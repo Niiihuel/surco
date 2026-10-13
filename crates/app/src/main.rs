@@ -341,6 +341,7 @@ fn icon() -> egui::IconData {
 fn main() -> eframe::Result {
     // Where this program is, while the system still says: a later version takes its place.
     update::running();
+    limn::set_labels(limn::Labels::SPANISH);
     let mut script = Script { after: Duration::from_millis(900), ..Script::default() };
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {

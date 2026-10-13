@@ -6,7 +6,7 @@ use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
-    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, RowSizing, Scheme,
+    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
@@ -130,7 +130,7 @@ const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
 /// limn's shuffle with a spark over where its arrows cross.
 const SMART_SHUFFLE: &str = include_str!("../assets/icons/shuffle-spark.svg");
 /// An entry of the library: 64 high around a 48 tile.
-const LIBRARY_ROW: RowSizing = RowSizing {
+const LIBRARY_ROW: ListRowSizing = ListRowSizing {
     height: Some(64.0),
     two_line_height: Some(64.0),
     padding: 8.0,
@@ -141,13 +141,13 @@ const LIBRARY_ROW: RowSizing = RowSizing {
     copy_gap: 2.0,
     title_height: Some(26.0),
     subtitle_height: Some(20.0),
-    ..RowSizing::COMPACT
+    ..ListRowSizing::COMPACT
 };
 const LIBRARY_TILE: f32 = 48.0;
 /// A quick-access entry of the home page: a short row around the same tile.
-const QUICK_ROW: RowSizing = RowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..RowSizing::COMPACT };
+const QUICK_ROW: ListRowSizing = ListRowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..ListRowSizing::COMPACT };
 /// A track's row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
-const TRACK_ROW: RowSizing = RowSizing {
+const TRACK_ROW: ListRowSizing = ListRowSizing {
     height: Some(60.0),
     two_line_height: Some(60.0),
     padding: 8.0,
@@ -159,7 +159,7 @@ const TRACK_ROW: RowSizing = RowSizing {
     copy_gap: 2.0,
     title_height: Some(22.0),
     subtitle_height: Some(20.0),
-    ..RowSizing::COMPACT
+    ..ListRowSizing::COMPACT
 };
 const ALBUM_COVER: f32 = 168.0;
 const ARTIST_PICTURE: f32 = 128.0;
@@ -360,7 +360,7 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
         Updating::Ready => (format!("Surco {version} está lista"), "Reiniciá para empezar a usarla.".to_owned(), Some(button("update-restart", "Reiniciar ahora"))),
         Updating::Failed(why) => ("No se pudo actualizar".to_owned(), why.clone(), Some(button("update-get", "Reintentar"))),
     };
-    let copy = Element::column(vec![Text::new(title, palette).size(15.0).render(), Text::new(about, palette).muted().render()]).gap(2.0).flex(1.0);
+    let copy = Element::column(vec![Text::new(title, palette).font_size(15.0).render(), Text::new(about, palette).muted().render()]).gap(2.0).flex(1.0);
     let mut head = vec![copy];
     let mut parts = Vec::new();
     if let Updating::Fetching(done) = &state.updating {
@@ -422,13 +422,13 @@ fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette)
 
 /// A release in the feed of what is new: a row around its cover, larger than a track's.
 const NEWS_COVER: f32 = 56.0;
-const NEWS_ROW: RowSizing = RowSizing { height: Some(72.0), two_line_height: Some(72.0), leading_width: NEWS_COVER, ..TRACK_ROW };
+const NEWS_ROW: ListRowSizing = ListRowSizing { height: Some(72.0), two_line_height: Some(72.0), leading_width: NEWS_COVER, ..TRACK_ROW };
 
 /// What the artists followed have released, what is still to be looked at first, under
 /// the notice of a later version of the app when there is one.
 fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut sections = vec![Element::column(vec![
-        Text::new("Novedades", palette).size(PAGE_TITLE).render(),
+        Text::new("Novedades", palette).font_size(PAGE_TITLE).render(),
         Text::new("Los últimos lanzamientos de los artistas que seguís.", palette).muted().render(),
     ])
     .gap(4.0)];
@@ -645,7 +645,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     // A panel is shut from its own header.
     let header = Element::row(vec![
         header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y(),
-        Text::new("Tu biblioteca", palette).size(15.0).muted().render().centered_y(),
+        Text::new("Tu biblioteca", palette).font_size(15.0).muted().render().centered_y(),
         Element::spacer().flex(1.0),
         header_button("playlist-new", Icon::Add, TooltipSpec::new("Crear playlist"), palette).render().centered_y(),
     ])
@@ -722,7 +722,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                 // A line each: what it is called, and what it is.
                 LibraryView::Compact => {
                     let kind = about.rsplit(" · ").last().unwrap_or_default().to_owned();
-                    let row = ListRow::new(id, name, palette).sizing(RowSizing::COMPACT).trailing(Text::new(kind, palette).role(TextRole::Caption).muted().render()).title_fade(true).radius(RadiusRole::Card);
+                    let row = ListRow::new(id, name, palette).sizing(ListRowSizing::COMPACT).trailing(Text::new(kind, palette).role(TextRole::Caption).muted().render()).title_fade(true).radius(RadiusRole::Card);
                     if here { row.filled() } else { row }.render()
                 }
                 LibraryView::List => {
@@ -766,7 +766,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         );
     }
     let hour = chrono::Timelike::hour(&chrono::Local::now());
-    let mut sections = vec![Text::new(greeting(hour), palette).size(PAGE_TITLE).render()];
+    let mut sections = vec![Text::new(greeting(hour), palette).font_size(PAGE_TITLE).render()];
 
     // Quick access: a grid of short rows, each a step above the page.
     let columns = if width >= 720.0 { 3 } else { 2 };
@@ -1088,8 +1088,8 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             // Numbered as they read, whatever their place in the list's own order.
             let number = Element::text((position + 1).to_string()).font_family(FontFamily::Monospace).font_size(12.0).foreground(if current { palette.text } else { palette.muted });
             let copy = Element::column(vec![
-                Text::new(&track.title, palette).size(TRACK_ROW.title_size).truncate().render(),
-                Text::new(&track.artist, palette).size(TRACK_ROW.subtitle_size).muted().truncate().render(),
+                Text::new(&track.title, palette).font_size(TRACK_ROW.title_size).truncate().render(),
+                Text::new(&track.artist, palette).font_size(TRACK_ROW.subtitle_size).muted().truncate().render(),
             ])
             .gap(TRACK_ROW.copy_gap)
             .flex(1.0)
@@ -1232,7 +1232,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     });
     let mut about = vec![
         Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
-        Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
+        Text::new(&playlist.name, palette).font_size(PAGE_TITLE).truncate().render(),
         Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
     ];
     // What a list brought in from another app left behind, a click from being read.
@@ -1444,7 +1444,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
 const SORT_MENU_WIDTH: f32 = 200.0;
 
 fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPalette) -> Element {
-    let mut about = vec![Text::new(&artist.name, palette).size(PAGE_TITLE).truncate().render()];
+    let mut about = vec![Text::new(&artist.name, palette).font_size(PAGE_TITLE).truncate().render()];
     if let Some(subscribers) = &artist.subscribers {
         about.push(Text::new(format!("{subscribers} suscriptores"), palette).muted().render());
     }
@@ -1482,7 +1482,7 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
         (saved, saving) => format!("{saved} en este equipo, {saving} descargando"),
     };
     let mut sections = vec![Element::column(vec![
-        Text::new("Descargas", palette).size(PAGE_TITLE).render(),
+        Text::new("Descargas", palette).font_size(PAGE_TITLE).render(),
         Text::new(count, palette).muted().render(),
         play_buttons(state, None, palette),
     ])
@@ -1500,7 +1500,7 @@ fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         return centered(Empty::new("Todavía no marcaste nada", "El corazón de la barra de abajo guarda acá lo que te gusta.", palette).icon(Icon::Heart).render());
     }
     let header = Element::column(vec![
-        Text::new("Tus me gusta", palette).size(PAGE_TITLE).render(),
+        Text::new("Tus me gusta", palette).font_size(PAGE_TITLE).render(),
         Text::new(songs(liked.len()), palette).muted().render(),
         play_buttons(state, None, palette),
     ])
@@ -1521,8 +1521,8 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
     let header = Element::row(vec![
         cover(state, &album.artwork_url, ALBUM_COVER, palette),
         Element::column(vec![
-            Text::new(&album.title, palette).size(PAGE_TITLE).truncate().render(),
-            Link::new("page-artist", &album.artist, palette).color(palette.text).font_size(14.0).render(),
+            Text::new(&album.title, palette).font_size(PAGE_TITLE).truncate().render(),
+            Link::new("page-artist", &album.artist, palette).ink(palette.text).font_size(14.0).render(),
             Text::new(facts.join(" · "), palette).muted().render(),
         ])
         .gap(10.0)
@@ -1538,7 +1538,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
 
 /// A panel's head: what it shows, and a muted line about it.
 fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Element {
-    let copy = Element::column(vec![Text::new(title, palette).size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
+    let copy = Element::column(vec![Text::new(title, palette).font_size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
     // A panel is shut from its own header.
     let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new("Ocultar este panel"), palette).render();
     inset(Element::row(vec![copy.flex(1.0), shut]))
@@ -1561,7 +1561,7 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let mut parts = vec![Text::eyebrow("LETRA", raised).render()];
     parts.extend(lines.iter().enumerate().skip(from).take(LYRICS_SHOWN).map(|(index, line)| {
-        let text = Text::new(&line.text, raised).size(15.0);
+        let text = Text::new(&line.text, raised).font_size(15.0);
         if sung == Some(index) { text } else { text.muted() }.render()
     }));
     let all = Button::new("lyrics", "Mostrar la letra", raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
@@ -1596,7 +1596,7 @@ fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let follows = state.is_followed(artist);
     let follow = Button::new("about-follow", if follows { "Siguiendo" } else { "Seguir" }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
-    let name = Element::clickable("about-artist", Text::new(&artist.name, raised).size(16.0).truncate().render());
+    let name = Element::clickable("about-artist", Text::new(&artist.name, raised).font_size(16.0).truncate().render());
     let mut copy = vec![Text::eyebrow("SOBRE EL ARTISTA", raised).render(), Element::row(vec![name.flex(1.0).centered_y(), follow.centered_y()]).gap(8.0)];
     if let Some(subscribers) = &artist.subscribers {
         copy.push(Text::new(format!("{subscribers} suscriptores"), raised).muted().render());
@@ -1709,7 +1709,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                 };
                 let mut playing = vec![
                     picture,
-                    link("panel-album", "now-album", Text::new(&track.title, palette).size(18.0).truncate().render()),
+                    link("panel-album", "now-album", Text::new(&track.title, palette).font_size(18.0).truncate().render()),
                     link("panel-artist", "now-artist", Text::new(&track.artist, palette).muted().truncate().render()),
                 ];
                 playing.extend(lyrics_preview(state, side, palette).map(inset));
