@@ -19,20 +19,23 @@ pub const THEME: Theme = Theme {
 const SIDEBAR_WIDTH: f32 = 260.0;
 const PLAYER_HEIGHT: f32 = 76.0;
 const VOLUME_WIDTH: f32 = 120.0;
+const VOLUME_WIDTH_NARROW: f32 = 84.0;
 const QUEUE_WIDTH: f32 = 300.0;
-/// Below this the queue takes the place of the results instead of squeezing them.
-const QUEUE_BESIDE_FROM: f32 = 960.0;
+/// Below this the queue takes the place of the results instead of squeezing them, and the
+/// volume gives up its share of the bar to the transport.
+const WIDE_FROM: f32 = 960.0;
 const EQUALIZER_SLIDER: f32 = 180.0;
 
 pub fn view(state: &State, window: Size) -> Element {
     let palette = THEME.palette();
-    let panes = match (state.queue_open, window.width >= QUEUE_BESIDE_FROM) {
+    let wide = window.width >= WIDE_FROM;
+    let panes = match (state.queue_open, wide) {
         (false, _) => vec![sidebar(state, palette), results(state, palette)],
         (true, true) => vec![sidebar(state, palette), results(state, palette), queue(state, palette).size(Some(QUEUE_WIDTH), None)],
         (true, false) => vec![sidebar(state, palette), queue(state, palette).flex(1.0)],
     };
     let body = Element::row(panes).flex(1.0);
-    Element::panel(Element::column(vec![body, player(state, palette)]))
+    Element::panel(Element::column(vec![body, player(state, wide, palette)]))
         .background(THEME.background)
         .size(Some(window.width), Some(window.height))
 }
@@ -152,7 +155,7 @@ fn cover(state: &State, track: &Track, side: f32, palette: ComponentPalette) -> 
     }
 }
 
-fn player(state: &State, palette: ComponentPalette) -> Element {
+fn player(state: &State, wide: bool, palette: ComponentPalette) -> Element {
     let current = state.current();
     let has_track = current.is_some();
     let transport = |id: &str, icon: Icon, hint: &str| {
@@ -214,8 +217,7 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
     .width(36.0 + EQUALIZER_SLIDER + 44.0 + 16.0 + 24.0)
     .render()
     .centered_y();
-    let volume = Element::row(vec![
-        Element::spacer().flex(1.0),
+    let mut volume = vec![
         equalizer,
         side("queue", Icon::Playlist, "Cola", state.queue_open),
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette)
@@ -224,14 +226,19 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
             .tooltip(if state.volume > 0.0 { "Silenciar" } else { "Activar sonido" })
             .render()
             .centered_y(),
-        Slider::new("volume", state.volume, palette).width(VOLUME_WIDTH).render().centered_y(),
-    ])
-    .gap(6.0);
+        Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).render().centered_y(),
+    ];
+    // Wide, the three parts share the bar 1:2:1 and the transport sits in the middle of the
+    // window. Narrow, the volume takes only what it needs.
+    if wide {
+        volume.insert(0, Element::spacer().flex(1.0));
+    }
+    let volume = Element::row(volume).gap(6.0).centered_y();
     Element::panel(
         Element::row(vec![
             now_playing.flex(1.0).centered_y(),
             Element::column(vec![buttons, seek]).gap(2.0).flex(2.0).centered_y(),
-            volume.flex(1.0).centered_y(),
+            if wide { volume.flex(1.0) } else { volume },
         ])
         .gap(24.0),
     )
@@ -308,6 +315,20 @@ mod tests {
         let after = ids(&state, size);
         for id in ["play-pause", "next", "previous", "shuffle", "repeat", "seek", "mute", "volume"] {
             assert!(after.iter().any(|found| found == id), "{id} is live while a track plays");
+        }
+    }
+
+    #[test]
+    fn the_player_bar_keeps_every_control_inside_the_window() {
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), duration: 200.0, ..PlayerView::default() });
+        for width in [698.0, 720.0, 960.0, 1400.0] {
+            let size = Size::new(width, 700.0);
+            let mut tree = UiTree::new(view(&state, size));
+            for region in tree.layout(size).regions {
+                let rect = region.rect;
+                assert!(rect.x >= 0.0 && rect.x + rect.width <= width, "{} spans {}..{} at {width}", region.id, rect.x, rect.x + rect.width);
+            }
         }
     }
 

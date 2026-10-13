@@ -208,8 +208,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 }
             });
         }
-        // The engine only fails this when its thread is gone, which the next `Play` reports.
-        (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume, false)),
+        // The slider is evenly spaced to the ear, not to the amplitude: half way is far quieter
+        // than half the samples. The engine only fails this when its thread is gone, which the
+        // next `Play` reports.
+        (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
         (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (command, _) => return player.command(command),

@@ -9,7 +9,7 @@ description = "dnmusic for the desktop: a native music player drawn with limn."
 dnm-core = { path = "../core" }
 limn = { path = "../../../lienzo/crates/limn", default-features = false }
 limn-egui = { path = "../../../lienzo/crates/limn-egui", default-features = false }
-eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence"] }
 # Saves the frame for `--screenshot`.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 fastrand = "2"

@@ -39,6 +39,18 @@ fn cover_requests<'a>(asked: &mut HashSet<String>, tracks: impl IntoIterator<Ite
 /// The equaliser's range, each side of zero.
 pub const EQUALIZER_DB: f32 = 12.0;
 
+/// The equaliser as it is kept between runs: the preamp and then each band.
+pub fn equalizer_text(values: EqualizerValues) -> String {
+    let gains = std::iter::once(values.preamp_db).chain(values.bands_db);
+    gains.map(|gain| gain.to_string()).collect::<Vec<_>>().join(",")
+}
+
+pub fn equalizer_from(text: &str) -> Option<EqualizerValues> {
+    let gains: Vec<f32> = text.split(',').map(|gain| gain.parse().ok().filter(|gain: &f32| gain.is_finite())).collect::<Option<_>>()?;
+    let (preamp_db, bands) = gains.split_first()?;
+    Some(EqualizerValues { preamp_db: *preamp_db, bands_db: bands.try_into().ok()? })
+}
+
 impl Default for State {
     fn default() -> Self {
         Self {
@@ -302,6 +314,17 @@ mod tests {
         assert!(state.equalizer_open);
         click(&mut state, "equalizer-close");
         assert!(!state.equalizer_open);
+    }
+
+    #[test]
+    fn the_equalizer_survives_being_written_down() {
+        let mut values = EqualizerValues::FLAT;
+        values.preamp_db = -3.0;
+        values.bands_db[9] = 12.0;
+        assert_eq!(equalizer_from(&equalizer_text(values)), Some(values));
+        for broken in ["", "1,2,3", "0,0,0,0,0,0,0,0,0,0,x", "NaN,0,0,0,0,0,0,0,0,0,0"] {
+            assert_eq!(equalizer_from(broken), None, "{broken:?} is not a setting");
+        }
     }
 
     #[test]

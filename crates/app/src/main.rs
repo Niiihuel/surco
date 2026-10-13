@@ -103,14 +103,22 @@ impl Host {
     }
 }
 
+const VOLUME_KEY: &str = "volume";
+const EQUALIZER_KEY: &str = "equalizer";
+
 impl eframe::App for Host {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        storage.set_string(VOLUME_KEY, self.state.volume.to_string());
+        storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if !self.started {
             self.started = true;
             limn_egui::attach_fonts(&mut self.tree, &ctx);
-            // The engine starts at full volume; the window owns the setting.
-            self.send(vec![Command::Volume(self.state.volume)]);
+            // The engine starts at full volume and flat; the window owns both settings.
+            self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer)]);
         }
         limn_egui::normalize_keyboard_input(&ctx);
         self.tree.set_reduced_motion(self.script.screenshot.is_some());
@@ -181,18 +189,29 @@ fn main() -> eframe::Result {
     }
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
-        viewport: egui::ViewportBuilder::default().with_inner_size([1180.0, 780.0]).with_min_inner_size([720.0, 480.0]),
+        viewport: egui::ViewportBuilder::default()
+            .with_title("dnmusic")
+            .with_inner_size([1180.0, 780.0])
+            .with_min_inner_size([720.0, 480.0]),
         ..Default::default()
     };
+    // Its own id, and with it its own settings folder: the Electron app is "dnmusic".
     eframe::run_native(
-        "dnmusic",
+        "dnmusic-native",
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone());
+            let mut state = State::default();
+            if let Some(storage) = creation.storage {
+                let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());
+                state.volume = volume.filter(|volume| volume.is_finite()).map_or(state.volume, |volume| volume.clamp(0.0, 1.0));
+                let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
+                state.equalizer = equalizer.unwrap_or(state.equalizer);
+            }
             Ok(Box::new(Host {
                 tree: UiTree::new(Element::spacer()),
-                state: State::default(),
+                state,
                 commands,
                 events,
                 player,
