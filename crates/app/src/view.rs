@@ -595,8 +595,9 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     if !facts.is_empty() {
         list_row = list_row.trailing(middle(Element::row(facts).gap(8.0)));
     }
-    // The dots show while the pointer is on the row, or while their menu is open.
-    let dots = Element::row(vec![menu]).reveal_on_hover(format!("dots:{row}"));
+    // The dots show while the pointer is on the row, or while their menu is open. A trailing
+    // action sits flush with the row's edge: the row's own padding keeps them off it.
+    let dots = Element::row(vec![menu, Element::spacer().size(Some(TRACK_ROW.padding), None)]).reveal_on_hover(format!("dots:{row}"));
     let element = list_row.trailing_action(format!("more:{row}"), middle(dots)).render().hover_region();
     let entries = actions.into_iter().map(|action| match action {
         Some(action) => ContextMenuEntry::Item(ContextMenuItem::new(action.id, action.label).icon(action.icon)),
