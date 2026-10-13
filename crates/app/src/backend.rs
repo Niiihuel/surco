@@ -463,6 +463,10 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
         Effect::Play(track) => begin(shared, track, Duration::ZERO, None),
         Effect::Fade(track, seconds) => begin(shared, track, Duration::from_secs_f64(seconds), None),
         Effect::Restore(track, at, playing) => begin(shared, track, Duration::ZERO, Some((at, playing))),
+        Effect::Handover(track, at) => {
+            let shared = shared.clone();
+            tokio::spawn(async move { handover(&shared, track, at).await });
+        }
         Effect::Preload(track) => {
             let shared = shared.clone();
             tokio::spawn(async move { preload(&shared, &track).await });
@@ -552,6 +556,41 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
         engine.audio.play()
     })
     .await
+}
+
+/// How far ahead of where the song is its other rendition is made ready, and how long the
+/// two sound together when it comes in.
+const HANDOVER_AHEAD: f64 = 2.5;
+const HANDOVER_FADE: Duration = Duration::from_millis(250);
+
+/// Hands what plays over to another rendition of it without a gap. The other is made ready
+/// on the standby deck from a little ahead of where the song is, the song goes on until it
+/// gets there, and then the other comes in under it.
+async fn handover(shared: &Arc<Shared>, track: Track, at: f64) {
+    let generation = shared.generation.load(Ordering::SeqCst);
+    let asked = std::time::Instant::now();
+    let ready = async {
+        let (mut load, download) = fetch(shared, &track, true).await.ok()?;
+        load.start_sec = Some(at + HANDOVER_AHEAD);
+        if !shared.is_current(generation) {
+            download.cancel();
+            return None;
+        }
+        let replaced = shared.downloads.lock().unwrap().standby.replace(download);
+        if let Some(replaced) = replaced {
+            replaced.cancel();
+        }
+        let engine = shared.clone();
+        blocking(move || engine.audio.load(load)).await.ok()
+    };
+    if ready.await.is_some() {
+        tokio::time::sleep(Duration::from_secs_f64(HANDOVER_AHEAD).saturating_sub(asked.elapsed())).await;
+    }
+    // Something else was asked to play meanwhile: this is no longer what follows.
+    if shared.is_current(generation) {
+        // Not ready, it is loaded the plain way from where the song has got to.
+        begin(shared, track, HANDOVER_FADE, Some((at + asked.elapsed().as_secs_f64(), true)));
+    }
 }
 
 /// A track that cannot be preloaded is loaded when its turn comes, and fails then if it must.

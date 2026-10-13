@@ -36,6 +36,9 @@ pub enum Effect {
     Fade(Track, f64),
     /// Load this track again and go on from so many seconds in, sounding or not.
     Restore(Track, f64, bool),
+    /// Bring this rendition of what plays in under it, from where it is so many seconds in:
+    /// what plays goes on sounding until the other is ready.
+    Handover(Track, f64),
     /// Get this track ready on the standby deck.
     Preload(Track),
     /// Nothing follows this track: ask the catalog what would.
@@ -55,6 +58,9 @@ pub struct Player {
     error: Option<String>,
     /// The track already asked onto the standby deck, so it is asked for once.
     preloading: Option<String>,
+    /// The rendition another one is taking over from: until that one sounds, this one
+    /// still says where the song is.
+    outgoing: Option<String>,
     /// Whether a queue that runs out goes on with its last track's radio.
     autoplay: bool,
     /// Whether the catalog's picks for what plays are woven into the shuffled list.
@@ -74,6 +80,7 @@ impl Default for Player {
             duration: 0.0,
             error: None,
             preloading: None,
+            outgoing: None,
             autoplay: true,
             smart: false,
             crossfade: 0.0,
@@ -110,6 +117,7 @@ impl Player {
         self.duration = track.duration_ms as f64 / 1000.0;
         self.error = None;
         self.preloading = None;
+        self.outgoing = None;
         // A lone track and the last of a list are followed by their radio, as long as the
         // user did not ask for the list to repeat. A list still to be woven asks for its picks.
         let ends = self.autoplay && self.queue.peek_next().is_none();
@@ -194,12 +202,15 @@ impl Player {
                 vec![Effect::Seek(seconds)]
             }
             Command::Swap(track) if self.queue.current().is_some() => {
+                let sounding = self.loaded && self.playing;
+                self.outgoing = self.queue.current().filter(|_| sounding).map(|current| current.id.clone());
                 self.queue.replace_current(track.clone());
                 self.duration = track.duration_ms as f64 / 1000.0;
                 self.position = self.position.min(self.duration);
                 self.loaded = true;
                 self.preloading = None;
-                vec![Effect::Restore(track, self.position, self.playing)]
+                // What sounds is not cut for the other to load; what is paused has nothing to cut.
+                vec![if sounding { Effect::Handover(track, self.position) } else { Effect::Restore(track, self.position, self.playing) }]
             }
             Command::Autoplay(on) => {
                 self.autoplay = on;
@@ -239,7 +250,12 @@ impl Player {
     pub fn engine(&mut self, event: dnm_audio::Event) -> Vec<Effect> {
         use dnm_audio::Event;
         match event {
+            Event::Position { track_id, position_sec, .. } if self.outgoing.as_deref() == Some(track_id.as_str()) => {
+                self.position = position_sec;
+                Vec::new()
+            }
             Event::Position { track_id, position_sec, duration_sec } if self.is_current(&track_id) => {
+                self.outgoing = None;
                 self.position = position_sec;
                 if let Some(duration) = duration_sec.filter(|duration| *duration > 0.0) {
                     self.duration = duration;
@@ -416,9 +432,18 @@ mod tests {
     fn another_rendition_takes_the_place_of_what_plays_and_goes_on_from_there() {
         let mut player = playing(&["a", "b"], 0);
         player.engine(Event::Position { track_id: "a".into(), position_sec: 42.0, duration_sec: Some(200.0) });
-        assert_eq!(player.command(Command::Swap(track("video"))), vec![Effect::Restore(track("video"), 42.0, true)]);
+        assert_eq!(player.command(Command::Swap(track("video"))), vec![Effect::Handover(track("video"), 42.0)]);
         let view = player.view();
         assert_eq!((view.current, view.upcoming), (Some(track("video")), vec![track("b")]));
+        // Until the other sounds, the one on its way out still says where the song is.
+        player.engine(Event::Position { track_id: "a".into(), position_sec: 43.5, duration_sec: Some(200.0) });
+        assert_eq!(player.view().position, 43.5);
+        player.engine(Event::Position { track_id: "video".into(), position_sec: 44.0, duration_sec: None });
+        player.engine(Event::Position { track_id: "a".into(), position_sec: 99.0, duration_sec: None });
+        assert_eq!(player.view().position, 44.0, "and no longer once it does");
+        // Paused, there is nothing to keep sounding: the other is loaded where the song was.
+        player.command(Command::PlayPause);
+        assert_eq!(player.command(Command::Swap(track("a"))), vec![Effect::Restore(track("a"), 44.0, false)]);
         assert!(Player::default().command(Command::Swap(track("video"))).is_empty(), "nothing plays");
     }
 
