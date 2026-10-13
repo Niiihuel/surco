@@ -65,6 +65,9 @@ const WAVE_BAR: f32 = 3.0;
 const WAVE_GAP: f32 = 2.0;
 /// A line of lyrics reads from across the room; the furthest off are this much out of focus.
 const LYRIC_SIZE: f32 = 24.0;
+/// In a pane this wide or wider the lines grow to this.
+const LYRIC_WIDE_FROM: f32 = 640.0;
+const LYRIC_SIZE_WIDE: f32 = 32.0;
 const LYRIC_GAP: f32 = 18.0;
 const LYRIC_BLUR: f32 = 2.2;
 /// How far up the panel the cover's colour reaches behind the lyrics.
@@ -111,6 +114,8 @@ const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
 const MENU_WIDTH: f32 = 272.0;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
+/// limn's shuffle with a spark over where its arrows cross.
+const SMART_SHUFFLE: &str = include_str!("../assets/icons/shuffle-spark.svg");
 /// An entry of the library: 64 high around a 48 tile.
 const LIBRARY_ROW: RowSizing = RowSizing {
     height: Some(64.0),
@@ -178,7 +183,7 @@ pub fn view(state: &State, window: Size) -> Element {
         content -= right + GAP;
         columns.push(surface(pane(state, content, palette)).flex(1.0));
         columns.extend([handle(Side::Right, right_slide), sliding(panel(state, palette), right_whole, right)]);
-    } else if (state.queue_open || state.lyrics_open) && window.width < PANEL_FROM {
+    } else if state.queue_open && window.width < PANEL_FROM {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
         columns.push(surface(pane(state, content, palette)).flex(1.0));
@@ -699,6 +704,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Liked => "page:liked".to_owned(),
         Page::Playlist(id) => format!("page:playlist:{id}"),
         Page::Settings => "page:settings".to_owned(),
+        Page::Lyrics => "page:lyrics".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
 }
@@ -714,8 +720,8 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
                 .action("retry", "Reintentar", ButtonVariant::Secondary)
                 .render(),
         ),
-        Page::Artist(artist) => artist_page(state, artist, palette),
-        Page::Album(album) => album_page(state, album, palette),
+        Page::Artist(artist) => artist_page(state, artist, width, palette),
+        Page::Album(album) => album_page(state, album, width, palette),
         Page::Song(track) => centered(
             Element::column(vec![
                 media_card(state, "song-card", track, palette).centered_x(),
@@ -723,10 +729,11 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             ])
             .gap(12.0),
         ),
-        Page::Downloads => downloads_page(state, palette),
-        Page::Liked => liked_page(state, palette),
+        Page::Downloads => downloads_page(state, width, palette),
+        Page::Liked => liked_page(state, width, palette),
+        Page::Lyrics => lyrics(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
-            Some(playlist) => playlist_page(state, playlist, palette),
+            Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
         },
         Page::Settings => settings_page(state, width, palette),
@@ -739,7 +746,7 @@ fn songs(count: usize) -> String {
 }
 
 /// One of the user's playlists: what it is, what to do with it, and its tracks in order.
-fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) -> Element {
+fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Element {
     let minutes = playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
     let picture = match playlist.tracks.first() {
@@ -749,28 +756,24 @@ fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) 
             .radius(limn::tokens().radius.control)
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
-    let mut actions = vec![
-        Button::new("page-play", "Reproducir", palette).icon(Icon::PlayFill).render(),
-        Button::new("page-shuffle", "Aleatorio", palette).icon(Icon::Shuffle).variant(ButtonVariant::Secondary).render(),
-        Button::new("playlist-share", if state.list_copied == Some(playlist.id) { "Enlace copiado" } else { "Compartir" }, palette)
-            .icon(Icon::Custom(include_str!("../assets/icons/share-2.svg")))
-            .variant(ButtonVariant::Ghost)
-            .render(),
-        Button::new("playlist-delete", "Eliminar", palette).icon(Icon::Trash).variant(ButtonVariant::Ghost).render(),
-    ];
-    if playlist.tracks.is_empty() {
+    let share = Button::new("playlist-share", if state.list_copied == Some(playlist.id) { "Enlace copiado" } else { "Compartir" }, palette)
+        .icon(Icon::Custom(include_str!("../assets/icons/share-2.svg")))
+        .variant(ButtonVariant::Ghost)
+        .render();
+    let delete = Button::new("playlist-delete", "Eliminar", palette).icon(Icon::Trash).variant(ButtonVariant::Ghost).render();
+    let actions = if playlist.tracks.is_empty() {
         // Nothing to play, to share or to search yet.
-        actions.drain(..3);
+        Element::row(vec![delete])
     } else {
-        actions.extend(page_search(state, palette));
-    }
+        page_actions(state, vec![share, delete], width - 24.0 - ALBUM_COVER - 20.0, palette)
+    };
     let header = Element::row(vec![
         picture,
         Element::column(vec![
             Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
             Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
             Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
-            Element::row(actions).gap(8.0),
+            actions,
         ])
         .gap(10.0)
         .flex(1.0)
@@ -915,19 +918,41 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
     ScrollArea::new("results", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
 }
 
-/// A page's actions: play it, shuffle it and, for a page the library can hold, keep it.
-/// `keep` names the action when the page is not kept and when it is.
-fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPalette) -> Element {
-    let mut buttons = vec![
-        Button::new("page-play", "Reproducir", palette).icon(Icon::PlayFill).render(),
-        Button::new("page-shuffle", "Aleatorio", palette).icon(Icon::Shuffle).variant(ButtonVariant::Secondary).render(),
-    ];
-    if let Some((keep, kept)) = keep {
-        let (label, icon) = if state.keeps_page() { (kept, Icon::Check) } else { (keep, Icon::Add) };
-        buttons.push(Button::new("keep", label, palette).icon(icon).variant(ButtonVariant::Ghost).render());
+/// The shuffle's three steps as its button shows them: the icon of the one it is on, and
+/// what a press does next.
+fn shuffle_step(state: &State) -> (Icon, &'static str) {
+    match (state.player.shuffle, state.player.smart) {
+        (false, _) => (Icon::Shuffle, "Activar aleatorio"),
+        (true, false) => (Icon::Shuffle, "Activar aleatorio con recomendaciones"),
+        (true, true) => (Icon::Custom(SMART_SHUFFLE), "Desactivar aleatorio"),
     }
-    buttons.extend(page_search(state, palette));
-    Element::row(buttons).gap(8.0)
+}
+
+/// A row of actions with less room than this gives the page's own to the search while it is open.
+const ACTIONS_ROOMY: f32 = 480.0;
+
+/// A page's actions in the `room` it has for them: its play, the one filled control, the
+/// step of the shuffle, the page's `own`, and the search of its tracks at the far end.
+fn page_actions(state: &State, own: Vec<Element>, room: f32, palette: ComponentPalette) -> Element {
+    let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+    let play = IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip("Reproducir").render().center_content();
+    let (icon, hint) = shuffle_step(state);
+    let shuffle = IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).active(state.player.shuffle).render();
+    let mut actions = vec![play, shuffle.centered_y()];
+    if room >= ACTIONS_ROOMY || !state.page_searching {
+        actions.extend(own.into_iter().map(Element::centered_y));
+    }
+    actions.extend(page_search(state, palette));
+    Element::row(actions).gap(8.0)
+}
+
+/// The actions of a page the library can hold: `keep` names keeping it, before and after.
+fn play_buttons(state: &State, keep: Option<(&str, &str)>, room: f32, palette: ComponentPalette) -> Element {
+    let keep = keep.map(|(keep, kept)| {
+        let (label, icon) = if state.keeps_page() { (kept, Icon::Check) } else { (keep, Icon::Add) };
+        Button::new("keep", label, palette).icon(icon).variant(ButtonVariant::Ghost).render()
+    });
+    page_actions(state, keep.into_iter().collect(), room, palette)
 }
 
 /// The search of the page's tracks, at the far end of its actions: a magnifier that grows
@@ -941,7 +966,9 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             .size(ControlSize::Compact)
             .width(PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open)
             .render()
-            .centered_y();
+            .centered_y()
+            // In a narrow pane it makes do with what the row has left.
+            .shrink_to_fit();
         parts.extend([field, toggle(Icon::Close, "Cerrar la búsqueda")]);
     } else {
         parts.push(toggle(Icon::Search, "Buscar en esta página"));
@@ -949,12 +976,12 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     parts
 }
 
-fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Element {
+fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPalette) -> Element {
     let mut about = vec![Text::new(&artist.name, palette).size(PAGE_TITLE).truncate().render()];
     if let Some(subscribers) = &artist.subscribers {
         about.push(Text::new(format!("{subscribers} suscriptores"), palette).muted().render());
     }
-    about.push(play_buttons(state, Some(("Seguir", "Siguiendo")), palette));
+    about.push(play_buttons(state, Some(("Seguir", "Siguiendo")), width - 24.0 - ARTIST_PICTURE - 20.0, palette));
     let header = Element::row(vec![
         cover(state, &artist.artwork_url, ARTIST_PICTURE, palette).radius(ARTIST_PICTURE / 2.0),
         // The copy gives way in a narrow pane; the picture keeps its size.
@@ -980,7 +1007,7 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
     ScrollArea::new("artist", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
 }
 
-fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
+fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let failure = state.save_error.as_ref().map(|error| Alert::new("No se pudo descargar", error, palette).render());
     if state.saved.is_empty() && state.saving.is_empty() {
         let empty = Empty::new("Nada descargado", "Lo que descargues desde el menú de una canción queda acá, para escucharlo sin conexión.", palette)
@@ -996,7 +1023,7 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
     let mut sections = vec![Element::column(vec![
         Text::new("Descargas", palette).size(PAGE_TITLE).render(),
         Text::new(count, palette).muted().render(),
-        play_buttons(state, None, palette),
+        play_buttons(state, None, width - 24.0, palette),
     ])
     .gap(10.0)];
     sections.extend(failure);
@@ -1010,7 +1037,7 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
 }
 
 /// The tracks marked with the heart, the last one first.
-fn liked_page(state: &State, palette: ComponentPalette) -> Element {
+fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let liked = &state.collection.liked;
     if liked.is_empty() {
         return centered(Empty::new("Todavía no marcaste nada", "El corazón de la barra de abajo guarda acá lo que te gusta.", palette).icon(Icon::Heart).render());
@@ -1018,7 +1045,7 @@ fn liked_page(state: &State, palette: ComponentPalette) -> Element {
     let header = Element::column(vec![
         Text::new("Tus me gusta", palette).size(PAGE_TITLE).render(),
         Text::new(songs(liked.len()), palette).muted().render(),
-        play_buttons(state, None, palette),
+        play_buttons(state, None, width - 24.0, palette),
     ])
     .gap(10.0);
     // A track that loses its heart closes where it was.
@@ -1030,7 +1057,7 @@ fn liked_page(state: &State, palette: ComponentPalette) -> Element {
     ScrollArea::new("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
-fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Element {
+fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalette) -> Element {
     let minutes = album.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
     let count = match album.tracks.len() {
@@ -1044,7 +1071,7 @@ fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Elemen
             Text::new(&album.title, palette).size(PAGE_TITLE).truncate().render(),
             Link::new("page-artist", &album.artist, palette).color(palette.text).font_size(14.0).render(),
             Text::new(facts.join(" · "), palette).muted().render(),
-            play_buttons(state, Some(("Guardar", "En tu biblioteca")), palette),
+            play_buttons(state, Some(("Guardar", "En tu biblioteca")), width - 24.0 - ALBUM_COVER - 20.0, palette),
         ])
         .gap(10.0)
         .flex(1.0)
@@ -1082,8 +1109,6 @@ fn inset(part: Element) -> Element {
 fn panel(state: &State, palette: ComponentPalette) -> Element {
     let content = if state.queue_open {
         vec![panel_header("Lo que viene", "La cola, en su orden real", palette), upcoming(state, palette)]
-    } else if state.lyrics_open {
-        vec![panel_header("Letra", state.current().map_or("Nada por ahora", |track| track.title.as_str()), palette), lyrics(state, palette)]
     } else {
         match state.current() {
             Some(track) => {
@@ -1116,25 +1141,15 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
             ],
         }
     };
-    let face = match (state.queue_open, state.lyrics_open) {
-        (true, _) => "panel:queue",
-        (_, true) => "panel:lyrics",
-        _ => "panel:playing",
-    };
+    let face = if state.queue_open { "panel:queue" } else { "panel:playing" };
     // The column's gap, plus this, is the margin over the header.
     let top = Element::spacer().size(None, Some(PANEL_PAD - 12.0));
-    let panel = Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face);
-    // The lyrics stand over a wash of the cover's own colour.
-    let wash = state.current().filter(|_| state.lyrics_open).and_then(|track| state.tints.get(track.artwork_url.as_deref()?));
-    match wash {
-        Some(tint) => panel.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
-        None => panel,
-    }
+    Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face)
 }
 
-/// The lines of what plays, the one being sung in full ink. A line that is clicked is sung
-/// from its start.
-fn lyrics(state: &State, palette: ComponentPalette) -> Element {
+/// The lines of what plays down the middle of the window, the one being sung in full ink,
+/// over a wash of the cover's own colour. A line that is clicked is sung from its start.
+fn lyrics(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Custom(LYRICS)).render());
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
@@ -1142,6 +1157,8 @@ fn lyrics(state: &State, palette: ComponentPalette) -> Element {
         Some((_, Lyrics::Missing)) => return note("Sin letra sincronizada", "Todavía nadie la cargó para esta canción."),
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
+    // With room, the lines stand larger and further in from the edge.
+    let (size, margin) = if width >= LYRIC_WIDE_FROM { (LYRIC_SIZE_WIDE, (width * 0.08).min(96.0)) } else { (LYRIC_SIZE, PANEL_PAD) };
     // Before the first line everything is still to come.
     let sung = state.active_line().map_or(-1, |index| index as i64);
     let rows = lines.iter().enumerate().map(|(index, line)| {
@@ -1155,7 +1172,7 @@ fn lyrics(state: &State, palette: ComponentPalette) -> Element {
         let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
         let text = Element::text(&line.text)
             .font_family(FontFamily::SansBold)
-            .font_size(LYRIC_SIZE)
+            .font_size(size)
             .foreground(ink)
             .animate_foreground(format!("lyric-ink:{index}"))
             .soft_focus(format!("lyric:{index}"), blur);
@@ -1163,7 +1180,12 @@ fn lyrics(state: &State, palette: ComponentPalette) -> Element {
     });
     // The list glides to each new line rather than stepping to it.
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
-    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP).padding(PANEL_PAD)).motion(glide).render().flex(1.0)
+    let list = ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP * size / LYRIC_SIZE).padding(margin)).motion(glide).render().flex(1.0);
+    let page = Element::column(vec![list]).flex(1.0);
+    match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
+        Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
+        None => page,
+    }
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
@@ -1176,7 +1198,8 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
             let row = ListRow::new(format!("upcoming:{index}"), &track.title, palette)
                 .sizing(TRACK_ROW)
                 .leading(middle(cover(state, &track.artwork_url, COVER, palette)))
-                .subtitle(&track.artist)
+                // A track the shuffle brought in from the catalog says so.
+                .subtitle(if state.player.picks.contains(&track.id) { format!("{} · Recomendada", track.artist) } else { track.artist.clone() })
                 .title_fade(true)
                 .radius(RadiusRole::Card)
                 .render();
@@ -1298,7 +1321,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .render()
         .center_content();
     let buttons = Element::row(vec![
-        transport("shuffle", Icon::Shuffle, "Aleatorio").active(state.player.shuffle).render(),
+        transport("shuffle", shuffle_step(state).0, shuffle_step(state).1).active(state.player.shuffle).render(),
         transport("previous", Icon::SkipBack, "Anterior").render(),
         play,
         transport("next", Icon::SkipForward, "Siguiente").render(),
@@ -1334,7 +1357,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         controls.push(Element::spacer().flex(1.0));
     }
     controls.extend([
-        side("lyrics", Icon::Custom(LYRICS), "Letra", state.lyrics_open),
+        side("lyrics", Icon::Custom(LYRICS), "Letra", state.lyrics_open()),
         side("queue", Icon::Playlist, "Cola", state.queue_open),
         equalizer,
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette)
@@ -1407,6 +1430,38 @@ mod tests {
         assert!(!has(&state, "page-track:0") && has(&state, "page-track:1"), "the rows keep their own numbers");
         state.update(&limn::UiAction::Clicked { id: "page-search".into() });
         assert!(!has(&state, "page-query") && has(&state, "page-track:0"), "shut, the page lists everything again");
+    }
+
+    #[test]
+    fn in_a_narrow_pane_the_search_fits_whole_in_the_place_of_the_pages_own_actions() {
+        let album = Album { id: "lp".into(), title: "Album".into(), artist: "Artist".into(), artist_id: None, year: "2017".into(), artwork_url: None, tracks: vec![track("one")] };
+        let mut state = State::default();
+        state.page = Page::Album(album);
+        state.motion = false;
+        state.update(&limn::UiAction::Clicked { id: "page-search".into() });
+        for (width, kept) in [(1100.0, false), (1900.0, true)] {
+            let size = Size::new(width, 700.0);
+            let mut tree = UiTree::new(view(&state, size));
+            let frame = tree.layout(size);
+            let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect);
+            let (field, shut, pane) = (rect("page-query").unwrap(), rect("page-search").unwrap(), rect("album").unwrap());
+            assert!(field.width >= 120.0, "room to type at {width}: {field:?}");
+            assert!(field.x + field.width <= shut.x && shut.x + shut.width <= pane.x + pane.width - 12.0, "inside the pane at {width}: {field:?} {shut:?}");
+            assert_eq!(rect("keep").is_some(), kept, "the page's own actions at {width}");
+        }
+    }
+
+    #[test]
+    fn the_lyrics_take_the_page_and_leave_the_panel_to_what_plays() {
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), duration: 200.0, playing: true, ..PlayerView::default() });
+        state.update(&limn::UiAction::Clicked { id: "lyrics".into() });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![dnm_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
+        let size = Size::new(1400.0, 800.0);
+        let mut tree = UiTree::new(view(&state, size));
+        let frame = tree.layout(size);
+        let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap();
+        assert!(rect("lyric:0").x < rect("panel-album").x, "the line in the middle, what plays still at the side");
     }
 
     #[test]

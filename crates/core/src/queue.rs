@@ -27,6 +27,8 @@ pub struct Queue {
     up_next: VecDeque<Track>,
     /// Play order over `list` when shuffling: a permutation of its indices.
     shuffle: Option<Vec<usize>>,
+    /// Where the tracks woven into `list` begin: from here on they are its guests.
+    guests_from: Option<usize>,
     /// What played before each hand-queued track, so `previous` can walk back through them.
     history: Vec<Track>,
     pub repeat: Repeat,
@@ -45,6 +47,7 @@ impl Queue {
         self.manual = None;
         self.up_next.clear();
         self.history.clear();
+        self.guests_from = None;
         self.shuffle = shuffled.then(|| deal(self.list.len(), index, rng));
     }
 
@@ -84,6 +87,51 @@ impl Queue {
             order.extend(added);
         }
         self.list.extend(fresh);
+    }
+
+    /// Whether the catalog's picks were already asked into this list.
+    pub fn is_woven(&self) -> bool {
+        self.guests_from.is_some()
+    }
+
+    /// The tracks that came into the list from elsewhere.
+    pub fn guests(&self) -> &[Track] {
+        self.guests_from.and_then(|own| self.list.get(own..)).unwrap_or_default()
+    }
+
+    /// Works `tracks` into what is still to play, one after every few of the list's own.
+    /// Only a shuffled list takes them: its order is its own to rearrange.
+    pub fn weave(&mut self, tracks: Vec<Track>) {
+        let (Some(position), Some(order)) = (self.position(), &mut self.shuffle) else { return };
+        self.guests_from.get_or_insert(self.list.len());
+        let fresh: Vec<Track> = tracks.into_iter().filter(|track| !self.list.iter().any(|known| known.id == track.id)).collect();
+        let mut fresh = fresh.into_iter();
+        for (count, index) in order.split_off(position + 1).into_iter().enumerate() {
+            order.push(index);
+            if (count + 1) % WEAVE_EVERY == 0 {
+                if let Some(track) = fresh.next() {
+                    order.push(self.list.len());
+                    self.list.push(track);
+                }
+            }
+        }
+    }
+
+    /// Takes the guests back out. One that is playing plays on as a hand-queued track does,
+    /// and the list resumes after the last of its own.
+    pub fn unweave(&mut self) {
+        let Some(own) = self.guests_from.take() else { return };
+        if let Some(index) = self.index.filter(|index| *index >= own) {
+            let position = self.position().unwrap_or(0);
+            if self.manual.is_none() {
+                self.manual = self.list.get(index).cloned();
+            }
+            self.index = (0..position).rev().filter_map(|before| self.at(before)).find(|before| *before < own);
+        }
+        self.list.truncate(own);
+        if let Some(order) = &mut self.shuffle {
+            order.retain(|index| *index < own);
+        }
     }
 
     pub fn enqueue(&mut self, track: Track) {
@@ -180,6 +228,9 @@ impl Queue {
     }
 }
 
+/// How many of a list's own tracks play between two woven into it.
+const WEAVE_EVERY: usize = 3;
+
 /// A random order over `len` indices that starts at `first`.
 fn deal(len: usize, first: usize, rng: &mut fastrand::Rng) -> Vec<usize> {
     let mut rest: Vec<usize> = (0..len).filter(|&i| i != first).collect();
@@ -272,6 +323,32 @@ mod tests {
         assert_eq!(id(q.peek_next()), Some("a"));
         assert_eq!(id(q.advance()), Some("a"));
         assert_eq!(id(q.skip_next()), Some("b"), "the next button is not held by repeat-one");
+    }
+
+    #[test]
+    fn picks_are_woven_into_a_shuffled_list_every_few_tracks_and_taken_back_out() {
+        let mut q = Queue::default();
+        let own = ["a", "b", "c", "d", "e", "f", "g"];
+        q.start(tracks(&own), 0, &mut rng());
+        q.weave(tracks(&["x"]));
+        assert!(!q.is_woven() && q.list().len() == own.len(), "a list in its own order takes none");
+        q.set_shuffle(true, &mut rng());
+        // One the list already has is not a pick.
+        q.weave(tracks(&["x", "b", "y", "z"]));
+        let upcoming: Vec<String> = q.upcoming().map(|track| track.id.clone()).collect();
+        assert_eq!((upcoming[3].as_str(), upcoming[7].as_str(), upcoming.len()), ("x", "y", 8), "{upcoming:?}");
+        assert_eq!(q.guests(), tracks(&["x", "y"]));
+
+        // Taken out while one of them plays, it plays on and the list resumes after it.
+        for _ in 0..4 {
+            q.advance();
+        }
+        assert_eq!(id(q.current()), Some("x"));
+        q.unweave();
+        assert_eq!(id(q.current()), Some("x"));
+        assert!(!q.is_woven() && q.guests().is_empty());
+        let rest: Vec<String> = q.upcoming().map(|track| track.id.clone()).collect();
+        assert_eq!(rest, upcoming[4..7], "the three of its own that were still to come");
     }
 
     #[test]

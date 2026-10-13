@@ -34,6 +34,8 @@ pub enum Page {
     /// One of the user's lists, by its id.
     Playlist(u64),
     Settings,
+    /// The lines of what plays, in the middle of the window.
+    Lyrics,
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -398,8 +400,6 @@ pub struct State {
     /// The clip asked for, with the track it belongs to; no clip yet while it is fetched,
     /// and still none when the track has no video of its own.
     pub clip: Option<(String, Option<Arc<Clip>>)>,
-    /// The right panel shows the lyrics of what plays.
-    pub lyrics_open: bool,
     /// The lyrics asked for, with the track they belong to.
     pub lyrics: Option<(String, Lyrics)>,
     /// The line the list was last scrolled to.
@@ -547,7 +547,6 @@ impl Default for State {
             levels: [0.0; dnm_audio::meter::BANDS],
             recommended: HashMap::new(),
             clip: None,
-            lyrics_open: false,
             lyrics: None,
             lyric_shown: None,
             outputs: Vec::new(),
@@ -949,16 +948,8 @@ impl State {
                 }
                 Vec::new()
             }
-            "page-play" => self.play_page(0),
-            "page-shuffle" => {
-                let tracks = self.page_tracks();
-                if tracks.is_empty() {
-                    return Vec::new();
-                }
-                let start = Command::PlayList { tracks: tracks.to_vec(), index: fastrand::usize(..tracks.len()) };
-                // The player keeps shuffle on across lists, so it is only switched on.
-                (!self.player.shuffle).then_some(Command::Shuffle).into_iter().chain([start]).collect()
-            }
+            // Shuffled, a page starts anywhere in itself.
+            "page-play" => self.play_page(if self.player.shuffle { fastrand::usize(..self.page_tracks().len().max(1)) } else { 0 }),
             // The queue is a face of the right panel: its button opens the panel on it, and
             // closes the panel from it.
             "page-search" => {
@@ -967,20 +958,19 @@ impl State {
             }
             "queue" => {
                 self.queue_open = !self.queue_open;
-                self.lyrics_open = false;
                 self.open_side(Side::Right, self.queue_open);
                 let mut commands = self.upcoming_covers();
                 commands.extend(self.ask_clip());
                 commands
             }
-            // So are the lyrics.
+            // The lyrics are a page: their button opens it, and leaves it for the one before.
             "lyrics" => {
-                self.lyrics_open = !self.lyrics_open;
-                self.queue_open = false;
-                self.open_side(Side::Right, self.lyrics_open);
-                let mut commands = self.ask_lyrics();
-                commands.extend(self.ask_clip());
-                commands
+                if self.lyrics_open() {
+                    self.page = self.history.pop().unwrap_or(Page::Search);
+                } else {
+                    self.go(Page::Lyrics);
+                }
+                self.ask_lyrics()
             }
             _ if id.starts_with("shelf-back:") || id.starts_with("shelf-on:") => {
                 let (way, shelf) = id.split_once(':').unwrap_or_default();
@@ -1006,7 +996,6 @@ impl State {
             "toggle-panel" | "toggle-panel-open" => {
                 self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
-                self.lyrics_open = false;
                 self.ask_clip()
             }
             "toggle-library" | "toggle-library-open" => {
@@ -1179,7 +1168,7 @@ impl State {
             "play-pause" => vec![Command::PlayPause],
             "next" => vec![Command::Next],
             "previous" => vec![Command::Previous],
-            "shuffle" => vec![Command::Shuffle],
+            "shuffle" | "page-shuffle" => vec![Command::Shuffle],
             "repeat" => vec![Command::Repeat],
             "mute" => {
                 self.volume = if self.volume > 0.0 { 0.0 } else { 0.8 };
@@ -1310,7 +1299,7 @@ impl State {
 
     /// Whether the right panel shows what plays, the one place a clip is seen.
     fn shows_playing(&self) -> bool {
-        self.panel_open && !self.queue_open && !self.lyrics_open
+        self.panel_open && !self.queue_open
     }
 
     /// A track's clip is looked for once, while it would be seen and the user wants them.
@@ -1356,7 +1345,7 @@ impl State {
 
     /// The lyrics are only looked for while they are on screen, once for each track.
     fn ask_lyrics(&mut self) -> Vec<Command> {
-        let Some(track) = self.player.current.as_ref().filter(|_| self.lyrics_open) else { return Vec::new() };
+        let Some(track) = self.player.current.as_ref().filter(|_| self.lyrics_open()) else { return Vec::new() };
         if self.lyrics.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
             return Vec::new();
         }
@@ -1378,9 +1367,13 @@ impl State {
         active(self.lines(), (self.player.position.max(0.0) * 1000.0) as u64)
     }
 
+    pub fn lyrics_open(&self) -> bool {
+        self.page == Page::Lyrics
+    }
+
     /// The line to bring into view, once each time the song moves on to another.
     pub fn line_to_reveal(&mut self) -> Option<String> {
-        let line = self.active_line().filter(|_| self.lyrics_open);
+        let line = self.active_line().filter(|_| self.lyrics_open());
         if line == self.lyric_shown {
             return None;
         }
@@ -1931,7 +1924,7 @@ mod tests {
         let mut state = State::default();
         assert!(state.show(playing("a", 0.0)).iter().all(|command| !matches!(command, Command::Lyrics(_))), "not while they are not on screen");
         assert_eq!(click(&mut state, "lyrics"), vec![Command::Lyrics(track("a"))]);
-        assert!(state.lyrics_open && state.panel_open && !state.queue_open);
+        assert!(state.lyrics_open(), "they take the page");
         assert!(state.show(playing("a", 1.0)).is_empty(), "already asked");
 
         let lines = vec![Line { at_ms: 5_000, text: "one".into() }, Line { at_ms: 9_000, text: "two".into() }];
@@ -1948,15 +1941,24 @@ mod tests {
         state.apply(Event::Lyrics { track_id: "b".into(), lines: None });
         assert_eq!(state.lyrics, Some(("b".into(), Lyrics::Missing)));
         assert!(state.lines().is_empty());
+
+        // Their button leaves them for the page they were opened over, and so does any other page.
+        click(&mut state, "lyrics");
+        assert_eq!(state.page, Page::Search);
+        click(&mut state, "lyrics");
+        click(&mut state, "downloads");
+        assert_eq!(state.page, Page::Downloads);
+        click(&mut state, "back");
+        assert!(state.lyrics_open(), "and the way back passes through them");
     }
 
     #[test]
-    fn shuffling_a_page_turns_shuffle_on_once() {
+    fn a_page_steps_the_shuffle_and_plays_from_its_top_until_shuffled() {
         let mut state = State { page: Page::Album(album("lp", None)), ..State::default() };
-        let commands = click(&mut state, "page-shuffle");
-        assert!(matches!(commands.as_slice(), [Command::Shuffle, Command::PlayList { tracks, .. }] if tracks.len() == 2));
+        assert_eq!(click(&mut state, "page-shuffle"), vec![Command::Shuffle]);
+        assert!(matches!(click(&mut state, "page-play").as_slice(), [Command::PlayList { tracks, index: 0 }] if tracks.len() == 2));
         state.show(PlayerView { shuffle: true, ..PlayerView::default() });
-        assert!(matches!(click(&mut state, "page-shuffle").as_slice(), [Command::PlayList { .. }]));
+        assert!(matches!(click(&mut state, "page-play").as_slice(), [Command::PlayList { index, .. }] if *index < 2));
     }
 
     #[test]

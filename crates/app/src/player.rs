@@ -19,6 +19,10 @@ pub struct PlayerView {
     pub position: f64,
     pub duration: f64,
     pub shuffle: bool,
+    /// Shuffled, with the catalog's picks woven in.
+    pub smart: bool,
+    /// The ids of the tracks that came into the list from the catalog.
+    pub picks: Vec<String>,
     pub repeat: Repeat,
     pub error: Option<String>,
 }
@@ -53,6 +57,8 @@ pub struct Player {
     preloading: Option<String>,
     /// Whether a queue that runs out goes on with its last track's radio.
     autoplay: bool,
+    /// Whether the catalog's picks for what plays are woven into the shuffled list.
+    smart: bool,
     /// Seconds a track that plays to its end shares with the next. 0 hands over in one step.
     crossfade: f64,
     rng: fastrand::Rng,
@@ -69,6 +75,7 @@ impl Default for Player {
             error: None,
             preloading: None,
             autoplay: true,
+            smart: false,
             crossfade: 0.0,
             rng: fastrand::Rng::default(),
         }
@@ -84,6 +91,8 @@ impl Player {
             position: self.position,
             duration: self.duration,
             shuffle: self.queue.is_shuffled(),
+            smart: self.smart,
+            picks: self.queue.guests().iter().map(|track| track.id.clone()).collect(),
             repeat: self.queue.repeat,
             error: self.error.clone(),
         }
@@ -102,8 +111,9 @@ impl Player {
         self.error = None;
         self.preloading = None;
         // A lone track and the last of a list are followed by their radio, as long as the
-        // user did not ask for the list to repeat.
-        let radio = (self.autoplay && self.queue.peek_next().is_none()).then(|| Effect::Radio(track.clone()));
+        // user did not ask for the list to repeat. A list still to be woven asks for its picks.
+        let ends = self.autoplay && self.queue.peek_next().is_none();
+        let radio = (ends || (self.smart && !self.queue.is_woven())).then(|| Effect::Radio(track.clone()));
         let play = if fade > 0.0 { Effect::Fade(track, fade) } else { Effect::Play(track) };
         std::iter::once(play).chain(radio).collect()
     }
@@ -119,8 +129,15 @@ impl Player {
     /// The catalog's answer to `Effect::Radio`. One that arrives after the user moved on to
     /// something else is dropped.
     pub fn radio(&mut self, seed: &str, tracks: Vec<Track>) {
-        if self.is_current(seed) && self.queue.peek_next().is_none() {
-            self.queue.extend(tracks, &mut self.rng);
+        if !self.is_current(seed) {
+            return;
+        }
+        if self.queue.peek_next().is_none() {
+            if self.autoplay {
+                self.queue.extend(tracks, &mut self.rng);
+            }
+        } else if self.smart && !self.queue.is_woven() {
+            self.queue.weave(tracks);
         }
     }
 
@@ -184,8 +201,18 @@ impl Player {
                 self.crossfade = seconds;
                 Vec::new()
             }
+            // Off, shuffled, shuffled with the catalog's picks woven in, and off again.
             Command::Shuffle => {
-                self.queue.set_shuffle(!self.queue.is_shuffled(), &mut self.rng);
+                if !self.queue.is_shuffled() {
+                    self.queue.set_shuffle(true, &mut self.rng);
+                } else if !self.smart {
+                    self.smart = true;
+                    return self.queue.current().cloned().map(Effect::Radio).into_iter().collect();
+                } else {
+                    self.smart = false;
+                    self.queue.unweave();
+                    self.queue.set_shuffle(false, &mut self.rng);
+                }
                 Vec::new()
             }
             Command::Repeat => {
@@ -358,6 +385,23 @@ mod tests {
         player.command(Command::Repeat);
         let view = player.view();
         assert!(view.shuffle && view.repeat == Repeat::All);
+    }
+
+    #[test]
+    fn shuffle_steps_through_off_shuffled_and_shuffled_with_picks() {
+        let mut player = playing(&["a", "b", "c", "d", "e"], 0);
+        assert!(player.command(Command::Shuffle).is_empty());
+        assert!(player.view().shuffle && !player.view().smart);
+        assert_eq!(player.command(Command::Shuffle), vec![Effect::Radio(track("a"))], "the picks for what plays are asked for");
+        player.radio("a", vec![track("x"), track("y")]);
+        let view = player.view();
+        assert!(view.smart && view.picks == ["x"] && view.upcoming.len() == 5, "one after three of its own: {:?}", view.picks);
+        // A list started while it is on asks for picks of its own.
+        let list = vec![track("p"), track("q")];
+        assert_eq!(player.command(Command::PlayList { tracks: list, index: 0 }), vec![Effect::Play(track("p")), Effect::Radio(track("p"))]);
+        assert!(player.command(Command::Shuffle).is_empty());
+        let view = player.view();
+        assert!(!view.shuffle && !view.smart && view.picks.is_empty());
     }
 
     #[test]
