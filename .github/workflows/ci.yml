@@ -53,10 +53,10 @@ jobs:
 
       - name: Build
         working-directory: surco
-        run: cargo build --workspace
+        run: cargo build --workspace --locked
 
       # The tests touch no window and no sound card; once is enough.
       - name: Test
         if: runner.os == 'Linux'
         working-directory: surco
-        run: cargo test --workspace
+        run: cargo test --workspace --locked

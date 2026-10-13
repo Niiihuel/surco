@@ -2428,30 +2428,28 @@ dependencies = [
 
 [[package]]
 name = "limn"
-version = "0.1.39"
+version = "0.1.0"
 dependencies = [
  "limn-editor",
  "unicode-linebreak",
  "unicode-segmentation",
  "unicode-width",
  "url",
- "web-time",
 ]
 
 [[package]]
 name = "limn-editor"
-version = "0.1.39"
+version = "0.1.0"
 dependencies = [
  "regex",
  "ropey",
  "unicode-segmentation",
  "unicode-width",
- "web-time",
 ]
 
 [[package]]
 name = "limn-egui"
-version = "0.1.39"
+version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "eframe",
@@ -4465,7 +4463,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surco"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -4489,7 +4487,7 @@ dependencies = [
 
 [[package]]
 name = "surco-audio"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "opus",
  "rodio",
@@ -4499,7 +4497,7 @@ dependencies = [
 
 [[package]]
 name = "surco-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "fastrand 2.5.0",
  "serde",
@@ -4507,7 +4505,7 @@ dependencies = [
 
 [[package]]
 name = "surco-video"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "openh264",
  "surco-youtube",
@@ -4516,8 +4514,9 @@ dependencies = [
 
 [[package]]
 name = "surco-youtube"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
+ "futures-util",
  "reqwest 0.12.28",
  "serde_json",
  "surco-core",

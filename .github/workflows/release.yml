@@ -76,7 +76,7 @@ jobs:
 
       - name: Build
         working-directory: surco
-        run: cargo build --release -p surco
+        run: cargo build --release --locked -p surco
 
       - name: Package
         id: package
@@ -85,7 +85,7 @@ jobs:
         run: |
           name="surco-${{ steps.version.outputs.version }}-${{ matrix.target }}"
           mkdir "$name"
-          cp "target/release/${{ matrix.binary }}" LICENSE README.md "$name/"
+          cp "target/release/${{ matrix.binary }}" LICENSE README.md CHANGELOG.md "$name/"
           cp -r LICENSES "$name/"
           # Beside the package, the program alone: it is what a running app fetches to
           # take this version in by itself.
@@ -139,4 +139,7 @@ jobs:
         run: |
           sha256sum surco-*-linux-x86_64 surco-*-macos-arm64 surco-*-windows-x86_64.exe > SHA256SUMS
           minimum=$(grep -m1 '^minimum = ' ../surco/Cargo.toml | cut -d'"' -f2)
-          gh release create "$GITHUB_REF_NAME" ./* --repo "$GITHUB_REPOSITORY" --title "Surco ${GITHUB_REF_NAME#v}" --notes "<!-- surco:minimum=${minimum} -->" --generate-notes
+          notes="$RUNNER_TEMP/surco-release-notes.md"
+          printf '<!-- surco:minimum=%s -->\n\n' "$minimum" > "$notes"
+          cat ../surco/CHANGELOG.md >> "$notes"
+          gh release create "$GITHUB_REF_NAME" ./* --repo "$GITHUB_REPOSITORY" --title "Surco ${GITHUB_REF_NAME#v}" --notes-file "$notes"

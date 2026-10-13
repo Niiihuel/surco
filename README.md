@@ -18,6 +18,10 @@ plays it; a playlist is shared as a link that carries it whole.
   shuffle with the catalog's picks woven in.
 - A library that searches, sorts, pins and lists as lines, rows or tiles; local
   playlists, likes and downloads for listening without a network.
+- Import public Spotify, YouTube Music and Apple Music playlists or albums by pasting
+  their links in the search bar, or from the library and settings. Export a playlist
+  as artist-and-title text to paste into a playlist transfer service. Spotify imports
+  read up to 100 tracks; songs that cannot be matched are reported after the import.
 - A bell for what the artists followed release, and for later versions of the app.
 
 | | |
@@ -72,3 +76,9 @@ later.
 (Apache-2.0, see `LICENSES/Apache-2.0.txt`); each adapted file names its origin and what
 changed. The icons under `crates/app/assets/icons` are from Lucide (ISC, see
 `LICENSES/ISC-lucide.txt`).
+
+The import illustration uses service icons from [Simple Icons](https://simpleicons.org)
+([CC0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md)). The
+Spotify, YouTube Music and Apple Music marks identify supported sources and belong to
+their respective owners. Surco is an independent project and is not affiliated with
+these services.
