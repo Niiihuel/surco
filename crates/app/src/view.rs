@@ -114,6 +114,11 @@ const PANEL_FROM: f32 = 1024.0;
 const CONTENT_MIN_WIDTH: f32 = 360.0;
 const EQUALIZER_SLIDER: f32 = 180.0;
 const TILE_WIDTH: f32 = 148.0;
+/// The space between two tiles of a shelf, the room under them for the shelf's bar, and
+/// how far an arrow carries the shelf: three tiles.
+const TILE_GAP: f32 = 12.0;
+const SHELF_BAR_ROOM: f32 = 12.0;
+pub const SHELF_STEP: f32 = 3.0 * (TILE_WIDTH + TILE_GAP);
 const COVER: f32 = 40.0;
 const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
@@ -729,7 +734,9 @@ fn shelf(id: &str, title: &str, tiles: Vec<Element>, palette: ComponentPalette) 
     if tiles.len() > SHELF_FITS {
         header.extend([arrow("back", Icon::ArrowLeft, "Anteriores"), arrow("on", Icon::ArrowRight, "Siguientes")]);
     }
-    let strip = Element::horizontal_scroll_2d(id, Element::row(tiles).gap(4.0)).drag_to_pan().foreground(palette.muted);
+    // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
+    let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
+    let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted);
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 

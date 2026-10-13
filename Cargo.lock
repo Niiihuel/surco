@@ -2497,6 +2497,7 @@ dependencies = [
  "unicode-segmentation",
  "unicode-width",
  "url",
+ "web-time",
 ]
 
 [[package]]
@@ -2507,6 +2508,7 @@ dependencies = [
  "ropey",
  "unicode-segmentation",
  "unicode-width",
+ "web-time",
 ]
 
 [[package]]

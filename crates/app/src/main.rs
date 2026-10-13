@@ -126,8 +126,6 @@ const PANEL_OPEN_KEY: &str = "panel-open";
 const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
-/// How far an arrow carries a shelf: three tiles.
-const SHELF_STEP: f32 = 456.0;
 const OUTPUT_KEY: &str = "output";
 
 impl eframe::App for Host {
@@ -235,7 +233,7 @@ impl eframe::App for Host {
         if let Some((shelf, way)) = self.state.shelf_push.take() {
             let now = Instant::now();
             let from = self.glide.as_ref().filter(|(gliding, _)| *gliding == shelf).map_or_else(|| self.tree.horizontal_scroll_offset(&shelf), |(_, spring)| spring.target());
-            let to = (from + way * SHELF_STEP).max(0.0);
+            let to = (from + way * view::SHELF_STEP).max(0.0);
             let mut spring = limn::ScalarSpring::new(if self.state.settings.reduce_motion { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
                 .motion(limn::SpringMotion::settling_in(Duration::from_millis(u64::from(limn::tokens().motion.move_ms) * 2)));
             spring.retarget(to, now);
