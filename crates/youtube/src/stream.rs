@@ -38,6 +38,12 @@ impl Stream {
     pub fn best(&self) -> Option<&Audio> {
         self.audio.iter().max_by_key(|audio| audio.average_bitrate)
     }
+
+    /// The highest-bitrate audio at or under `bps`, or the lowest on offer when all are above.
+    pub fn at_most(&self, bps: u64) -> Option<&Audio> {
+        let under = self.audio.iter().filter(|audio| audio.average_bitrate <= bps).max_by_key(|audio| audio.average_bitrate);
+        under.or_else(|| self.audio.iter().min_by_key(|audio| audio.average_bitrate))
+    }
 }
 
 /// Without a visitor id the player answers LOGIN_REQUIRED ("confirm you're not a bot").
@@ -161,6 +167,8 @@ mod tests {
         assert_eq!(stream.duration_seconds, 290.0);
         assert_eq!(stream.expires_in_seconds, 21540);
         assert_eq!(stream.audio.iter().map(|a| a.itag).collect::<Vec<_>>(), [251, 140]);
+        assert_eq!(stream.at_most(135_000).map(|audio| audio.itag), Some(140));
+        assert_eq!(stream.at_most(64_000).map(|audio| audio.itag), Some(140), "nothing that low: the lowest there is");
         let best = stream.best().unwrap();
         assert_eq!((best.itag, best.size), (251, 5_134_839));
     }

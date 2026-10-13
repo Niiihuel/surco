@@ -114,6 +114,29 @@ pub struct Settings {
     pub reduce_motion: bool,
     /// Seconds a track that ends shares with the next; 0 for none.
     pub crossfade: f32,
+    pub quality: Quality,
+}
+
+/// How much of a stream is asked for.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Quality {
+    Low,
+    Normal,
+    #[default]
+    High,
+}
+
+impl Quality {
+    pub const ALL: [(Quality, &'static str, &'static str); 3] = [(Quality::Low, "low", "Baja"), (Quality::Normal, "normal", "Normal"), (Quality::High, "high", "Alta")];
+
+    /// The most bits per second it takes. YouTube offers about 50, 70 and 140 thousand.
+    pub fn bps(self) -> u64 {
+        match self {
+            Quality::Low => 64_000,
+            Quality::Normal => 96_000,
+            Quality::High => u64::MAX,
+        }
+    }
 }
 
 /// The longest crossfade on offer, as in the players people know.
@@ -121,7 +144,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0 }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High }
     }
 }
 
@@ -822,6 +845,11 @@ impl State {
                 self.settings.reduce_motion = !self.settings.reduce_motion;
                 Vec::new()
             }
+            _ if id.starts_with("setting:quality:") => {
+                let Some((quality, ..)) = Quality::ALL.into_iter().find(|(_, name, _)| id.ends_with(name)) else { return Vec::new() };
+                self.settings.quality = quality;
+                vec![Command::Quality(quality.bps())]
+            }
             "playlist-new" => {
                 self.creating = Some(Draft::default());
                 Vec::new()
@@ -1387,6 +1415,8 @@ mod tests {
         assert!(!state.settings.autoplay && state.settings.reduce_motion);
         let half = UiAction::SliderChanged { id: "setting:crossfade".into(), fraction: 0.5, committed: true };
         assert_eq!(state.update(&half), vec![Command::Crossfade(6.0)]);
+        assert_eq!(click(&mut state, "setting:quality:normal"), vec![Command::Quality(96_000)]);
+        assert_eq!(state.settings.quality, Quality::Normal);
         assert!(click(&mut state, "downloads-clear").is_empty() && state.confirm.is_none(), "nothing to clear");
         state.apply(Event::Library { saved: vec![track("a"), track("b")], saving: HashSet::new(), bytes: 2048 });
         assert_eq!(state.saved_bytes, 2048);

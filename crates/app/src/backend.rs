@@ -70,6 +70,8 @@ pub enum Command {
     Autoplay(bool),
     /// Seconds a track that ends shares with the next; 0 for none.
     Crossfade(f64),
+    /// The most bits per second a stream may have, from the next track on.
+    Quality(u64),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -126,6 +128,8 @@ struct Shared {
     audio: NativeAudio,
     /// Bumped by every `Effect::Play`. A task that finds another number was overtaken and stops.
     generation: AtomicU64,
+    /// The most bits per second a stream is fetched at.
+    quality: AtomicU64,
     downloads: Mutex<Downloads>,
     /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
     decks: tokio::sync::Mutex<()>,
@@ -228,6 +232,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         youtube,
         audio,
         generation: AtomicU64::new(0),
+        quality: AtomicU64::new(u64::MAX),
         downloads: Mutex::default(),
         decks: tokio::sync::Mutex::default(),
         inputs,
@@ -273,6 +278,8 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
         (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
+        (Command::Quality(bps), Ok(shared)) => shared.quality.store(bps, Ordering::SeqCst),
+        (Command::Quality(_), Err(_)) => {}
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
@@ -472,7 +479,7 @@ async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Lo
         return Ok(ready);
     }
     let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
-    let best = stream.best().ok_or(NO_AUDIO)?.clone();
+    let best = stream.at_most(shared.quality.load(Ordering::SeqCst)).ok_or(NO_AUDIO)?.clone();
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     let load = Load {
         track_id: track.id.clone(),

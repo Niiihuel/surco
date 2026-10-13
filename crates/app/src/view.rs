@@ -12,7 +12,7 @@ use limn::{
 };
 
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -49,6 +49,9 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// The three qualities side by side in a settings row.
+const QUALITY_WIDTH: f32 = 216.0;
+
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).fill_width(width).render()
 }
@@ -735,6 +738,17 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 
     let equalizer = if state.equalizer == dnm_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let chosen = state.settings.quality;
+    let quality = segments(
+        "setting-quality",
+        QUALITY_WIDTH,
+        Quality::ALL.into_iter().map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect(),
+    );
+    let ceiling = match chosen {
+        Quality::Low => "Hasta 50 kbps.",
+        Quality::Normal => "Hasta 70 kbps.",
+        Quality::High => "Hasta 140 kbps.",
+    };
     let seconds = state.settings.crossfade;
     let crossfade = Element::row(vec![
         Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, control).steps(CROSSFADE_MAX as usize + 1).width(140.0).render().centered_y(),
@@ -748,6 +762,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
             vec![
                 switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
                 row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
+                row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
             ],
         ),
