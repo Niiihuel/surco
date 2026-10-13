@@ -217,9 +217,8 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
             let name = state.collection.playlist(*id).map_or("esta playlist", |playlist| playlist.name.as_str());
             (format!("¿Eliminar «{name}»?"), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar")
         }
-        Some(Confirm::ClearDownloads) => ("¿Borrar todas las descargas?".to_owned(), "Vas a necesitar conexión para volver a escucharlas.", "Borrar")
-        ,
-        Some(Confirm::ClearRecent) => ("¿Borrar lo escuchado recientemente?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
+        Some(Confirm::ClearDownloads) => ("¿Eliminar las descargas?".to_owned(), "Ya no vas a tener acceso a lo que descargaste en este equipo.", "Eliminar"),
+        Some(Confirm::ClearRecent) => ("¿Borrar el historial de reproducciones?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
         None => (String::new(), "", ""),
     };
     AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", palette)
@@ -740,26 +739,34 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Reproducción",
             vec![
-                switch("Reproducción automática", "Cuando termina lo que elegiste, sigue con música parecida.", "setting:autoplay", state.settings.autoplay),
+                switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
             ],
         ),
-        group("Pantalla", vec![switch("Reducir el movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)]),
+        group("Visualización", vec![switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)]),
         group(
             "Almacenamiento",
             vec![
-                row("Descargas", &format!("Guardadas en este equipo para escuchar sin conexión: {downloads}."))
-                    .trailing(action("downloads-clear", "Borrar todas", !state.saved.is_empty()))
+                row(&format!("Descargas: {downloads}"), "Lo que descargaste para escuchar sin conexión.")
+                    .trailing(action("downloads-clear", "Eliminar todas las descargas", !state.saved.is_empty()))
                     .stacked(compact)
                     .render(),
-                row("Escuchado recientemente", "Los accesos rápidos de Inicio.").trailing(action("recent-clear", "Borrar", !state.collection.recent.is_empty())).stacked(compact).render(),
+            ],
+        ),
+        group(
+            "Privacidad y datos",
+            vec![
+                row("Borrar historial de reproducciones", "Borra de este equipo lo que escuchaste recientemente.")
+                    .trailing(action("recent-clear", "Borrar", !state.collection.recent.is_empty()))
+                    .stacked(compact)
+                    .render(),
             ],
         ),
         group(
             "Acerca de",
             vec![
                 row("Versión", "dnmusic para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
-                row("Licencias", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
+                row("Licencias de terceros", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
             ],
         ),
     ];
