@@ -19,6 +19,8 @@ mod player;
 mod state;
 mod update;
 mod view;
+#[cfg(any(target_os = "windows", test))]
+mod window;
 
 use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
@@ -180,7 +182,10 @@ impl eframe::App for Host {
         let still = self.state.settings.reduce_motion;
         self.tree.set_reduced_motion(still);
         self.state.motion = !still;
+        #[cfg(not(target_os = "windows"))]
         let area = ui.max_rect();
+        #[cfg(target_os = "windows")]
+        let area = window::show(ui, self.state.cinema);
         let window = Size::new(area.width(), area.height());
 
         // Ctrl+B folds the library, as it folds a sidebar anywhere.
@@ -365,6 +370,7 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("Surco")
+            .with_decorations(!cfg!(target_os = "windows"))
             .with_icon(icon())
             .with_inner_size([1180.0, 780.0])
             .with_min_inner_size([720.0, 480.0]),
