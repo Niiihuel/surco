@@ -772,12 +772,13 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             TableRow::new(&row, cells).controls([format!("more:{row}")])
         })
         .collect();
+    let sizing = TableSizing { row_height: 60.0, ..TableSizing::ROOMY };
     let (header, built) = Table::new("tracks", columns, width, palette)
         .rows(listed)
         .sort(state.page_sort.clone())
         .menu_palette(SCHEME.menu())
         .radius(RadiusRole::Card)
-        .sizing(TableSizing { row_height: 60.0, ..TableSizing::ROOMY })
+        .sizing(sizing)
         .into_parts();
     let body = built.into_iter().zip(menus).zip(rows).map(|((element, pressed), (place, track))| {
         let element = ContextMenu::new(format!("context:page-track:{place}"), element.hover_region(), pressed, SCHEME.menu()).render();
@@ -791,7 +792,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
         Some(list) => body.keep_leaving(format!("{list}:rows")),
         None => body,
     };
-    Element::column(vec![header, body])
+    Element::column(vec![header, body]).gap(sizing.header_gap)
 }
 
 /// Rows that pulse where a list is on its way.
@@ -1621,6 +1622,21 @@ mod tests {
             assert!(keep.x + keep.width <= field.x && field.x + field.width <= shut.x, "side by side at {width}: {keep:?} {field:?} {shut:?}");
             assert!(shut.x + shut.width <= pane.x + pane.width - 12.0, "inside the pane at {width}: {shut:?}");
         }
+    }
+
+    #[test]
+    fn a_pages_table_has_heads_that_order_it_and_an_album_boundary_to_drag() {
+        let song = |id: &str| Track { album: Some("Disco".into()), ..track(id) };
+        let artist = Artist { id: "who".into(), name: "Who".into(), subscribers: None, artwork_url: None, songs: vec![song("a"), song("b")], albums: Vec::new(), singles: Vec::new() };
+        let mut state = State::default();
+        state.page = Page::Artist(artist);
+        let found = ids(&state, Size::new(1600.0, 800.0));
+        for id in ["tracks:sort:title", "tracks:sort:album", "tracks:sort:duration", "tracks:resize:album", "page-track:0", "more:page-track:1", "page-sort"] {
+            assert!(found.iter().any(|found| found == id), "{id} among {found:?}");
+        }
+        // In a narrow pane the album gives its place to the title and there is nothing to drag.
+        let found = ids(&state, Size::new(1100.0, 800.0));
+        assert!(found.iter().any(|id| id == "tracks:sort:title") && !found.iter().any(|id| id.starts_with("tracks:") && id.contains("album")), "{found:?}");
     }
 
     #[test]
