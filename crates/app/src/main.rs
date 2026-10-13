@@ -107,6 +107,7 @@ impl Host {
 /// Its own id, and with it its own settings folder: the Electron app is "dnmusic".
 const APP_ID: &str = "dnmusic-native";
 const VOLUME_KEY: &str = "volume";
+const COLLECTION_KEY: &str = "collection";
 const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
@@ -114,6 +115,9 @@ const EQUALIZER_KEY: &str = "equalizer";
 impl eframe::App for Host {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(VOLUME_KEY, self.state.volume.to_string());
+        if let Ok(collection) = serde_json::to_string(&self.state.collection) {
+            storage.set_string(COLLECTION_KEY, collection);
+        }
         storage.set_string(LEFT_KEY, self.state.left_width.to_string());
         storage.set_string(RIGHT_KEY, self.state.right_width.to_string());
         storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
@@ -126,9 +130,12 @@ impl eframe::App for Host {
             limn_egui::attach_fonts(&mut self.tree, &ctx);
             // The engine starts at full volume and flat; the window owns both settings.
             self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer)]);
+            let covers = self.state.collection_covers();
+            self.send(covers);
         }
         limn_egui::normalize_keyboard_input(&ctx);
         self.tree.set_reduced_motion(self.script.screenshot.is_some());
+        self.state.motion = self.script.screenshot.is_none();
         let area = ui.max_rect();
         let window = Size::new(area.width(), area.height());
 
@@ -153,10 +160,13 @@ impl eframe::App for Host {
         }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
+        limn_egui::set_cursor(&ctx, self.tree.cursor());
         limn_egui::paint_at(ui, &frame, area.min);
 
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
+        } else if self.state.panel_slide.is_active(Instant::now()) {
+            ctx.request_repaint();
         } else if let Some(after) = self.tree.animation_repaint_after() {
             ctx.request_repaint_after(after);
         }
@@ -217,6 +227,8 @@ fn main() -> eframe::Result {
                 let width = |key: &str, side: Side| storage.get_string(key).and_then(|width| width.parse::<f32>().ok()).map(|width| side.width(width));
                 state.left_width = width(LEFT_KEY, Side::Left).unwrap_or(state.left_width);
                 state.right_width = width(RIGHT_KEY, Side::Right).unwrap_or(state.right_width);
+                let collection = storage.get_string(COLLECTION_KEY).and_then(|text| serde_json::from_str(&text).ok());
+                state.collection = collection.unwrap_or_default();
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
             }

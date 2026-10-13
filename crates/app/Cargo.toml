@@ -21,4 +21,6 @@ sha2 = "0.10"
 # The index of what is kept for offline listening.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The hour of the day, for the greeting. Already in the tree through the catalog.
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"

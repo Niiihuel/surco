@@ -5,11 +5,11 @@ use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     Alert, Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
     ControlSize, DropdownMenu, DropdownMenuEntry, DropdownMenuItem, Element, Empty, FontFamily, Icon, IconButton, Link,
-    ListRow, MediaTile, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField, Size, Slider,
-    Spinner, Text, TextRole, Theme,
+    ListRow, MediaTile, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField,
+    SegmentedControl, Size, SkeletonGroup, Slider, Spinner, Tab, Text, TextRole, Theme, Ticker,
 };
 
-use crate::state::{clock, large_cover, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
+use crate::state::{clock, greeting, large_cover, Entry, Filter, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
 
 /// dnmusic's palette: near-black surfaces told apart by luminance, white ink.
 pub const THEME: Theme = Theme {
@@ -28,7 +28,6 @@ const PANEL_RADIUS: f32 = 8.0;
 const TOP_BAR_HEIGHT: f32 = 56.0;
 const SEARCH_MAX_WIDTH: f32 = 474.0;
 const PLAYER_HEIGHT: f32 = 76.0;
-const PLAY_SIDE: f32 = 32.0;
 const VOLUME_WIDTH: f32 = 93.0;
 const VOLUME_WIDTH_NARROW: f32 = 64.0;
 /// The library folded to its icons, for a window too narrow to spare it a column.
@@ -61,6 +60,8 @@ const LIBRARY_ROW: RowSizing = RowSizing {
     ..RowSizing::COMPACT
 };
 const LIBRARY_TILE: f32 = 48.0;
+/// A quick-access entry of the home page: a short row around the same tile.
+const QUICK_ROW: RowSizing = RowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..RowSizing::COMPACT };
 /// dnmusic's track row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
 const TRACK_ROW: RowSizing = RowSizing {
     height: Some(60.0),
@@ -85,21 +86,27 @@ pub fn view(state: &State, window: Size) -> Element {
     let surface = |element: Element| Element::panel(element).background(THEME.background).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
     let rail = window.width < RAIL_BELOW;
-    let beside = state.panel_open && window.width >= PANEL_FROM;
+    // The right panel slides open and shut: while it travels it is drawn part of its width.
+    let slide = state.panel_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
+    let beside = slide > 0.0 && window.width >= PANEL_FROM;
     // The side panels give way before the content does.
-    let right = if beside { state.right_width.min(window.width - 4.0 * GAP - RAIL_WIDTH - CONTENT_MIN_WIDTH) } else { 0.0 };
+    let right_whole = state.right_width.min(window.width - 4.0 * GAP - RAIL_WIDTH - CONTENT_MIN_WIDTH);
+    let right = if beside { right_whole * slide } else { 0.0 };
     let left = if rail { RAIL_WIDTH } else { state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH) };
 
-    let mut columns = vec![gap(), surface(library(state, rail, palette)).size(Some(left), None)];
+    let content = window.width - 3.0 * GAP - left - if beside { right + GAP } else { 0.0 };
+    let mut columns = vec![gap(), surface(library(state, rail, left, palette)).size(Some(left), None)];
     columns.push(if rail { gap() } else { ResizeHandle::vertical(Side::Left.handle(), palette).thickness(GAP).render() });
     if beside {
-        columns.push(surface(pane(state, palette)).flex(1.0));
-        columns.push(ResizeHandle::vertical(Side::Right.handle(), palette).thickness(GAP).render());
-        columns.push(surface(panel(state, palette)).size(Some(right), None));
+        columns.push(surface(pane(state, content, palette)).flex(1.0));
+        // Only a panel at rest can be resized.
+        columns.push(if slide < 1.0 { gap() } else { ResizeHandle::vertical(Side::Right.handle(), palette).thickness(GAP).render() });
+        // Its content keeps its width and is uncovered as the panel opens.
+        columns.push(surface(Element::row(vec![panel(state, palette).size(Some(right_whole), None)])).size(Some(right), None).clip_children());
     } else if state.queue_open {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
-        columns.push(surface(pane(state, palette)).flex(1.0));
+        columns.push(surface(pane(state, content, palette)).flex(1.0));
     }
     columns.push(gap());
     Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
@@ -107,33 +114,22 @@ pub fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height))
 }
 
-/// A round button of the bars: a step above the floor it stands on.
-fn round(id: &str, icon: Icon, enabled: bool, palette: ComponentPalette) -> Element {
-    let palette = ComponentPalette { surface: CHOSEN, ..palette };
-    let side = 40.0;
-    let glyph = Element::icon(icon).foreground(if enabled { palette.text } else { palette.muted }).centered();
-    if enabled { palette.interactive_surface(Element::clickable(id, glyph)) } else { Element::panel(glyph) }
-        .background(CHOSEN)
-        .size(Some(side), Some(side))
-        .radius(side / 2.0)
-        .centered_y()
-}
-
 /// Across the top: the way back, home, and the search in the middle of the window.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let button = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).tooltip(hint);
     let search = SearchField::new("search", &state.query, "¿Qué querés escuchar?", ComponentPalette { surface: CHOSEN, ..palette })
         .width((width - 240.0).clamp(160.0, SEARCH_MAX_WIDTH))
         .render()
         .centered_y();
     Element::panel(
         Element::row(vec![
-            round("back", Icon::ArrowLeft, state.can_go_back(), palette),
+            button("back", Icon::ArrowLeft, "Volver").enabled(state.can_go_back()).render().centered_y(),
             Element::spacer().flex(1.0),
-            round("home", Icon::Home, true, palette),
+            button("home", Icon::Home, "Inicio").render().centered_y(),
             search,
             Element::spacer().flex(1.0),
             // As wide as the button on the other side, so the search stays in the middle.
-            Element::spacer().size(Some(40.0), None),
+            Element::spacer().size(Some(32.0), None),
         ])
         .gap(GAP),
     )
@@ -141,19 +137,45 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     .size(None, Some(TOP_BAR_HEIGHT))
 }
 
-/// The left panel: what the user keeps. Folded, it is a rail of tiles.
-fn library(state: &State, rail: bool, palette: ComponentPalette) -> Element {
-    let tile = |icon: Icon| {
-        Element::panel(Element::icon(icon).foreground(palette.text).centered()).background(CHOSEN).radius(4.0).size(Some(LIBRARY_TILE), Some(LIBRARY_TILE))
-    };
-    let downloads = state.page == Page::Downloads;
-    let count = match state.saved.len() {
-        1 => "1 canción".to_owned(),
-        count => format!("{count} canciones"),
-    };
+/// A square of the library's size for something with no picture of its own.
+fn library_tile(icon: Icon, palette: ComponentPalette) -> Element {
+    Element::panel(Element::icon(icon).foreground(palette.text).centered())
+        .background(CHOSEN)
+        .radius(limn::tokens().radius.control)
+        .size(Some(LIBRARY_TILE), Some(LIBRARY_TILE))
+}
+
+/// The left panel: what the user keeps, under the filters that narrow it. Folded, it is a
+/// rail of pictures.
+fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> Element {
+    let shows = |filter: Filter| state.filter == Filter::All || state.filter == filter;
+    // One entry: the id it reports, its picture, its name and what it is.
+    let mut entries: Vec<(String, Element, &str, String, bool)> = Vec::new();
+    if shows(Filter::Lists) {
+        let count = match state.saved.len() {
+            1 => "Lista · 1 canción".to_owned(),
+            count => format!("Lista · {count} canciones"),
+        };
+        entries.push(("downloads".into(), library_tile(Icon::Custom(DOWNLOAD), palette), "Descargas", count, state.page == Page::Downloads));
+    }
+    if shows(Filter::Artists) {
+        for (index, artist) in state.collection.artists() {
+            let picture = cover(state, &artist.artwork_url, LIBRARY_TILE, palette).radius(LIBRARY_TILE / 2.0);
+            let here = matches!(&state.page, Page::Artist(page) if page.id == artist.id);
+            entries.push((format!("kept:{index}"), picture, &artist.name, "Artista".into(), here));
+        }
+    }
+    if shows(Filter::Albums) {
+        for (index, album) in state.collection.albums() {
+            let about = album.artist.as_ref().map_or_else(|| "Álbum".to_owned(), |artist| format!("Álbum · {artist}"));
+            let here = matches!(&state.page, Page::Album(page) if page.id == album.id);
+            entries.push((format!("kept:{index}"), cover(state, &album.artwork_url, LIBRARY_TILE, palette), &album.title, about, here));
+        }
+    }
     if rail {
-        let entry = Element::clickable("downloads", tile(Icon::Custom(DOWNLOAD)));
-        return Element::column(vec![Element::icon(Icon::Library).foreground(palette.muted).size(Some(LIBRARY_TILE), Some(40.0)), entry]).gap(8.0).padding(8.0);
+        let pictures = entries.into_iter().map(|(id, picture, ..)| Element::clickable(id, picture));
+        let head = Element::icon(Icon::Library).foreground(palette.muted).size(Some(LIBRARY_TILE), Some(40.0));
+        return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
     }
     let header = Element::row(vec![
         Element::icon(Icon::Library).foreground(palette.muted).centered_y(),
@@ -161,10 +183,89 @@ fn library(state: &State, rail: bool, palette: ComponentPalette) -> Element {
     ])
     .gap(10.0)
     .size(None, Some(40.0));
-    // The page being shown stands out by its fill.
-    let row_palette = if downloads { ComponentPalette { surface: CHOSEN, ..palette } } else { palette };
-    let row = ListRow::new("downloads", "Descargas", row_palette).sizing(LIBRARY_ROW).leading(tile(Icon::Custom(DOWNLOAD))).subtitle(count).radius(RadiusRole::Card);
-    Element::column(vec![Element::panel(header).padding(8.0), if downloads { row.filled() } else { row }.render()]).gap(4.0).padding(8.0)
+    let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, (width - 16.0) / 4.0).active(state.filter == filter);
+    let filters = SegmentedControl::new(
+        vec![
+            filter("filter:all", "Todo", Filter::All),
+            filter("filter:lists", "Listas", Filter::Lists),
+            filter("filter:artists", "Artistas", Filter::Artists),
+            filter("filter:albums", "Álbumes", Filter::Albums),
+        ],
+        palette,
+    )
+    .render();
+    let rows: Vec<Element> = entries
+        .into_iter()
+        .map(|(id, picture, name, about, here)| {
+            // The page being shown stands out by its fill.
+            let palette = if here { ComponentPalette { surface: CHOSEN, ..palette } } else { palette };
+            let row = ListRow::new(id, name, palette).sizing(LIBRARY_ROW).leading(picture).subtitle(about).title_fade(true).radius(RadiusRole::Card);
+            if here { row.filled() } else { row }.render()
+        })
+        .collect();
+    let list = if rows.is_empty() {
+        let what = if state.filter == Filter::Artists { "Seguí a un artista desde su página y aparece acá." } else { "Guardá un álbum desde su página y aparece acá." };
+        Element::panel(Text::new(what, palette).muted().render()).padding(8.0)
+    } else {
+        ScrollArea::new("library", Element::column(rows).gap(2.0)).render().flex(1.0)
+    };
+    Element::column(vec![Element::panel(header).padding(8.0), filters, list]).gap(6.0).padding(8.0)
+}
+
+/// The page the app opens on: what was opened lately, a click away, and what the user keeps.
+fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let collection = &state.collection;
+    if collection.recent.is_empty() && collection.kept.is_empty() && state.saved.is_empty() {
+        return centered(
+            Empty::new("Buscá algo para escuchar", "Escribí una canción o un artista arriba y apretá Enter.", palette).icon(Icon::Search).render(),
+        );
+    }
+    let hour = chrono::Timelike::hour(&chrono::Local::now());
+    let mut sections = vec![Text::new(greeting(hour), palette).size(PAGE_TITLE).render()];
+
+    // Quick access: a grid of short rows, each a step above the page.
+    let columns = if width >= 720.0 { 3 } else { 2 };
+    let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let quick = |id: String, name: &str, picture: Element| {
+        ListRow::new(id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render()
+    };
+    let mut tiles = Vec::new();
+    if !state.saved.is_empty() {
+        // The library lists the same entries: here they keep ids of their own and report the library's.
+        tiles.push(quick("home-downloads".into(), "Descargas", library_tile(Icon::Custom(DOWNLOAD), palette)).dispatch_as("downloads"));
+    }
+    for (index, entry) in collection.recent.iter().enumerate() {
+        let picture = cover(state, entry.artwork(), LIBRARY_TILE, palette);
+        let picture = if matches!(entry, Entry::Artist(_)) { picture.radius(LIBRARY_TILE / 2.0) } else { picture };
+        tiles.push(quick(format!("recent:{index}"), entry.title(), picture));
+    }
+    let mut tiles = tiles.into_iter().peekable();
+    let mut grid = Vec::new();
+    while tiles.peek().is_some() {
+        grid.push(Element::row(tiles.by_ref().take(columns).collect()).gap(GAP));
+    }
+    sections.push(Element::column(grid).gap(GAP));
+
+    let albums: Vec<Element> = collection
+        .albums()
+        .map(|(index, album)| {
+            tile(state, format!("home-kept:{index}"), &album.title, album.artist.clone(), &album.artwork_url, false, palette).dispatch_as(format!("kept:{index}"))
+        })
+        .collect();
+    if !albums.is_empty() {
+        sections.extend([heading("Tus álbumes", palette), shelf("home-albums", albums)]);
+    }
+    let artists: Vec<Element> = collection
+        .artists()
+        .map(|(index, artist)| {
+            tile(state, format!("home-kept:{index}"), &artist.name, Some("Artista".into()), &artist.artwork_url, true, palette).dispatch_as(format!("kept:{index}"))
+        })
+        .collect();
+    if !artists.is_empty() {
+        sections.extend([heading("Tus artistas", palette), shelf("home-artists", artists)]);
+    }
+    ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
 fn centered(element: Element) -> Element {
@@ -315,11 +416,32 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     ContextMenu::new(format!("context:{row}"), element, entries.collect(), palette).render()
 }
 
-/// The main pane: the search, or the page the user walked to from it.
-fn pane(state: &State, palette: ComponentPalette) -> Element {
+/// Rows that pulse where a list is on its way.
+fn loading(id: &str, palette: ComponentPalette) -> Element {
+    let rows = SkeletonGroup::rows(id, palette, 8).row_height(TRACK_ROW.height.unwrap_or_default()).icon(true).into_rows();
+    Element::column(rows).gap(2.0).padding(12.0).flex(1.0)
+}
+
+/// The main pane: home, the search, or the page the user walked to. A page fades in and
+/// settles when it takes the pane.
+fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let entering = match &state.page {
+        Page::Search if state.searching => "page:searching".to_owned(),
+        Page::Search => format!("page:search:{}", state.submitted.as_deref().unwrap_or_default()),
+        Page::Loading(_) => "page:loading".to_owned(),
+        Page::Failed(..) => "page:failed".to_owned(),
+        Page::Artist(artist) => format!("page:artist:{}", artist.id),
+        Page::Album(album) => format!("page:album:{}", album.id),
+        Page::Downloads => "page:downloads".to_owned(),
+    };
+    page(state, width, palette).animate_enter(entering)
+}
+
+fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
+        Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, palette),
-        Page::Loading(_) => centered(Spinner::new("opening", palette.muted).size(24.0).render()),
+        Page::Loading(_) => loading("opening", palette),
         Page::Failed(_, message) => centered(
             Empty::new("No se pudo abrir", message, palette)
                 .icon(Icon::WarningTriangle)
@@ -334,20 +456,13 @@ fn pane(state: &State, palette: ComponentPalette) -> Element {
 
 fn results(state: &State, palette: ComponentPalette) -> Element {
     if state.searching {
-        return centered(Spinner::new("searching", palette.muted).size(24.0).render());
+        return loading("searching", palette);
     }
     if let Some(error) = &state.search_error {
         // Without a network there is still what was kept for it.
         let empty = Empty::new("No se pudo buscar", error, palette).icon(Icon::WarningTriangle);
         let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", "Ver descargas", ButtonVariant::Secondary) };
         return centered(empty.render());
-    }
-    if state.submitted.is_none() {
-        return centered(
-            Empty::new("Buscá algo para escuchar", "Escribí una canción o un artista y apretá Enter.", palette)
-                .icon(Icon::Search)
-                .render(),
-        );
     }
     let found = &state.found;
     if found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
@@ -370,12 +485,18 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
     ScrollArea::new("results", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
 }
 
-fn play_buttons(palette: ComponentPalette) -> Element {
-    Element::row(vec![
+/// A page's actions: play it, shuffle it and, for a page the library can hold, keep it.
+/// `keep` names the action when the page is not kept and when it is.
+fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPalette) -> Element {
+    let mut buttons = vec![
         Button::new("page-play", "Reproducir", palette).icon(Icon::PlayFill).render(),
         Button::new("page-shuffle", "Aleatorio", palette).icon(Icon::Shuffle).variant(ButtonVariant::Secondary).render(),
-    ])
-    .gap(8.0)
+    ];
+    if let Some((keep, kept)) = keep {
+        let (label, icon) = if state.keeps_page() { (kept, Icon::Check) } else { (keep, Icon::Add) };
+        buttons.push(Button::new("keep", label, palette).icon(icon).variant(ButtonVariant::Ghost).render());
+    }
+    Element::row(buttons).gap(8.0)
 }
 
 fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Element {
@@ -383,7 +504,7 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
     if let Some(subscribers) = &artist.subscribers {
         about.push(Text::new(format!("{subscribers} suscriptores"), palette).muted().render());
     }
-    about.push(play_buttons(palette));
+    about.push(play_buttons(state, Some(("Seguir", "Siguiendo")), palette));
     let header = Element::row(vec![
         cover(state, &artist.artwork_url, ARTIST_PICTURE, palette).radius(ARTIST_PICTURE / 2.0),
         // The copy gives way in a narrow pane; the picture keeps its size.
@@ -423,16 +544,16 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
     let mut sections = vec![Element::column(vec![
         Text::new("Descargas", palette).size(PAGE_TITLE).render(),
         Text::new(count, palette).muted().render(),
-        play_buttons(palette),
+        play_buttons(state, None, palette),
     ])
     .gap(10.0)];
     sections.extend(failure);
-    let rows = state
-        .saved
-        .iter()
-        .enumerate()
-        .map(|(index, track)| track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette));
-    sections.push(Element::column(rows.collect()).gap(2.0));
+    // A download that is removed closes where it was.
+    let rows = state.saved.iter().enumerate().map(|(index, track)| {
+        let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
+        Element::column(vec![row]).animate_height(format!("saved-row:{}", track.id), false)
+    });
+    sections.push(Element::column(rows.collect()).keep_leaving("saved-rows"));
     ScrollArea::new("downloads", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
@@ -450,7 +571,7 @@ fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Elemen
             Text::new(&album.title, palette).size(PAGE_TITLE).truncate().render(),
             Link::new("page-artist", &album.artist, palette).color(palette.text).font_size(14.0).render(),
             Text::new(facts.join(" · "), palette).muted().render(),
-            play_buttons(palette),
+            play_buttons(state, Some(("Guardar", "En tu biblioteca")), palette),
         ])
         .gap(10.0)
         .flex(1.0)
@@ -497,7 +618,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
             ],
         }
     };
-    Element::column(content).gap(12.0).padding(16.0)
+    Element::column(content).gap(12.0).padding(16.0).animate_enter(if state.queue_open { "panel:queue" } else { "panel:playing" })
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
@@ -507,19 +628,21 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
         .iter()
         .enumerate()
         .map(|(index, track)| {
-            ListRow::new(format!("upcoming:{index}"), &track.title, palette)
+            let row = ListRow::new(format!("upcoming:{index}"), &track.title, palette)
                 .sizing(TRACK_ROW)
                 .leading(middle(cover(state, &track.artwork_url, COVER, palette)))
                 .subtitle(&track.artist)
                 .title_fade(true)
                 .radius(RadiusRole::Card)
-                .render()
+                .render();
+            // Named by its track, so the row that starts playing closes and the rest glide up.
+            Element::column(vec![row]).animate_height(format!("upcoming-row:{}", track.id), false)
         })
         .collect();
     if rows.is_empty() {
         return centered(Empty::new("Nada en la cola", "Elegí una canción y acá aparece lo que sigue.", palette).icon(Icon::Playlist).render());
     }
-    ScrollArea::new("queue-list", Element::column(rows).gap(2.0)).render().flex(1.0)
+    ScrollArea::new("queue-list", Element::column(rows).keep_leaving("upcoming-rows")).render().flex(1.0)
 }
 
 /// Ten bands and the preamp, a row each: the label, the slider and the gain it is set to.
@@ -570,18 +693,31 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Some(track) => Element::row(vec![
             cover(state, &track.artwork_url, 56.0, palette).radius(4.0).centered_y(),
             // The title leads to the album and the artist to their page.
+            // A new track's name rises into place as the last one's leaves.
             Element::column(vec![
-                Element::clickable(
-                    "now-album",
-                    Element::faded_text(&track.title, 24.0).font_family(FontFamily::Sans).font_size(14.0).foreground(palette.text),
-                ),
-                Element::clickable(
-                    "now-artist",
-                    Element::faded_text(state.player.error.as_deref().unwrap_or(&track.artist), 24.0)
-                        .font_family(FontFamily::Sans)
-                        .font_size(12.0)
-                        .foreground(palette.muted),
-                ),
+                Ticker::new(
+                    "now-title",
+                    &track.id,
+                    Element::clickable(
+                        "now-album",
+                        Element::faded_text(&track.title, 24.0).font_family(FontFamily::Sans).font_size(14.0).foreground(palette.text),
+                    ),
+                )
+                .height(20.0)
+                .render(),
+                Ticker::new(
+                    "now-artist-line",
+                    &track.id,
+                    Element::clickable(
+                        "now-artist",
+                        Element::faded_text(state.player.error.as_deref().unwrap_or(&track.artist), 24.0)
+                            .font_family(FontFamily::Sans)
+                            .font_size(12.0)
+                            .foreground(palette.muted),
+                    ),
+                )
+                .height(18.0)
+                .render(),
             ])
             .gap(2.0)
             .flex(1.0)
@@ -591,12 +727,10 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         None => Element::spacer(),
     };
     let repeat_icon = if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
-    // Play is the one filled control: a white circle with the icon in the content's ink.
-    let glyph = Element::icon(if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }).foreground(THEME.background).centered();
-    let play = if has_track { Element::clickable("play-pause", glyph).background(palette.text) } else { Element::panel(glyph).background(palette.muted) }
-        .size(Some(PLAY_SIDE), Some(PLAY_SIDE))
-        .radius(PLAY_SIDE / 2.0)
-        .centered_y();
+    // Play is the one filled control of the bar.
+    let play = transport("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" })
+        .variant(ButtonVariant::Default)
+        .render();
     let buttons = Element::row(vec![
         transport("shuffle", Icon::Shuffle, "Aleatorio").active(state.player.shuffle).render(),
         transport("previous", Icon::SkipBack, "Anterior").render(),
@@ -749,6 +883,27 @@ mod tests {
         assert!(has(&at(&state, 1400.0), "upcoming:0") && has(&at(&state, 700.0), "upcoming:0"), "the queue shows at any width");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
+    }
+
+    #[test]
+    fn home_and_the_library_offer_what_was_opened_and_what_is_kept() {
+        let mut state = State::default();
+        let size = Size::new(1400.0, 900.0);
+        let has = |state: &State, id: &str| ids(state, size).iter().any(|found| found == id);
+        assert!(has(&state, "filter:all") && has(&state, "filter:albums") && has(&state, "downloads"));
+        assert!(!has(&state, "recent:0"), "nothing was opened yet");
+
+        let album = Album { id: "lp".into(), title: "Album lp".into(), artist: "Artist".into(), artist_id: None, year: "2017".into(), artwork_url: None, tracks: vec![track("t1")] };
+        state.page = Page::Loading(Target::Album("lp".into()));
+        state.apply(Event::Opened { target: Target::Album("lp".into()), result: Ok(Content::Album(album)) });
+        assert!(has(&state, "keep"));
+        state.update(&limn::UiAction::Clicked { id: "keep".into() });
+        assert!(has(&state, "kept:0"), "the library lists it beside its page");
+        state.update(&limn::UiAction::Clicked { id: "home".into() });
+        assert!(has(&state, "recent:0"), "home offers what was opened");
+        state.update(&limn::UiAction::Clicked { id: "filter:artists".into() });
+        assert!(!has(&state, "downloads"), "a filter leaves only its kind in the library");
+        assert!(ids(&state, Size::new(700.0, 900.0)).iter().any(|found| found == "recent:0"), "and at a narrow window");
     }
 
     #[test]

@@ -4,8 +4,11 @@
 use std::collections::{HashMap, HashSet};
 
 use dnm_audio::equalizer::EqualizerValues;
-use dnm_core::{Album, AlbumRef, Artist, Found, Track};
-use limn::{RasterImage, UiAction};
+use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
+use serde::{Deserialize, Serialize};
+use std::time::{Duration, Instant};
+
+use limn::{RasterImage, ScalarTransition, UiAction};
 
 use crate::backend::{Command, Content, Event, Target};
 use crate::player::PlayerView;
@@ -20,6 +23,104 @@ pub enum Page {
     Album(Album),
     /// What is kept on disk to listen to without a network.
     Downloads,
+}
+
+/// An album or an artist the library or the home page can lead to.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Entry {
+    Album(AlbumRef),
+    Artist(ArtistRef),
+}
+
+impl Entry {
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Album(album) => &album.title,
+            Self::Artist(artist) => &artist.name,
+        }
+    }
+
+    pub fn artwork(&self) -> &Option<String> {
+        match self {
+            Self::Album(album) => &album.artwork_url,
+            Self::Artist(artist) => &artist.artwork_url,
+        }
+    }
+
+    fn target(&self) -> Target {
+        match self {
+            Self::Album(album) => Target::Album(album.id.clone()),
+            Self::Artist(artist) => Target::Artist(artist.id.clone()),
+        }
+    }
+
+    fn is(&self, other: &Self) -> bool {
+        self.target() == other.target()
+    }
+}
+
+/// What the user keeps and what they opened lately, newest first. It is kept with the
+/// settings of this machine until accounts carry it.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Collection {
+    pub kept: Vec<Entry>,
+    pub recent: Vec<Entry>,
+}
+
+/// How many recent entries the home page offers.
+const RECENT_KEPT: usize = 8;
+
+impl Collection {
+    pub fn albums(&self) -> impl Iterator<Item = (usize, &AlbumRef)> {
+        self.kept.iter().enumerate().filter_map(|(index, entry)| match entry {
+            Entry::Album(album) => Some((index, album)),
+            Entry::Artist(_) => None,
+        })
+    }
+
+    pub fn artists(&self) -> impl Iterator<Item = (usize, &ArtistRef)> {
+        self.kept.iter().enumerate().filter_map(|(index, entry)| match entry {
+            Entry::Artist(artist) => Some((index, artist)),
+            Entry::Album(_) => None,
+        })
+    }
+
+    fn keeps(&self, entry: &Entry) -> bool {
+        self.kept.iter().any(|kept| kept.is(entry))
+    }
+
+    fn toggle(&mut self, entry: Entry) {
+        if self.keeps(&entry) {
+            self.kept.retain(|kept| !kept.is(&entry));
+        } else {
+            self.kept.insert(0, entry);
+        }
+    }
+
+    fn visited(&mut self, entry: Entry) {
+        self.recent.retain(|recent| !recent.is(&entry));
+        self.recent.insert(0, entry);
+        self.recent.truncate(RECENT_KEPT);
+    }
+}
+
+/// What the library panel lists.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum Filter {
+    #[default]
+    All,
+    Lists,
+    Artists,
+    Albums,
+}
+
+/// "Buenos días", "Buenas tardes" or "Buenas noches" for an hour of the day.
+pub fn greeting(hour: u32) -> &'static str {
+    match hour {
+        6..=11 => "Buenos días",
+        12..=19 => "Buenas tardes",
+        _ => "Buenas noches",
+    }
 }
 
 /// A side panel the user can resize.
@@ -78,7 +179,14 @@ pub struct State {
     pub volume: f32,
     /// Whether the right panel shows, and whether it shows the queue instead of what plays.
     pub panel_open: bool,
+    /// How far open the right panel is drawn, from 0 to 1, on its way to `panel_open`.
+    pub panel_slide: ScalarTransition,
+    /// Whether what the app moves by itself travels or jumps. Off for a screenshot, which
+    /// wants the final picture.
+    pub motion: bool,
     pub queue_open: bool,
+    pub collection: Collection,
+    pub filter: Filter,
     /// The widths the user gave the side panels.
     pub left_width: f32,
     pub right_width: f32,
@@ -159,7 +267,11 @@ impl Default for State {
             seek_preview: None,
             volume: 0.8,
             panel_open: true,
+            panel_slide: ScalarTransition::new(1.0, Instant::now()),
+            motion: false,
             queue_open: false,
+            collection: Collection::default(),
+            filter: Filter::All,
             left_width: Side::Left.limits().default,
             right_width: Side::Right.limits().default,
             resizing: None,
@@ -205,6 +317,44 @@ impl State {
         !self.history.is_empty()
     }
 
+    /// The page being shown as something the library can keep.
+    fn page_entry(&self) -> Option<Entry> {
+        match &self.page {
+            Page::Album(album) => Some(Entry::Album(AlbumRef {
+                id: album.id.clone(),
+                title: album.title.clone(),
+                artist: Some(album.artist.clone()),
+                year: album.year.clone(),
+                artwork_url: album.artwork_url.clone(),
+            })),
+            Page::Artist(artist) => Some(Entry::Artist(ArtistRef {
+                id: artist.id.clone(),
+                name: artist.name.clone(),
+                subscribers: artist.subscribers.clone(),
+                artwork_url: artist.artwork_url.clone(),
+            })),
+            _ => None,
+        }
+    }
+
+    /// Whether the page being shown is in the library.
+    pub fn keeps_page(&self) -> bool {
+        self.page_entry().is_some_and(|entry| self.collection.keeps(&entry))
+    }
+
+    /// The covers of everything the library and the home page show.
+    pub fn collection_covers(&mut self) -> Vec<Command> {
+        let collection = &self.collection;
+        cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork))
+    }
+
+    /// Opens or closes the right panel, which slides to its place.
+    fn open_panel(&mut self, open: bool) {
+        self.panel_open = open;
+        let travel = Duration::from_millis(u64::from(limn::tokens().motion.move_ms));
+        self.panel_slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
+    }
+
     pub fn is_saved(&self, track_id: &str) -> bool {
         self.saved.iter().any(|track| track.id == track_id)
     }
@@ -238,6 +388,8 @@ impl State {
                 Some(album.artist_id.clone().map_or_else(|| Target::ArtistNamed(album.artist.clone()), Target::Artist))
             }
             ("retry", None, Page::Failed(target, _)) => Some(target.clone()),
+            ("kept", Some(index), _) => self.collection.kept.get(index).map(Entry::target),
+            ("recent", Some(index), _) => self.collection.recent.get(index).map(Entry::target),
             ("now-artist", None, _) => self.current().map(artist_of),
             ("now-album", None, _) => self.current().and_then(|track| track.album_id.clone()).map(Target::Album),
             _ => None,
@@ -407,11 +559,11 @@ impl State {
             // Each button shows its face of the right panel, and closes the panel from that face.
             "queue" => {
                 self.queue_open = !self.queue_open;
-                self.panel_open = self.queue_open;
+                self.open_panel(self.queue_open);
                 self.upcoming_covers()
             }
             "now-playing-view" => {
-                self.panel_open = !self.panel_open || self.queue_open;
+                self.open_panel(!self.panel_open || self.queue_open);
                 self.queue_open = false;
                 Vec::new()
             }
@@ -427,6 +579,21 @@ impl State {
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
+                Vec::new()
+            }
+            "keep" => {
+                if let Some(entry) = self.page_entry() {
+                    self.collection.toggle(entry);
+                }
+                Vec::new()
+            }
+            "filter:all" | "filter:lists" | "filter:artists" | "filter:albums" => {
+                self.filter = match id {
+                    "filter:lists" => Filter::Lists,
+                    "filter:artists" => Filter::Artists,
+                    "filter:albums" => Filter::Albums,
+                    _ => Filter::All,
+                };
                 Vec::new()
             }
             "menu-close" => {
@@ -471,6 +638,10 @@ impl State {
                     Ok(Content::Album(album)) => Page::Album(album),
                     Err(message) => Page::Failed(target, message),
                 };
+                // What was opened is what the home page offers next time.
+                if let Some(entry) = self.page_entry() {
+                    self.collection.visited(entry);
+                }
                 match &self.page {
                     Page::Artist(artist) => {
                         let shown = &artist.songs[..artist.songs.len().min(ARTIST_SONGS_SHOWN)];
@@ -772,6 +943,42 @@ mod tests {
         click(&mut state, "home");
         assert!(state.page == Page::Search && state.submitted.is_none() && state.found.tracks.is_empty() && state.query.is_empty());
         assert!(!state.can_go_back());
+    }
+
+    #[test]
+    fn the_library_keeps_what_the_user_keeps_and_home_remembers_what_was_opened() {
+        let mut state = State::default();
+        assert!(click(&mut state, "keep").is_empty() && state.collection.kept.is_empty(), "nothing on this page to keep");
+        let open = |state: &mut State, target: Target, content: Content| {
+            state.page = Page::Loading(target.clone());
+            state.apply(Event::Opened { target, result: Ok(content) });
+        };
+        open(&mut state, Target::Album("lp".into()), Content::Album(album("lp", Some("who"))));
+        open(&mut state, Target::Artist("who".into()), Content::Artist(artist("who")));
+        open(&mut state, Target::Album("lp".into()), Content::Album(album("lp", Some("who"))));
+        let titles: Vec<&str> = state.collection.recent.iter().map(Entry::title).collect();
+        assert_eq!(titles, ["lp", "who"], "newest first, each once");
+
+        assert!(!state.keeps_page());
+        click(&mut state, "keep");
+        assert!(state.keeps_page());
+        assert_eq!(state.collection.albums().count(), 1);
+        state.page = Page::Search;
+        assert_eq!(click(&mut state, "kept:0"), vec![Command::Open(Target::Album("lp".into()))]);
+        assert_eq!(click(&mut state, "recent:1"), vec![Command::Open(Target::Artist("who".into()))]);
+        assert!(click(&mut state, "kept:5").is_empty());
+
+        let kept = serde_json::to_string(&state.collection).unwrap();
+        assert_eq!(serde_json::from_str::<Collection>(&kept).unwrap(), state.collection, "it survives being written down");
+        state.page = Page::Album(album("lp", Some("who")));
+        click(&mut state, "keep");
+        assert!(state.collection.kept.is_empty(), "kept twice is not kept");
+
+        click(&mut state, "filter:artists");
+        assert_eq!(state.filter, Filter::Artists);
+        click(&mut state, "filter:all");
+        assert_eq!(state.filter, Filter::All);
+        assert_eq!((greeting(7), greeting(15), greeting(23), greeting(3)), ("Buenos días", "Buenas tardes", "Buenas noches", "Buenas noches"));
     }
 
     #[test]

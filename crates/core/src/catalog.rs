@@ -1,7 +1,7 @@
 use crate::Track;
 
 /// An artist as a list shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ArtistRef {
     pub id: String,
     pub name: String,
@@ -11,7 +11,7 @@ pub struct ArtistRef {
 }
 
 /// An album, a single or an EP as a list shows it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct AlbumRef {
     pub id: String,
     pub title: String,
