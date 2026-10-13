@@ -141,5 +141,6 @@ jobs:
           minimum=$(grep -m1 '^minimum = ' ../surco/Cargo.toml | cut -d'"' -f2)
           notes="$RUNNER_TEMP/surco-release-notes.md"
           printf '<!-- surco:minimum=%s -->\n\n' "$minimum" > "$notes"
-          cat ../surco/CHANGELOG.md >> "$notes"
+          # Only what this version brings: the app shows these notes to whoever it offers it to.
+          awk -v heading="## ${GITHUB_REF_NAME#v}" '$0 == heading { on = 1; next } /^## / { on = 0 } on' ../surco/CHANGELOG.md >> "$notes"
           gh release create "$GITHUB_REF_NAME" ./* --repo "$GITHUB_REPOSITORY" --title "Surco ${GITHUB_REF_NAME#v}" --notes-file "$notes"
