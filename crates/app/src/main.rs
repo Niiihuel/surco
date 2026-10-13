@@ -8,6 +8,7 @@
 //! the window after `--after <ms>` and exits.
 
 mod backend;
+mod clip;
 mod library;
 mod media_keys;
 mod player;
@@ -34,6 +35,8 @@ struct Host {
     events: Receiver<Event>,
     player: watch::Receiver<PlayerView>,
     started: bool,
+    /// The clip of what plays, while its panel shows it.
+    clip: Option<clip::ClipPlayer>,
     /// The shelf an arrow is carrying along, and where it is on its way.
     glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
@@ -182,6 +185,28 @@ impl eframe::App for Host {
         self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
+        // The clip of what plays turns where its cover is, for as long as that is on screen.
+        let side = self.state.right_width - 32.0;
+        match self.state.clip_to_show() {
+            Some((track, found)) => {
+                if self.clip.as_ref().is_none_or(|player| player.track_id != track) {
+                    limn_egui::forget_surface(view::CLIP_SURFACE);
+                    let wake = ctx.clone();
+                    self.clip = Some(clip::ClipPlayer::start(track.to_owned(), found.clone(), side, move || wake.request_repaint()));
+                }
+            }
+            None => {
+                if self.clip.take().is_some() {
+                    limn_egui::forget_surface(view::CLIP_SURFACE);
+                }
+            }
+        }
+        if let Some(player) = &self.clip {
+            player.follow(self.state.player.playing, side);
+            if let Some(frame) = player.take() {
+                limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
+            }
+        }
         // An arrow of a shelf carries it a few tiles along, on a spring.
         if let Some((shelf, way)) = self.state.shelf_push.take() {
             let now = Instant::now();
@@ -301,6 +326,7 @@ fn main() -> eframe::Result {
                 events,
                 player,
                 started: false,
+                clip: None,
                 glide: None,
                 opened: Instant::now(),
                 script,

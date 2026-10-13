@@ -1,0 +1,15 @@
+[package]
+name = "dnm-video"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "A song's short video: YouTube's fragmented H.264 read apart and decoded to frames."
+
+[dependencies]
+# BSD-2-Clause. Cisco's decoder, built from source: H.264 is all a short clip needs.
+openh264 = "0.9.8"
+
+[dev-dependencies]
+# For the example that checks all of this against the real service.
+dnm-youtube = { path = "../youtube" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

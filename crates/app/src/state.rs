@@ -6,6 +6,8 @@ use std::collections::{HashMap, HashSet};
 use dnm_audio::equalizer::EqualizerValues;
 use dnm_audio::AudioOutputDevice;
 use dnm_core::lyrics::{active, Line};
+use dnm_video::Clip;
+use std::sync::Arc;
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -125,6 +127,8 @@ pub struct Settings {
     /// Seconds a track that ends shares with the next; 0 for none.
     pub crossfade: f32,
     pub quality: Quality,
+    /// Show a stretch of a song's own video where its cover is while it plays.
+    pub clips: bool,
 }
 
 /// How much of a stream is asked for.
@@ -166,7 +170,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true }
     }
 }
 
@@ -384,6 +388,9 @@ pub struct State {
     /// What the catalog offers after a track that was heard, by that track's id; empty
     /// while the answer is on its way.
     pub recommended: HashMap<String, Vec<Track>>,
+    /// The clip asked for, with the track it belongs to; no clip yet while it is fetched,
+    /// and still none when the track has no video of its own.
+    pub clip: Option<(String, Option<Arc<Clip>>)>,
     /// The right panel shows the lyrics of what plays.
     pub lyrics_open: bool,
     /// The lyrics asked for, with the track they belong to.
@@ -528,6 +535,7 @@ impl Default for State {
             save_error: None,
             levels: [0.0; dnm_audio::meter::BANDS],
             recommended: HashMap::new(),
+            clip: None,
             lyrics_open: false,
             lyrics: None,
             lyric_shown: None,
@@ -916,14 +924,18 @@ impl State {
                 self.queue_open = !self.queue_open;
                 self.lyrics_open = false;
                 self.open_side(Side::Right, self.queue_open);
-                self.upcoming_covers()
+                let mut commands = self.upcoming_covers();
+                commands.extend(self.ask_clip());
+                commands
             }
             // So are the lyrics.
             "lyrics" => {
                 self.lyrics_open = !self.lyrics_open;
                 self.queue_open = false;
                 self.open_side(Side::Right, self.lyrics_open);
-                self.ask_lyrics()
+                let mut commands = self.ask_lyrics();
+                commands.extend(self.ask_clip());
+                commands
             }
             _ if id.starts_with("shelf-back:") || id.starts_with("shelf-on:") => {
                 let (way, shelf) = id.split_once(':').unwrap_or_default();
@@ -950,7 +962,7 @@ impl State {
                 self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
                 self.lyrics_open = false;
-                Vec::new()
+                self.ask_clip()
             }
             "toggle-library" | "toggle-library-open" => {
                 self.open_side(Side::Left, !self.library_open);
@@ -1019,6 +1031,10 @@ impl State {
             "setting:motion" => {
                 self.settings.reduce_motion = !self.settings.reduce_motion;
                 Vec::new()
+            }
+            "setting:clips" => {
+                self.settings.clips = !self.settings.clips;
+                self.ask_clip()
             }
             _ if id.starts_with("setting:quality:") => {
                 let Some((quality, ..)) = Quality::ALL.into_iter().find(|(_, name, _)| id.ends_with(name)) else { return Vec::new() };
@@ -1186,6 +1202,14 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
+            Event::Clip { track_id, clip } => {
+                if let Some((asked, found)) = &mut self.clip {
+                    if *asked == track_id {
+                        *found = clip;
+                    }
+                }
+                Vec::new()
+            }
             Event::Recommended { seed, tracks } => {
                 let tracks: Vec<Track> = tracks.into_iter().filter(|track| track.id != seed).take(SHELF).collect();
                 let covers = cover_requests(&mut self.covers, covers_of(&tracks));
@@ -1235,7 +1259,32 @@ impl State {
         let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]));
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
+        commands.extend(self.ask_clip());
         commands
+    }
+
+    /// Whether the right panel shows what plays, the one place a clip is seen.
+    fn shows_playing(&self) -> bool {
+        self.panel_open && !self.queue_open && !self.lyrics_open
+    }
+
+    /// A track's clip is looked for once, while it would be seen and the user wants them.
+    fn ask_clip(&mut self) -> Vec<Command> {
+        let wanted = self.settings.clips && !self.settings.reduce_motion && self.shows_playing();
+        let Some(track) = self.player.current.as_ref().filter(|_| wanted) else { return Vec::new() };
+        if self.clip.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
+            return Vec::new();
+        }
+        self.clip = Some((track.id.clone(), None));
+        vec![Command::Clip(track.clone())]
+    }
+
+    /// The clip to show now: that of what plays, while its panel is on screen.
+    pub fn clip_to_show(&self) -> Option<(&str, &Arc<Clip>)> {
+        let wanted = self.settings.clips && !self.settings.reduce_motion && self.shows_playing();
+        let track = self.player.current.as_ref().filter(|_| wanted)?;
+        let (asked, clip) = self.clip.as_ref()?;
+        (*asked == track.id).then_some((asked.as_str(), clip.as_ref()?))
     }
 
     /// The tracks the home page asks the catalog about: the last heard, one for each artist.
@@ -1357,6 +1406,11 @@ mod tests {
 
     fn click(state: &mut State, id: &str) -> Vec<Command> {
         state.update(&UiAction::Clicked { id: id.into() })
+    }
+
+    /// A state that looks for no clips, for the tests that count what a new track asks for.
+    fn without_clips() -> State {
+        State { settings: Settings { clips: false, ..Settings::default() }, ..State::default() }
     }
 
     fn playing(id: &str) -> PlayerView {
@@ -1726,6 +1780,30 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_is_asked_once_for_what_plays_while_its_panel_shows_it() {
+        let playing = |id: &str| PlayerView { current: Some(track(id)), playing: true, ..PlayerView::default() };
+        let asks = |commands: &[Command]| commands.iter().any(|command| matches!(command, Command::Clip(_)));
+        let mut state = State::default();
+        assert!(asks(&state.show(playing("a"))));
+        assert!(!asks(&state.show(playing("a"))), "already asked");
+        assert!(state.clip_to_show().is_none(), "not fetched yet");
+        let clip = Arc::new(Clip { parameters: vec![0], samples: Vec::new() });
+        state.apply(Event::Clip { track_id: "other".into(), clip: Some(clip.clone()) });
+        assert!(state.clip_to_show().is_none(), "an answer for another track changes nothing");
+        state.apply(Event::Clip { track_id: "a".into(), clip: Some(clip) });
+        assert_eq!(state.clip_to_show().map(|(id, _)| id), Some("a"));
+
+        click(&mut state, "queue");
+        assert!(state.clip_to_show().is_none() && !asks(&state.show(playing("b"))), "the queue covers what plays");
+        // Its button shuts the panel; opened again, it shows what plays and its clip is looked for.
+        click(&mut state, "queue");
+        assert!(asks(&click(&mut state, "toggle-panel-open")));
+        click(&mut state, "setting:clips");
+        assert!(!asks(&state.show(playing("c"))) && state.clip_to_show().is_none(), "switched off");
+        assert!(asks(&click(&mut state, "setting:clips")), "and back on, it is looked for");
+    }
+
+    #[test]
     fn a_playlist_travels_in_its_link_and_arrives_as_a_copy() {
         let list = Playlist { id: 7, name: "Para el viaje & más".into(), collaborative: false, tracks: vec![track("DdI598gKkKw"), track("abc_-1")] };
         let link = list_link(&list);
@@ -1822,7 +1900,7 @@ mod tests {
         for other in ["https://i.ytimg.com/vi/x/hqdefault.jpg", "https://img/a", "https://x/=w-h1", "https://x/=w12", ""] {
             assert_eq!(large_cover(other), other);
         }
-        let mut state = State::default();
+        let mut state = without_clips();
         let mut track = track("a");
         track.artwork_url = Some("https://lh3.example/a=w120-h120-rj".into());
         let asked = state.show(PlayerView { current: Some(track), ..PlayerView::default() });
@@ -1831,7 +1909,7 @@ mod tests {
 
     #[test]
     fn a_new_track_asks_for_its_cover_once() {
-        let mut state = State::default();
+        let mut state = without_clips();
         assert_eq!(state.show(playing("a")), vec![Command::FetchArtwork("https://img/a".into())]);
         assert!(state.show(playing("a")).is_empty(), "the same track again is only a position");
         assert_eq!(state.current(), Some(&track("a")));
@@ -1839,7 +1917,7 @@ mod tests {
 
     #[test]
     fn the_queue_fetches_its_covers_only_while_it_is_open() {
-        let mut state = State::default();
+        let mut state = without_clips();
         let view = PlayerView { upcoming: vec![track("b"), track("c")], ..playing("a") };
         assert_eq!(state.show(view.clone()), vec![Command::FetchArtwork("https://img/a".into())]);
         let opened = click(&mut state, "queue");

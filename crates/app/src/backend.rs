@@ -12,6 +12,7 @@ use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
 use dnm_core::lyrics::{parse_lrc, Line};
+use dnm_video::Clip;
 use futures_util::future::join_all;
 use dnm_core::{Album, Artist, Found, Track};
 use dnm_youtube::{Audio, YouTube};
@@ -86,6 +87,8 @@ pub enum Command {
     Lyrics(Track),
     /// Ask the catalog what goes with a track the user heard.
     Recommend(Track),
+    /// Look for a track's own video and fetch a few seconds of it.
+    Clip(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -106,6 +109,8 @@ pub enum Event {
     Outputs(Vec<AudioOutputDevice>),
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
+    /// A stretch of a track's own video, or none when it has no such video.
+    Clip { track_id: String, clip: Option<Arc<Clip>> },
     /// What the catalog would play after the track `seed`.
     Recommended { seed: String, tracks: Vec<Track> },
     /// The device that was asked for is gone: the system's own plays instead.
@@ -343,6 +348,14 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Recommend(_), Err(_)) => {}
+        (Command::Clip(track), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let clip = clip(&shared, &track).await.map(Arc::new);
+                (shared.reply)(Event::Clip { track_id: track.id, clip });
+            });
+        }
+        (Command::Clip(track), Err(_)) => reply(Event::Clip { track_id: track.id, clip: None }),
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
@@ -511,6 +524,29 @@ async fn preload(shared: &Arc<Shared>, track: &Track) {
     }
     let engine = shared.clone();
     let _ = blocking(move || engine.audio.load(load)).await;
+}
+
+/// The rendition a clip is cut from, by its height, and how long the clip is.
+const CLIP_HEIGHT: u64 = 360;
+const CLIP_SECONDS: f64 = 8.0;
+
+/// A few seconds of the track's own video: its header and its index in one request, then
+/// the fragments the index points to. None when the track has no video of its own, or
+/// none in H.264, the one kind this decodes.
+async fn clip(shared: &Shared, track: &Track) -> Option<Clip> {
+    let id = shared.youtube.video_for(&track.artist, &track.title).await.ok()??;
+    let stream = shared.youtube.stream(&id).await.ok()?;
+    let video = stream.video.iter().filter(|video| video.mime.contains("avc1")).min_by_key(|video| video.height.abs_diff(CLIP_HEIGHT))?;
+    let bytes = |from: u64, to: u64| async move {
+        let request = shared.youtube.http().get(&video.url).header("Range", format!("bytes={from}-{to}"));
+        Some(request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec())
+    };
+    let head = bytes(0, video.index.1).await?;
+    let header = dnm_video::header(head.get(..=usize::try_from(video.init.1).ok()?)?)?;
+    let fragments = dnm_video::fragments(head.get(usize::try_from(video.index.0).ok()?..)?, video.index.1);
+    let (from, to) = dnm_video::stretch(&fragments, CLIP_SECONDS)?;
+    let samples = dnm_video::samples(&bytes(from, to).await?, &header);
+    (!samples.is_empty()).then_some(Clip { parameters: header.parameters, samples })
 }
 
 /// Synced lyrics from LRCLIB. It is searched, not asked for the exact track, because an

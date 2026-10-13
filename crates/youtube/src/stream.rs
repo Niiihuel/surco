@@ -24,12 +24,28 @@ pub struct Audio {
     pub url: String,
 }
 
+/// A picture-only rendition, cut in fragments: `init` and `index` are the byte ranges of
+/// its header and of the table that says where each fragment is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Video {
+    pub itag: u64,
+    /// As YouTube writes it, e.g. `video/mp4; codecs="avc1.4d401e"`.
+    pub mime: String,
+    pub width: u64,
+    pub height: u64,
+    pub size: u64,
+    pub init: (u64, u64),
+    pub index: (u64, u64),
+    pub url: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Stream {
     pub duration_seconds: f64,
     /// Seconds until the URLs stop working.
     pub expires_in_seconds: u64,
     pub audio: Vec<Audio>,
+    pub video: Vec<Video>,
 }
 
 impl Stream {
@@ -113,10 +129,30 @@ fn parse(response: &Value) -> Result<Stream> {
             })
         })
         .collect();
+    let range = |range: &Value| Some((range["start"].as_str()?.parse().ok()?, range["end"].as_str()?.parse().ok()?));
+    let video = response["streamingData"]["adaptiveFormats"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|format| {
+            let mime = format["mimeType"].as_str()?;
+            Some(Video {
+                itag: format["itag"].as_u64()?,
+                mime: mime.starts_with("video/").then(|| mime.to_owned())?,
+                width: format["width"].as_u64()?,
+                height: format["height"].as_u64()?,
+                size: number(&format["contentLength"]),
+                init: range(&format["initRange"])?,
+                index: range(&format["indexRange"])?,
+                url: format["url"].as_str()?.to_owned(),
+            })
+        })
+        .collect();
     Ok(Stream {
         duration_seconds: number(&response["videoDetails"]["lengthSeconds"]) as f64,
         expires_in_seconds: number(&response["streamingData"]["expiresInSeconds"]),
         audio,
+        video,
     })
 }
 

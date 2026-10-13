@@ -6,12 +6,13 @@
 mod stream;
 
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
+use ytmapi_rs::parse::SearchResultVideo;
 use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
 use ytmapi_rs::parse::{ParsedSongArtist, PlaylistItem};
 use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, SongsFilter, SpellingMode};
 
-pub use stream::{Audio, Stream};
+pub use stream::{Audio, Stream, Video};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -224,10 +225,34 @@ impl YouTube {
         Ok(track.ok_or("the catalog does not know this track")?)
     }
 
+    /// The id of a song's own video: the first one the catalog finds for it that its artist
+    /// published under the song's name. A song listed in the catalog is a still picture
+    /// over its audio; this is the video made for it, when there is one.
+    pub async fn video_for(&self, artist: &str, title: &str) -> Result<Option<String>> {
+        let videos = self.music().await?.search_videos(format!("{artist} {title}").as_str()).await?;
+        Ok(videos.into_iter().find_map(|video| match video {
+            SearchResultVideo::Video { title: name, channel_name, video_id, .. } if official(artist, title, &channel_name, &name) => {
+                Some(video_id.get_raw().to_owned())
+            }
+            _ => None,
+        }))
+    }
+
     /// Playable audio for a video id. The URLs expire; resolve again rather than keep them.
     pub async fn stream(&self, video_id: &str) -> Result<Stream> {
         stream::resolve(&self.http, video_id).await
     }
+}
+
+/// Whether the video `name` on `channel` is `artist`'s own video of the song `title`.
+fn official(artist: &str, title: &str, channel: &str, name: &str) -> bool {
+    // "TheWeekndVEVO" and "The Weeknd" are the same publisher.
+    let plain = |text: &str| text.to_lowercase().chars().filter(|c| c.is_alphanumeric()).collect::<String>();
+    let channel = plain(channel);
+    let channel = channel.strip_suffix("vevo").unwrap_or(&channel);
+    // A song by several lists them; the first is whose channel it is on.
+    let artist = plain(artist.split([',', '&']).next().unwrap_or(artist));
+    !artist.is_empty() && channel == artist && plain(name).contains(&plain(title))
 }
 
 /// The largest rendition on offer.
@@ -253,7 +278,16 @@ fn duration_ms(text: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::duration_ms;
+    use super::{duration_ms, official};
+
+    #[test]
+    fn a_songs_video_is_the_one_its_own_artist_published_under_its_name() {
+        assert!(official("The Weeknd", "Blinding Lights", "The Weeknd", "Blinding Lights (Official Video)"));
+        assert!(official("The Weeknd, Daft Punk", "Starboy", "TheWeekndVEVO", "The Weeknd - Starboy ft. Daft Punk"));
+        assert!(!official("The Weeknd", "Blinding Lights", "Jared Halley", "The Weeknd - Blinding Lights (HYBRID ACAPELLA)"));
+        assert!(!official("The Weeknd", "Blinding Lights", "The Weeknd", "Save Your Tears (Official Video)"));
+        assert!(!official("", "x", "", "x"));
+    }
 
     #[test]
     fn durations_are_read_from_clock_text() {

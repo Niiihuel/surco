@@ -49,6 +49,8 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// Where the window presents the frames of the clip of what plays.
+pub const CLIP_SURFACE: &str = "now-clip";
 /// The mark of the lyrics: words in a bubble.
 const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
 /// A shelf with more tiles than this gets arrows to move along it.
@@ -844,7 +846,10 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
                 row("Dispositivo de salida", "Por dónde suena la música.").trailing(output).stacked(compact).render(),
             ],
         ),
-        group("Visualización", vec![switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)]),
+        group("Visualización", vec![
+            switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
+            switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
+        ]),
         group(
             "Almacenamiento",
             vec![
@@ -1062,6 +1067,15 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                         // The large rendition once it has arrived; until then, the row's.
                         let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
                         let cover = cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px());
+                        // The song's own video turns over its cover, which stays until the first frame.
+                        let cover = if state.clip_to_show().is_some() {
+                            Element::stack(vec![cover, Element::surface(CLIP_SURFACE, "Video de la canción")])
+                                .size(Some(side), Some(side))
+                                .radius(RadiusRole::Panel.px())
+                                .corner_mask(palette.surface)
+                        } else {
+                            cover
+                        };
                         Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
                     },
                     link("panel-album", "now-album", Text::new(&track.title, palette).size(18.0).truncate().render()),

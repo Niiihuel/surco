@@ -15,6 +15,7 @@ image = { version = "0.25.10", default-features = false, features = ["png", "jpe
 fastrand = "2"
 dnm-audio = { path = "../audio" }
 dnm-youtube = { path = "../youtube" }
+dnm-video = { path = "../video" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"
