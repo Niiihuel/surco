@@ -397,6 +397,8 @@ pub struct State {
     pub page_search: String,
     pub page_searching: bool,
     pub page_search_slide: ScalarTransition,
+    /// How far open the library's search is, the same way.
+    pub library_search_slide: ScalarTransition,
     /// A field the window is to put the keyboard in, once.
     pub focus: Option<String>,
     /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
@@ -600,6 +602,7 @@ impl Default for State {
             page_search: String::new(),
             page_searching: false,
             page_search_slide: ScalarTransition::new(0.0, Instant::now()),
+            library_search_slide: ScalarTransition::new(0.0, Instant::now()),
             focus: None,
             library_open: true,
             library_slide: ScalarTransition::new(1.0, Instant::now()),
@@ -755,7 +758,7 @@ impl State {
 
     /// Whether a side panel, or the page's search, is on its way open or shut.
     pub fn is_sliding(&self, now: Instant) -> bool {
-        self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now)
+        self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now) || self.library_search_slide.is_active(now)
     }
 
     /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
@@ -1377,6 +1380,9 @@ impl State {
                 self.library_searching = !self.library_searching;
                 self.library_search.clear();
                 self.focus = self.library_searching.then(|| "library-query".to_owned());
+                // Its field grows out of its magnifier and back, as a page's does.
+                let travel = Duration::from_millis(u64::from(limn::tokens().motion.move_ms));
+                self.library_search_slide.retarget_with_motion(if self.library_searching { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
                 Vec::new()
             }
             "queue-clear" => {

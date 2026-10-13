@@ -266,6 +266,8 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
 
 /// The narrowest a tile of the library gets, and the width of the menu of its orders and views.
 const LIBRARY_GRID_TILE: f32 = 112.0;
+/// What the library's row of tools keeps for the cross of its search and the button of its order.
+const LIBRARY_SORT_ROOM: f32 = 150.0;
 const LIBRARY_MENU_WIDTH: f32 = 220.0;
 
 /// A button of a header: quiet, small, with its hint under it.
@@ -447,34 +449,37 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         Filter::Artists => "Buscar en Artistas",
         Filter::Albums => "Buscar en Álbumes",
     };
-    let mut tools = if state.library_searching {
-        vec![
-            SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(ControlSize::Compact).render().flex(1.0),
-            header_button("library-search", Icon::Close, TooltipSpec::new("Cerrar la búsqueda"), palette).render().centered_y(),
-        ]
+    let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
+    let mut tools = if open > 0.0 {
+        // It grows out of where the magnifier was to what the row has left beside the order.
+        let whole = width - 16.0 - LIBRARY_SORT_ROOM;
+        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised())
+            .size(ControlSize::Compact)
+            .width(PAGE_SEARCH_SHUT + (whole - PAGE_SEARCH_SHUT).max(0.0) * open)
+            .render()
+            .centered_y()
+            .shrink_to_fit();
+        vec![field, header_button("library-search", Icon::Close, TooltipSpec::new("Cerrar la búsqueda"), palette).render().centered_y(), Element::spacer().flex(1.0)]
     } else {
         vec![header_button("library-search", Icon::Search, TooltipSpec::new(looking), palette).render().centered_y(), Element::spacer().flex(1.0)]
     };
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
     let choice = |id: &str, label: &str, chosen: bool| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).selected(chosen));
-    // A heading inside the menu: what the choices under it are of.
-    let heading = |label: &str| {
-        let label = Text::new(label, SCHEME.menu()).role(TextRole::Caption).muted().render();
-        DropdownMenuEntry::Custom(Box::new(Element::panel(label).padding(8.0).size(None, Some(ControlSize::Compact.height()))))
-    };
     let choices = vec![
-        heading("Clasificar por"),
+        DropdownMenuEntry::Heading("Clasificar por".into()),
         choice("library-sort:added", "Agregado recientemente", sort == Sort::Added),
         choice("library-sort:alphabetical", "Alfabéticamente", sort == Sort::Alphabetical),
         choice("library-sort:creator", "Creador", sort == Sort::Creator),
         DropdownMenuEntry::Separator,
-        heading("Ver como"),
+        DropdownMenuEntry::Heading("Ver como".into()),
         choice("library-view:compact", "Compacta", view == LibraryView::Compact),
         choice("library-view:list", "Lista", view == LibraryView::List),
         choice("library-view:grid", "Cuadrícula", view == LibraryView::Grid),
     ];
     let picker = Button::new("library-sort", sort.label(), palette).icon(Icon::Sort).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
-    tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", SCHEME.menu()).width(LIBRARY_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
+    // All of its choices at once: past eight a menu becomes a list that scrolls, with a rail's room beside it.
+    let all = choices.len();
+    tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", SCHEME.menu()).width(LIBRARY_MENU_WIDTH).max_visible_items(all).placement(PopoverPlacement::BottomEnd).render().centered_y());
     let tools = Element::row(tools).gap(8.0).size(None, Some(ControlSize::Compact.height()));
 
     let wanted = state.library_search.trim().to_lowercase();
