@@ -40,6 +40,8 @@ pub enum Target {
     Song(String),
     /// A playlist someone shared, as its link carries it: its name and its tracks' ids.
     List { name: String, ids: Vec<String> },
+    /// A list of another app's, by its link there.
+    Import(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -47,7 +49,8 @@ pub enum Content {
     Artist(Artist),
     Album(Album),
     Song(Track),
-    List { name: String, tracks: Vec<Track> },
+    /// A list brought in, and how many of its songs the catalog does not have.
+    List { name: String, tracks: Vec<Track>, missed: usize },
 }
 
 /// What the window asks for.
@@ -523,8 +526,9 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
             if tracks.is_empty() {
                 return Err("No pudimos traer ninguna de las canciones de esa playlist.".to_owned());
             }
-            Ok(Content::List { name: name.clone(), tracks })
+            Ok(Content::List { name: name.clone(), missed: ids.len() - tracks.len(), tracks })
         }
+        Target::Import(link) => return crate::import::list(youtube, link).await.map(|(name, tracks, missed)| Content::List { name, tracks, missed }),
     };
     content.map_err(|error| error.to_string())
 }

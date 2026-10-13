@@ -6,6 +6,7 @@ use std::collections::{HashMap, HashSet};
 use surco_audio::equalizer::EqualizerValues;
 use surco_audio::AudioOutputDevice;
 use surco_core::discover;
+use surco_core::transfer;
 use surco_core::lyrics::{active, Line};
 use std::sync::Arc;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
@@ -152,6 +153,8 @@ pub struct Settings {
     pub mono: bool,
     /// Turn the tracks louder than the reference down to it.
     pub normalize: bool,
+    /// The library's offer to bring music in from another app was put away.
+    pub import_dismissed: bool,
 }
 
 /// The order the library lists what is not pinned in.
@@ -223,7 +226,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false }
     }
 }
 
@@ -469,6 +472,12 @@ pub struct State {
     pub settings: Settings,
     /// The playlist being made, while its dialog is open.
     pub creating: Option<Draft>,
+    /// The link of another app's list being typed, while its dialog is open, and whether
+    /// what was typed is no such link.
+    pub importing: Option<String>,
+    pub import_unknown: bool,
+    /// The playlist just brought in and how many of its songs were not found, while its page says so.
+    pub imported: Option<(u64, usize)>,
     pub confirm: Option<Confirm>,
     /// The room the downloads take on disk.
     pub saved_bytes: u64,
@@ -500,8 +509,10 @@ pub struct State {
     pub copied: bool,
     /// A shelf whose arrow was pressed and which way, back or on, until the window moves it.
     pub shelf_push: Option<(String, f32)>,
-    /// The playlist whose link was just copied, while its page says so.
+    /// The playlist whose link was just copied, while its page says so, and the one whose
+    /// songs were, as text for another app.
     pub list_copied: Option<u64>,
+    pub list_exported: Option<u64>,
     /// Text on its way to the clipboard; the window takes it.
     pub copy: Option<String>,
     /// Covers already asked for, arrived or not.
@@ -675,6 +686,9 @@ impl Default for State {
             library_menu: false,
             settings: Settings::default(),
             creating: None,
+            importing: None,
+            import_unknown: false,
+            imported: None,
             confirm: None,
             saved_bytes: 0,
             left_width: Side::Left.limits().default,
@@ -688,6 +702,7 @@ impl Default for State {
             sharing: None,
             copied: false,
             list_copied: None,
+            list_exported: None,
             shelf_push: None,
             copy: None,
             covers: HashSet::new(),
@@ -749,6 +764,10 @@ impl State {
         // Nor is a playlist's: it is brought in as a copy.
         if let Some((name, ids)) = shared_list(&query) {
             return self.open(Target::List { name, ids });
+        }
+        // And so is a list of another app's.
+        if transfer::source(&query).is_some() {
+            return self.open(Target::Import(query));
         }
         self.submitted = Some(query.clone());
         self.searching = true;
@@ -854,6 +873,8 @@ impl State {
     /// Leaves the current page for another. A page that never loaded is not one to return to.
     fn go(&mut self, page: Page) {
         self.list_copied = None;
+        self.list_exported = None;
+        self.imported = None;
         // A search and an order belong to the page they were made on.
         if self.page_searching {
             self.search_page(false);
@@ -1026,6 +1047,12 @@ impl State {
                 Vec::new()
             }
             UiAction::Submitted { id, .. } if id == "playlist-name" => self.click("playlist-create"),
+            UiAction::InputChanged { id, value } if id == "import-link" => {
+                self.importing = Some(value.clone());
+                self.import_unknown = false;
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
             UiAction::SliderChanged { id, fraction, committed } if id == "seek" => {
                 if !*committed {
@@ -1416,6 +1443,38 @@ impl State {
                 }
                 Vec::new()
             }
+            // Its songs as text, which is what carries a list to another app.
+            "playlist-export" => {
+                if let Page::Playlist(id) = self.page {
+                    self.copy = self.collection.playlist(id).map(|playlist| transfer::as_text(&playlist.tracks));
+                    self.list_exported = self.copy.is_some().then_some(id);
+                }
+                Vec::new()
+            }
+            "import-open" => {
+                self.importing = Some(String::new());
+                self.import_unknown = false;
+                Vec::new()
+            }
+            "import-cancel" => {
+                self.importing = None;
+                Vec::new()
+            }
+            "import-dismiss" => {
+                self.settings.import_dismissed = true;
+                Vec::new()
+            }
+            "import-go" => {
+                let link = self.importing.clone().unwrap_or_default().trim().to_owned();
+                self.import_unknown = transfer::source(&link).is_none();
+                if self.import_unknown {
+                    return Vec::new();
+                }
+                self.importing = None;
+                // Used once, the offer has done its work.
+                self.settings.import_dismissed = true;
+                self.open(Target::Import(link))
+            }
             "downloads-clear" => {
                 self.confirm = (!self.saved.is_empty()).then_some(Confirm::ClearDownloads);
                 Vec::new()
@@ -1534,25 +1593,27 @@ impl State {
                     .chain(found.albums.iter().map(|album| &album.artwork_url));
                 cover_requests(&mut self.covers, covers)
             }
+            // A list brought in becomes one of the user's own, wherever they have walked to
+            // meanwhile; where they waited for it, that is the page shown.
+            Event::Opened { target, result: Ok(Content::List { name, tracks, missed }) } => {
+                let id = self.collection.create(Draft { name, collaborative: false, first: None });
+                for track in tracks {
+                    self.collection.add(id, track);
+                }
+                if self.page != Page::Loading(target) {
+                    return Vec::new();
+                }
+                self.query.clear();
+                self.page = Page::Playlist(id);
+                self.imported = Some((id, missed));
+                self.page_covers()
+            }
             Event::Opened { target, result } if self.page == Page::Loading(target.clone()) => {
-                // A shared playlist becomes one of the user's own, and that is the page shown.
-                let result = match result {
-                    Ok(Content::List { name, tracks }) => {
-                        let id = self.collection.create(Draft { name, collaborative: false, first: None });
-                        for track in tracks {
-                            self.collection.add(id, track);
-                        }
-                        self.query.clear();
-                        self.page = Page::Playlist(id);
-                        return self.page_covers();
-                    }
-                    other => other,
-                };
                 self.page = match result {
                     Ok(Content::Artist(artist)) => Page::Artist(artist),
                     Ok(Content::Album(album)) => Page::Album(album),
                     Ok(Content::Song(track)) => Page::Song(track),
-                    Ok(Content::List { .. }) => unreachable!("a shared playlist was taken in above"),
+                    Ok(Content::List { .. }) => unreachable!("a list brought in was taken above"),
                     Err(message) => Page::Failed(target, message),
                 };
                 // What was opened is what the home page offers next time.
@@ -2557,13 +2618,40 @@ mod tests {
         let mut state = State { query: link, ..State::default() };
         let target = Target::List { name: "Para el viaje & más".into(), ids: vec!["DdI598gKkKw".into(), "abc_-1".into()] };
         assert_eq!(state.search(), vec![Command::Open(target.clone())]);
-        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Para el viaje & más".into(), tracks: vec![track("a"), track("b")] }) });
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Para el viaje & más".into(), tracks: vec![track("a"), track("b")], missed: 0 }) });
         let copy = &state.collection.playlists[0];
         assert_eq!((copy.name.as_str(), copy.tracks.len(), state.page.clone()), ("Para el viaje & más", 2, Page::Playlist(copy.id)));
 
         click(&mut state, "playlist-share");
         assert_eq!(state.copy.as_deref(), Some("surco://lista/a,b?nombre=Para%20el%20viaje%20%26%20m%C3%A1s"));
         assert_eq!(state.list_copied, Some(state.collection.playlists[0].id));
+    }
+
+    #[test]
+    fn a_list_of_another_app_comes_in_by_its_link_and_goes_out_as_text() {
+        let mut state = State::default();
+        let link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M";
+        click(&mut state, "import-open");
+        state.update(&UiAction::InputChanged { id: "import-link".into(), value: "viaje".into() });
+        assert!(click(&mut state, "import-go").is_empty() && state.import_unknown && state.importing.is_some(), "not a link of a list");
+        state.update(&UiAction::InputChanged { id: "import-link".into(), value: format!(" {link} ") });
+        let target = Target::Import(link.into());
+        assert_eq!(state.update(&UiAction::Submitted { id: "import-link".into(), value: String::new() }), vec![Command::Open(target.clone())]);
+        assert!(state.importing.is_none() && state.settings.import_dismissed, "the offer has done its work");
+
+        state.apply(Event::Opened { target: target.clone(), result: Ok(Content::List { name: "Viaje".into(), tracks: vec![track("a"), track("b")], missed: 3 }) });
+        let id = state.collection.playlists[0].id;
+        assert_eq!((state.page.clone(), state.imported), (Page::Playlist(id), Some((id, 3))));
+        click(&mut state, "playlist-export");
+        assert_eq!((state.copy.as_deref(), state.list_exported), (Some("artist - a\nartist - b"), Some(id)));
+
+        // Pasted where songs are searched for, it is brought in all the same; and it is
+        // kept even when its user has walked off meanwhile.
+        state.query = link.into();
+        assert_eq!(state.search(), vec![Command::Open(target.clone())]);
+        click(&mut state, "settings");
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Otra".into(), tracks: vec![track("c")], missed: 0 }) });
+        assert_eq!((state.collection.playlists.len(), state.page.clone(), state.imported), (2, Page::Settings, None));
     }
 
     #[test]

@@ -12,6 +12,7 @@
 
 mod backend;
 mod clip;
+mod import;
 mod library;
 mod media_keys;
 mod player;

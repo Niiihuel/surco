@@ -6,6 +6,7 @@ pub mod discover;
 pub mod lyrics;
 mod queue;
 mod track;
+pub mod transfer;
 
 pub use catalog::{Album, AlbumRef, Artist, ArtistRef, Found};
 pub use queue::{Queue, Repeat};

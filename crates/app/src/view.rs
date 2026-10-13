@@ -11,7 +11,7 @@ use limn::{
     TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
 
-use crate::backend::Release;
+use crate::backend::{Release, Target};
 use crate::clip::Showing;
 use crate::state::{
     clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
@@ -210,7 +210,8 @@ pub fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = playlist_dialog(state, shared, window.width, palette);
-    update_dialog(state, confirm_dialog(state, created, palette), palette)
+    let imported = import_dialog(state, created, window.width, palette);
+    update_dialog(state, confirm_dialog(state, imported, palette), palette)
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -253,6 +254,62 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .initial_focus("playlist-name")
         .return_focus("playlist-new")
         .render()
+}
+
+/// Bringing a list in from another app: its link there.
+fn import_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let Some(link) = &state.importing else { return window_tree };
+    let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
+    let about = if state.import_unknown {
+        "Ese enlace no es de una playlist de Spotify ni de YouTube Music."
+    } else {
+        "De Spotify (playlist o álbum, hasta 100 canciones) o de YouTube Music. Tiene que ser pública."
+    };
+    let cancel = Button::new("import-cancel", "Cancelar", palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let go = Button::new("import-go", "Importar", palette).size(ControlSize::Regular).render();
+    let out = Text::new("Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».", palette).role(TextRole::Caption).muted().render();
+    let mut fields: Vec<Element> = FormField::new("Enlace de la lista", field, palette).hint(about).sizing(DIALOG_FIELD).rows();
+    fields.push(out);
+    Modal::new(window_tree, true, "Importar de otras apps", "Queda como una playlist tuya, con las canciones que el catálogo tenga.", "import-cancel", palette)
+        .width(Modal::fit_width(width, 460.0).max(240.0))
+        .body(Element::column(fields).gap(8.0))
+        .footer(dialog_footer(cancel, go))
+        .initial_focus("import-link")
+        .render()
+}
+
+/// The picture on the library's offer to bring music in, drawn for it (`assets/import.svg`)
+/// and read once.
+fn import_picture() -> Option<limn::RasterImage> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    static PICTURE: std::sync::OnceLock<Option<limn::RasterImage>> = std::sync::OnceLock::new();
+    let read = || {
+        let bytes: &[u8] = include_bytes!("../assets/import.png");
+        let digest: String = sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
+        limn::RasterImage::new(digest, limn::RasterImageFormat::Png, bytes.len() as u32, encoded.into(), "Música de otras apps que llega a Surco")
+    };
+    PICTURE.get_or_init(read).clone()
+}
+
+/// The library's offer to bring music in from another app, until it is used or put away.
+fn import_card(width: f32, palette: ComponentPalette) -> Element {
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let away = Element::row(vec![Element::spacer().flex(1.0), on_picture("import-dismiss", Icon::Close, "No mostrar más", palette)]);
+    // As wide as the card's own room, at the proportions it was drawn at.
+    let across = width - 24.0;
+    let top = match import_picture() {
+        Some(picture) => {
+            let picture = Element::raster_image(picture.cover()).size(Some(across), Some(across * 130.0 / 460.0)).radius(limn::tokens().radius.control);
+            Element::stack(vec![picture, away.padding(6.0)])
+        }
+        None => away,
+    };
+    let title = Text::new("Traé tu música de otras apps", raised).render();
+    let about = Text::new("Tus playlists de Spotify y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
+    let go = Button::new("import-open", "Importar", raised).size(ControlSize::Compact).render();
+    Element::panel(Element::column(vec![top, title, about, Element::row(vec![go])]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
 }
 
 /// What cannot be undone asks before it is done.
@@ -631,7 +688,12 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     } else {
         ScrollArea::new("library", Element::column(shown).gap(2.0)).render().flex(1.0)
     };
-    Element::column(vec![Element::panel(header).padding(8.0), filters, tools, list]).gap(6.0).padding(8.0)
+    let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
+    if !state.settings.import_dismissed && wanted.is_empty() {
+        parts.push(import_card(width - 16.0, palette));
+    }
+    parts.push(list);
+    Element::column(parts).gap(6.0).padding(8.0)
 }
 
 /// The page the app opens on: what was opened lately, a click away, and what the user keeps.
@@ -1036,6 +1098,11 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, palette),
+        // Each of its songs is looked for in the catalog, which takes a while.
+        Page::Loading(Target::Import(_)) => Element::column(vec![
+            Element::panel(Text::new("Buscando las canciones en el catálogo. Podés seguir escuchando: la playlist aparece en tu biblioteca.", palette).muted().render()).padding(12.0),
+            loading("opening", palette),
+        ]),
         Page::Loading(_) => loading("opening", palette),
         Page::Failed(_, message) => centered(
             Empty::new("No se pudo abrir", message, palette)
@@ -1084,19 +1151,26 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     let own = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
     let copied = state.list_copied == Some(playlist.id);
     let share = own("playlist-share", if copied { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/share-2.svg")) }, if copied { "Enlace copiado" } else { "Compartir" });
+    let exported = state.list_exported == Some(playlist.id);
+    let export = own("playlist-export", if exported { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/upload.svg")) }, if exported { "Canciones copiadas: pegalas en la otra app" } else { "Copiar canciones para otra app" });
     let delete = own("playlist-delete", Icon::Trash, "Eliminar");
     let actions = if playlist.tracks.is_empty() {
         // Nothing to play, to share or to search yet.
         Element::row(vec![delete])
     } else {
-        page_actions(state, vec![share, delete], palette)
+        page_actions(state, vec![share, export, delete], palette)
+    };
+    // What a list brought in from another app left behind.
+    let missed = match state.imported {
+        Some((id, missed)) if id == playlist.id && missed > 0 => format!(" · {} no se {}", missed, if missed == 1 { "encontró" } else { "encontraron" }),
+        _ => String::new(),
     };
     let header = Element::row(vec![
         picture,
         Element::column(vec![
             Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
             Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
-            Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
+            Text::new(format!("{} · {length}{missed}", songs(playlist.tracks.len())), palette).muted().render(),
         ])
         .gap(10.0)
         .flex(1.0)
@@ -1180,6 +1254,12 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
             switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
             switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
         ]),
+        group(
+            "Biblioteca",
+            vec![
+                row("Importar música de otras apps", "Trae playlists de Spotify y YouTube Music con su enlace.").trailing(action("import-open", "Importar", true)).stacked(compact).render(),
+            ],
+        ),
         group(
             "Almacenamiento",
             vec![

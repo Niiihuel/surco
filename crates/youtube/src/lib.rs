@@ -6,7 +6,7 @@
 mod stream;
 
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
-use ytmapi_rs::parse::SearchResultVideo;
+use ytmapi_rs::parse::{SearchResultSong, SearchResultVideo};
 use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
 use ytmapi_rs::parse::{ParsedSongArtist, PlaylistItem};
@@ -71,20 +71,7 @@ impl YouTube {
             music.search_artists(SearchQuery::new_filtered(query, ArtistsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
             music.search_albums(SearchQuery::new_filtered(query, AlbumsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
         );
-        let tracks = songs?
-            .into_iter()
-            .map(|song| Track {
-                id: song.video_id.get_raw().to_owned(),
-                title: song.title,
-                artist: song.artist,
-                // Song results carry the artist as a name only.
-                artist_id: None,
-                album_id: song.album.as_ref().map(|album| album.id.get_raw().to_owned()),
-                album: song.album.map(|album| album.name),
-                artwork_url: artwork(song.thumbnails),
-                duration_ms: duration_ms(&song.duration),
-            })
-            .collect();
+        let tracks = songs?.into_iter().map(found_song).collect();
         let artists = artists
             .unwrap_or_default()
             .into_iter()
@@ -107,6 +94,18 @@ impl YouTube {
             })
             .collect();
         Ok(Found { artists, albums, tracks })
+    }
+
+    /// The songs alone for one query: a song another app names, looked for by that name.
+    pub async fn songs(&self, query: &str) -> Result<Vec<Track>> {
+        let songs = self.music().await?.search_songs(SearchQuery::new_filtered(query, SongsFilter).with_spelling_mode(SpellingMode::WithSuggestions)).await?;
+        Ok(songs.into_iter().map(found_song).collect())
+    }
+
+    /// One of the service's playlists by its id: its name, and what it lists in order.
+    pub async fn playlist_named(&self, id: &str) -> Result<(String, Vec<Track>)> {
+        let details = self.music().await?.get_playlist_details(PlaylistID::from_raw(id)).await?;
+        Ok((details.title, self.playlist(PlaylistID::from_raw(id)).await?))
     }
 
     /// The id of the artist a name most likely means, for a track that names its artist
@@ -245,6 +244,17 @@ impl YouTube {
                     artwork_url: artwork(song.thumbnails),
                     duration_ms: duration_ms(&song.duration),
                 }),
+                // A list its owner made may hold a video where the catalog has no song.
+                PlaylistItem::Video(video) if video.is_available => Some(Track {
+                    id: video.video_id.get_raw().to_owned(),
+                    title: video.title,
+                    artist: video.channel_name,
+                    artist_id: None,
+                    album: None,
+                    album_id: None,
+                    artwork_url: artwork(video.thumbnails),
+                    duration_ms: duration_ms(&video.duration),
+                }),
                 _ => None,
             })
             .collect())
@@ -292,6 +302,20 @@ impl YouTube {
     /// Playable audio for a video id. The URLs expire; resolve again rather than keep them.
     pub async fn stream(&self, video_id: &str) -> Result<Stream> {
         stream::resolve(&self.http, video_id).await
+    }
+}
+
+fn found_song(song: SearchResultSong) -> Track {
+    Track {
+        id: song.video_id.get_raw().to_owned(),
+        title: song.title,
+        artist: song.artist,
+        // Song results carry the artist as a name only.
+        artist_id: None,
+        album_id: song.album.as_ref().map(|album| album.id.get_raw().to_owned()),
+        album: song.album.map(|album| album.name),
+        artwork_url: artwork(song.thumbnails),
+        duration_ms: duration_ms(&song.duration),
     }
 }
 
