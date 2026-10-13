@@ -24,7 +24,7 @@ use tokio::sync::watch;
 
 use backend::{Command, Event};
 use player::PlayerView;
-use state::State;
+use state::{Side, State};
 
 struct Host {
     tree: UiTree,
@@ -107,11 +107,15 @@ impl Host {
 /// Its own id, and with it its own settings folder: the Electron app is "dnmusic".
 const APP_ID: &str = "dnmusic-native";
 const VOLUME_KEY: &str = "volume";
+const LEFT_KEY: &str = "left-width";
+const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
 
 impl eframe::App for Host {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(VOLUME_KEY, self.state.volume.to_string());
+        storage.set_string(LEFT_KEY, self.state.left_width.to_string());
+        storage.set_string(RIGHT_KEY, self.state.right_width.to_string());
         storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
     }
 
@@ -210,6 +214,9 @@ fn main() -> eframe::Result {
             if let Some(storage) = creation.storage {
                 let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());
                 state.volume = volume.filter(|volume| volume.is_finite()).map_or(state.volume, |volume| volume.clamp(0.0, 1.0));
+                let width = |key: &str, side: Side| storage.get_string(key).and_then(|width| width.parse::<f32>().ok()).map(|width| side.width(width));
+                state.left_width = width(LEFT_KEY, Side::Left).unwrap_or(state.left_width);
+                state.right_width = width(RIGHT_KEY, Side::Right).unwrap_or(state.right_width);
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
             }

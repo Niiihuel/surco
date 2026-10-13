@@ -22,6 +22,42 @@ pub enum Page {
     Downloads,
 }
 
+/// A side panel the user can resize.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Side {
+    Left,
+    Right,
+}
+
+pub struct Limits {
+    pub min: f32,
+    pub default: f32,
+    pub max: f32,
+}
+
+impl Side {
+    pub const fn limits(self) -> Limits {
+        match self {
+            Self::Left => Limits { min: 220.0, default: 280.0, max: 420.0 },
+            Self::Right => Limits { min: 280.0, default: 320.0, max: 460.0 },
+        }
+    }
+
+    /// The id of the handle that resizes it.
+    pub const fn handle(self) -> &'static str {
+        match self {
+            Self::Left => "resize:left",
+            Self::Right => "resize:right",
+        }
+    }
+
+    /// A width for this panel from anything a setting or a drag may hold.
+    pub fn width(self, wanted: f32) -> f32 {
+        let limits = self.limits();
+        if wanted.is_finite() { wanted.clamp(limits.min, limits.max) } else { limits.default }
+    }
+}
+
 /// How many of an artist's songs their page lists; playing one still queues them all.
 pub const ARTIST_SONGS_SHOWN: usize = 10;
 
@@ -40,7 +76,14 @@ pub struct State {
     /// Where the seek thumb is while it is being dragged.
     pub seek_preview: Option<f32>,
     pub volume: f32,
+    /// Whether the right panel shows, and whether it shows the queue instead of what plays.
+    pub panel_open: bool,
     pub queue_open: bool,
+    /// The widths the user gave the side panels.
+    pub left_width: f32,
+    pub right_width: f32,
+    /// The handle being dragged: which one, where the pointer took it and the width it had.
+    resizing: Option<(Side, f32, f32)>,
     /// The row whose menu of actions is open.
     pub menu: Option<String>,
     pub equalizer_open: bool,
@@ -65,6 +108,21 @@ fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item 
 
 fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
     tracks.iter().map(|track| &track.artwork_url)
+}
+
+/// A cover's address at the size a large picture needs. The catalog's addresses end in the size
+/// they were listed at (`=w120-h120-…`); any other address is returned as it is.
+pub fn large_cover(url: &str) -> String {
+    const SIDE: &str = "544";
+    let digits = |text: &str| text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
+    let Some(start) = url.rfind("=w") else { return url.to_owned() };
+    let width = digits(&url[start + 2..]);
+    let rest = &url[start + 2 + width..];
+    let height = rest.strip_prefix("-h").map(digits).unwrap_or(0);
+    if width == 0 || height == 0 {
+        return url.to_owned();
+    }
+    format!("{}=w{SIDE}-h{SIDE}{}", &url[..start], &rest[2 + height..])
 }
 
 /// Where a track's artist lives: by link when the catalog gave one, by name otherwise.
@@ -100,7 +158,11 @@ impl Default for State {
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
+            panel_open: true,
             queue_open: false,
+            left_width: Side::Left.limits().default,
+            right_width: Side::Right.limits().default,
+            resizing: None,
             menu: None,
             equalizer_open: false,
             equalizer: EqualizerValues::FLAT,
@@ -262,6 +324,33 @@ impl State {
                 }
                 vec![Command::Equalizer(self.equalizer)]
             }
+            UiAction::DragStarted { id, position } => {
+                self.resizing = [Side::Left, Side::Right].into_iter().find(|side| side.handle() == id).map(|side| {
+                    (side, position.x, if side == Side::Left { self.left_width } else { self.right_width })
+                });
+                Vec::new()
+            }
+            UiAction::DragMoved { position, .. } => {
+                // The left panel grows as its handle goes right; the right one as its handle goes left.
+                match self.resizing {
+                    Some((Side::Left, from, width)) => self.left_width = Side::Left.width(width + position.x - from),
+                    Some((Side::Right, from, width)) => self.right_width = Side::Right.width(width - (position.x - from)),
+                    None => {}
+                }
+                Vec::new()
+            }
+            UiAction::Dropped { .. } => {
+                self.resizing = None;
+                Vec::new()
+            }
+            UiAction::DragCancelled { .. } => {
+                match self.resizing.take() {
+                    Some((Side::Left, _, width)) => self.left_width = width,
+                    Some((Side::Right, _, width)) => self.right_width = width,
+                    None => {}
+                }
+                Vec::new()
+            }
             UiAction::Clicked { id } => self.click(id),
             _ => Vec::new(),
         }
@@ -315,9 +404,26 @@ impl State {
                 // The player keeps shuffle on across lists, so it is only switched on.
                 (!self.player.shuffle).then_some(Command::Shuffle).into_iter().chain([start]).collect()
             }
+            // Each button shows its face of the right panel, and closes the panel from that face.
             "queue" => {
                 self.queue_open = !self.queue_open;
+                self.panel_open = self.queue_open;
                 self.upcoming_covers()
+            }
+            "now-playing-view" => {
+                self.panel_open = !self.panel_open || self.queue_open;
+                self.queue_open = false;
+                Vec::new()
+            }
+            "home" => {
+                self.page = Page::Search;
+                self.history.clear();
+                self.query.clear();
+                self.submitted = None;
+                self.searching = false;
+                self.search_error = None;
+                self.found = Found::default();
+                Vec::new()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -400,7 +506,9 @@ impl State {
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
         self.player = player;
-        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url));
+        // The playing track's cover is also shown large, in the right panel.
+        let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
+        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]));
         commands.extend(self.upcoming_covers());
         commands
     }
@@ -611,12 +719,82 @@ mod tests {
     }
 
     #[test]
+    fn dragging_a_handle_resizes_its_panel_within_limits_and_escape_puts_it_back() {
+        let mut state = State::default();
+        let at = |x: f32| limn::Point::new(x, 100.0);
+        let started = |id: &str, x| UiAction::DragStarted { id: id.into(), position: at(x) };
+        let moved = |id: &str, x| UiAction::DragMoved { id: id.into(), position: at(x), over: None };
+        let dropped = |id: &str, x| UiAction::Dropped { id: id.into(), position: at(x), target: None };
+
+        state.update(&started("resize:left", 290.0));
+        state.update(&moved("resize:left", 340.0));
+        assert_eq!(state.left_width, 330.0, "50 to the right is 50 wider");
+        state.update(&moved("resize:left", 2000.0));
+        assert_eq!(state.left_width, Side::Left.limits().max);
+        state.update(&dropped("resize:left", 2000.0));
+        state.update(&moved("resize:left", 0.0));
+        assert_eq!(state.left_width, Side::Left.limits().max, "nothing is held any more");
+
+        state.update(&started("resize:right", 900.0));
+        state.update(&moved("resize:right", 860.0));
+        assert_eq!(state.right_width, 360.0, "the right panel grows towards the left");
+        state.update(&UiAction::DragCancelled { id: "resize:right".into() });
+        assert_eq!(state.right_width, 320.0);
+
+        state.update(&started("some-row", 10.0));
+        state.update(&moved("some-row", 500.0));
+        assert_eq!((state.left_width, state.right_width), (Side::Left.limits().max, 320.0), "other drags resize nothing");
+        assert_eq!(Side::Left.width(f32::NAN), 280.0);
+    }
+
+    #[test]
+    fn the_right_panel_has_two_faces_and_each_button_closes_its_own() {
+        let mut state = State::default();
+        assert!(state.panel_open && !state.queue_open, "what plays shows at first");
+        click(&mut state, "queue");
+        assert!(state.panel_open && state.queue_open);
+        click(&mut state, "now-playing-view");
+        assert!(state.panel_open && !state.queue_open, "from the queue to what plays");
+        click(&mut state, "now-playing-view");
+        assert!(!state.panel_open);
+        click(&mut state, "queue");
+        assert!(state.panel_open && state.queue_open);
+        click(&mut state, "queue");
+        assert!(!state.panel_open && !state.queue_open);
+    }
+
+    #[test]
+    fn home_clears_the_search() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a"]) });
+        click(&mut state, "downloads");
+        click(&mut state, "home");
+        assert!(state.page == Page::Search && state.submitted.is_none() && state.found.tracks.is_empty() && state.query.is_empty());
+        assert!(!state.can_go_back());
+    }
+
+    #[test]
     fn shuffling_a_page_turns_shuffle_on_once() {
         let mut state = State { page: Page::Album(album("lp", None)), ..State::default() };
         let commands = click(&mut state, "page-shuffle");
         assert!(matches!(commands.as_slice(), [Command::Shuffle, Command::PlayList { tracks, .. }] if tracks.len() == 2));
         state.show(PlayerView { shuffle: true, ..PlayerView::default() });
         assert!(matches!(click(&mut state, "page-shuffle").as_slice(), [Command::PlayList { .. }]));
+    }
+
+    #[test]
+    fn a_cover_is_asked_for_large_where_its_address_names_a_size() {
+        assert_eq!(large_cover("https://lh3.example/abc=w120-h120-l90-rj"), "https://lh3.example/abc=w544-h544-l90-rj");
+        assert_eq!(large_cover("https://lh3.example/abc=w60-h60"), "https://lh3.example/abc=w544-h544");
+        for other in ["https://i.ytimg.com/vi/x/hqdefault.jpg", "https://img/a", "https://x/=w-h1", "https://x/=w12", ""] {
+            assert_eq!(large_cover(other), other);
+        }
+        let mut state = State::default();
+        let mut track = track("a");
+        track.artwork_url = Some("https://lh3.example/a=w120-h120-rj".into());
+        let asked = state.show(PlayerView { current: Some(track), ..PlayerView::default() });
+        assert_eq!(asked.len(), 2, "the row's size and the panel's: {asked:?}");
     }
 
     #[test]
