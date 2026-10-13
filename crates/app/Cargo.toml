@@ -13,3 +13,9 @@ eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "de
 # Saves the frame for `--screenshot`.
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 fastrand = "2"
+dnm-audio = { path = "../audio" }
+dnm-youtube = { path = "../youtube" }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+# A cover reaches limn as base64 with its digest.
+sha2 = "0.10"
+base64 = "0.22"

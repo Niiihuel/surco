@@ -14,3 +14,7 @@ debug = "line-tables-only"
 [profile.dev.package."*"]
 opt-level = 2
 debug = false
+
+# The equaliser and the Opus decoder run per sample on the mixing thread.
+[profile.dev.package.dnm-audio]
+opt-level = 2

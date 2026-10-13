@@ -9,11 +9,12 @@ mod state;
 mod view;
 
 use std::path::PathBuf;
-use std::sync::mpsc::{Receiver, Sender};
+use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use limn::{Element, Size, UiAction, UiTree};
+use tokio::sync::mpsc::UnboundedSender;
 
 use backend::{Command, Event};
 use state::State;
@@ -21,7 +22,7 @@ use state::State;
 struct Host {
     tree: UiTree,
     state: State,
-    commands: Sender<Command>,
+    commands: UnboundedSender<Command>,
     events: Receiver<Event>,
     started: bool,
     opened: Instant,
@@ -90,6 +91,8 @@ impl eframe::App for Host {
         if !self.started {
             self.started = true;
             limn_egui::attach_fonts(&mut self.tree, &ctx);
+            // The engine starts at full volume; the window owns the setting.
+            self.send(vec![Command::Volume(self.state.volume)]);
         }
         limn_egui::normalize_keyboard_input(&ctx);
         self.tree.set_reduced_motion(self.script.screenshot.is_some());

@@ -1,0 +1,19 @@
+[package]
+name = "dnm-audio"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Audio engine for dnmusic: decode, two-deck output with gapless and crossfade, equaliser. No UI, no networking."
+
+[dependencies]
+rodio = { version = "0.22.2", default-features = false, features = ["playback", "symphonia-all"] }
+# Demuxing only, and pinned to the version rodio already pulls so the binary carries one copy
+# of the Matroska/Ogg readers rather than two.
+symphonia = { version = "0.5", default-features = false, features = ["mkv", "ogg"] }
+# libopus, built from source via cmake and linked statically. symphonia has no Opus decoder at
+# all. Not zuno's 0.3.1: its bundled libopus is refused by CMake 4 and then not found at link.
+opus = "0.4.0"
+
+# Only parses `pactl -f json`, which is how PipeWire sinks are listed and selected.
+[target.'cfg(target_os = "linux")'.dependencies]
+serde_json = "1"
