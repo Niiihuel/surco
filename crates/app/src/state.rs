@@ -18,6 +18,8 @@ pub enum Page {
     Failed(Target, String),
     Artist(Artist),
     Album(Album),
+    /// What is kept on disk to listen to without a network.
+    Downloads,
 }
 
 /// How many of an artist's songs their page lists; playing one still queues them all.
@@ -46,6 +48,11 @@ pub struct State {
     pub artwork: HashMap<String, RasterImage>,
     /// Covers already asked for, arrived or not.
     covers: HashSet<String>,
+    /// The tracks kept on disk, newest first, and the ids on their way there.
+    pub saved: Vec<Track>,
+    pub saving: HashSet<String>,
+    /// Why the last track asked for could not be kept.
+    pub save_error: Option<String>,
 }
 
 /// One request per cover, however many rows show it and however often it comes up.
@@ -99,6 +106,9 @@ impl Default for State {
             equalizer: EqualizerValues::FLAT,
             artwork: HashMap::new(),
             covers: HashSet::new(),
+            saved: Vec::new(),
+            saving: HashSet::new(),
+            save_error: None,
         }
     }
 }
@@ -133,12 +143,20 @@ impl State {
         !self.history.is_empty()
     }
 
-    /// Leaves the current page for `target`. A page that never loaded is not one to return to.
-    fn open(&mut self, target: Target) -> Vec<Command> {
-        let leaving = std::mem::replace(&mut self.page, Page::Loading(target.clone()));
+    pub fn is_saved(&self, track_id: &str) -> bool {
+        self.saved.iter().any(|track| track.id == track_id)
+    }
+
+    /// Leaves the current page for another. A page that never loaded is not one to return to.
+    fn go(&mut self, page: Page) {
+        let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
         }
+    }
+
+    fn open(&mut self, target: Target) -> Vec<Command> {
+        self.go(Page::Loading(target.clone()));
         vec![Command::Open(target)]
     }
 
@@ -182,6 +200,11 @@ impl State {
         match action {
             "queue" => vec![Command::Enqueue(track)],
             "next" => vec![Command::PlayNext(track)],
+            "save" => {
+                self.save_error = None;
+                vec![Command::Save(track)]
+            }
+            "unsave" => vec![Command::Unsave(track.id)],
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
             _ => Vec::new(),
@@ -193,6 +216,7 @@ impl State {
         match &self.page {
             Page::Artist(artist) => &artist.songs,
             Page::Album(album) => &album.tracks,
+            Page::Downloads => &self.saved,
             _ => &[],
         }
     }
@@ -269,6 +293,12 @@ impl State {
             return self.open(target);
         }
         match id {
+            "downloads" => {
+                if self.page != Page::Downloads {
+                    self.go(Page::Downloads);
+                }
+                cover_requests(&mut self.covers, covers_of(&self.saved))
+            }
             "back" => {
                 if let Some(page) = self.history.pop() {
                     self.page = page;
@@ -348,6 +378,15 @@ impl State {
             Event::SearchFailed { query, message } if self.submitted.as_deref() == Some(&query) => {
                 self.searching = false;
                 self.search_error = Some(message);
+                Vec::new()
+            }
+            Event::Library { saved, saving } => {
+                self.saved = saved;
+                self.saving = saving;
+                if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
+            }
+            Event::SaveFailed { title, message } => {
+                self.save_error = Some(format!("{title}: {message}"));
                 Vec::new()
             }
             Event::Artwork { url, image } => {
@@ -547,6 +586,28 @@ mod tests {
         click(&mut state, "back");
         assert_eq!(click(&mut state, "do:artist:track:0"), vec![Command::Open(Target::ArtistNamed("artist".into()))]);
         assert!(click(&mut state, "do:queue:track:9").is_empty());
+    }
+
+    #[test]
+    fn saved_tracks_have_a_page_that_plays_them_and_a_menu_that_drops_them() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
+        assert_eq!(click(&mut state, "do:save:track:1"), vec![Command::Save(track("b"))]);
+        state.apply(Event::Library { saved: Vec::new(), saving: HashSet::from(["b".to_owned()]) });
+        assert!(state.saving.contains("b") && !state.is_saved("b"));
+        state.apply(Event::SaveFailed { title: "b".into(), message: "sin red".into() });
+        assert_eq!(state.save_error.as_deref(), Some("b: sin red"));
+
+        state.apply(Event::Library { saved: vec![track("b"), track("a")], saving: HashSet::new() });
+        assert!(state.is_saved("b"));
+        assert!(click(&mut state, "downloads").is_empty(), "both covers were asked for with the search");
+        assert_eq!(state.page, Page::Downloads);
+        click(&mut state, "downloads");
+        assert_eq!(click(&mut state, "page-track:1"), vec![Command::PlayList { tracks: vec![track("b"), track("a")], index: 1 }]);
+        assert_eq!(click(&mut state, "do:unsave:page-track:0"), vec![Command::Unsave("b".into())]);
+        click(&mut state, "back");
+        assert!(state.page == Page::Search && !state.can_go_back(), "opening the page twice is one step back");
     }
 
     #[test]

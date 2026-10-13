@@ -18,4 +18,7 @@ dnm-youtube = { path = "../youtube" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"
+# The index of what is kept for offline listening.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 base64 = "0.22"

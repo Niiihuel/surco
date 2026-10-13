@@ -1,5 +1,5 @@
 /// One playable item as the catalog describes it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Track {
     /// The catalog's stable id for the recording; also the identity used by the queue.
     pub id: String,

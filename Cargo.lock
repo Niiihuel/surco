@@ -820,6 +820,7 @@ name = "dnm-core"
 version = "0.1.0"
 dependencies = [
  "fastrand",
+ "serde",
 ]
 
 [[package]]
@@ -846,6 +847,8 @@ dependencies = [
  "image",
  "limn",
  "limn-egui",
+ "serde",
+ "serde_json",
  "sha2",
  "tokio",
 ]

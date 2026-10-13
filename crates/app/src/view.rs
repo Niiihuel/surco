@@ -3,7 +3,7 @@
 use dnm_audio::equalizer::BAND_HZ;
 use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
+    Alert, Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
     ControlSize, DropdownMenu, DropdownMenuEntry, DropdownMenuItem, Element, Empty, FontFamily, Icon, IconButton, Link,
     ListRow, MediaTile, Popover, PopoverPlacement, RadiusRole, RowSizing, ScrollArea, SearchField, Size, Slider,
     Spinner, Text, TextRole, Theme,
@@ -32,6 +32,9 @@ const COVER: f32 = 40.0;
 const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
 const MENU_WIDTH: f32 = 272.0;
+const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
+/// A destination in the sidebar.
+const NAV_ROW: RowSizing = RowSizing { height: Some(36.0), padding: 8.0, gap: 12.0, title_size: 14.0, ..RowSizing::COMPACT };
 /// dnmusic's track row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
 const TRACK_ROW: RowSizing = RowSizing {
     height: Some(60.0),
@@ -72,6 +75,14 @@ fn sidebar(state: &State, palette: ComponentPalette) -> Element {
             SearchField::new("search", &state.query, "Buscar canciones y artistas", palette)
                 .width(SIDEBAR_WIDTH - 24.0)
                 .render(),
+            {
+                // The page being shown stands out from the sidebar by its fill.
+                let here = state.page == Page::Downloads;
+                let palette = if here { ComponentPalette { surface: palette.selected, ..palette } } else { palette };
+                let row = ListRow::new("downloads", "Descargas", palette).icon(Icon::Custom(DOWNLOAD)).sizing(NAV_ROW);
+                let row = if state.saved.is_empty() { row } else { row.meta(state.saved.len().to_string()) };
+                if here { row.filled() } else { row }.render()
+            },
         ])
         .gap(16.0),
     )
@@ -134,7 +145,7 @@ struct Action {
 }
 
 /// What a row's menu offers for its track. `None` is a divider.
-fn track_actions(row: &str, track: &Track) -> Vec<Option<Action>> {
+fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>> {
     let item = |action: &str, label, icon, detail| Some(Action { id: format!("do:{action}:{row}"), label, icon: Icon::Custom(icon), detail });
     let mut actions = vec![
         item("queue", "Agregar a la cola", include_str!("../assets/icons/list-plus.svg"), None),
@@ -145,6 +156,12 @@ fn track_actions(row: &str, track: &Track) -> Vec<Option<Action>> {
         actions.push(item("album", "Ir al álbum", include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
     }
     actions.push(item("artist", "Ir al artista", include_str!("../assets/icons/user-round.svg"), Some(track.artist.clone())));
+    actions.push(None);
+    actions.push(if state.is_saved(&track.id) {
+        item("unsave", "Quitar descarga", include_str!("../assets/icons/trash-2.svg"), None)
+    } else {
+        item("save", "Descargar para escuchar sin conexión", DOWNLOAD, None)
+    });
     actions
 }
 
@@ -168,7 +185,7 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     let sizing = RowSizing { leading_width: if number.is_some() { NUMBER_WIDTH + TRACK_ROW.gap + COVER } else { COVER }, ..TRACK_ROW };
 
     let open = state.menu.as_deref() == Some(row.as_str());
-    let actions = track_actions(&row, track);
+    let actions = track_actions(state, &row, track);
     let entries = actions.iter().map(|action| match action {
         Some(action) => {
             let item = DropdownMenuItem::new(&action.id, action.label).icon(action.icon);
@@ -196,12 +213,21 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         .subtitle(subtitle)
         .title_fade(true)
         .radius(RadiusRole::Card);
+    // After the copy: that it plays, that it is kept on disk or on its way there, how long it lasts.
+    let mut facts = Vec::new();
     if current && number.is_none() {
-        list_row = list_row.trailing(middle(Element::icon(Icon::Audio).foreground(palette.text)));
+        facts.push(Element::icon(Icon::Audio).foreground(palette.text).size(Some(16.0), Some(16.0)).centered_y());
+    }
+    if state.saving.contains(&track.id) {
+        facts.push(Spinner::new(format!("saving:{row}"), palette.muted).size(12.0).render().centered_y());
+    } else if state.is_saved(&track.id) {
+        facts.push(Element::icon(Icon::Custom(DOWNLOAD)).foreground(palette.muted).size(Some(14.0), Some(14.0)).centered_y());
     }
     if track.duration_ms > 0 {
-        let duration = muted(clock(track.duration_ms as f64 / 1000.0)).centered_x().size(Some(DURATION_WIDTH), None);
-        list_row = list_row.trailing(middle(duration));
+        facts.push(muted(clock(track.duration_ms as f64 / 1000.0)).centered_x().size(Some(DURATION_WIDTH), None).centered_y());
+    }
+    if !facts.is_empty() {
+        list_row = list_row.trailing(middle(Element::row(facts).gap(8.0)));
     }
     // The dots show while the pointer is on the row, or while their menu is open.
     let dots = Element::row(vec![menu]).reveal_on_hover(format!("dots:{row}"));
@@ -226,6 +252,7 @@ fn pane(state: &State, palette: ComponentPalette) -> Element {
         ),
         Page::Artist(artist) => artist_page(state, artist, palette),
         Page::Album(album) => album_page(state, album, palette),
+        Page::Downloads => downloads_page(state, palette),
     };
     let back = IconButton::new("back", Icon::ArrowLeft, palette).variant(ButtonVariant::Ghost).tooltip("Volver").enabled(state.can_go_back());
     Element::column(vec![Element::row(vec![back.render()]).padding(12.0), page]).flex(1.0)
@@ -236,7 +263,10 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
         return centered(Spinner::new("searching", palette.muted).size(24.0).render());
     }
     if let Some(error) = &state.search_error {
-        return centered(Empty::new("No se pudo buscar", error, palette).icon(Icon::WarningTriangle).render());
+        // Without a network there is still what was kept for it.
+        let empty = Empty::new("No se pudo buscar", error, palette).icon(Icon::WarningTriangle);
+        let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", "Ver descargas", ButtonVariant::Secondary) };
+        return centered(empty.render());
     }
     if state.submitted.is_none() {
         return centered(
@@ -301,6 +331,35 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
         sections.extend([heading("Sencillos y EP", palette), shelf("artist-singles", tiles)]);
     }
     ScrollArea::new("artist", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
+}
+
+fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
+    let failure = state.save_error.as_ref().map(|error| Alert::new("No se pudo descargar", error, palette).render());
+    if state.saved.is_empty() && state.saving.is_empty() {
+        let empty = Empty::new("Nada descargado", "Lo que descargues desde el menú de una canción queda acá, para escucharlo sin conexión.", palette)
+            .icon(Icon::Custom(DOWNLOAD))
+            .render();
+        return Element::column(failure.into_iter().chain([centered(empty)]).collect()).padding(12.0).flex(1.0);
+    }
+    let count = match (state.saved.len(), state.saving.len()) {
+        (1, 0) => "1 canción en este equipo".to_owned(),
+        (saved, 0) => format!("{saved} canciones en este equipo"),
+        (saved, saving) => format!("{saved} en este equipo, {saving} descargando"),
+    };
+    let mut sections = vec![Element::column(vec![
+        Text::new("Descargas", palette).size(PAGE_TITLE).render(),
+        Text::new(count, palette).muted().render(),
+        play_buttons(palette),
+    ])
+    .gap(10.0)];
+    sections.extend(failure);
+    let rows = state
+        .saved
+        .iter()
+        .enumerate()
+        .map(|(index, track)| track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette));
+    sections.push(Element::column(rows.collect()).gap(2.0));
+    ScrollArea::new("downloads", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
 fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Element {
@@ -547,6 +606,7 @@ mod tests {
                 assert!(found.iter().any(|id| id == "search"), "the search field is always there at {width}");
                 assert!(found.iter().any(|id| id == "volume"));
                 assert!(found.iter().any(|id| id == "queue") && found.iter().any(|id| id == "equalizer"));
+                assert!(found.iter().any(|id| id == "downloads"), "the way to what is kept on disk");
                 assert!(!found.iter().any(|id| id == "seek"), "nothing to seek without a track");
             }
         }
@@ -606,7 +666,7 @@ mod tests {
         };
         has(&state, &["artist:0", "album:0", "track:0", "more:track:0"]);
         state.update(&limn::UiAction::Clicked { id: "more:track:0".into() });
-        has(&state, &["do:queue:track:0", "do:next:track:0", "do:artist:track:0"]);
+        has(&state, &["do:queue:track:0", "do:next:track:0", "do:artist:track:0", "do:save:track:0"]);
         state.update(&limn::UiAction::Clicked { id: "menu-close".into() });
 
         state.update(&limn::UiAction::Clicked { id: "artist:0".into() });

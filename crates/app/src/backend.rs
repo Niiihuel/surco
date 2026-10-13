@@ -1,6 +1,8 @@
 //! The contract between the window and everything that takes time: the catalog, the network,
 //! the player and the audio engine live on the other side of these two channels.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
@@ -18,6 +20,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::library::Library;
 use crate::player::{Effect, Player, PlayerView};
 
 /// A page of the catalog.
@@ -60,6 +63,9 @@ pub enum Command {
     /// Steps repeat: off, the list, the track.
     Repeat,
     Equalizer(EqualizerValues),
+    /// Keep a track on disk to play it without a network, or stop keeping it.
+    Save(Track),
+    Unsave(String),
 }
 
 /// What comes back. Every answer names what it answers, because answers arrive late and out of
@@ -69,6 +75,9 @@ pub enum Event {
     SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
+    /// What is kept on disk, newest first, and the ids on their way there.
+    Library { saved: Vec<Track>, saving: HashSet<String> },
+    SaveFailed { title: String, message: String },
     Artwork { url: String, image: RasterImage },
 }
 
@@ -114,11 +123,20 @@ struct Shared {
     decks: tokio::sync::Mutex<()>,
     /// The way back into the player.
     inputs: UnboundedSender<Input>,
+    library: Mutex<Library>,
+    saving: Mutex<HashSet<String>>,
 }
 
 impl Shared {
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) == generation
+    }
+
+    /// Tells the window what the library holds now.
+    fn announce(&self) {
+        let saved = self.library.lock().unwrap().tracks();
+        let saving = self.saving.lock().unwrap().clone();
+        (self.reply)(Event::Library { saved, saving });
     }
 }
 
@@ -127,7 +145,7 @@ impl Shared {
 ///
 /// The player is a value to read, not a stream of events: a hidden window stops repainting,
 /// and positions would pile up for as long as it stays hidden.
-pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, watch::Receiver<PlayerView>) {
+pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>, Receiver<Event>, watch::Receiver<PlayerView>) {
     let (commands, mut inbox) = unbounded_channel::<Command>();
     let (outbox, events) = channel::<Event>();
     let (views, player_view) = watch::channel(PlayerView::default());
@@ -143,7 +161,10 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, 
             let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("a tokio runtime");
             runtime.block_on(async move {
                 let (inputs, mut inbox_own) = unbounded_channel();
-                let shared = start(reply.clone(), inputs.clone()).await.map(Arc::new);
+                let shared = start(reply.clone(), inputs.clone(), library).map(Arc::new);
+                if let Ok(shared) = &shared {
+                    shared.announce();
+                }
                 let mut player = Player::default();
                 loop {
                     let effects = tokio::select! {
@@ -186,10 +207,7 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, 
     (commands, events, player_view)
 }
 
-async fn start(
-    reply: impl Fn(Event) + Send + Sync + 'static,
-    inputs: UnboundedSender<Input>,
-) -> Result<Shared, String> {
+fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<Input>, library: PathBuf) -> Result<Shared, String> {
     let youtube = YouTube::new().map_err(|error| error.to_string())?;
     let events = inputs.clone();
     let audio = NativeAudio::start(None, move |event| drop(events.send(Input::Engine(event))))
@@ -202,6 +220,8 @@ async fn start(
         downloads: Mutex::default(),
         decks: tokio::sync::Mutex::default(),
         inputs,
+        library: Mutex::new(Library::open(library)),
+        saving: Mutex::default(),
     })
 }
 
@@ -242,6 +262,28 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
         (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
+        (Command::Save(track), Ok(shared)) => {
+            let known = shared.library.lock().unwrap().audio(&track.id).is_some();
+            if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
+                return Vec::new();
+            }
+            shared.announce();
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let result = save(&shared, &track).await;
+                shared.saving.lock().unwrap().remove(&track.id);
+                shared.announce();
+                if let Err(message) = result {
+                    (shared.reply)(Event::SaveFailed { title: track.title, message });
+                }
+            });
+        }
+        (Command::Unsave(id), Ok(shared)) => {
+            // An index that cannot be rewritten still lists the track; the window shows what is true.
+            let _ = shared.library.lock().unwrap().remove(&id);
+            shared.announce();
+        }
+        (Command::Save(_) | Command::Unsave(_), Err(_)) => {}
         (command, _) => return player.command(command),
     }
     Vec::new()
@@ -363,10 +405,54 @@ async fn preload(shared: &Arc<Shared>, track: &Track) {
     let _ = blocking(move || engine.audio.load(load)).await;
 }
 
-/// Resolves the track and starts downloading it into the buffer the returned load reads from.
-async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Load, Download), String> {
+const NO_AUDIO: &str = "YouTube no ofreció audio para este tema.";
+
+/// Downloads a track whole and keeps it, with its cover, in the library.
+async fn save(shared: &Arc<Shared>, track: &Track) -> Result<(), String> {
     let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
-    let best = stream.best().ok_or("YouTube no ofreció audio para este tema.")?.clone();
+    let best = stream.best().ok_or(NO_AUDIO)?.clone();
+    let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
+    download(shared.clone(), best.clone(), buffer.clone()).await;
+    let audio = buffer.bytes().ok_or("La descarga se cortó antes de terminar.")?;
+    let cover = match &track.artwork_url {
+        Some(url) => cover_bytes(shared, url).await,
+        None => None,
+    };
+    let (shared, track) = (shared.clone(), track.clone());
+    blocking(move || {
+        let mut library = shared.library.lock().unwrap();
+        library.add(track, best.mime, &audio, cover.as_deref()).map_err(|error| format!("No se pudo guardar en el disco: {error}"))
+    })
+    .await
+}
+
+/// A saved track as a load that needs no network.
+async fn saved(shared: &Arc<Shared>, track: &Track, standby: bool) -> Option<(Load, Download)> {
+    let (path, mime_type) = shared.library.lock().unwrap().audio(&track.id)?;
+    // A file that went missing is not an error: the track is fetched like any other.
+    let bytes = blocking(move || std::fs::read(path).map_err(|error| error.to_string())).await.ok()?;
+    let buffer = MediaBuffer::new(Some(bytes.len()));
+    buffer.append(&bytes);
+    buffer.complete();
+    let load = Load {
+        track_id: track.id.clone(),
+        buffer: buffer.clone(),
+        mime_type,
+        duration_sec: (track.duration_ms > 0).then_some(track.duration_ms as f64 / 1000.0),
+        start_sec: None,
+        standby,
+    };
+    Some((load, Download { track_id: track.id.clone(), task: tokio::spawn(async {}), buffer }))
+}
+
+/// Resolves the track and starts downloading it into the buffer the returned load reads from,
+/// unless the library already holds it.
+async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Load, Download), String> {
+    if let Some(ready) = saved(shared, track, standby).await {
+        return Ok(ready);
+    }
+    let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
+    let best = stream.best().ok_or(NO_AUDIO)?.clone();
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     let load = Load {
         track_id: track.id.clone(),
@@ -402,8 +488,17 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
     buffer.fail();
 }
 
+/// A cover from the library when it is there, from the network otherwise.
+async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
+    let kept = shared.library.lock().unwrap().cover(url);
+    match kept {
+        Some(bytes) => Some(bytes),
+        None => Some(shared.youtube.http().get(url).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec()),
+    }
+}
+
 async fn artwork(shared: &Shared, url: &str) -> Option<RasterImage> {
-    let bytes = shared.youtube.http().get(url).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
+    let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
         [0xFF, 0xD8, ..] => RasterImageFormat::Jpeg,
         [0x89, b'P', b'N', b'G', ..] => RasterImageFormat::Png,

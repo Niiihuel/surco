@@ -6,4 +6,6 @@ rust-version.workspace = true
 description = "Player state for dnmusic: tracks and the playback queue. No UI, no I/O."
 
 [dependencies]
+# Tracks are written to disk with what is kept for offline listening.
+serde = { version = "1", features = ["derive"] }
 fastrand = "2"

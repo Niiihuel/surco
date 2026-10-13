@@ -8,6 +8,7 @@
 //! the window after `--after <ms>` and exits.
 
 mod backend;
+mod library;
 mod player;
 mod state;
 mod view;
@@ -103,6 +104,8 @@ impl Host {
     }
 }
 
+/// Its own id, and with it its own settings folder: the Electron app is "dnmusic".
+const APP_ID: &str = "dnmusic-native";
 const VOLUME_KEY: &str = "volume";
 const EQUALIZER_KEY: &str = "equalizer";
 
@@ -195,13 +198,14 @@ fn main() -> eframe::Result {
             .with_min_inner_size([720.0, 480.0]),
         ..Default::default()
     };
-    // Its own id, and with it its own settings folder: the Electron app is "dnmusic".
     eframe::run_native(
-        "dnmusic-native",
+        APP_ID,
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
-            let (commands, events, player) = backend::spawn(creation.egui_ctx.clone());
+            // Beside the settings; without a place of its own the library lasts the session.
+            let data = eframe::storage_dir(APP_ID).unwrap_or_else(std::env::temp_dir).join("offline");
+            let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
             let mut state = State::default();
             if let Some(storage) = creation.storage {
                 let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());

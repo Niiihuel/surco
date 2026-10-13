@@ -52,6 +52,13 @@ impl MediaBuffer {
         self.lock().failed = true;
     }
 
+    /// The whole body, once it has all arrived: what a caller keeps to play again without
+    /// downloading it.
+    pub fn bytes(&self) -> Option<Vec<u8>> {
+        let inner = self.lock();
+        (!inner.failed && inner.total == Some(inner.bytes.len())).then(|| inner.bytes.clone())
+    }
+
     pub fn is_failed(&self) -> bool {
         self.lock().failed
     }
