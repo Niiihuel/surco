@@ -973,7 +973,16 @@ fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Eleme
     let copy = Element::column(vec![Text::new(title, palette).size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
     // A panel is shut from its own header.
     let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new("Ocultar este panel"), palette).render();
-    Element::row(vec![copy.flex(1.0), shut])
+    inset(Element::row(vec![copy.flex(1.0), shut]))
+}
+
+/// The right panel's own margin. Its lists do without it: they run to the panel's edge, so
+/// their scrollbar sits where the middle panel's does, and set their rows in themselves.
+const PANEL_PAD: f32 = 16.0;
+
+fn inset(part: Element) -> Element {
+    let gutter = || Element::spacer().size(Some(PANEL_PAD), None);
+    Element::row(vec![gutter(), part.flex(1.0), gutter()])
 }
 
 /// The right-hand column: what plays, or what comes after it while the queue is open.
@@ -986,13 +995,14 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
         match state.current() {
             Some(track) => {
                 let side = state.right_width - 32.0;
-                let link = |id: &str, action: &str, text: Element| Element::clickable(id, text).dispatch_as(action);
+                let link = |id: &str, action: &str, text: Element| inset(Element::clickable(id, text).dispatch_as(action));
                 vec![
                     panel_header("Sonando", track.album.as_deref().unwrap_or(&track.artist), palette),
                     {
                         // The large rendition once it has arrived; until then, the row's.
                         let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
-                        cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px())
+                        let cover = cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px());
+                        Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
                     },
                     link("panel-album", "now-album", Text::new(&track.title, palette).size(18.0).truncate().render()),
                     link("panel-artist", "now-artist", Text::new(&track.artist, palette).muted().truncate().render()),
@@ -1009,7 +1019,9 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
         (_, true) => "panel:lyrics",
         _ => "panel:playing",
     };
-    Element::column(content).gap(12.0).padding(16.0).animate_enter(face)
+    // The column's gap, plus this, is the margin over the header.
+    let top = Element::spacer().size(None, Some(PANEL_PAD - 12.0));
+    Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face)
 }
 
 /// The lines of what plays, the one being sung in full ink. A line that is clicked is sung
@@ -1028,7 +1040,7 @@ fn lyrics(state: &State, palette: ComponentPalette) -> Element {
         let text = Text::new(&line.text, palette).size(LYRIC_SIZE).ink(ink).render().animate_foreground(format!("lyric-ink:{index}"));
         Element::clickable(format!("lyric:{index}"), text)
     });
-    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP)).render().flex(1.0)
+    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0)
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
@@ -1052,7 +1064,9 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
     if rows.is_empty() {
         return centered(Empty::new("Nada en la cola", "Elegí una canción y acá aparece lo que sigue.", palette).icon(Icon::Playlist).render());
     }
-    ScrollArea::new("queue-list", Element::column(rows).keep_leaving("upcoming-rows")).render().flex(1.0)
+    // The rows carry half the margin in themselves.
+    let list = Element::column(rows).keep_leaving("upcoming-rows");
+    ScrollArea::new("queue-list", Element::column(vec![list]).padding(PANEL_PAD / 2.0)).render().flex(1.0)
 }
 
 /// Ten bands and the preamp, a row each: the label, the slider and the gain it is set to.
