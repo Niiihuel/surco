@@ -9,6 +9,7 @@
 
 mod backend;
 mod library;
+mod media_keys;
 mod player;
 mod state;
 mod view;

@@ -24,3 +24,7 @@ serde_json = "1"
 # The hour of the day, for the greeting. Already in the tree through the catalog.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
+
+# MIT. The desktop's media keys and "now playing" widget; over zbus, so nothing to link.
+[target.'cfg(target_os = "linux")'.dependencies]
+souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }

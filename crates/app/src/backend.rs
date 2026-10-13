@@ -21,6 +21,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::library::Library;
+use crate::media_keys::{Key, MediaKeys};
 use crate::player::{Effect, Player, PlayerView};
 
 /// A page of the catalog.
@@ -97,6 +98,7 @@ const DOWNLOAD_ATTEMPTS: u32 = 4;
 /// What reaches the player from the worker's own side.
 enum Input {
     Engine(dnm_audio::Event),
+    Key(Key),
     Radio { seed: String, tracks: Vec<Track> },
 }
 
@@ -181,6 +183,8 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                     shared.announce();
                 }
                 let mut player = Player::default();
+                let pressed = inputs.clone();
+                let mut keys = MediaKeys::start(move |key| drop(pressed.send(Input::Key(key))));
                 loop {
                     let effects = tokio::select! {
                         command = inbox.recv() => match command {
@@ -189,6 +193,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         },
                         Some(input) = inbox_own.recv() => match input {
                             Input::Engine(event) => player.engine(event),
+                            Input::Key(key) => key.command(&player.view()).map(|command| player.command(command)).unwrap_or_default(),
                             Input::Radio { seed, tracks } => {
                                 player.radio(&seed, tracks);
                                 Vec::new()
@@ -207,6 +212,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         }
                     }
                     let view = player.view();
+                    keys.show(&view);
                     let changed = views.send_if_modified(|shown| {
                         let changed = *shown != view;
                         *shown = view;
