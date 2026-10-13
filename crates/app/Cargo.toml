@@ -1,0 +1,15 @@
+[package]
+name = "dnmusic"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "dnmusic for the desktop: a native music player drawn with limn."
+
+[dependencies]
+dnm-core = { path = "../core" }
+limn = { path = "../../../lienzo/crates/limn", default-features = false }
+limn-egui = { path = "../../../lienzo/crates/limn-egui", default-features = false }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland"] }
+# Saves the frame for `--screenshot`.
+image = { version = "0.25.10", default-features = false, features = ["png"] }
+fastrand = "2"

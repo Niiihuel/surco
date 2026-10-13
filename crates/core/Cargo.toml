@@ -1,0 +1,9 @@
+[package]
+name = "dnm-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Player state for dnmusic: tracks and the playback queue. No UI, no I/O."
+
+[dependencies]
+fastrand = "2"
