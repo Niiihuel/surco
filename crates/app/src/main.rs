@@ -63,7 +63,7 @@ impl Host {
             self.send(commands);
         }
         if let Some(index) = self.script.play {
-            if index < self.state.results.len() {
+            if index < self.state.found.tracks.len() {
                 self.script.play = None;
                 let commands = self.state.update(&UiAction::Clicked { id: format!("track:{index}") });
                 self.send(commands);

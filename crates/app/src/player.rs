@@ -111,6 +111,19 @@ impl Player {
                 self.playing = !self.playing;
                 vec![if self.playing { Effect::Resume } else { Effect::Pause }]
             }
+            // With nothing playing there is no "after": the track simply starts.
+            Command::PlayNext(track) | Command::Enqueue(track) if self.queue.current().is_none() => {
+                self.queue.start(vec![track], 0, &mut self.rng);
+                self.start(self.queue.current().cloned())
+            }
+            Command::PlayNext(track) => {
+                self.queue.enqueue_next(track);
+                Vec::new()
+            }
+            Command::Enqueue(track) => {
+                self.queue.enqueue(track);
+                Vec::new()
+            }
             Command::Next => self.skip(1),
             Command::Jump(upcoming) => self.skip(upcoming + 1),
             // Like every player: a few seconds in, "previous" restarts the track.
@@ -300,6 +313,18 @@ mod tests {
         assert_eq!(player.view().upcoming.len(), 2, "a second answer adds nothing");
         assert_eq!(player.command(Command::Jump(1)), vec![Effect::Play(track("c")), Effect::Radio(track("c"))]);
         assert!(player.command(Command::Jump(5)).is_empty(), "nowhere to jump to");
+    }
+
+    #[test]
+    fn tracks_queued_by_hand_go_before_the_rest_of_the_list() {
+        let mut player = Player::default();
+        assert_eq!(player.command(Command::Enqueue(track("x"))).first(), Some(&Effect::Play(track("x"))), "nothing played, so it starts");
+        let mut player = playing(&["a", "b"], 0);
+        assert!(player.command(Command::Enqueue(track("x"))).is_empty());
+        assert!(player.command(Command::Enqueue(track("y"))).is_empty());
+        assert!(player.command(Command::PlayNext(track("w"))).is_empty());
+        assert_eq!(player.view().upcoming, vec![track("w"), track("x"), track("y"), track("b")]);
+        assert_eq!(player.command(Command::Next), vec![Effect::Play(track("w"))]);
     }
 
     #[test]

@@ -7,11 +7,40 @@ use std::time::Instant;
 #[tokio::main]
 async fn main() -> dnm_youtube::Result<()> {
     let query = std::env::args().nth(1).unwrap_or_else(|| "apocalypse cigarettes after sex".into());
-    let youtube = dnm_youtube::YouTube::new().await?;
+    let youtube = dnm_youtube::YouTube::new()?;
 
     let started = Instant::now();
-    let tracks = youtube.search(&query).await?;
-    println!("search {query:?}: {} tracks in {:?}", tracks.len(), started.elapsed());
+    let found = youtube.search(&query).await?;
+    let tracks = found.tracks;
+    println!("search {query:?}: {} tracks, {} artists, {} albums in {:?}", tracks.len(), found.artists.len(), found.albums.len(), started.elapsed());
+    if let Some(reference) = found.artists.first() {
+        let started = Instant::now();
+        let artist = youtube.artist(&reference.id).await?;
+        println!(
+            "artist {} ({:?}, artwork {}): {} songs, {} albums, {} singles in {:?}",
+            artist.name,
+            artist.subscribers,
+            artist.artwork_url.as_deref().map_or("no", |_| "yes"),
+            artist.songs.len(),
+            artist.albums.len(),
+            artist.singles.len(),
+            started.elapsed()
+        );
+        for song in artist.songs.iter().take(3) {
+            println!("  song {} | {} | {} ms | artwork {}", song.title, song.album.as_deref().unwrap_or("-"), song.duration_ms, song.artwork_url.as_deref().map_or("no", |_| "yes"));
+        }
+        for album in artist.albums.iter().take(3) {
+            println!("  album {} | {} | artwork {}", album.title, album.year, album.artwork_url.as_deref().map_or("no", |_| "yes"));
+        }
+    }
+    if let Some(reference) = found.albums.first() {
+        let started = Instant::now();
+        let album = youtube.album(&reference.id).await?;
+        println!("album {} by {} ({:?}), {}: {} tracks in {:?}", album.title, album.artist, album.artist_id, album.year, album.tracks.len(), started.elapsed());
+        for track in album.tracks.iter().take(3) {
+            println!("  track {} | {} ms", track.title, track.duration_ms);
+        }
+    }
     for track in tracks.iter().take(5) {
         println!(
             "  {} | {} | {} | {} | {} ms | artwork {}",

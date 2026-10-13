@@ -4,25 +4,43 @@
 use std::collections::{HashMap, HashSet};
 
 use dnm_audio::equalizer::EqualizerValues;
-use dnm_core::Track;
+use dnm_core::{Album, AlbumRef, Artist, Found, Track};
 use limn::{RasterImage, UiAction};
 
-use crate::backend::{Command, Event};
+use crate::backend::{Command, Content, Event, Target};
 use crate::player::PlayerView;
+
+/// What the main pane shows.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Page {
+    Search,
+    Loading(Target),
+    Failed(Target, String),
+    Artist(Artist),
+    Album(Album),
+}
+
+/// How many of an artist's songs their page lists; playing one still queues them all.
+pub const ARTIST_SONGS_SHOWN: usize = 10;
 
 pub struct State {
     pub query: String,
     /// The query whose results are shown or awaited. Answers for any other are stale.
     pub submitted: Option<String>,
     pub searching: bool,
-    pub results: Vec<Track>,
+    pub found: Found,
     pub search_error: Option<String>,
+    pub page: Page,
+    /// The pages behind the current one, the search first.
+    history: Vec<Page>,
     /// The player as the backend last described it.
     pub player: PlayerView,
     /// Where the seek thumb is while it is being dragged.
     pub seek_preview: Option<f32>,
     pub volume: f32,
     pub queue_open: bool,
+    /// The row whose menu of actions is open.
+    pub menu: Option<String>,
     pub equalizer_open: bool,
     pub equalizer: EqualizerValues,
     pub artwork: HashMap<String, RasterImage>,
@@ -31,9 +49,20 @@ pub struct State {
 }
 
 /// One request per cover, however many rows show it and however often it comes up.
-fn cover_requests<'a>(asked: &mut HashSet<String>, tracks: impl IntoIterator<Item = &'a Track>) -> Vec<Command> {
-    let urls = tracks.into_iter().filter_map(|track| track.artwork_url.as_ref());
+// shortcut: covers come at the catalog's largest size and stay for the whole run; ask for the
+// size on screen and evict when a long session's memory matters.
+fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item = &'a Option<String>>) -> Vec<Command> {
+    let urls = urls.into_iter().flatten();
     urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
+}
+
+fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
+    tracks.iter().map(|track| &track.artwork_url)
+}
+
+/// Where a track's artist lives: by link when the catalog gave one, by name otherwise.
+fn artist_of(track: &Track) -> Target {
+    track.artist_id.clone().map_or_else(|| Target::ArtistNamed(track.artist.clone()), Target::Artist)
 }
 
 /// The equaliser's range, each side of zero.
@@ -57,12 +86,15 @@ impl Default for State {
             query: String::new(),
             submitted: None,
             searching: false,
-            results: Vec::new(),
+            found: Found::default(),
             search_error: None,
+            page: Page::Search,
+            history: Vec::new(),
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
             queue_open: false,
+            menu: None,
             equalizer_open: false,
             equalizer: EqualizerValues::FLAT,
             artwork: HashMap::new(),
@@ -92,7 +124,85 @@ impl State {
         self.submitted = Some(query.clone());
         self.searching = true;
         self.search_error = None;
+        self.page = Page::Search;
+        self.history.clear();
         vec![Command::Search(query)]
+    }
+
+    pub fn can_go_back(&self) -> bool {
+        !self.history.is_empty()
+    }
+
+    /// Leaves the current page for `target`. A page that never loaded is not one to return to.
+    fn open(&mut self, target: Target) -> Vec<Command> {
+        let leaving = std::mem::replace(&mut self.page, Page::Loading(target.clone()));
+        if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
+            self.history.push(leaving);
+        }
+        vec![Command::Open(target)]
+    }
+
+    /// The page a click leads to, if it leads to one.
+    fn target_of(&self, id: &str) -> Option<Target> {
+        let (name, index) = match id.split_once(':') {
+            Some((name, index)) => (name, index.parse::<usize>().ok()),
+            None => (id, None),
+        };
+        let album = |album: &AlbumRef| Target::Album(album.id.clone());
+        match (name, index, &self.page) {
+            ("artist", Some(index), _) => self.found.artists.get(index).map(|artist| Target::Artist(artist.id.clone())),
+            ("album", Some(index), _) => self.found.albums.get(index).map(album),
+            ("page-album", Some(index), Page::Artist(artist)) => artist.albums.get(index).map(album),
+            ("page-single", Some(index), Page::Artist(artist)) => artist.singles.get(index).map(album),
+            ("page-artist", None, Page::Album(album)) => {
+                Some(album.artist_id.clone().map_or_else(|| Target::ArtistNamed(album.artist.clone()), Target::Artist))
+            }
+            ("retry", None, Page::Failed(target, _)) => Some(target.clone()),
+            ("now-artist", None, _) => self.current().map(artist_of),
+            ("now-album", None, _) => self.current().and_then(|track| track.album_id.clone()).map(Target::Album),
+            _ => None,
+        }
+    }
+
+    /// The track a row shows, from the row's id.
+    pub fn track_at(&self, row: &str) -> Option<&Track> {
+        let (list, index) = row.split_once(':')?;
+        let index = index.parse::<usize>().ok()?;
+        match list {
+            "track" => self.found.tracks.get(index),
+            "page-track" => self.page_tracks().get(index),
+            "upcoming" => self.player.upcoming.get(index),
+            _ => None,
+        }
+    }
+
+    /// One of the actions of a row's menu.
+    fn act(&mut self, action: &str, row: &str) -> Vec<Command> {
+        let Some(track) = self.track_at(row).cloned() else { return Vec::new() };
+        match action {
+            "queue" => vec![Command::Enqueue(track)],
+            "next" => vec![Command::PlayNext(track)],
+            "artist" => self.open(artist_of(&track)),
+            "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The tracks the current page plays.
+    fn page_tracks(&self) -> &[Track] {
+        match &self.page {
+            Page::Artist(artist) => &artist.songs,
+            Page::Album(album) => &album.tracks,
+            _ => &[],
+        }
+    }
+
+    fn play_page(&self, index: usize) -> Vec<Command> {
+        let tracks = self.page_tracks();
+        if index >= tracks.len() {
+            return Vec::new();
+        }
+        vec![Command::PlayList { tracks: tracks.to_vec(), index }]
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
@@ -134,20 +244,57 @@ impl State {
     }
 
     fn click(&mut self, id: &str) -> Vec<Command> {
-        if let Some(index) = id.strip_prefix("track:").and_then(|i| i.parse::<usize>().ok()) {
-            // A result plays on its own and the player follows it with its radio.
-            return self.results.get(index).map(|track| Command::PlayList { tracks: vec![track.clone()], index: 0 }).into_iter().collect();
+        if let Some(row) = id.strip_prefix("more:") {
+            self.menu = (self.menu.as_deref() != Some(row)).then(|| row.to_owned());
+            return Vec::new();
         }
-        if let Some(upcoming) = id.strip_prefix("upcoming:").and_then(|i| i.parse::<usize>().ok()) {
+        if let Some((action, row)) = id.strip_prefix("do:").and_then(|rest| rest.split_once(':')) {
+            self.menu = None;
+            return self.act(action, row);
+        }
+        let indexed = |prefix: &str| id.strip_prefix(prefix).and_then(|index| index.parse::<usize>().ok());
+        if let Some(index) = indexed("track:") {
+            // A result plays on its own and the player follows it with its radio.
+            let track = self.found.tracks.get(index);
+            return track.map(|track| Command::PlayList { tracks: vec![track.clone()], index: 0 }).into_iter().collect();
+        }
+        if let Some(upcoming) = indexed("upcoming:") {
             return vec![Command::Jump(upcoming)];
         }
+        if let Some(index) = indexed("page-track:") {
+            return self.play_page(index);
+        }
+        let target = self.target_of(id);
+        if let Some(target) = target {
+            return self.open(target);
+        }
         match id {
+            "back" => {
+                if let Some(page) = self.history.pop() {
+                    self.page = page;
+                }
+                Vec::new()
+            }
+            "page-play" => self.play_page(0),
+            "page-shuffle" => {
+                let tracks = self.page_tracks();
+                if tracks.is_empty() {
+                    return Vec::new();
+                }
+                let start = Command::PlayList { tracks: tracks.to_vec(), index: fastrand::usize(..tracks.len()) };
+                // The player keeps shuffle on across lists, so it is only switched on.
+                (!self.player.shuffle).then_some(Command::Shuffle).into_iter().chain([start]).collect()
+            }
             "queue" => {
                 self.queue_open = !self.queue_open;
                 self.upcoming_covers()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
+                Vec::new()
+            }
+            "menu-close" => {
+                self.menu = None;
                 Vec::new()
             }
             "equalizer-close" => {
@@ -173,10 +320,30 @@ impl State {
 
     pub fn apply(&mut self, event: Event) -> Vec<Command> {
         match event {
-            Event::SearchResults { query, tracks } if self.submitted.as_deref() == Some(&query) => {
+            Event::SearchResults { query, found } if self.submitted.as_deref() == Some(&query) => {
                 self.searching = false;
-                self.results = tracks;
-                cover_requests(&mut self.covers, &self.results)
+                self.found = found;
+                let found = &self.found;
+                let covers = covers_of(&found.tracks)
+                    .chain(found.artists.iter().map(|artist| &artist.artwork_url))
+                    .chain(found.albums.iter().map(|album| &album.artwork_url));
+                cover_requests(&mut self.covers, covers)
+            }
+            Event::Opened { target, result } if self.page == Page::Loading(target.clone()) => {
+                self.page = match result {
+                    Ok(Content::Artist(artist)) => Page::Artist(artist),
+                    Ok(Content::Album(album)) => Page::Album(album),
+                    Err(message) => Page::Failed(target, message),
+                };
+                match &self.page {
+                    Page::Artist(artist) => {
+                        let shown = &artist.songs[..artist.songs.len().min(ARTIST_SONGS_SHOWN)];
+                        let releases = artist.albums.iter().chain(&artist.singles).map(|album| &album.artwork_url);
+                        cover_requests(&mut self.covers, std::iter::once(&artist.artwork_url).chain(covers_of(shown)).chain(releases))
+                    }
+                    Page::Album(album) => cover_requests(&mut self.covers, [&album.artwork_url]),
+                    _ => Vec::new(),
+                }
             }
             Event::SearchFailed { query, message } if self.submitted.as_deref() == Some(&query) => {
                 self.searching = false;
@@ -194,7 +361,7 @@ impl State {
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
         self.player = player;
-        let mut commands = cover_requests(&mut self.covers, &self.player.current);
+        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url));
         commands.extend(self.upcoming_covers());
         commands
     }
@@ -204,7 +371,7 @@ impl State {
         if !self.queue_open {
             return Vec::new();
         }
-        cover_requests(&mut self.covers, &self.player.upcoming)
+        cover_requests(&mut self.covers, covers_of(&self.player.upcoming))
     }
 }
 
@@ -231,6 +398,35 @@ mod tests {
         }
     }
 
+    fn found(ids: &[&str]) -> Found {
+        Found { tracks: ids.iter().map(|id| track(id)).collect(), ..Found::default() }
+    }
+
+    fn album(id: &str, artist_id: Option<&str>) -> Album {
+        Album {
+            id: id.into(),
+            title: id.into(),
+            artist: "artist".into(),
+            artist_id: artist_id.map(Into::into),
+            year: "2017".into(),
+            artwork_url: Some(format!("https://img/{id}")),
+            tracks: vec![track("t1"), track("t2")],
+        }
+    }
+
+    fn artist(id: &str) -> Artist {
+        let release = |id: &str| AlbumRef { id: id.into(), title: id.into(), artist: None, year: "2019".into(), artwork_url: None };
+        Artist {
+            id: id.into(),
+            name: id.into(),
+            subscribers: None,
+            artwork_url: None,
+            songs: vec![track("s1"), track("s2")],
+            albums: vec![release("lp")],
+            singles: vec![release("single")],
+        }
+    }
+
     fn click(state: &mut State, id: &str) -> Vec<Command> {
         state.update(&UiAction::Clicked { id: id.into() })
     }
@@ -246,9 +442,9 @@ mod tests {
         assert!(state.searching);
         state.query = "second".into();
         state.search();
-        state.apply(Event::SearchResults { query: "first".into(), tracks: vec![track("old")] });
-        assert!(state.results.is_empty() && state.searching, "the stale answer changes nothing");
-        let commands = state.apply(Event::SearchResults { query: "second".into(), tracks: vec![track("a"), track("a")] });
+        state.apply(Event::SearchResults { query: "first".into(), found: found(&["old"]) });
+        assert!(state.found.tracks.is_empty() && state.searching, "the stale answer changes nothing");
+        let commands = state.apply(Event::SearchResults { query: "second".into(), found: found(&["a", "a"]) });
         assert!(!state.searching);
         assert_eq!(commands, vec![Command::FetchArtwork("https://img/a".into())], "one request per cover");
         state.query = "   ".into();
@@ -259,7 +455,7 @@ mod tests {
     fn clicks_become_player_commands() {
         let mut state = State { query: "q".into(), ..State::default() };
         state.search();
-        state.apply(Event::SearchResults { query: "q".into(), tracks: vec![track("a"), track("b")] });
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
         assert_eq!(click(&mut state, "track:1"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
         assert!(click(&mut state, "track:9").is_empty());
         assert!(state.current().is_none(), "the player says what plays, not the click");
@@ -277,6 +473,89 @@ mod tests {
         assert_eq!(state.update(&volume), vec![Command::Volume(0.3)]);
         assert_eq!(click(&mut state, "mute"), vec![Command::Volume(0.0)]);
         assert_eq!(click(&mut state, "mute"), vec![Command::Volume(0.8)]);
+    }
+
+    #[test]
+    fn pages_open_load_and_lead_back_the_way_they_came() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        let mut results = found(&["a"]);
+        results.albums = vec![AlbumRef { id: "lp".into(), title: "lp".into(), artist: Some("artist".into()), year: String::new(), artwork_url: None }];
+        state.apply(Event::SearchResults { query: "q".into(), found: results });
+
+        assert_eq!(click(&mut state, "album:0"), vec![Command::Open(Target::Album("lp".into()))]);
+        assert_eq!(state.page, Page::Loading(Target::Album("lp".into())));
+        state.apply(Event::Opened { target: Target::Album("other".into()), result: Ok(Content::Album(album("other", None))) });
+        assert_eq!(state.page, Page::Loading(Target::Album("lp".into())), "the answer for another page is dropped");
+        let covers = state.apply(Event::Opened { target: Target::Album("lp".into()), result: Ok(Content::Album(album("lp", Some("who")))) });
+        assert_eq!(covers, vec![Command::FetchArtwork("https://img/lp".into())]);
+        assert_eq!(click(&mut state, "page-track:1"), vec![Command::PlayList { tracks: vec![track("t1"), track("t2")], index: 1 }]);
+        assert_eq!(click(&mut state, "page-play"), vec![Command::PlayList { tracks: vec![track("t1"), track("t2")], index: 0 }]);
+        assert!(click(&mut state, "page-track:7").is_empty());
+
+        assert_eq!(click(&mut state, "page-artist"), vec![Command::Open(Target::Artist("who".into()))]);
+        state.apply(Event::Opened { target: Target::Artist("who".into()), result: Ok(Content::Artist(artist("who"))) });
+        assert_eq!(click(&mut state, "page-single:0"), vec![Command::Open(Target::Album("single".into()))]);
+        state.apply(Event::Opened { target: Target::Album("single".into()), result: Err("sin red".into()) });
+        assert_eq!(state.page, Page::Failed(Target::Album("single".into()), "sin red".into()));
+        assert_eq!(click(&mut state, "retry"), vec![Command::Open(Target::Album("single".into()))]);
+
+        click(&mut state, "back");
+        assert_eq!(state.page, Page::Artist(artist("who")), "a page that never loaded is not one to return to");
+        click(&mut state, "back");
+        assert!(matches!(state.page, Page::Album(_)));
+        click(&mut state, "back");
+        assert!(state.page == Page::Search && !state.can_go_back());
+    }
+
+    #[test]
+    fn the_playing_track_leads_to_its_album_and_its_artist() {
+        let mut state = State::default();
+        assert!(click(&mut state, "now-artist").is_empty(), "nothing plays yet");
+        let mut playing_track = track("a");
+        playing_track.album_id = Some("lp".into());
+        state.show(PlayerView { current: Some(playing_track), ..PlayerView::default() });
+        assert_eq!(click(&mut state, "now-album"), vec![Command::Open(Target::Album("lp".into()))]);
+        assert_eq!(click(&mut state, "now-artist"), vec![Command::Open(Target::ArtistNamed("artist".into()))], "found by name without a link");
+        state.query = "x".into();
+        state.search();
+        assert!(state.page == Page::Search && !state.can_go_back(), "a search starts over");
+    }
+
+    #[test]
+    fn a_row_menu_queues_the_track_or_leads_to_its_album_and_artist() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        let mut results = found(&["a", "b"]);
+        results.tracks[1].album_id = Some("lp".into());
+        state.apply(Event::SearchResults { query: "q".into(), found: results.clone() });
+        let b = results.tracks[1].clone();
+
+        click(&mut state, "more:track:1");
+        assert_eq!(state.menu.as_deref(), Some("track:1"));
+        click(&mut state, "more:track:0");
+        assert_eq!(state.menu.as_deref(), Some("track:0"), "one menu at a time");
+        click(&mut state, "more:track:0");
+        assert!(state.menu.is_none(), "the dots close their own menu");
+
+        click(&mut state, "more:track:1");
+        assert_eq!(click(&mut state, "do:queue:track:1"), vec![Command::Enqueue(b.clone())]);
+        assert!(state.menu.is_none(), "an action closes the menu");
+        assert_eq!(click(&mut state, "do:next:track:1"), vec![Command::PlayNext(b)]);
+        assert!(click(&mut state, "do:album:track:0").is_empty(), "that track names no album");
+        assert_eq!(click(&mut state, "do:album:track:1"), vec![Command::Open(Target::Album("lp".into()))]);
+        click(&mut state, "back");
+        assert_eq!(click(&mut state, "do:artist:track:0"), vec![Command::Open(Target::ArtistNamed("artist".into()))]);
+        assert!(click(&mut state, "do:queue:track:9").is_empty());
+    }
+
+    #[test]
+    fn shuffling_a_page_turns_shuffle_on_once() {
+        let mut state = State { page: Page::Album(album("lp", None)), ..State::default() };
+        let commands = click(&mut state, "page-shuffle");
+        assert!(matches!(commands.as_slice(), [Command::Shuffle, Command::PlayList { tracks, .. }] if tracks.len() == 2));
+        state.show(PlayerView { shuffle: true, ..PlayerView::default() });
+        assert!(matches!(click(&mut state, "page-shuffle").as_slice(), [Command::PlayList { .. }]));
     }
 
     #[test]

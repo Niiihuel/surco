@@ -9,7 +9,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{Load, MediaBuffer, NativeAudio};
-use dnm_core::Track;
+use dnm_core::{Album, Artist, Found, Track};
 use dnm_youtube::{Audio, YouTube};
 use eframe::egui;
 use limn::{RasterImage, RasterImageFormat};
@@ -20,10 +20,26 @@ use tokio::task::JoinHandle;
 
 use crate::player::{Effect, Player, PlayerView};
 
+/// A page of the catalog.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Target {
+    Artist(String),
+    /// A track that names its artist without linking to it.
+    ArtistNamed(String),
+    Album(String),
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Content {
+    Artist(Artist),
+    Album(Album),
+}
+
 /// What the window asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Search(String),
+    Open(Target),
     FetchArtwork(String),
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
@@ -31,6 +47,9 @@ pub enum Command {
     Next,
     /// Play the n-th of the upcoming tracks, skipping the ones before it.
     Jump(usize),
+    /// Queue a track by hand: right after the current one, or after the ones already queued.
+    PlayNext(Track),
+    Enqueue(Track),
     Previous,
     /// Seconds from the start of the current track.
     Seek(f64),
@@ -43,12 +62,13 @@ pub enum Command {
     Equalizer(EqualizerValues),
 }
 
-/// What comes back. A search answer names its query, because answers arrive late and out of
-/// order: a result for a query the user already replaced must be ignored.
+/// What comes back. Every answer names what it answers, because answers arrive late and out of
+/// order: a result for a query or a page the user already left must be ignored.
 #[derive(Clone, Debug)]
 pub enum Event {
-    SearchResults { query: String, tracks: Vec<Track> },
+    SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
+    Opened { target: Target, result: Result<Content, String> },
     Artwork { url: String, image: RasterImage },
 }
 
@@ -170,7 +190,7 @@ async fn start(
     reply: impl Fn(Event) + Send + Sync + 'static,
     inputs: UnboundedSender<Input>,
 ) -> Result<Shared, String> {
-    let youtube = YouTube::new().await.map_err(|error| format!("No se pudo conectar con el catálogo: {error}"))?;
+    let youtube = YouTube::new().map_err(|error| error.to_string())?;
     let events = inputs.clone();
     let audio = NativeAudio::start(None, move |event| drop(events.send(Input::Engine(event))))
         .map_err(|error| format!("No se pudo abrir la salida de audio: {error}"))?;
@@ -192,13 +212,21 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 let event = match shared.youtube.search(&query).await {
-                    Ok(tracks) => Event::SearchResults { query, tracks },
+                    Ok(found) => Event::SearchResults { query, found },
                     Err(error) => Event::SearchFailed { query, message: error.to_string() },
                 };
                 (shared.reply)(event);
             });
         }
         (Command::Search(query), Err(message)) => reply(Event::SearchFailed { query, message: message.clone() }),
+        (Command::Open(target), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let result = open(&shared, &target).await;
+                (shared.reply)(Event::Opened { target, result });
+            });
+        }
+        (Command::Open(target), Err(message)) => reply(Event::Opened { target, result: Err(message.clone()) }),
         (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -217,6 +245,20 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (command, _) => return player.command(command),
     }
     Vec::new()
+}
+
+async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
+    let youtube = &shared.youtube;
+    let content = match target {
+        Target::Artist(id) => youtube.artist(id).await.map(Content::Artist),
+        Target::ArtistNamed(name) => match youtube.find_artist(name).await {
+            Ok(Some(id)) => youtube.artist(&id).await.map(Content::Artist),
+            Ok(None) => return Err(format!("No encontramos a {name} en el catálogo.")),
+            Err(error) => Err(error),
+        },
+        Target::Album(id) => youtube.album(id).await.map(Content::Album),
+    };
+    content.map_err(|error| error.to_string())
 }
 
 fn run(shared: &Arc<Shared>, effect: Effect) {
