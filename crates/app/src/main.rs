@@ -208,11 +208,15 @@ impl eframe::App for Host {
         match self.state.screening() {
             Some((name, footage, showing)) => {
                 let fit = match showing {
-                    clip::Showing::Large => clip::Fit::Whole(view::cinema_picture(&footage.large.0, window).width),
+                    clip::Showing::Large => {
+                        let room = view::cinema_room(window);
+                        clip::Fit::Whole { width: view::cinema_picture(&footage.large.0, window).width, room: (room.width, room.height) }
+                    }
                     _ => clip::Fit::Square(self.state.right_width - 32.0),
                 };
                 if self.clip.as_ref().is_none_or(|screen| screen.key != name) {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
+                    limn_egui::forget_surface(view::CLIP_BACKDROP);
                     let wake = ctx.clone();
                     self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint()));
                 }
@@ -221,11 +225,15 @@ impl eframe::App for Host {
                     if let Some(frame) = screen.take() {
                         limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
                     }
+                    if let Some(glow) = screen.take_backdrop() {
+                        limn_egui::present_surface(&ctx, view::CLIP_BACKDROP, glow);
+                    }
                 }
             }
             None => {
                 if self.clip.take().is_some() {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
+                    limn_egui::forget_surface(view::CLIP_BACKDROP);
                 }
             }
         }

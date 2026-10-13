@@ -56,6 +56,8 @@ const PAGE_SEARCH_WIDTH: f32 = 220.0;
 const PAGE_SEARCH_SHUT: f32 = 32.0;
 /// Where the window presents the frames of the clip of what plays.
 pub const CLIP_SURFACE: &str = "now-clip";
+/// The glow of the video behind it, where it does not fill the window.
+pub const CLIP_BACKDROP: &str = "now-clip-glow";
 /// The mark of the lyrics: words in a bubble.
 const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
 /// A shelf with more tiles than this gets arrows to move along it.
@@ -1489,6 +1491,11 @@ fn footage_switch(state: &State, palette: ComponentPalette) -> Element {
 /// The bar over what plays while it fills the window.
 const CINEMA_TOP: f32 = 48.0;
 
+/// The room over the playback bar, which what plays has while it fills the window.
+pub fn cinema_room(window: Size) -> Size {
+    Size::new(window.width, window.height - PLAYER_HEIGHT)
+}
+
 /// The size a film takes while it fills the window: all of it, as large as fits over the
 /// playback bar.
 pub fn cinema_picture(film: &surco_video::Film, window: Size) -> Size {
@@ -1500,21 +1507,30 @@ pub fn cinema_picture(film: &surco_video::Film, window: Size) -> Size {
 /// What plays over the whole window: its video where it has one that keeps time, its
 /// cover where not, and under it the bar that plays it.
 fn cinema(state: &State, window: Size, palette: ComponentPalette) -> Element {
-    let picture = match (state.screening(), state.current()) {
-        (Some((_, footage, Showing::Large)), _) => {
-            let size = cinema_picture(&footage.large.0, window);
-            Element::surface(CLIP_SURFACE, "Video de la canción").size(Some(size.width), Some(size.height))
-        }
-        (_, Some(track)) => {
-            let side = (window.height - PLAYER_HEIGHT - CINEMA_TOP).min(window.width) * 0.8;
-            let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
-            cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px())
-        }
-        _ => Element::spacer(),
-    };
+    let room = cinema_room(window);
     let leave = on_picture("cinema", Icon::Compact, "Salir de pantalla completa (Esc)", palette);
     let top = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette).centered_y(), leave.centered_y()]).gap(6.0).padding(GAP).size(None, Some(CINEMA_TOP));
-    Element::panel(Element::column(vec![top, centered(picture), player(state, window.width, palette)])).background(CANVAS).size(Some(window.width), Some(window.height))
+    let over = |picture: Element| Element::column(vec![top, centered(picture)]);
+    // Around a video, its own glow; around a cover, the cover's colour.
+    let stage = match (state.screening(), state.current()) {
+        (Some((_, footage, Showing::Large)), _) => {
+            let size = cinema_picture(&footage.large.0, window);
+            let film = Element::surface(CLIP_SURFACE, "Video de la canción").size(Some(size.width), Some(size.height));
+            let glow = Element::surface(CLIP_BACKDROP, "").size(Some(room.width), Some(room.height));
+            Element::stack(vec![glow, over(film)]).clip_children()
+        }
+        (_, Some(track)) => {
+            let side = (room.height - CINEMA_TOP).min(room.width) * 0.8;
+            let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
+            let stage = over(cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px()));
+            match track.artwork_url.as_ref().and_then(|url| state.tints.get(url)) {
+                Some(tint) => stage.top_background_fade(Color { a: 150, ..*tint }, room.height),
+                None => stage,
+            }
+        }
+        _ => over(Element::spacer()),
+    };
+    Element::panel(Element::column(vec![stage.size(Some(room.width), Some(room.height)), player(state, window.width, palette)])).background(CANVAS).size(Some(window.width), Some(window.height))
 }
 
 /// The right panel's own margin. Its lists do without it: they run to the panel's edge, so

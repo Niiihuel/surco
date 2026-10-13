@@ -22,11 +22,12 @@ pub enum Showing {
 }
 
 /// How a frame is laid in its place, in the window's own units: the middle square of it
-/// on a square of this side, or all of it at this width.
+/// on a square of this side, or all of it at this width in a room it does not fill, which
+/// gets a glow of the frame behind it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fit {
     Square(f32),
-    Whole(f32),
+    Whole { width: f32, room: (f32, f32) },
 }
 
 /// Where the song is, as the window last knew it.
@@ -38,8 +39,9 @@ struct Clock {
 
 /// What the window and the thread that decodes share.
 struct Shared {
-    /// The newest frame the window has not shown yet.
+    /// The newest frame the window has not shown yet, and the glow that goes behind it.
     frame: Mutex<Option<SurfaceFrame>>,
+    backdrop: Mutex<Option<SurfaceFrame>>,
     fit: Mutex<Fit>,
     clock: Mutex<Clock>,
     stopped: AtomicBool,
@@ -65,7 +67,10 @@ impl Shared {
         let fit = *self.fit.lock().unwrap();
         let laid = match fit {
             Fit::Square(side) => squared(frame, side),
-            Fit::Whole(width) => SurfaceFrame::from_rgba([frame.width, frame.height], &frame.rgba, frame.width as f32 / width.max(1.0)),
+            Fit::Whole { width, room } => {
+                *self.backdrop.lock().unwrap() = glow(frame, room);
+                SurfaceFrame::from_rgba([frame.width, frame.height], &frame.rgba, frame.width as f32 / width.max(1.0))
+            }
         };
         if let Some(laid) = laid {
             *self.frame.lock().unwrap() = Some(laid);
@@ -86,6 +91,7 @@ impl Screen {
     pub fn start(key: String, footage: Arc<Footage>, showing: Showing, fit: Fit, repaint: impl Fn() + Send + 'static) -> Self {
         let shared = Arc::new(Shared {
             frame: Mutex::new(None),
+            backdrop: Mutex::new(None),
             fit: Mutex::new(fit),
             clock: Mutex::new(Clock { position: 0.0, at: Instant::now(), playing: false }),
             stopped: AtomicBool::new(false),
@@ -103,6 +109,11 @@ impl Screen {
     /// The newest frame, once.
     pub fn take(&self) -> Option<SurfaceFrame> {
         self.shared.frame.lock().unwrap().take()
+    }
+
+    /// The newest glow for behind the frame, once.
+    pub fn take_backdrop(&self) -> Option<SurfaceFrame> {
+        self.shared.backdrop.lock().unwrap().take()
     }
 
     /// Follows the music: where the song is and whether it plays, and the place the
@@ -224,6 +235,48 @@ fn keep_time(film: &Film, url: &str, shared: &Shared, repaint: &impl Fn()) {
     }
 }
 
+/// How many pixels across the glow is, and how much of the frame's light it keeps.
+const GLOW_ACROSS: usize = 32;
+const GLOW_LIGHT: f32 = 0.45;
+
+/// The frame as a glow to stand behind it where it does not fill its room: its middle at
+/// the room's proportions, a few pixels across and dimmed. Drawn as large as the room,
+/// those pixels run into one another.
+fn glow(frame: &Frame, room: (f32, f32)) -> Option<SurfaceFrame> {
+    let (across, tall) = room;
+    if across < 1.0 || tall < 1.0 || frame.width == 0 || frame.height == 0 {
+        return None;
+    }
+    // Rounded up: it is drawn at the room's width, and must not end short of its floor.
+    let down = ((GLOW_ACROSS as f32 * tall / across).ceil() as usize).max(1);
+    // The part of the frame that has the room's proportions.
+    let wide = frame.width as f32 / frame.height as f32 > across / tall;
+    let (taken_across, taken_down) = if wide { ((frame.height as f32 * across / tall) as usize, frame.height) } else { (frame.width, (frame.width as f32 * tall / across) as usize) };
+    let (left, top) = ((frame.width - taken_across.min(frame.width)) / 2, (frame.height - taken_down.min(frame.height)) / 2);
+    // Where sample `nth` of five around glow pixel `at` falls among `taken` frame pixels:
+    // the five reach into the pixels beside it, so that neighbours share what they show.
+    let place = |at: usize, nth: usize, of: usize, taken: usize| (((at as f32 + 0.5 + (nth as f32 - 2.0) * 0.6) / of as f32).clamp(0.0, 1.0) * taken.saturating_sub(1) as f32) as usize;
+    let mut rgba = Vec::with_capacity(GLOW_ACROSS * down * 4);
+    for row in 0..down {
+        // Its last rows thin out, down to the bar under the room.
+        let shown = ((down - row) as f32 / (down as f32 * 0.12)).min(1.0);
+        for column in 0..GLOW_ACROSS {
+            let mut light = [0.0f32; 3];
+            for sample in 0..25 {
+                let x = (left + place(column, sample % 5, GLOW_ACROSS, taken_across)).min(frame.width - 1);
+                let y = (top + place(row, sample / 5, down, taken_down)).min(frame.height - 1);
+                let pixel = frame.rgba.get((y * frame.width + x) * 4..)?;
+                for (sum, value) in light.iter_mut().zip(pixel) {
+                    *sum += f32::from(*value);
+                }
+            }
+            rgba.extend(light.map(|sum| (sum / 25.0 * GLOW_LIGHT) as u8));
+            rgba.push((shown * 255.0) as u8);
+        }
+    }
+    SurfaceFrame::from_rgba([GLOW_ACROSS, down], &rgba, GLOW_ACROSS as f32 / across)
+}
+
 /// The middle square of a frame, said to be as dense as it takes to fill `side`: the
 /// backend draws pixels at their own density, so that is what makes them cover the square.
 fn squared(frame: &Frame, side: f32) -> Option<SurfaceFrame> {
@@ -248,5 +301,13 @@ mod tests {
         let frame = squared(&Frame { width: 4, height: 2, rgba }, 100.0).unwrap();
         assert_eq!(frame.size(), [2, 2]);
         assert!(squared(&Frame { width: 4, height: 2, rgba: vec![0; 3] }, 100.0).is_none(), "a frame with rows missing");
+    }
+
+    #[test]
+    fn the_glow_behind_a_frame_is_a_few_dimmed_pixels_at_the_rooms_proportions() {
+        let frame = Frame { width: 64, height: 64, rgba: [200, 100, 50, 255].repeat(64 * 64) };
+        let glow = glow(&frame, (1600.0, 800.0)).unwrap();
+        assert_eq!(glow.size(), [GLOW_ACROSS, GLOW_ACROSS / 2]);
+        assert!(super::glow(&frame, (0.0, 800.0)).is_none() && super::glow(&Frame { width: 0, height: 0, rgba: Vec::new() }, (16.0, 9.0)).is_none());
     }
 }
