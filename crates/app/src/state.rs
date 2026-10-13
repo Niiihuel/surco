@@ -106,16 +106,22 @@ pub enum Confirm {
 
 /// What the user set, kept between runs.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Settings {
     /// Go on with similar music when what was asked for runs out.
     pub autoplay: bool,
     /// Show changes at once instead of moving to them.
     pub reduce_motion: bool,
+    /// Seconds a track that ends shares with the next; 0 for none.
+    pub crossfade: f32,
 }
+
+/// The longest crossfade on offer, as in the players people know.
+pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0 }
     }
 }
 
@@ -652,6 +658,10 @@ impl State {
             UiAction::SliderChanged { id, fraction, .. } if id == "volume" => {
                 self.volume = *fraction;
                 vec![Command::Volume(self.volume)]
+            }
+            UiAction::SliderChanged { id, fraction, .. } if id == "setting:crossfade" => {
+                self.settings.crossfade = (fraction * CROSSFADE_MAX).round();
+                vec![Command::Crossfade(f64::from(self.settings.crossfade))]
             }
             UiAction::SliderChanged { id, fraction, .. } if id.starts_with("equalizer:") => {
                 let gain = ((fraction * 2.0 - 1.0) * EQUALIZER_DB).round();
@@ -1375,6 +1385,8 @@ mod tests {
         assert_eq!(click(&mut state, "setting:autoplay"), vec![Command::Autoplay(false)]);
         click(&mut state, "setting:motion");
         assert!(!state.settings.autoplay && state.settings.reduce_motion);
+        let half = UiAction::SliderChanged { id: "setting:crossfade".into(), fraction: 0.5, committed: true };
+        assert_eq!(state.update(&half), vec![Command::Crossfade(6.0)]);
         assert!(click(&mut state, "downloads-clear").is_empty() && state.confirm.is_none(), "nothing to clear");
         state.apply(Event::Library { saved: vec![track("a"), track("b")], saving: HashSet::new(), bytes: 2048 });
         assert_eq!(state.saved_bytes, 2048);

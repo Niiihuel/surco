@@ -28,6 +28,8 @@ pub struct PlayerView {
 pub enum Effect {
     /// Start this track from the beginning, replacing whatever plays.
     Play(Track),
+    /// Bring this track in over so many seconds, under the end of the one that plays.
+    Fade(Track, f64),
     /// Get this track ready on the standby deck.
     Preload(Track),
     /// Nothing follows this track: ask the catalog what would.
@@ -49,6 +51,8 @@ pub struct Player {
     preloading: Option<String>,
     /// Whether a queue that runs out goes on with its last track's radio.
     autoplay: bool,
+    /// Seconds a track that plays to its end shares with the next. 0 hands over in one step.
+    crossfade: f64,
     rng: fastrand::Rng,
 }
 
@@ -63,6 +67,7 @@ impl Default for Player {
             error: None,
             preloading: None,
             autoplay: true,
+            crossfade: 0.0,
             rng: fastrand::Rng::default(),
         }
     }
@@ -83,6 +88,10 @@ impl Player {
     }
 
     fn start(&mut self, track: Option<Track>) -> Vec<Effect> {
+        self.begin(track, 0.0)
+    }
+
+    fn begin(&mut self, track: Option<Track>, fade: f64) -> Vec<Effect> {
         let Some(track) = track else { return Vec::new() };
         self.playing = true;
         self.loaded = true;
@@ -93,7 +102,8 @@ impl Player {
         // A lone track and the last of a list are followed by their radio, as long as the
         // user did not ask for the list to repeat.
         let radio = (self.autoplay && self.queue.peek_next().is_none()).then(|| Effect::Radio(track.clone()));
-        std::iter::once(Effect::Play(track)).chain(radio).collect()
+        let play = if fade > 0.0 { Effect::Fade(track, fade) } else { Effect::Play(track) };
+        std::iter::once(play).chain(radio).collect()
     }
 
     /// The catalog's answer to `Effect::Radio`. One that arrives after the user moved on to
@@ -160,6 +170,10 @@ impl Player {
                 self.autoplay = on;
                 Vec::new()
             }
+            Command::Crossfade(seconds) => {
+                self.crossfade = seconds;
+                Vec::new()
+            }
             Command::Shuffle => {
                 self.queue.set_shuffle(!self.queue.is_shuffled(), &mut self.rng);
                 Vec::new()
@@ -185,7 +199,7 @@ impl Player {
                 if let Some(duration) = duration_sec.filter(|duration| *duration > 0.0) {
                     self.duration = duration;
                 }
-                self.preload()
+                self.fade().unwrap_or_else(|| self.preload())
             }
             Event::Ended { track_id } if self.is_current(&track_id) => {
                 self.loaded = false;
@@ -204,6 +218,21 @@ impl Player {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// With a crossfade set, the next track comes in under the last seconds of this one.
+    fn fade(&mut self) -> Option<Vec<Effect>> {
+        // A track shorter than two fades would spend all of itself fading.
+        if self.crossfade <= 0.0 || self.duration < self.crossfade * 2.0 || self.duration - self.position > self.crossfade {
+            return None;
+        }
+        // Only onto what the standby deck was asked for: anything else cuts this track short.
+        let asked = self.queue.peek_next().is_some_and(|next| self.preloading.as_deref() == Some(next.id.as_str()));
+        if !asked {
+            return None;
+        }
+        let next = self.queue.advance().cloned();
+        Some(self.begin(next, self.crossfade))
     }
 
     fn preload(&mut self) -> Vec<Effect> {
@@ -346,6 +375,21 @@ mod tests {
         assert!(player.command(Command::PlayNext(track("w"))).is_empty());
         assert_eq!(player.view().upcoming, vec![track("w"), track("x"), track("y"), track("b")]);
         assert_eq!(player.command(Command::Next), vec![Effect::Play(track("w"))]);
+    }
+
+    #[test]
+    fn a_crossfade_brings_the_next_track_in_before_this_one_ends() {
+        let at = |position_sec| Event::Position { track_id: "a".into(), position_sec, duration_sec: Some(200.0) };
+        let mut player = playing(&["a", "b"], 0);
+        player.command(Command::Crossfade(5.0));
+        assert_eq!(player.engine(at(194.0)), vec![Effect::Preload(track("b"))], "outside the fade it only gets ready");
+        assert_eq!(player.engine(at(195.5)).first(), Some(&Effect::Fade(track("b"), 5.0)));
+        assert!(player.engine(at(196.0)).is_empty(), "the outgoing track is no longer the current one");
+        assert_eq!(player.view().current, Some(track("b")));
+
+        let mut plain = playing(&["a", "b"], 0);
+        plain.engine(at(194.0));
+        assert!(plain.engine(at(195.5)).is_empty(), "with none set the track plays to its end");
     }
 
     #[test]

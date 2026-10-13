@@ -68,6 +68,8 @@ pub enum Command {
     Equalizer(EqualizerValues),
     /// Whether a queue that runs out goes on with its last track's radio.
     Autoplay(bool),
+    /// Seconds a track that ends shares with the next; 0 for none.
+    Crossfade(f64),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -315,29 +317,8 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
 
 fn run(shared: &Arc<Shared>, effect: Effect) {
     match effect {
-        Effect::Play(track) => {
-            let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            // The old track stops now, not when the new one has loaded.
-            drop(shared.audio.pause());
-            {
-                let mut downloads = shared.downloads.lock().unwrap();
-                if let Some(replaced) = downloads.active.take() {
-                    replaced.cancel();
-                }
-                if downloads.standby.as_ref().is_some_and(|download| download.track_id == track.id) {
-                    downloads.active = downloads.standby.take();
-                }
-            }
-            let shared = shared.clone();
-            tokio::spawn(async move {
-                if let Err(message) = play(&shared, &track, generation).await {
-                    if shared.is_current(generation) {
-                        let failed = dnm_audio::Event::Failed { track_id: track.id, message };
-                        let _ = shared.inputs.send(Input::Engine(failed));
-                    }
-                }
-            });
-        }
+        Effect::Play(track) => begin(shared, track, Duration::ZERO),
+        Effect::Fade(track, seconds) => begin(shared, track, Duration::from_secs_f64(seconds)),
         Effect::Preload(track) => {
             let shared = shared.clone();
             tokio::spawn(async move { preload(&shared, &track).await });
@@ -358,21 +339,50 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
     }
 }
 
+/// Starts a track: at once, or under the end of the one that plays when `fade` is not zero.
+fn begin(shared: &Arc<Shared>, track: Track, fade: Duration) {
+    let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
+    // The old track stops now, not when the new one has loaded. One that fades out plays on.
+    if fade.is_zero() {
+        drop(shared.audio.pause());
+    }
+    {
+        let mut downloads = shared.downloads.lock().unwrap();
+        // The track that fades out still reads its download: cancelling it would end it there.
+        if let Some(replaced) = downloads.active.take().filter(|_| fade.is_zero()) {
+            replaced.cancel();
+        }
+        if downloads.standby.as_ref().is_some_and(|download| download.track_id == track.id) {
+            downloads.active = downloads.standby.take();
+        }
+    }
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        if let Err(message) = play(&shared, &track, generation, fade).await {
+            if shared.is_current(generation) {
+                let failed = dnm_audio::Event::Failed { track_id: track.id, message };
+                let _ = shared.inputs.send(Input::Engine(failed));
+            }
+        }
+    });
+}
+
 /// The engine answers these on its own thread, and `load` waits for the container header to
 /// arrive, so neither can run on a runtime thread.
 async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
     tokio::task::spawn_blocking(work).await.map_err(|error| error.to_string())?
 }
 
-async fn play(shared: &Arc<Shared>, track: &Track, generation: u64) -> Result<(), String> {
+async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Duration) -> Result<(), String> {
     {
         let _decks = shared.decks.lock().await;
         if !shared.is_current(generation) {
             return Ok(());
         }
         let (engine, id) = (shared.clone(), track.id.clone());
-        // A track that was preloaded starts in one step.
-        if blocking(move || engine.audio.transition(&id, Duration::ZERO)).await? {
+        // A track that was preloaded starts in one step, or fades in.
+        // shortcut: one that is not ready by its fade cuts in when it loads; have the player wait for the standby deck if preloads prove slow.
+        if blocking(move || engine.audio.transition(&id, fade)).await? {
             return Ok(());
         }
     }

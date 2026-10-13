@@ -12,7 +12,7 @@ use limn::{
 };
 
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -734,12 +734,19 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 
     let equalizer = if state.equalizer == dnm_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let seconds = state.settings.crossfade;
+    let crossfade = Element::row(vec![
+        Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, control).steps(CROSSFADE_MAX as usize + 1).width(140.0).render().centered_y(),
+        Text::new(if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") }, card).role(TextRole::Caption).muted().render().size(Some(28.0), None).centered_y(),
+    ])
+    .gap(8.0);
     let body = vec![
         PageHeader::new("Configuración", card).description("Lo que elegís acá vale para este equipo.").stacked(compact).render(),
         group(
             "Reproducción",
             vec![
                 switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
+                row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
             ],
         ),
