@@ -49,6 +49,8 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// What dims a cover under what is drawn over it.
+const COVER_SCRIM: Color = Color::rgba(0, 0, 0, 150);
 /// A bar of the playing row's wave, and the space between two.
 const WAVE_BAR: f32 = 3.0;
 const WAVE_GAP: f32 = 2.0;
@@ -576,15 +578,23 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     let muted = |text: String| Element::text(text).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
     let mut leading = Vec::new();
     if let Some(number) = number {
-        // The playing track shows that it plays where its number was.
-        let mark = match (current, state.player.playing) {
-            (true, true) => wave(state, format!("wave:{row}"), palette),
-            (true, false) => Element::icon(Icon::PlayFill).foreground(palette.text),
-            (false, _) => muted(number.to_string()),
-        };
-        leading.push(mark.centered().size(Some(NUMBER_WIDTH), Some(COVER)));
+        let number = muted(number.to_string());
+        let number = if current { number.foreground(palette.text) } else { number };
+        leading.push(number.centered().size(Some(NUMBER_WIDTH), Some(COVER)));
     }
-    leading.push(cover(state, &track.artwork_url, COVER, palette));
+    // Over its cover, what plays wears its own sound. Under the pointer every cover says
+    // what a click on the row does: it pauses what plays and plays the rest.
+    let over = |content: Element| {
+        Element::panel(content.centered()).background(COVER_SCRIM).radius(limn::tokens().radius.control).size(Some(COVER), Some(COVER))
+    };
+    let does = Element::icon(if current && state.player.playing { Icon::PauseFill } else { Icon::PlayFill }).foreground(palette.text);
+    let mut layers = vec![cover(state, &track.artwork_url, COVER, palette)];
+    if current {
+        layers.push(over(wave(state, format!("wave:{row}"), palette)).conceal_on_hover(format!("sounding:{row}")));
+    }
+    layers.push(over(does).reveal_on_hover(format!("does:{row}")));
+    leading.push(Element::stack(layers));
+
     let sizing = RowSizing { leading_width: if number.is_some() { NUMBER_WIDTH + TRACK_ROW.gap + COVER } else { COVER }, ..TRACK_ROW };
 
     let open = state.menu.as_deref() == Some(row.as_str());
@@ -618,9 +628,6 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         .radius(RadiusRole::Card);
     // After the copy: that it plays, that it is kept on disk or on its way there, how long it lasts.
     let mut facts = Vec::new();
-    if current && number.is_none() {
-        facts.push(wave(state, format!("wave:{row}"), palette).centered_y());
-    }
     if state.saving.contains(&track.id) {
         facts.push(Spinner::new(format!("saving:{row}"), palette.muted).size(12.0).render().centered_y());
     } else if state.is_saved(&track.id) {
