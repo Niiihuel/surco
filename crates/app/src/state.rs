@@ -7,7 +7,6 @@ use dnm_audio::equalizer::EqualizerValues;
 use dnm_audio::AudioOutputDevice;
 use dnm_core::discover;
 use dnm_core::lyrics::{active, Line};
-use dnm_video::Clip;
 use std::sync::Arc;
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
@@ -15,7 +14,8 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarTransition, UiAction};
 
-use crate::backend::{Command, Content, Event, Picks, Target, Taste};
+use crate::backend::{Command, Content, Event, Footage, Picks, Target, Taste};
+use crate::clip::Showing;
 use crate::player::PlayerView;
 
 /// What the main pane shows.
@@ -176,6 +176,9 @@ impl Default for Settings {
         Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true }
     }
 }
+
+/// A song and its video this close in length are taken to be the same recording.
+const SAME_LENGTH_MS: u64 = 2000;
 
 /// How many played tracks are remembered, and for how many of the artists played most
 /// the home page asks the catalog what goes with them.
@@ -405,9 +408,13 @@ pub struct State {
     pub picked_albums: Vec<AlbumRef>,
     /// The artists the picks were last asked for.
     picked_for: Option<Vec<String>>,
-    /// The clip asked for, with the track it belongs to; no clip yet while it is fetched,
-    /// and still none when the track has no video of its own.
-    pub clip: Option<(String, Option<Arc<Clip>>)>,
+    /// The footage asked for, with the song it belongs to; none yet while it is fetched,
+    /// and still none when the song has no video of its own.
+    pub clip: Option<(String, Option<Arc<Footage>>)>,
+    /// What plays fills the window: its video, or its cover.
+    pub cinema: bool,
+    /// The song whose video's own sound plays in its place.
+    swapped: Option<Track>,
     /// The lyrics asked for, with the track they belong to.
     pub lyrics: Option<(String, Lyrics)>,
     /// The line the list was last scrolled to.
@@ -559,6 +566,8 @@ impl Default for State {
             picked_albums: Vec::new(),
             picked_for: None,
             clip: None,
+            cinema: false,
+            swapped: None,
             lyrics: None,
             lyric_shown: None,
             outputs: Vec::new(),
@@ -1010,6 +1019,13 @@ impl State {
                 let line = id["lyric:".len()..].parse::<usize>().ok().and_then(|index| self.lines().get(index));
                 line.map(|line| Command::Seek(line.at_ms as f64 / 1000.0)).into_iter().collect()
             }
+            // What plays over the whole window, and back.
+            "cinema" => {
+                self.cinema = !self.cinema;
+                let mut commands = self.ask_clip();
+                commands.extend(self.resound());
+                commands
+            }
             // Each panel is shut from its own header and opened from the bar above.
             "toggle-panel" | "toggle-panel-open" => {
                 self.open_side(Side::Right, !self.panel_open);
@@ -1254,13 +1270,13 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
-            Event::Clip { track_id, clip } => {
+            Event::Clip { track_id, footage } => {
                 if let Some((asked, found)) = &mut self.clip {
                     if *asked == track_id {
-                        *found = clip;
+                        *found = footage;
                     }
                 }
-                Vec::new()
+                self.resound()
             }
             Event::Discovered(Picks::Tracks { mix, because }) => {
                 let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
@@ -1311,7 +1327,14 @@ impl State {
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
         let before = self.player.current.as_ref().map(|track| track.id.as_str());
-        if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str())) {
+        let now = player.current.as_ref().map(|track| track.id.as_str());
+        // The video's sound in a song's place is that song still: until the song is back
+        // with the window, or something else plays.
+        let video = self.footage().map(|footage| footage.video.id.clone());
+        if self.swapped.as_ref().is_some_and(|song| if now == Some(song.id.as_str()) { !self.cinema } else { now != video.as_deref() }) {
+            self.swapped = None;
+        }
+        if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str()) && self.swapped.is_none()) {
             self.collection.heard(track);
         }
         self.player = player;
@@ -1329,23 +1352,67 @@ impl State {
         self.panel_open && !self.queue_open
     }
 
-    /// A track's clip is looked for once, while it would be seen and the user wants them.
+    /// The song that plays, also while its video's own sound has its place.
+    fn song(&self) -> Option<&Track> {
+        self.swapped.as_ref().or(self.player.current.as_ref())
+    }
+
+    /// Whether what plays is somewhere its video is seen, and the user wants videos.
+    fn wants_footage(&self) -> bool {
+        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing())
+    }
+
+    /// A song's footage is looked for once, while it would be seen and the user wants it.
     fn ask_clip(&mut self) -> Vec<Command> {
-        let wanted = self.settings.clips && !self.settings.reduce_motion && self.shows_playing();
-        let Some(track) = self.player.current.as_ref().filter(|_| wanted) else { return Vec::new() };
+        let wanted = self.wants_footage();
+        let Some(track) = self.song().filter(|_| wanted) else { return Vec::new() };
         if self.clip.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
             return Vec::new();
         }
+        let track = track.clone();
         self.clip = Some((track.id.clone(), None));
-        vec![Command::Clip(track.clone())]
+        vec![Command::Clip(track)]
     }
 
-    /// The clip to show now: that of what plays, while its panel is on screen.
-    pub fn clip_to_show(&self) -> Option<(&str, &Arc<Clip>)> {
-        let wanted = self.settings.clips && !self.settings.reduce_motion && self.shows_playing();
-        let track = self.player.current.as_ref().filter(|_| wanted)?;
-        let (asked, clip) = self.clip.as_ref()?;
-        (*asked == track.id).then_some((asked.as_str(), clip.as_ref()?))
+    /// The footage of the song that plays, once it has arrived.
+    fn footage(&self) -> Option<&Arc<Footage>> {
+        let (asked, footage) = self.clip.as_ref()?;
+        (Some(asked) == self.song().map(|song| &song.id)).then_some(footage.as_ref()?)
+    }
+
+    /// Whether the whole video can keep time with what sounds: it is the video's own
+    /// sound, or the song lasts what the video does.
+    fn follows(&self, footage: &Footage) -> bool {
+        let video = &footage.video;
+        self.player.current.as_ref().is_some_and(|track| track.id == video.id || track.duration_ms.abs_diff(video.duration_ms) <= SAME_LENGTH_MS)
+    }
+
+    /// What to show of the song's footage now, named so that another showing is another
+    /// name: the whole video where it keeps time, and a stretch of it in the panel where
+    /// it does not.
+    pub fn screening(&self) -> Option<(String, &Arc<Footage>, Showing)> {
+        let footage = self.footage().filter(|_| self.wants_footage())?;
+        let showing = match (self.follows(footage), self.cinema) {
+            (true, true) => Showing::Large,
+            (true, false) => Showing::Small,
+            (false, false) => Showing::Loop,
+            (false, true) => return None,
+        };
+        Some((format!("{}:{showing:?}", self.song()?.id), footage, showing))
+    }
+
+    /// The sound that goes with what is seen. A video that fills the window and does not
+    /// last what its song does plays with its own; out of the window, the song is back.
+    fn resound(&mut self) -> Vec<Command> {
+        match (&self.swapped, self.cinema) {
+            (None, true) => {
+                let Some(footage) = self.footage().filter(|footage| self.settings.clips && !self.follows(footage)).cloned() else { return Vec::new() };
+                self.swapped = self.player.current.clone();
+                vec![Command::Swap(footage.video.clone())]
+            }
+            (Some(song), false) => vec![Command::Swap(song.clone())],
+            _ => Vec::new(),
+        }
     }
 
     /// What the user plays and already has, for the catalog to pick from.
@@ -1887,27 +1954,65 @@ mod tests {
     }
 
     #[test]
-    fn a_clip_is_asked_once_for_what_plays_while_its_panel_shows_it() {
+    fn footage_is_asked_once_for_what_plays_while_it_would_be_seen() {
         let playing = |id: &str| PlayerView { current: Some(track(id)), playing: true, ..PlayerView::default() };
         let asks = |commands: &[Command]| commands.iter().any(|command| matches!(command, Command::Clip(_)));
+        let shown = |state: &State| state.screening().map(|(name, _, showing)| (name, showing));
         let mut state = State::default();
         assert!(asks(&state.show(playing("a"))));
         assert!(!asks(&state.show(playing("a"))), "already asked");
-        assert!(state.clip_to_show().is_none(), "not fetched yet");
-        let clip = Arc::new(Clip { parameters: vec![0], samples: Vec::new() });
-        state.apply(Event::Clip { track_id: "other".into(), clip: Some(clip.clone()) });
-        assert!(state.clip_to_show().is_none(), "an answer for another track changes nothing");
-        state.apply(Event::Clip { track_id: "a".into(), clip: Some(clip) });
-        assert_eq!(state.clip_to_show().map(|(id, _)| id), Some("a"));
+        assert!(state.screening().is_none(), "not fetched yet");
+        let footage = footage_of(&track("a"), 0);
+        state.apply(Event::Clip { track_id: "other".into(), footage: Some(footage.clone()) });
+        assert!(state.screening().is_none(), "an answer for another track changes nothing");
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage) });
+        assert_eq!(shown(&state), Some(("a:Small".into(), Showing::Small)), "as long as the song, the whole video keeps time with it");
 
         click(&mut state, "queue");
-        assert!(state.clip_to_show().is_none() && !asks(&state.show(playing("b"))), "the queue covers what plays");
-        // Its button shuts the panel; opened again, it shows what plays and its clip is looked for.
+        assert!(state.screening().is_none() && !asks(&state.show(playing("b"))), "the queue covers what plays");
+        // Its button shuts the panel; opened again, it shows what plays and its footage is looked for.
         click(&mut state, "queue");
         assert!(asks(&click(&mut state, "toggle-panel-open")));
         click(&mut state, "setting:clips");
-        assert!(!asks(&state.show(playing("c"))) && state.clip_to_show().is_none(), "switched off");
+        assert!(!asks(&state.show(playing("c"))) && state.screening().is_none(), "switched off");
         assert!(asks(&click(&mut state, "setting:clips")), "and back on, it is looked for");
+    }
+
+    /// The footage of a song whose video lasts `longer_ms` more than it does.
+    fn footage_of(song: &Track, longer_ms: u64) -> Arc<Footage> {
+        let video = Track { id: format!("{}-video", song.id), duration_ms: song.duration_ms + longer_ms, ..song.clone() };
+        Arc::new(Footage { clip: dnm_video::Clip { parameters: vec![0], samples: Vec::new() }, small: Default::default(), large: Default::default(), video })
+    }
+
+    #[test]
+    fn a_video_that_fills_the_window_plays_with_its_own_sound_when_it_is_not_as_long_as_its_song() {
+        let playing = |track: &Track| PlayerView { current: Some(track.clone()), playing: true, ..PlayerView::default() };
+        let shown = |state: &State| state.screening().map(|(_, _, showing)| showing);
+        let song = track("a");
+        let mut state = State::default();
+        state.show(playing(&song));
+        let footage = footage_of(&song, 30_000);
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage.clone()) });
+        assert_eq!(shown(&state), Some(Showing::Loop), "beside the song it only turns over");
+
+        assert_eq!(click(&mut state, "cinema"), vec![Command::Swap(footage.video.clone())]);
+        assert_eq!(shown(&state), None, "until its own sound plays");
+        state.show(playing(&footage.video));
+        assert_eq!(shown(&state), Some(Showing::Large));
+        assert_eq!(state.collection.heard, std::slice::from_ref(&song), "the video is the same song, not another one heard");
+
+        assert_eq!(click(&mut state, "cinema"), vec![Command::Swap(song.clone())]);
+        state.show(playing(&song));
+        assert_eq!(shown(&state), Some(Showing::Loop));
+        // Back in the window, the song is swapped again: it was not left swapped.
+        assert_eq!(click(&mut state, "cinema"), vec![Command::Swap(footage.video.clone())]);
+
+        // A video as long as its song keeps time with it and changes nothing of the sound.
+        let mut state = State::default();
+        state.show(playing(&song));
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 0)) });
+        assert!(click(&mut state, "cinema").is_empty());
+        assert_eq!(shown(&state), Some(Showing::Large));
     }
 
     #[test]

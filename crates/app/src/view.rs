@@ -11,6 +11,7 @@ use limn::{
     TooltipPlacement, TooltipSpec,
 };
 
+use crate::clip::Showing;
 use crate::state::{
     clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
@@ -156,6 +157,9 @@ const PAGE_TITLE: f32 = 26.0;
 
 pub fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
+    if state.cinema {
+        return cinema(state, window, palette);
+    }
     let surface = |element: Element| Element::panel(element).background(SCHEME.canvas).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
     // A panel on its way open or shut is drawn part of its width, uncovering content that
@@ -1120,6 +1124,49 @@ fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Eleme
     inset(Element::row(vec![copy.flex(1.0), shut]))
 }
 
+/// A round button that stands on a picture, over a scrim of its own.
+fn on_picture(id: &str, icon: Icon, hint: &str, palette: ComponentPalette) -> Element {
+    let scrim = ComponentPalette { surface: COVER_SCRIM, hover: COVER_SCRIM, selected: COVER_SCRIM, ..palette };
+    IconButton::new(id, icon, scrim).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip(hint).render()
+}
+
+/// Turns the videos of what plays off and on, from where they are seen.
+fn footage_switch(state: &State, palette: ComponentPalette) -> Element {
+    let (icon, hint) = if state.settings.clips { (Icon::Image, "Ver la tapa") } else { (Icon::Video, "Ver el video") };
+    on_picture("cover-clips", icon, hint, palette).dispatch_as("setting:clips")
+}
+
+/// The bar over what plays while it fills the window.
+const CINEMA_TOP: f32 = 48.0;
+
+/// The size a film takes while it fills the window: all of it, as large as fits over the
+/// playback bar.
+pub fn cinema_picture(film: &dnm_video::Film, window: Size) -> Size {
+    let (width, height) = (film.width.max(1) as f32, film.height.max(1) as f32);
+    let scale = (window.width / width).min((window.height - PLAYER_HEIGHT - CINEMA_TOP) / height);
+    Size::new(width * scale, height * scale)
+}
+
+/// What plays over the whole window: its video where it has one that keeps time, its
+/// cover where not, and under it the bar that plays it.
+fn cinema(state: &State, window: Size, palette: ComponentPalette) -> Element {
+    let picture = match (state.screening(), state.current()) {
+        (Some((_, footage, Showing::Large)), _) => {
+            let size = cinema_picture(&footage.large.0, window);
+            Element::surface(CLIP_SURFACE, "Video de la canción").size(Some(size.width), Some(size.height))
+        }
+        (_, Some(track)) => {
+            let side = (window.height - PLAYER_HEIGHT - CINEMA_TOP).min(window.width) * 0.8;
+            let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
+            cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px())
+        }
+        _ => Element::spacer(),
+    };
+    let leave = on_picture("cinema", Icon::Compact, "Salir de pantalla completa (Esc)", palette);
+    let top = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette).centered_y(), leave.centered_y()]).gap(6.0).padding(GAP).size(None, Some(CINEMA_TOP));
+    Element::panel(Element::column(vec![top, centered(picture), player(state, window.width, palette)])).background(CANVAS).size(Some(window.width), Some(window.height))
+}
+
 /// The right panel's own margin. Its lists do without it: they run to the panel's edge, so
 /// their scrollbar sits where the middle panel's does, and set their rows in themselves.
 const PANEL_PAD: f32 = 16.0;
@@ -1144,15 +1191,15 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                         // The large rendition once it has arrived; until then, the row's.
                         let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
                         let cover = cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px());
-                        // The song's own video turns over its cover, which stays until the first frame.
-                        let cover = if state.clip_to_show().is_some() {
-                            Element::stack(vec![cover, Element::surface(CLIP_SURFACE, "Video de la canción")])
-                                .size(Some(side), Some(side))
-                                .radius(RadiusRole::Panel.px())
-                                .corner_mask(palette.surface)
-                        } else {
-                            cover
-                        };
+                        // The song's own video goes over its cover, which stays until the first frame;
+                        // under the pointer, what to see there and the way to see it large.
+                        let mut layers = vec![cover];
+                        if state.screening().is_some() {
+                            layers.push(Element::surface(CLIP_SURFACE, "Video de la canción"));
+                        }
+                        let controls = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette), on_picture("cinema", Icon::Fullscreen, "Pantalla completa", palette)]).gap(6.0).padding(8.0);
+                        layers.push(Element::column(vec![controls, Element::spacer().flex(1.0)]).reveal_on_hover("cover-controls"));
+                        let cover = Element::stack(layers).size(Some(side), Some(side)).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).hover_region();
                         Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
                     },
                     link("panel-album", "now-album", Text::new(&track.title, palette).size(18.0).truncate().render()),

@@ -55,6 +55,17 @@ impl Queue {
         self.manual.as_ref().or_else(|| self.index.and_then(|i| self.list.get(i)))
     }
 
+    /// Puts another rendition of the track that plays in its place.
+    pub fn replace_current(&mut self, track: Track) {
+        let slot = match self.manual.as_mut() {
+            Some(manual) => Some(manual),
+            None => self.index.and_then(|index| self.list.get_mut(index)),
+        };
+        if let Some(slot) = slot {
+            *slot = track;
+        }
+    }
+
     pub fn list(&self) -> &[Track] {
         &self.list
     }

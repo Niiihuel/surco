@@ -36,7 +36,9 @@ struct Host {
     player: watch::Receiver<PlayerView>,
     started: bool,
     /// The clip of what plays, while its panel shows it.
-    clip: Option<clip::ClipPlayer>,
+    clip: Option<clip::Screen>,
+    /// Whether the window was last asked to take the whole screen.
+    fullscreen: bool,
     /// The shelf an arrow is carrying along, and where it is on its way.
     glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
@@ -185,26 +187,42 @@ impl eframe::App for Host {
         self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
-        // The clip of what plays turns where its cover is, for as long as that is on screen.
-        let side = self.state.right_width - 32.0;
-        match self.state.clip_to_show() {
-            Some((track, found)) => {
-                if self.clip.as_ref().is_none_or(|player| player.track_id != track) {
+        // Escape leaves the whole window to the app again, and the screen follows.
+        if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+            let commands = self.state.update(&UiAction::Clicked { id: "cinema".into() });
+            self.send(commands);
+        }
+        if self.fullscreen != self.state.cinema {
+            self.fullscreen = self.state.cinema;
+            // A scripted run keeps the window it was given.
+            if self.script.screenshot.is_none() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+            }
+        }
+        // The footage of what plays goes where its cover is, or over the whole window, for
+        // as long as that is on screen.
+        match self.state.screening() {
+            Some((name, footage, showing)) => {
+                let fit = match showing {
+                    clip::Showing::Large => clip::Fit::Whole(view::cinema_picture(&footage.large.0, window).width),
+                    _ => clip::Fit::Square(self.state.right_width - 32.0),
+                };
+                if self.clip.as_ref().is_none_or(|screen| screen.key != name) {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
                     let wake = ctx.clone();
-                    self.clip = Some(clip::ClipPlayer::start(track.to_owned(), found.clone(), side, move || wake.request_repaint()));
+                    self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint()));
+                }
+                if let Some(screen) = &self.clip {
+                    screen.follow(self.state.player.playing, self.state.player.position, fit);
+                    if let Some(frame) = screen.take() {
+                        limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
+                    }
                 }
             }
             None => {
                 if self.clip.take().is_some() {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
                 }
-            }
-        }
-        if let Some(player) = &self.clip {
-            player.follow(self.state.player.playing, side);
-            if let Some(frame) = player.take() {
-                limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
             }
         }
         // An arrow of a shelf carries it a few tiles along, on a spring.
@@ -333,6 +351,7 @@ fn main() -> eframe::Result {
                 player,
                 started: false,
                 clip: None,
+                fullscreen: false,
                 glide: None,
                 opened: Instant::now(),
                 script,

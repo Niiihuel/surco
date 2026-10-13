@@ -17,6 +17,40 @@ pub struct Clip {
     pub samples: Vec<Sample>,
 }
 
+/// A whole video as it is fetched a few seconds at a time: how to decode it, and where
+/// each of its fragments lies.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Film {
+    pub header: Header,
+    pub fragments: Vec<Fragment>,
+    pub width: usize,
+    pub height: usize,
+}
+
+impl Film {
+    /// The fragment that holds the picture for `seconds` into the video, and when that
+    /// fragment starts. None past the end.
+    pub fn at(&self, seconds: f64) -> Option<(usize, f64)> {
+        fragment_at(&self.fragments, seconds)
+    }
+
+    pub fn seconds(&self) -> f64 {
+        self.fragments.iter().map(|fragment| fragment.seconds).sum()
+    }
+}
+
+fn fragment_at(fragments: &[Fragment], seconds: f64) -> Option<(usize, f64)> {
+    let mut starts = 0.0;
+    let index = fragments.iter().position(|fragment| {
+        let holds = seconds < starts + fragment.seconds;
+        if !holds {
+            starts += fragment.seconds;
+        }
+        holds
+    })?;
+    Some((index, starts))
+}
+
 /// The first and last byte to fetch for a clip of about `seconds`. It starts a third of
 /// the way in, where a video has left its opening behind, and takes whole fragments,
 /// since each begins with a picture that stands alone.
@@ -56,5 +90,13 @@ mod tests {
         assert_eq!(stretch(&fragments, 8.0), Some((1300, 1499)));
         assert_eq!(stretch(&fragments[..1], 8.0), Some((1000, 1099)), "a video of one fragment gives it");
         assert_eq!(stretch(&[], 8.0), None);
+    }
+
+    #[test]
+    fn a_moment_of_a_film_is_in_the_fragment_that_starts_before_it() {
+        let fragments: Vec<Fragment> = (0..3).map(|index| Fragment { start: index * 100, size: 100, seconds: 5.0 }).collect();
+        assert_eq!(fragment_at(&fragments, 0.0), Some((0, 0.0)));
+        assert_eq!(fragment_at(&fragments, 7.5), Some((1, 5.0)));
+        assert_eq!(fragment_at(&fragments, 15.0), None, "past its end");
     }
 }

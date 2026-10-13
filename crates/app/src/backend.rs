@@ -13,7 +13,7 @@ use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
 use dnm_core::discover;
 use dnm_core::lyrics::{parse_lrc, Line};
-use dnm_video::Clip;
+use dnm_video::{Clip, Film};
 use futures_util::future::join_all;
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use dnm_youtube::{Audio, YouTube};
@@ -90,6 +90,8 @@ pub enum Command {
     Discover(Taste),
     /// Look for a track's own video and fetch a few seconds of it.
     Clip(Track),
+    /// Go on from where the track that plays is with another rendition of it in its place.
+    Swap(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -136,8 +138,8 @@ pub enum Event {
     Outputs(Vec<AudioOutputDevice>),
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
-    /// A stretch of a track's own video, or none when it has no such video.
-    Clip { track_id: String, clip: Option<Arc<Clip>> },
+    /// A track's own video, or none when it has no such video.
+    Clip { track_id: String, footage: Option<Arc<Footage>> },
     /// A part of the home page's picks.
     Discovered(Picks),
     /// The device that was asked for is gone: the system's own plays instead.
@@ -373,11 +375,11 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Clip(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                let clip = clip(&shared, &track).await.map(Arc::new);
-                (shared.reply)(Event::Clip { track_id: track.id, clip });
+                let footage = footage(&shared, &track).await.map(Arc::new);
+                (shared.reply)(Event::Clip { track_id: track.id, footage });
             });
         }
-        (Command::Clip(track), Err(_)) => reply(Event::Clip { track_id: track.id, clip: None }),
+        (Command::Clip(track), Err(_)) => reply(Event::Clip { track_id: track.id, footage: None }),
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
@@ -550,25 +552,45 @@ async fn preload(shared: &Arc<Shared>, track: &Track) {
 
 /// The rendition a clip is cut from, by its height, and how long the clip is.
 const CLIP_HEIGHT: u64 = 360;
+/// The lines of the video that fills the window.
+const FILM_HEIGHT: u64 = 720;
 const CLIP_SECONDS: f64 = 8.0;
 
-/// A few seconds of the track's own video: its header and its index in one request, then
-/// the fragments the index points to. None when the track has no video of its own, or
-/// none in H.264, the one kind this decodes.
-async fn clip(shared: &Shared, track: &Track) -> Option<Clip> {
+/// A track's own video, as far as it was found.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Footage {
+    /// A stretch of it, to turn over where the cover was.
+    pub clip: Clip,
+    /// The whole of it, small for the panel and large for the window, each with the address
+    /// it is fetched from.
+    pub small: (Film, String),
+    pub large: (Film, String),
+    /// The video as a track: its sound takes over where it does not last what the song does.
+    pub video: Track,
+}
+
+/// What is known of the track's own video: its header and its index in one request for
+/// each size, then the fragments of a stretch of it. None when the track has no video of
+/// its own, or none in H.264, the one kind this decodes.
+async fn footage(shared: &Shared, track: &Track) -> Option<Footage> {
     let id = shared.youtube.video_for(&track.artist, &track.title).await.ok()??;
     let stream = shared.youtube.stream(&id).await.ok()?;
-    let video = stream.video.iter().filter(|video| video.mime.contains("avc1")).min_by_key(|video| video.height.abs_diff(CLIP_HEIGHT))?;
-    let bytes = |from: u64, to: u64| async move {
-        let request = shared.youtube.http().get(&video.url).header("Range", format!("bytes={from}-{to}"));
-        Some(request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec())
+    let stream = &stream;
+    let film = |height: u64| async move {
+        // Of two renditions as tall, the one with fewer pictures a second: it is decoded on a core.
+        let video = stream.video.iter().filter(|video| video.mime.contains("avc1")).min_by_key(|video| (video.height.abs_diff(height), video.fps))?;
+        let head = shared.youtube.bytes(&video.url, 0, video.index.1).await.ok()?;
+        let header = dnm_video::header(head.get(..=usize::try_from(video.init.1).ok()?)?)?;
+        let fragments = dnm_video::fragments(head.get(usize::try_from(video.index.0).ok()?..)?, video.index.1);
+        let (width, height) = (usize::try_from(video.width).ok()?, usize::try_from(video.height).ok()?);
+        Some((Film { header, fragments, width, height }, video.url.clone()))
     };
-    let head = bytes(0, video.index.1).await?;
-    let header = dnm_video::header(head.get(..=usize::try_from(video.init.1).ok()?)?)?;
-    let fragments = dnm_video::fragments(head.get(usize::try_from(video.index.0).ok()?..)?, video.index.1);
-    let (from, to) = dnm_video::stretch(&fragments, CLIP_SECONDS)?;
-    let samples = dnm_video::samples(&bytes(from, to).await?, &header);
-    (!samples.is_empty()).then_some(Clip { parameters: header.parameters, samples })
+    let (small, large) = tokio::join!(film(CLIP_HEIGHT), film(FILM_HEIGHT));
+    let (small, large) = (small?, large?);
+    let (from, to) = dnm_video::stretch(&small.0.fragments, CLIP_SECONDS)?;
+    let samples = dnm_video::samples(&shared.youtube.bytes(&small.1, from, to).await.ok()?, &small.0.header);
+    let video = Track { id, duration_ms: (stream.duration_seconds * 1000.0) as u64, ..track.clone() };
+    (!samples.is_empty()).then(|| Footage { clip: Clip { parameters: small.0.header.parameters.clone(), samples }, small, large, video })
 }
 
 /// Synced lyrics from LRCLIB. It is searched, not asked for the exact track, because an

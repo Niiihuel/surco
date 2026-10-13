@@ -35,7 +35,7 @@ fn u64_at(data: &[u8], at: usize) -> Option<u64> {
 }
 
 /// What the header of a rendition says about decoding it.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Header {
     /// The parameter sets the decoder is given before any picture, each with its start code.
     pub parameters: Vec<u8>,

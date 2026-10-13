@@ -193,6 +193,14 @@ impl Player {
                 self.position = seconds;
                 vec![Effect::Seek(seconds)]
             }
+            Command::Swap(track) if self.queue.current().is_some() => {
+                self.queue.replace_current(track.clone());
+                self.duration = track.duration_ms as f64 / 1000.0;
+                self.position = self.position.min(self.duration);
+                self.loaded = true;
+                self.preloading = None;
+                vec![Effect::Restore(track, self.position, self.playing)]
+            }
             Command::Autoplay(on) => {
                 self.autoplay = on;
                 Vec::new()
@@ -402,6 +410,16 @@ mod tests {
         assert!(player.command(Command::Shuffle).is_empty());
         let view = player.view();
         assert!(!view.shuffle && !view.smart && view.picks.is_empty());
+    }
+
+    #[test]
+    fn another_rendition_takes_the_place_of_what_plays_and_goes_on_from_there() {
+        let mut player = playing(&["a", "b"], 0);
+        player.engine(Event::Position { track_id: "a".into(), position_sec: 42.0, duration_sec: Some(200.0) });
+        assert_eq!(player.command(Command::Swap(track("video"))), vec![Effect::Restore(track("video"), 42.0, true)]);
+        let view = player.view();
+        assert_eq!((view.current, view.upcoming), (Some(track("video")), vec![track("b")]));
+        assert!(Player::default().command(Command::Swap(track("video"))).is_empty(), "nothing plays");
     }
 
     #[test]

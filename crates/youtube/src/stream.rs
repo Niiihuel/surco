@@ -33,6 +33,8 @@ pub struct Video {
     pub mime: String,
     pub width: u64,
     pub height: u64,
+    /// Pictures in a second; 0 when the format does not say.
+    pub fps: u64,
     pub size: u64,
     pub init: (u64, u64),
     pub index: (u64, u64),
@@ -141,6 +143,7 @@ fn parse(response: &Value) -> Result<Stream> {
                 mime: mime.starts_with("video/").then(|| mime.to_owned())?,
                 width: format["width"].as_u64()?,
                 height: format["height"].as_u64()?,
+                fps: format["fps"].as_u64().unwrap_or(0),
                 size: number(&format["contentLength"]),
                 init: range(&format["initRange"])?,
                 index: range(&format["indexRange"])?,

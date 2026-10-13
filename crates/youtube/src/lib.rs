@@ -40,6 +40,12 @@ impl YouTube {
         &self.http
     }
 
+    /// A stretch of what an address serves, from one byte to another, both included.
+    pub async fn bytes(&self, url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
+        let response = self.http.get(url).header("Range", format!("bytes={from}-{to}")).send().await?.error_for_status()?;
+        Ok(response.bytes().await?.to_vec())
+    }
+
     /// Songs, artists and albums for one query. A query that finds nothing is tried again as
     /// the service would complete it, which is how a misspelt title still finds its song.
     pub async fn search(&self, query: &str) -> Result<Found> {
