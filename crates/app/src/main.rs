@@ -303,6 +303,8 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
+            // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
+            limn_egui::set_image_cache_entries(256);
             // Beside the settings; without a place of its own the library lasts the session.
             let data = eframe::storage_dir(APP_ID).unwrap_or_else(std::env::temp_dir).join("offline");
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
