@@ -92,8 +92,9 @@ const GAP: f32 = 8.0;
 const PANEL_RADIUS: f32 = 8.0;
 const TOP_BAR_HEIGHT: f32 = 56.0;
 const SEARCH_MAX_WIDTH: f32 = 474.0;
-/// The room each end of the top bar keeps: two header buttons.
-const TOP_BAR_END: f32 = 56.0;
+/// The room each end of the top bar keeps: three header buttons, for the bell, the
+/// settings and the way back to a panel that was shut.
+const TOP_BAR_END: f32 = 80.0;
 /// The round button's fill under the pointer and while held, and what it shows disabled.
 const ROUND_HOVER: Color = Color::rgb(224, 224, 224);
 const ROUND_HELD: Color = Color::rgb(204, 204, 204);
@@ -1878,6 +1879,20 @@ mod tests {
         // The card of the lines leads to all of them, and the one of what is next plays it or opens the queue.
         for id in ["lyrics", "upcoming:0", "next-queue"] {
             assert!(found.iter().filter(|found| *found == id).count() >= 1, "{id} among {found:?}");
+        }
+    }
+
+    #[test]
+    fn a_shut_panel_keeps_the_button_that_opens_it_inside_the_window() {
+        let mut state = State::default();
+        state.update(&limn::UiAction::Clicked { id: "toggle-panel".into() });
+        for width in [1100.0, 1400.0, 2200.0] {
+            let size = Size::new(width, 700.0);
+            let mut tree = UiTree::new(view(&state, size));
+            let frame = tree.layout(size);
+            let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap_or_else(|| panic!("no {id} at {width}"));
+            let (bell, settings, open) = (rect("news"), rect("settings"), rect("toggle-panel-open"));
+            assert!(bell.x + bell.width <= settings.x && settings.x + settings.width <= open.x && open.x + open.width <= width, "at {width}: {bell:?} {settings:?} {open:?}");
         }
     }
 
