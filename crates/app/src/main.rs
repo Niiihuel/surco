@@ -34,6 +34,8 @@ struct Host {
     events: Receiver<Event>,
     player: watch::Receiver<PlayerView>,
     started: bool,
+    /// The shelf an arrow is carrying along, and where it is on its way.
+    glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
     script: Script,
 }
@@ -115,6 +117,8 @@ const PANEL_OPEN_KEY: &str = "panel-open";
 const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
+/// How far an arrow carries a shelf: three tiles.
+const SHELF_STEP: f32 = 456.0;
 const OUTPUT_KEY: &str = "output";
 
 impl eframe::App for Host {
@@ -178,6 +182,25 @@ impl eframe::App for Host {
         self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
+        // An arrow of a shelf carries it a few tiles along, on a spring.
+        if let Some((shelf, way)) = self.state.shelf_push.take() {
+            let now = Instant::now();
+            let from = self.glide.as_ref().filter(|(gliding, _)| *gliding == shelf).map_or_else(|| self.tree.horizontal_scroll_offset(&shelf), |(_, spring)| spring.target());
+            let to = (from + way * SHELF_STEP).max(0.0);
+            let mut spring = limn::ScalarSpring::new(if self.state.settings.reduce_motion { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
+                .motion(limn::SpringMotion::settling_in(Duration::from_millis(u64::from(limn::tokens().motion.move_ms) * 2)));
+            spring.retarget(to, now);
+            self.glide = Some((shelf, spring));
+        }
+        if let Some((shelf, spring)) = &self.glide {
+            let now = Instant::now();
+            self.tree.set_horizontal_scroll_offset(shelf, spring.value(now));
+            if spring.is_active(now) {
+                ctx.request_repaint();
+            } else {
+                self.glide = None;
+            }
+        }
         // The line being sung is kept in the middle of its list.
         if let Some(line) = self.state.line_to_reveal() {
             self.tree.center(&line);
@@ -278,6 +301,7 @@ fn main() -> eframe::Result {
                 events,
                 player,
                 started: false,
+                glide: None,
                 opened: Instant::now(),
                 script,
             }))

@@ -12,6 +12,7 @@ use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
 use dnm_core::lyrics::{parse_lrc, Line};
+use futures_util::future::join_all;
 use dnm_core::{Album, Artist, Found, Track};
 use dnm_youtube::{Audio, YouTube};
 use eframe::egui;
@@ -34,6 +35,8 @@ pub enum Target {
     Album(String),
     /// A track someone shared, by its id.
     Song(String),
+    /// A playlist someone shared, as its link carries it: its name and its tracks' ids.
+    List { name: String, ids: Vec<String> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -41,6 +44,7 @@ pub enum Content {
     Artist(Artist),
     Album(Album),
     Song(Track),
+    List { name: String, tracks: Vec<Track> },
 }
 
 /// What the window asks for.
@@ -377,6 +381,17 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
         },
         Target::Album(id) => youtube.album(id).await.map(Content::Album),
         Target::Song(id) => youtube.song(id).await.map(Content::Song),
+        Target::List { name, ids } => {
+            // A few at a time, in the order of the list. A track the catalog no longer has is left out.
+            let mut tracks = Vec::new();
+            for some in ids.chunks(8) {
+                tracks.extend(join_all(some.iter().map(|id| youtube.song(id))).await.into_iter().flatten());
+            }
+            if tracks.is_empty() {
+                return Err("No pudimos traer ninguna de las canciones de esa playlist.".to_owned());
+            }
+            Ok(Content::List { name: name.clone(), tracks })
+        }
     };
     content.map_err(|error| error.to_string())
 }

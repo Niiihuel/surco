@@ -49,6 +49,10 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// The mark of the lyrics: words in a bubble.
+const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
+/// A shelf with more tiles than this gets arrows to move along it.
+const SHELF_FITS: usize = 4;
 /// What dims a cover under what is drawn over it.
 const COVER_SCRIM: Color = Color::rgba(0, 0, 0, 150);
 /// A bar of the playing row's wave, and the space between two.
@@ -444,12 +448,12 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
     let heard: Vec<Element> = collection.heard.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("heard:{index}"), track)).collect();
     if !heard.is_empty() {
-        sections.extend([heading("Volver a escuchar", palette), shelf("home-heard", heard)]);
+        sections.push(shelf("home-heard", "Volver a escuchar", heard, palette));
     }
     for (shelf_index, seed) in state.seeds().into_iter().enumerate() {
         let picks: Vec<Element> = state.recommended.get(&seed.id).into_iter().flatten().enumerate().map(|(index, track)| pick(format!("rec:{shelf_index}:{index}"), track)).collect();
         if !picks.is_empty() {
-            sections.extend([heading(&format!("Porque escuchaste «{}»", seed.title), palette), shelf(&format!("home-rec:{shelf_index}"), picks)]);
+            sections.push(shelf(&format!("home-rec:{shelf_index}"), &format!("Porque escuchaste «{}»", seed.title), picks, palette));
         }
     }
 
@@ -460,7 +464,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         })
         .collect();
     if !albums.is_empty() {
-        sections.extend([heading("Tus álbumes", palette), shelf("home-albums", albums)]);
+        sections.push(shelf("home-albums", "Tus álbumes", albums, palette));
     }
     let artists: Vec<Element> = collection
         .artists()
@@ -469,7 +473,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         })
         .collect();
     if !artists.is_empty() {
-        sections.extend([heading("Tus artistas", palette), shelf("home-artists", artists)]);
+        sections.push(shelf("home-artists", "Tus artistas", artists, palette));
     }
     ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
@@ -482,9 +486,19 @@ fn heading(title: &str, palette: ComponentPalette) -> Element {
     Text::new(title, palette).role(TextRole::Heading).render()
 }
 
-/// A row of tiles that scrolls sideways inside the page.
-fn shelf(id: &str, tiles: Vec<Element>) -> Element {
-    Element::horizontal_scroll_2d(id, Element::row(tiles).gap(4.0))
+/// A heading over a row of tiles that scrolls sideways inside the page: by dragging it, by
+/// the trackpad, or a few tiles at a time with the arrows beside the heading.
+fn shelf(id: &str, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
+    let arrow = |way: &str, icon: Icon, hint: &str| {
+        IconButton::new(format!("shelf-{way}:{id}"), icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(hint).render().centered_y()
+    };
+    let mut header = vec![heading(title, palette).flex(1.0)];
+    // A shelf that fits has nowhere to go.
+    if tiles.len() > SHELF_FITS {
+        header.extend([arrow("back", Icon::ArrowLeft, "Anteriores"), arrow("on", Icon::ArrowRight, "Siguientes")]);
+    }
+    let strip = Element::horizontal_scroll_2d(id, Element::row(tiles).gap(4.0)).drag_to_pan().foreground(palette.muted);
+    Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
@@ -733,11 +747,15 @@ fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) 
     let mut actions = vec![
         Button::new("page-play", "Reproducir", palette).icon(Icon::PlayFill).render(),
         Button::new("page-shuffle", "Aleatorio", palette).icon(Icon::Shuffle).variant(ButtonVariant::Secondary).render(),
+        Button::new("playlist-share", if state.list_copied == Some(playlist.id) { "Enlace copiado" } else { "Compartir" }, palette)
+            .icon(Icon::Custom(include_str!("../assets/icons/share-2.svg")))
+            .variant(ButtonVariant::Ghost)
+            .render(),
         Button::new("playlist-delete", "Eliminar", palette).icon(Icon::Trash).variant(ButtonVariant::Ghost).render(),
     ];
     if playlist.tracks.is_empty() {
-        // Nothing to play yet.
-        actions.drain(..2);
+        // Nothing to play or to share yet.
+        actions.drain(..3);
     }
     let header = Element::row(vec![
         picture,
@@ -875,10 +893,10 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
         let tiles = found.artists.iter().enumerate().map(|(index, artist)| {
             tile(state, format!("artist:{index}"), &artist.name, Some("Artista".into()), &artist.artwork_url, true, palette)
         });
-        sections.extend([heading("Artistas", palette), shelf("found-artists", tiles.collect())]);
+        sections.push(shelf("found-artists", "Artistas", tiles.collect(), palette));
     }
     if !found.albums.is_empty() {
-        sections.extend([heading("Álbumes", palette), shelf("found-albums", release_tiles(state, "album", &found.albums, palette))]);
+        sections.push(shelf("found-albums", "Álbumes", release_tiles(state, "album", &found.albums, palette), palette));
     }
     if !found.tracks.is_empty() {
         let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, None, &track.artist, palette));
@@ -921,11 +939,11 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
         sections.extend([heading("Canciones", palette), Element::column(rows.collect()).gap(2.0)]);
     }
     if !artist.albums.is_empty() {
-        sections.extend([heading("Álbumes", palette), shelf("artist-albums", release_tiles(state, "page-album", &artist.albums, palette))]);
+        sections.push(shelf("artist-albums", "Álbumes", release_tiles(state, "page-album", &artist.albums, palette), palette));
     }
     if !artist.singles.is_empty() {
         let tiles = release_tiles(state, "page-single", &artist.singles, palette);
-        sections.extend([heading("Sencillos y EP", palette), shelf("artist-singles", tiles)]);
+        sections.push(shelf("artist-singles", "Sencillos y EP", tiles, palette));
     }
     ScrollArea::new("artist", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
 }
@@ -1075,7 +1093,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
 /// The lines of what plays, the one being sung in full ink. A line that is clicked is sung
 /// from its start.
 fn lyrics(state: &State, palette: ComponentPalette) -> Element {
-    let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Microphone).render());
+    let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Custom(LYRICS)).render());
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
@@ -1274,7 +1292,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         controls.push(Element::spacer().flex(1.0));
     }
     controls.extend([
-        side("lyrics", Icon::Microphone, "Letra", state.lyrics_open),
+        side("lyrics", Icon::Custom(LYRICS), "Letra", state.lyrics_open),
         side("queue", Icon::Playlist, "Cola", state.queue_open),
         equalizer,
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette)

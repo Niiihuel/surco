@@ -24,6 +24,10 @@ serde_json = "1"
 # The hour of the day, for the greeting. Already in the tree through the catalog.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
+# Both already in the tree through the HTTP client: a playlist's name inside its link, and
+# its tracks fetched side by side when one is opened.
+percent-encoding = "2"
+futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # MIT. The desktop's media keys and "now playing" widget; over zbus, so nothing to link.
 [target.'cfg(target_os = "linux")'.dependencies]

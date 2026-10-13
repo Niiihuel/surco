@@ -364,6 +364,10 @@ pub struct State {
     /// The track whose share card is open, and whether its link was just copied.
     pub sharing: Option<Track>,
     pub copied: bool,
+    /// A shelf whose arrow was pressed and which way, back or on, until the window moves it.
+    pub shelf_push: Option<(String, f32)>,
+    /// The playlist whose link was just copied, while its page says so.
+    pub list_copied: Option<u64>,
     /// Text on its way to the clipboard; the window takes it.
     pub copy: Option<String>,
     /// Covers already asked for, arrived or not.
@@ -419,6 +423,30 @@ pub fn shared_song(text: &str) -> Option<&str> {
     let rest = [SITE, "https://dnmusic-app.vercel.app", "dnmusic:/", "app://dnmusic"].iter().find_map(|origin| text.strip_prefix(origin))?;
     let id = rest.strip_prefix("/cancion/")?.split(['/', '?', '#']).next()?;
     (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then_some(id)
+}
+
+/// The most tracks a shared playlist brings.
+const SHARED_LIST_MOST: usize = 300;
+/// What a playlist's name keeps as it is inside a link.
+const LINK_NAME: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMERIC.remove(b'-').remove(b'_').remove(b'.');
+
+/// The link that shares a playlist. It carries the playlist itself, its name and the ids
+/// of its tracks, so opening it needs no account and no server: whoever pastes it into the
+/// search box gets a copy.
+pub fn list_link(playlist: &Playlist) -> String {
+    let ids: Vec<&str> = playlist.tracks.iter().map(|track| track.id.as_str()).collect();
+    format!("dnmusic://lista/{}?nombre={}", ids.join(","), percent_encoding::utf8_percent_encode(&playlist.name, LINK_NAME))
+}
+
+/// The name and the track ids a playlist's link carries. Anything else is not such a link.
+pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
+    let rest = text.trim().strip_prefix("dnmusic://lista/")?;
+    let (ids, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let valid = |id: &&str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+    let ids: Vec<String> = ids.split(',').filter(valid).take(SHARED_LIST_MOST).map(str::to_owned).collect();
+    let name = query.split('&').find_map(|pair| pair.strip_prefix("nombre="))?;
+    let name = percent_encoding::percent_decode_str(name).decode_utf8().ok()?.trim().to_owned();
+    (!ids.is_empty() && !name.is_empty()).then_some((name, ids))
 }
 
 /// A cover's address at the size a large picture needs. The catalog's addresses end in the size
@@ -491,6 +519,8 @@ impl Default for State {
             tints: HashMap::new(),
             sharing: None,
             copied: false,
+            list_copied: None,
+            shelf_push: None,
             copy: None,
             covers: HashSet::new(),
             saved: Vec::new(),
@@ -529,6 +559,10 @@ impl State {
         // A dnmusic link is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
             return self.open(Target::Song(id.to_owned()));
+        }
+        // Nor is a playlist's: it is brought in as a copy.
+        if let Some((name, ids)) = shared_list(&query) {
+            return self.open(Target::List { name, ids });
         }
         self.submitted = Some(query.clone());
         self.searching = true;
@@ -614,6 +648,7 @@ impl State {
 
     /// Leaves the current page for another. A page that never loaded is not one to return to.
     fn go(&mut self, page: Page) {
+        self.list_copied = None;
         let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
@@ -890,6 +925,11 @@ impl State {
                 self.open_side(Side::Right, self.lyrics_open);
                 self.ask_lyrics()
             }
+            _ if id.starts_with("shelf-back:") || id.starts_with("shelf-on:") => {
+                let (way, shelf) = id.split_once(':').unwrap_or_default();
+                self.shelf_push = Some((shelf.to_owned(), if way == "shelf-on" { 1.0 } else { -1.0 }));
+                Vec::new()
+            }
             _ if id.starts_with("heard:") => {
                 let index = id["heard:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.heard.len());
                 index.map(|index| Command::PlayList { tracks: self.collection.heard.clone(), index }).into_iter().collect()
@@ -1013,6 +1053,13 @@ impl State {
                 }
                 Vec::new()
             }
+            "playlist-share" => {
+                if let Page::Playlist(id) = self.page {
+                    self.copy = self.collection.playlist(id).map(list_link);
+                    self.list_copied = self.copy.is_some().then_some(id);
+                }
+                Vec::new()
+            }
             "downloads-clear" => {
                 self.confirm = (!self.saved.is_empty()).then_some(Confirm::ClearDownloads);
                 Vec::new()
@@ -1093,10 +1140,24 @@ impl State {
                 cover_requests(&mut self.covers, covers)
             }
             Event::Opened { target, result } if self.page == Page::Loading(target.clone()) => {
+                // A shared playlist becomes one of the user's own, and that is the page shown.
+                let result = match result {
+                    Ok(Content::List { name, tracks }) => {
+                        let id = self.collection.create(Draft { name, collaborative: false, first: None });
+                        for track in tracks {
+                            self.collection.add(id, track);
+                        }
+                        self.query.clear();
+                        self.page = Page::Playlist(id);
+                        return self.page_covers();
+                    }
+                    other => other,
+                };
                 self.page = match result {
                     Ok(Content::Artist(artist)) => Page::Artist(artist),
                     Ok(Content::Album(album)) => Page::Album(album),
                     Ok(Content::Song(track)) => Page::Song(track),
+                    Ok(Content::List { .. }) => unreachable!("a shared playlist was taken in above"),
                     Err(message) => Page::Failed(target, message),
                 };
                 // What was opened is what the home page offers next time.
@@ -1662,6 +1723,28 @@ mod tests {
         click(&mut state, "recent-clear");
         click(&mut state, "confirm-yes");
         assert!(state.collection.recent.is_empty() && state.confirm.is_none());
+    }
+
+    #[test]
+    fn a_playlist_travels_in_its_link_and_arrives_as_a_copy() {
+        let list = Playlist { id: 7, name: "Para el viaje & más".into(), collaborative: false, tracks: vec![track("DdI598gKkKw"), track("abc_-1")] };
+        let link = list_link(&list);
+        assert_eq!(link, "dnmusic://lista/DdI598gKkKw,abc_-1?nombre=Para%20el%20viaje%20%26%20m%C3%A1s");
+        assert_eq!(shared_list(&format!("  {link} ")), Some(("Para el viaje & más".into(), vec!["DdI598gKkKw".into(), "abc_-1".into()])));
+        for not_one in ["dnmusic://lista/?nombre=x", "dnmusic://lista/a,b", "dnmusic://cancion/abc", "viaje"] {
+            assert_eq!(shared_list(not_one), None, "{not_one}");
+        }
+
+        let mut state = State { query: link, ..State::default() };
+        let target = Target::List { name: "Para el viaje & más".into(), ids: vec!["DdI598gKkKw".into(), "abc_-1".into()] };
+        assert_eq!(state.search(), vec![Command::Open(target.clone())]);
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Para el viaje & más".into(), tracks: vec![track("a"), track("b")] }) });
+        let copy = &state.collection.playlists[0];
+        assert_eq!((copy.name.as_str(), copy.tracks.len(), state.page.clone()), ("Para el viaje & más", 2, Page::Playlist(copy.id)));
+
+        click(&mut state, "playlist-share");
+        assert_eq!(state.copy.as_deref(), Some("dnmusic://lista/a,b?nombre=Para%20el%20viaje%20%26%20m%C3%A1s"));
+        assert_eq!(state.list_copied, Some(state.collection.playlists[0].id));
     }
 
     #[test]
