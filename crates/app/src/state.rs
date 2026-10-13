@@ -1451,6 +1451,11 @@ impl State {
                 }
                 Vec::new()
             }
+            "search-clear" => {
+                self.query.clear();
+                self.focus = Some("search".to_owned());
+                Vec::new()
+            }
             "import-open" => {
                 self.importing = Some(String::new());
                 self.import_unknown = false;

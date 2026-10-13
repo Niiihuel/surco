@@ -463,10 +463,15 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
 /// Across the top: the way back, home, and the search in the middle of the window. A side
 /// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let search = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
-        .width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH))
-        .render()
-        .centered_y();
+    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH)).render();
+    // What was typed is taken back from a cross at the field's end, filled as the field is so it covers a long text.
+    let search = if state.query.is_empty() {
+        field
+    } else {
+        let clear = IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip("Borrar").render().centered_y();
+        Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), clear]).padding(6.0)])
+    }
+    .centered_y();
     let mut leading = Vec::new();
     if !state.library_open {
         leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new("Mostrar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
