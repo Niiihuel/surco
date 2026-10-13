@@ -334,6 +334,13 @@ pub struct State {
     /// Where the seek thumb is while it is being dragged.
     pub seek_preview: Option<f32>,
     pub volume: f32,
+    /// What the tracks of the page are searched for, whether that search is open, and how
+    /// far open its field is drawn, from 0 to 1, on its way there.
+    pub page_search: String,
+    pub page_searching: bool,
+    pub page_search_slide: ScalarTransition,
+    /// A field the window is to put the keyboard in, once.
+    pub focus: Option<String>,
     /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
     pub library_open: bool,
     pub library_slide: ScalarTransition,
@@ -504,6 +511,10 @@ impl Default for State {
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
+            page_search: String::new(),
+            page_searching: false,
+            page_search_slide: ScalarTransition::new(0.0, Instant::now()),
+            focus: None,
             library_open: true,
             library_slide: ScalarTransition::new(1.0, Instant::now()),
             panel_open: true,
@@ -641,9 +652,28 @@ impl State {
         self.panel_slide = ScalarTransition::new(if panel_open { 1.0 } else { 0.0 }, now);
     }
 
-    /// Whether a side panel is on its way open or shut.
+    /// Whether a side panel, or the page's search, is on its way open or shut.
     pub fn is_sliding(&self, now: Instant) -> bool {
-        self.library_slide.is_active(now) || self.panel_slide.is_active(now)
+        self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now)
+    }
+
+    /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
+    /// forgets what it was looking for. Its field grows out of its magnifier and back.
+    fn search_page(&mut self, open: bool) {
+        self.page_searching = open;
+        self.page_search.clear();
+        self.focus = open.then(|| "page-query".to_owned());
+        let travel = Duration::from_millis(u64::from(limn::tokens().motion.move_ms));
+        self.page_search_slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
+    }
+
+    /// Whether a track is one the page's search is looking for: every track while nothing
+    /// is searched, and otherwise those whose title, artist or album holds what was typed,
+    /// whatever its case.
+    pub fn page_has(&self, track: &Track) -> bool {
+        let wanted = self.page_search.trim().to_lowercase();
+        let holds = |text: &str| text.to_lowercase().contains(&wanted);
+        wanted.is_empty() || holds(&track.title) || holds(&track.artist) || track.album.as_deref().is_some_and(holds)
     }
 
     pub fn is_liked(&self, track_id: &str) -> bool {
@@ -657,6 +687,10 @@ impl State {
     /// Leaves the current page for another. A page that never loaded is not one to return to.
     fn go(&mut self, page: Page) {
         self.list_copied = None;
+        // A search belongs to the page it was made on.
+        if self.page_searching {
+            self.search_page(false);
+        }
         let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
@@ -773,6 +807,13 @@ impl State {
         match action {
             UiAction::InputChanged { id, value } if id == "search" => {
                 self.query = value.clone();
+                Vec::new()
+            }
+            UiAction::InputChanged { id, value } if id == "page-query" => {
+                // Typing into a search that was shut meanwhile changes nothing.
+                if self.page_searching {
+                    self.page_search.clone_from(value);
+                }
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "playlist-name" => {
@@ -920,6 +961,10 @@ impl State {
             }
             // The queue is a face of the right panel: its button opens the panel on it, and
             // closes the panel from it.
+            "page-search" => {
+                self.search_page(!self.page_searching);
+                Vec::new()
+            }
             "queue" => {
                 self.queue_open = !self.queue_open;
                 self.lyrics_open = false;
@@ -1777,6 +1822,27 @@ mod tests {
         click(&mut state, "recent-clear");
         click(&mut state, "confirm-yes");
         assert!(state.collection.recent.is_empty() && state.confirm.is_none());
+    }
+
+    #[test]
+    fn a_pages_search_opens_with_the_keyboard_in_it_narrows_its_tracks_and_ends_with_the_page() {
+        let mut state = State::default();
+        let named = |title: &str, album: Option<&str>| Track { title: title.into(), album: album.map(str::to_owned), ..track("x") };
+        assert!(state.page_has(&named("Luna", None)), "nothing is searched yet");
+        click(&mut state, "page-search");
+        assert!(state.page_searching && state.focus.as_deref() == Some("page-query"));
+        state.update(&UiAction::InputChanged { id: "page-query".into(), value: " NADA ".into() });
+        assert!(state.page_has(&named("Nada (feat. Enrique Bunbury)", None)) && !state.page_has(&named("Luna", None)));
+        assert!(state.page_has(&named("Luna", Some("Nada personal"))), "its album counts");
+        assert!(state.page_has(&Track { artist: "Nadadores".into(), ..named("Luna", None) }), "and its artist");
+
+        click(&mut state, "downloads");
+        assert!(!state.page_searching && state.page_search.is_empty() && state.page_has(&named("Luna", None)), "another page starts unsearched");
+        state.update(&UiAction::InputChanged { id: "page-query".into(), value: "x".into() });
+        assert!(state.page_search.is_empty(), "a shut search takes no typing");
+        click(&mut state, "page-search");
+        click(&mut state, "page-search");
+        assert!(!state.page_searching);
     }
 
     #[test]

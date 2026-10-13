@@ -226,6 +226,10 @@ impl eframe::App for Host {
                 self.glide = None;
             }
         }
+        // A field that has just appeared takes the keyboard.
+        if let Some(field) = self.state.focus.take() {
+            self.tree.focus(&field);
+        }
         // The line being sung is kept in the middle of its list.
         if let Some(line) = self.state.line_to_reveal() {
             self.tree.center(&line);

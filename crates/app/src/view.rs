@@ -49,6 +49,9 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// The page's search field, fully open and as it starts to grow.
+const PAGE_SEARCH_WIDTH: f32 = 220.0;
+const PAGE_SEARCH_SHUT: f32 = 32.0;
 /// Where the window presents the frames of the clip of what plays.
 pub const CLIP_SURFACE: &str = "now-clip";
 /// The mark of the lyrics: words in a bubble.
@@ -756,8 +759,10 @@ fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) 
         Button::new("playlist-delete", "Eliminar", palette).icon(Icon::Trash).variant(ButtonVariant::Ghost).render(),
     ];
     if playlist.tracks.is_empty() {
-        // Nothing to play or to share yet.
+        // Nothing to play, to share or to search yet.
         actions.drain(..3);
+    } else {
+        actions.extend(page_search(state, palette));
     }
     let header = Element::row(vec![
         picture,
@@ -778,7 +783,7 @@ fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) 
         )
         .padding(24.0)
     } else {
-        let rows = playlist.tracks.iter().enumerate().map(|(index, track)| {
+        let rows = playlist.tracks.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
             let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
             Element::column(vec![row]).animate_height(format!("playlist-row:{}:{}", playlist.id, track.id), false)
         });
@@ -921,7 +926,27 @@ fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPal
         let (label, icon) = if state.keeps_page() { (kept, Icon::Check) } else { (keep, Icon::Add) };
         buttons.push(Button::new("keep", label, palette).icon(icon).variant(ButtonVariant::Ghost).render());
     }
+    buttons.extend(page_search(state, palette));
     Element::row(buttons).gap(8.0)
+}
+
+/// The search of the page's tracks, at the far end of its actions: a magnifier that grows
+/// into a field, with the cross that shuts it where the magnifier was.
+fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
+    let open = state.page_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
+    let toggle = |icon: Icon, hint: &str| header_button("page-search", icon, TooltipSpec::new(hint), palette).render().centered_y();
+    let mut parts = vec![Element::spacer().flex(1.0)];
+    if open > 0.0 {
+        let field = SearchField::new("page-query", &state.page_search, "Buscar en esta página", SCHEME.on_raised())
+            .size(ControlSize::Compact)
+            .width(PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open)
+            .render()
+            .centered_y();
+        parts.extend([field, toggle(Icon::Close, "Cerrar la búsqueda")]);
+    } else {
+        parts.push(toggle(Icon::Search, "Buscar en esta página"));
+    }
+    parts
 }
 
 fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Element {
@@ -938,7 +963,9 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
     .gap(20.0);
     let mut sections = vec![header];
     if !artist.songs.is_empty() {
-        let rows = artist.songs.iter().take(ARTIST_SONGS_SHOWN).enumerate().map(|(index, track)| {
+        // Searched, an artist's page looks through all of their songs, not only the ones it shows.
+        let shown = if state.page_search.trim().is_empty() { ARTIST_SONGS_SHOWN } else { artist.songs.len() };
+        let rows = artist.songs.iter().take(shown).enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
             track_row(state, format!("page-track:{index}"), track, Some(index + 1), track.album.as_deref().unwrap_or(&track.artist), palette)
         });
         sections.extend([heading("Canciones", palette), Element::column(rows.collect()).gap(2.0)]);
@@ -974,7 +1001,7 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(10.0)];
     sections.extend(failure);
     // A download that is removed closes where it was.
-    let rows = state.saved.iter().enumerate().map(|(index, track)| {
+    let rows = state.saved.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
         let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
         Element::column(vec![row]).animate_height(format!("saved-row:{}", track.id), false)
     });
@@ -995,7 +1022,7 @@ fn liked_page(state: &State, palette: ComponentPalette) -> Element {
     ])
     .gap(10.0);
     // A track that loses its heart closes where it was.
-    let rows = liked.iter().enumerate().map(|(index, track)| {
+    let rows = liked.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
         let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
         Element::column(vec![row]).animate_height(format!("liked-row:{}", track.id), false)
     });
@@ -1028,6 +1055,7 @@ fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Elemen
         .tracks
         .iter()
         .enumerate()
+        .filter(|(_, track)| state.page_has(track))
         .map(|(index, track)| track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette));
     let sections = vec![header, Element::column(rows.collect()).gap(2.0)];
     ScrollArea::new("album", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
@@ -1360,6 +1388,25 @@ mod tests {
         let mut tree = UiTree::new(view(state, size));
         // A disabled control keeps a hover region for its tooltip; these are the ones that answer a press.
         tree.layout(size).regions.iter().filter(|region| matches!(region.kind, HitKind::Button | HitKind::TextInput)).map(|region| region.id.clone()).collect()
+    }
+
+    #[test]
+    fn a_page_keeps_a_search_at_the_end_of_its_actions_that_opens_into_a_field_and_narrows_its_rows() {
+        let size = Size::new(1400.0, 900.0);
+        let album = Album { id: "lp".into(), title: "Album".into(), artist: "Artist".into(), artist_id: None, year: "2017".into(), artwork_url: None, tracks: vec![track("one"), track("two")] };
+        // Without motion the field is open on the frame of the click.
+        let mut state = State::default();
+        state.page = Page::Album(album);
+        state.motion = false;
+        let has = |state: &State, id: &str| ids(state, size).iter().any(|found| found == id);
+        assert!(has(&state, "page-search") && !has(&state, "page-query"), "a magnifier, shut");
+        state.update(&limn::UiAction::Clicked { id: "page-search".into() });
+        assert!(has(&state, "page-query") && has(&state, "page-search"), "the field, and the cross that shuts it");
+        assert!(has(&state, "page-track:0") && has(&state, "page-track:1"));
+        state.update(&limn::UiAction::InputChanged { id: "page-query".into(), value: "title TWO".into() });
+        assert!(!has(&state, "page-track:0") && has(&state, "page-track:1"), "the rows keep their own numbers");
+        state.update(&limn::UiAction::Clicked { id: "page-search".into() });
+        assert!(!has(&state, "page-query") && has(&state, "page-track:0"), "shut, the page lists everything again");
     }
 
     #[test]
