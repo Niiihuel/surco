@@ -231,6 +231,8 @@ struct Shared {
     audio: NativeAudio,
     /// Bumped by every `Effect::Play`. A task that finds another number was overtaken and stops.
     generation: AtomicU64,
+    /// Counts the handovers asked for: only the last one asked may take the sound.
+    handovers: AtomicU64,
     /// The most bits per second a stream is fetched at.
     quality: AtomicU64,
     downloads: Mutex<Downloads>,
@@ -339,6 +341,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         youtube,
         audio,
         generation: AtomicU64::new(0),
+        handovers: AtomicU64::new(0),
         quality: AtomicU64::new(u64::MAX),
         downloads: Mutex::default(),
         decks: tokio::sync::Mutex::default(),
@@ -694,11 +697,15 @@ const HANDOVER_FADE: Duration = Duration::from_millis(250);
 /// gets there, and then the other comes in under it.
 async fn handover(shared: &Arc<Shared>, track: Track, at: f64) {
     let generation = shared.generation.load(Ordering::SeqCst);
+    // A handover asked for after this one overrules it: going to the video and straight
+    // back must end on the song, whichever of the two is ready first.
+    let turn = shared.handovers.fetch_add(1, Ordering::SeqCst) + 1;
+    let last = || shared.handovers.load(Ordering::SeqCst) == turn && shared.is_current(generation);
     let asked = std::time::Instant::now();
     let ready = async {
         let (mut load, download) = fetch(shared, &track, true).await.ok()?;
         load.start_sec = Some(at + HANDOVER_AHEAD);
-        if !shared.is_current(generation) {
+        if !last() {
             download.cancel();
             return None;
         }
@@ -713,7 +720,7 @@ async fn handover(shared: &Arc<Shared>, track: Track, at: f64) {
         tokio::time::sleep(Duration::from_secs_f64(HANDOVER_AHEAD).saturating_sub(asked.elapsed())).await;
     }
     // Something else was asked to play meanwhile: this is no longer what follows.
-    if shared.is_current(generation) {
+    if last() {
         // Not ready, it is loaded the plain way from where the song has got to.
         begin(shared, track, HANDOVER_FADE, Some((at + asked.elapsed().as_secs_f64(), true)));
     }
