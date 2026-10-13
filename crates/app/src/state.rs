@@ -137,6 +137,7 @@ pub struct Settings {
     /// Show a stretch of a song's own video where its cover is while it plays.
     pub clips: bool,
     pub library_sort: Sort,
+    pub library_view: LibraryView,
     /// Play the same in both speakers.
     pub mono: bool,
     /// Turn the tracks louder than the reference down to it.
@@ -154,20 +155,21 @@ pub enum Sort {
     Creator,
 }
 
+/// How the library lists what it holds: a line each, a row with its picture, or tiles.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LibraryView {
+    Compact,
+    #[default]
+    List,
+    Grid,
+}
+
 impl Sort {
     pub fn label(self) -> &'static str {
         match self {
             Sort::Added => "Agregados",
             Sort::Alphabetical => "A–Z",
             Sort::Creator => "Creador",
-        }
-    }
-
-    fn next(self) -> Self {
-        match self {
-            Sort::Added => Sort::Alphabetical,
-            Sort::Alphabetical => Sort::Creator,
-            Sort::Creator => Sort::Added,
         }
     }
 }
@@ -211,7 +213,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, mono: false, normalize: true }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true }
     }
 }
 
@@ -412,6 +414,9 @@ pub struct State {
     pub filter: Filter,
     /// What the library's rows are searched for.
     pub library_search: String,
+    /// The library's search is open, and so is the menu of its orders and views.
+    pub library_searching: bool,
+    pub library_menu: bool,
     pub settings: Settings,
     /// The playlist being made, while its dialog is open.
     pub creating: Option<Draft>,
@@ -605,6 +610,8 @@ impl Default for State {
             collection: Collection::default(),
             filter: Filter::All,
             library_search: String::new(),
+            library_searching: false,
+            library_menu: false,
             settings: Settings::default(),
             creating: None,
             confirm: None,
@@ -1348,8 +1355,28 @@ impl State {
                 }
                 Vec::new()
             }
-            "library-sort" => {
-                self.settings.library_sort = self.settings.library_sort.next();
+            "library-sort" | "library-menu-close" => {
+                self.library_menu = id == "library-sort" && !self.library_menu;
+                Vec::new()
+            }
+            _ if id.starts_with("library-sort:") || id.starts_with("library-view:") => {
+                match &id["library-".len()..] {
+                    "sort:added" => self.settings.library_sort = Sort::Added,
+                    "sort:alphabetical" => self.settings.library_sort = Sort::Alphabetical,
+                    "sort:creator" => self.settings.library_sort = Sort::Creator,
+                    "view:compact" => self.settings.library_view = LibraryView::Compact,
+                    "view:list" => self.settings.library_view = LibraryView::List,
+                    "view:grid" => self.settings.library_view = LibraryView::Grid,
+                    _ => {}
+                }
+                self.library_menu = false;
+                Vec::new()
+            }
+            // The magnifier opens the library's search; shut, it forgets what was typed.
+            "library-search" => {
+                self.library_searching = !self.library_searching;
+                self.library_search.clear();
+                self.focus = self.library_searching.then(|| "library-query".to_owned());
                 Vec::new()
             }
             "queue-clear" => {
@@ -1527,7 +1554,9 @@ impl State {
         self.player = player;
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
-        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]));
+        // And the panel of what plays shows what comes next.
+        let next = self.player.upcoming.first().filter(|_| self.shows_playing()).map(|track| &track.artwork_url);
+        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]).chain(next));
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
         commands.extend(self.ask_clip());
@@ -1670,7 +1699,9 @@ impl State {
 
     /// The lyrics are only looked for while they are on screen, once for each track.
     fn ask_lyrics(&mut self) -> Vec<Command> {
-        let Some(track) = self.player.current.as_ref().filter(|_| self.lyrics_open()) else { return Vec::new() };
+        // Their page shows them all, and the panel of what plays a few of them.
+        let shown = self.lyrics_open() || self.shows_playing();
+        let Some(track) = self.player.current.as_ref().filter(|_| shown) else { return Vec::new() };
         if self.lyrics.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
             return Vec::new();
         }
@@ -2027,7 +2058,13 @@ mod tests {
         click(&mut state, "pin:liked");
         assert_eq!(state.collection.pinned, ["playlist:2"], "pinned twice is let go");
         click(&mut state, "library-sort");
-        assert_eq!(state.settings.library_sort, Sort::Alphabetical);
+        assert!(state.library_menu);
+        click(&mut state, "library-sort:alphabetical");
+        assert!(state.settings.library_sort == Sort::Alphabetical && !state.library_menu, "choosing shuts the menu");
+        click(&mut state, "library-view:grid");
+        assert_eq!(state.settings.library_view, LibraryView::Grid);
+        click(&mut state, "library-search");
+        assert!(state.library_searching && state.focus.as_deref() == Some("library-query"));
         state.update(&UiAction::InputChanged { id: "library-query".into(), value: "lu".into() });
         assert_eq!(state.library_search, "lu");
         assert!(click(&mut state, "queue-clear").is_empty() && state.confirm == Some(Confirm::ClearQueue), "it asks first");
@@ -2384,7 +2421,8 @@ mod tests {
     #[test]
     fn lyrics_are_asked_once_for_what_plays_and_a_line_seeks_to_itself() {
         let playing = |id: &str, position| PlayerView { current: Some(track(id)), position, duration: 200.0, playing: true, ..PlayerView::default() };
-        let mut state = State::default();
+        // Neither their page nor the panel that shows a few of them is on screen.
+        let mut state = State { panel_open: false, ..State::default() };
         assert!(state.show(playing("a", 0.0)).iter().all(|command| !matches!(command, Command::Lyrics(_))), "not while they are not on screen");
         assert_eq!(click(&mut state, "lyrics"), vec![Command::Lyrics(track("a"))]);
         assert!(state.lyrics_open(), "they take the page");
@@ -2450,9 +2488,10 @@ mod tests {
     fn the_queue_fetches_its_covers_only_while_it_is_open() {
         let mut state = without_clips();
         let view = PlayerView { upcoming: vec![track("b"), track("c")], ..playing("a") };
-        assert_eq!(covers(state.show(view.clone())), vec![Command::FetchArtwork("https://img/a".into())]);
+        // The panel of what plays shows what comes next, and no further.
+        assert_eq!(covers(state.show(view.clone())), vec![Command::FetchArtwork("https://img/a".into()), Command::FetchArtwork("https://img/b".into())]);
         let opened = click(&mut state, "queue");
-        assert_eq!(opened, vec![Command::FetchArtwork("https://img/b".into()), Command::FetchArtwork("https://img/c".into())]);
+        assert_eq!(opened, vec![Command::FetchArtwork("https://img/c".into())]);
         assert!(state.show(view).is_empty(), "nothing is asked for twice");
         click(&mut state, "queue");
         assert!(!state.queue_open);
