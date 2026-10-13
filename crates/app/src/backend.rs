@@ -11,10 +11,11 @@ use std::time::Duration;
 use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
+use dnm_core::discover;
 use dnm_core::lyrics::{parse_lrc, Line};
 use dnm_video::Clip;
 use futures_util::future::join_all;
-use dnm_core::{Album, Artist, Found, Track};
+use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use dnm_youtube::{Audio, YouTube};
 use eframe::egui;
 use limn::{RasterImage, RasterImageFormat};
@@ -85,13 +86,39 @@ pub enum Command {
     Outputs,
     /// Look for the synced lyrics of a track.
     Lyrics(Track),
-    /// Ask the catalog what goes with a track the user heard.
-    Recommend(Track),
+    /// Ask the catalog for the home page's picks.
+    Discover(Taste),
     /// Look for a track's own video and fetch a few seconds of it.
     Clip(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
+}
+
+/// What the home page's picks are made from: what the user plays and what they already have.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Taste {
+    /// A track for each of the artists played most, the most played first.
+    pub seeds: Vec<Track>,
+    /// The ids of the tracks the user already has.
+    pub tracks: HashSet<String>,
+    /// The artists already played or followed, as `discover::plain` writes them.
+    pub artists: HashSet<String>,
+    /// The ids of artists the user plays or follows, for more of their albums.
+    pub artist_ids: Vec<String>,
+    /// The ids of the albums already kept.
+    pub albums: HashSet<String>,
+}
+
+/// What the catalog picked for the home page, a part at a time as each is ready.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Picks {
+    /// A mix out of every seed's radio, and what goes with each of the first seeds.
+    Tracks { mix: Vec<Track>, because: Vec<(Track, Vec<Track>)> },
+    /// Artists the user does not play yet.
+    Artists(Vec<ArtistRef>),
+    /// Albums of those artists and of the ones the user plays.
+    Albums(Vec<AlbumRef>),
 }
 
 /// What comes back. Every answer names what it answers, because answers arrive late and out of
@@ -111,8 +138,8 @@ pub enum Event {
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
     /// A stretch of a track's own video, or none when it has no such video.
     Clip { track_id: String, clip: Option<Arc<Clip>> },
-    /// What the catalog would play after the track `seed`.
-    Recommended { seed: String, tracks: Vec<Track> },
+    /// A part of the home page's picks.
+    Discovered(Picks),
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -338,16 +365,11 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Lyrics(track), Err(_)) => reply(Event::Lyrics { track_id: track.id, lines: None }),
-        (Command::Recommend(seed), Ok(shared)) => {
+        (Command::Discover(taste), Ok(shared)) => {
             let shared = shared.clone();
-            tokio::spawn(async move {
-                // Without an answer the home page simply has one shelf less.
-                if let Ok(tracks) = shared.youtube.radio(&seed.id).await {
-                    (shared.reply)(Event::Recommended { seed: seed.id, tracks });
-                }
-            });
+            tokio::spawn(async move { discover(&shared, taste).await });
         }
-        (Command::Recommend(_), Err(_)) => {}
+        (Command::Discover(_), Err(_)) => {}
         (Command::Clip(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -551,6 +573,44 @@ async fn clip(shared: &Shared, track: &Track) -> Option<Clip> {
 
 /// Synced lyrics from LRCLIB. It is searched, not asked for the exact track, because an
 /// exact lookup misses on any difference in length; the entry closest in length wins.
+/// How many tracks the mix has, how many seeds get a shelf of their own, and how many
+/// artists and albums are picked.
+const MIX: usize = 20;
+const BECAUSE: usize = 2;
+const PICKED_ARTISTS: usize = 8;
+const PICKED_ALBUMS: usize = 12;
+/// How many of the artists found, and of the ones already played, lend their albums.
+const ALBUM_ARTISTS: usize = 4;
+
+/// The home page's picks, out of the radios of what the user plays. Each part is sent as
+/// soon as it is ready, and a part the catalog fails is a shelf less.
+async fn discover(shared: &Shared, taste: Taste) {
+    let radios: Vec<Vec<Track>> = join_all(taste.seeds.iter().map(|seed| async { shared.youtube.radio(&seed.id).await.unwrap_or_default() })).await;
+    let mix = discover::blend(&radios, &taste.tracks, MIX);
+    // A seed's own shelf goes further into its radio than the mix did.
+    let mut shown = taste.tracks.clone();
+    shown.extend(mix.iter().map(|track| track.id.clone()));
+    let own = |(seed, radio): (&Track, &Vec<Track>)| (seed.clone(), discover::blend(std::slice::from_ref(radio), &shown, crate::state::SHELF));
+    let because = taste.seeds.iter().zip(&radios).take(BECAUSE).map(own).collect();
+    (shared.reply)(Event::Discovered(Picks::Tracks { mix, because }));
+
+    // Twice the names: a radio also names uploaders, who have no artist's page.
+    let names = discover::newcomers(&radios, &taste.artists, PICKED_ARTISTS * 2);
+    let found = join_all(names.iter().map(|name| shared.youtube.artist_named(name))).await;
+    let artists: Vec<ArtistRef> = found.into_iter().filter_map(|artist| artist.ok().flatten()).take(PICKED_ARTISTS).collect();
+    (shared.reply)(Event::Discovered(Picks::Artists(artists.clone())));
+
+    // An album of each in turn: of the artists just found, then of the ones already played.
+    let ids = artists.iter().map(|artist| &artist.id).take(ALBUM_ARTISTS).chain(taste.artist_ids.iter().take(ALBUM_ARTISTS));
+    let pages: Vec<Vec<AlbumRef>> = join_all(ids.map(|id| async move { shared.youtube.albums_of(id).await.unwrap_or_default() })).await;
+    let mut albums: Vec<AlbumRef> = Vec::new();
+    for rank in 0..pages.iter().map(Vec::len).max().unwrap_or(0) {
+        albums.extend(pages.iter().filter_map(|page| page.get(rank)).filter(|album| !taste.albums.contains(&album.id)).cloned());
+    }
+    albums.truncate(PICKED_ALBUMS);
+    (shared.reply)(Event::Discovered(Picks::Albums(albums)));
+}
+
 async fn lyrics(shared: &Shared, track: &Track) -> Option<Vec<Line>> {
     let request = shared.youtube.http().get("https://lrclib.net/api/search").query(&[("artist_name", &track.artist), ("track_name", &track.title)]);
     let body = request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;

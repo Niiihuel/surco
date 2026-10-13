@@ -153,8 +153,8 @@ impl eframe::App for Host {
             }
             let covers = self.state.collection_covers();
             self.send(covers);
-            let recommendations = self.state.ask_recommendations();
-            self.send(recommendations);
+            let picks = self.state.ask_picks();
+            self.send(picks);
         }
         limn_egui::normalize_keyboard_input(&ctx);
         // Motion stays on for a scripted run too: whoever looks at its window sees the app as

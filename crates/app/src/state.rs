@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use dnm_audio::equalizer::EqualizerValues;
 use dnm_audio::AudioOutputDevice;
+use dnm_core::discover;
 use dnm_core::lyrics::{active, Line};
 use dnm_video::Clip;
 use std::sync::Arc;
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarTransition, UiAction};
 
-use crate::backend::{Command, Content, Event, Target};
+use crate::backend::{Command, Content, Event, Picks, Target, Taste};
 use crate::player::PlayerView;
 
 /// What the main pane shows.
@@ -176,10 +177,10 @@ impl Default for Settings {
     }
 }
 
-/// How many played tracks are remembered, and from how many of them the home page asks
-/// the catalog for more.
-const HEARD_KEPT: usize = 20;
-const SEEDS: usize = 2;
+/// How many played tracks are remembered, and for how many of the artists played most
+/// the home page asks the catalog what goes with them.
+const HEARD_KEPT: usize = 100;
+const SEEDS: usize = 5;
 
 /// How many recent entries the home page offers.
 const RECENT_KEPT: usize = 8;
@@ -396,7 +397,14 @@ pub struct State {
     pub levels: [f32; dnm_audio::meter::BANDS],
     /// What the catalog offers after a track that was heard, by that track's id; empty
     /// while the answer is on its way.
-    pub recommended: HashMap<String, Vec<Track>>,
+    /// The catalog's picks for the home page: a mix out of what goes with what the user
+    /// plays, what goes with each of the first seeds, and artists and albums to open.
+    pub mix: Vec<Track>,
+    pub because: Vec<(Track, Vec<Track>)>,
+    pub picked_artists: Vec<ArtistRef>,
+    pub picked_albums: Vec<AlbumRef>,
+    /// The artists the picks were last asked for.
+    picked_for: Option<Vec<String>>,
     /// The clip asked for, with the track it belongs to; no clip yet while it is fetched,
     /// and still none when the track has no video of its own.
     pub clip: Option<(String, Option<Arc<Clip>>)>,
@@ -545,7 +553,11 @@ impl Default for State {
             saving: HashSet::new(),
             save_error: None,
             levels: [0.0; dnm_audio::meter::BANDS],
-            recommended: HashMap::new(),
+            mix: Vec::new(),
+            because: Vec::new(),
+            picked_artists: Vec::new(),
+            picked_albums: Vec::new(),
+            picked_for: None,
             clip: None,
             lyrics: None,
             lyric_shown: None,
@@ -719,6 +731,8 @@ impl State {
             ("retry", None, Page::Failed(target, _)) => Some(target.clone()),
             ("kept", Some(index), _) => self.collection.kept.get(index).map(Entry::target),
             ("recent", Some(index), _) => self.collection.recent.get(index).map(Entry::target),
+            ("pick-artist", Some(index), _) => self.picked_artists.get(index).map(|artist| Target::Artist(artist.id.clone())),
+            ("pick-album", Some(index), _) => self.picked_albums.get(index).map(album),
             ("now-artist", None, _) => self.current().map(artist_of),
             ("now-album", None, _) => self.current().and_then(|track| track.album_id.clone()).map(Target::Album),
             _ => None,
@@ -981,10 +995,14 @@ impl State {
                 let index = id["heard:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.heard.len());
                 index.map(|index| Command::PlayList { tracks: self.collection.heard.clone(), index }).into_iter().collect()
             }
+            _ if id.starts_with("mix:") => {
+                let index = id["mix:".len()..].parse::<usize>().ok().filter(|index| *index < self.mix.len());
+                index.map(|index| Command::PlayList { tracks: self.mix.clone(), index }).into_iter().collect()
+            }
             _ if id.starts_with("rec:") => {
                 // A pick plays, and the rest of its shelf follows it.
                 let place = id["rec:".len()..].split_once(':').and_then(|(shelf, index)| Some((shelf.parse::<usize>().ok()?, index.parse::<usize>().ok()?)));
-                let shelf = place.and_then(|(shelf, index)| Some((self.recommended.get(&self.seeds().get(shelf)?.id)?, index)));
+                let shelf = place.and_then(|(shelf, index)| Some((&self.because.get(shelf)?.1, index)));
                 shelf.filter(|(tracks, index)| *index < tracks.len()).map(|(tracks, index)| Command::PlayList { tracks: tracks.clone(), index }).into_iter().collect()
             }
             _ if id.starts_with("lyric:") => {
@@ -1010,7 +1028,7 @@ impl State {
                 self.searching = false;
                 self.search_error = None;
                 self.found = Found::default();
-                self.ask_recommendations()
+                self.ask_picks()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -1244,10 +1262,19 @@ impl State {
                 }
                 Vec::new()
             }
-            Event::Recommended { seed, tracks } => {
-                let tracks: Vec<Track> = tracks.into_iter().filter(|track| track.id != seed).take(SHELF).collect();
-                let covers = cover_requests(&mut self.covers, covers_of(&tracks));
-                self.recommended.insert(seed, tracks);
+            Event::Discovered(Picks::Tracks { mix, because }) => {
+                let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
+                (self.mix, self.because) = (mix, because);
+                covers
+            }
+            Event::Discovered(Picks::Artists(artists)) => {
+                let covers = cover_requests(&mut self.covers, artists.iter().map(|artist| &artist.artwork_url));
+                self.picked_artists = artists;
+                covers
+            }
+            Event::Discovered(Picks::Albums(albums)) => {
+                let covers = cover_requests(&mut self.covers, albums.iter().map(|album| &album.artwork_url));
+                self.picked_albums = albums;
                 covers
             }
             Event::Lyrics { track_id, lines } => {
@@ -1321,24 +1348,45 @@ impl State {
         (*asked == track.id).then_some((asked.as_str(), clip.as_ref()?))
     }
 
-    /// The tracks the home page asks the catalog about: the last heard, one for each artist.
-    pub fn seeds(&self) -> Vec<&Track> {
-        let mut seeds: Vec<&Track> = Vec::new();
-        for track in &self.collection.heard {
-            if seeds.len() < SEEDS && seeds.iter().all(|seed| seed.artist != track.artist) {
-                seeds.push(track);
+    /// What the user plays and already has, for the catalog to pick from.
+    fn taste(&self) -> Taste {
+        let collection = &self.collection;
+        let seeds = discover::seeds(&collection.heard, &collection.liked, SEEDS);
+        let own = || collection.heard.iter().chain(&collection.liked).chain(&self.saved).chain(collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
+        // A track by several is a track of each of them.
+        let credited = own().flat_map(|track| std::iter::once(track.artist.as_str()).chain(track.artist.split([',', '&'])));
+        let followed = collection.artists().map(|(_, artist)| artist.name.as_str());
+        let visited = collection.recent.iter().filter_map(|entry| match entry {
+            Entry::Artist(artist) => Some(artist.id.clone()),
+            Entry::Album(_) => None,
+        });
+        let mut artist_ids: Vec<String> = Vec::new();
+        for id in seeds.iter().filter_map(|seed| seed.artist_id.clone()).chain(collection.artists().map(|(_, artist)| artist.id.clone())).chain(visited) {
+            if !artist_ids.contains(&id) {
+                artist_ids.push(id);
             }
         }
-        seeds
+        Taste {
+            tracks: own().map(|track| track.id.clone()).collect(),
+            artists: credited.chain(followed).map(discover::plain).collect(),
+            artist_ids,
+            albums: collection.albums().map(|(_, album)| album.id.clone()).collect(),
+            seeds,
+        }
     }
 
-    /// Asks for what goes with each seed, once, and for the covers of what was heard.
-    pub fn ask_recommendations(&mut self) -> Vec<Command> {
-        let seeds: Vec<Track> = self.seeds().into_iter().filter(|seed| !self.recommended.contains_key(&seed.id)).cloned().collect();
-        let mut commands = cover_requests(&mut self.covers, covers_of(&self.collection.heard));
-        for seed in seeds {
-            self.recommended.insert(seed.id.clone(), Vec::new());
-            commands.push(Command::Recommend(seed));
+    /// Asks for the home page's picks, once for each set of artists the user plays most,
+    /// and for the covers of what was heard.
+    pub fn ask_picks(&mut self) -> Vec<Command> {
+        let heard = &self.collection.heard;
+        let mut commands = cover_requests(&mut self.covers, covers_of(&heard[..heard.len().min(SHELF)]));
+        let taste = self.taste();
+        let mut artists: Vec<String> = taste.seeds.iter().map(|seed| discover::plain(&seed.artist)).collect();
+        artists.sort();
+        let anything = !taste.seeds.is_empty() || !taste.artist_ids.is_empty();
+        if anything && self.picked_for.as_ref() != Some(&artists) {
+            self.picked_for = Some(artists);
+            commands.push(Command::Discover(taste));
         }
         commands
     }
@@ -1908,13 +1956,23 @@ mod tests {
         state.show(playing("a"));
         state.show(playing("b"));
         assert_eq!(state.collection.heard.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["b", "a"], "newest first, each once");
-        assert_eq!(state.seeds().len(), 1, "both are by the same artist");
 
-        assert!(click(&mut state, "home").contains(&Command::Recommend(track("b"))));
-        assert!(click(&mut state, "home").iter().all(|command| !matches!(command, Command::Recommend(_))), "asked once");
-        state.apply(Event::Recommended { seed: "b".into(), tracks: vec![track("b"), track("x"), track("y")] });
-        assert_eq!(click(&mut state, "rec:0:1"), vec![Command::PlayList { tracks: vec![track("x"), track("y")], index: 1 }], "without the seed itself");
-        assert!(click(&mut state, "rec:0:9").is_empty() && click(&mut state, "rec:3:0").is_empty());
+        let asked = click(&mut state, "home");
+        let Some(Command::Discover(taste)) = asked.last() else { panic!("the picks are asked for: {asked:?}") };
+        assert_eq!(taste.seeds, [track("b")], "one seed: both are by the same artist");
+        assert!(taste.tracks.contains("a") && taste.artists.contains("artist"));
+        assert!(click(&mut state, "home").iter().all(|command| !matches!(command, Command::Discover(_))), "asked once");
+
+        state.apply(Event::Discovered(Picks::Tracks { mix: vec![track("m")], because: vec![(track("b"), vec![track("x"), track("y")])] }));
+        assert_eq!(click(&mut state, "mix:0"), vec![Command::PlayList { tracks: vec![track("m")], index: 0 }]);
+        assert_eq!(click(&mut state, "rec:0:1"), vec![Command::PlayList { tracks: vec![track("x"), track("y")], index: 1 }]);
+        assert!(click(&mut state, "rec:0:9").is_empty() && click(&mut state, "rec:3:0").is_empty() && click(&mut state, "mix:4").is_empty());
+        let artist = ArtistRef { id: "who".into(), name: "Who".into(), subscribers: None, artwork_url: None };
+        let album = AlbumRef { id: "lp".into(), title: "LP".into(), artist: Some("Who".into()), year: String::new(), artwork_url: None };
+        state.apply(Event::Discovered(Picks::Artists(vec![artist])));
+        state.apply(Event::Discovered(Picks::Albums(vec![album])));
+        assert_eq!(click(&mut state, "pick-album:0"), vec![Command::Open(Target::Album("lp".into()))]);
+        assert_eq!(click(&mut state, "pick-artist:0"), vec![Command::Open(Target::Artist("who".into()))]);
         assert_eq!(click(&mut state, "heard:1"), vec![Command::PlayList { tracks: vec![track("b"), track("a")], index: 1 }]);
     }
 

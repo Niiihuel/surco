@@ -2,6 +2,7 @@
 //! Nothing here touches the network, the disk or a window, so all of it is unit-tested.
 
 mod catalog;
+pub mod discover;
 pub mod lyrics;
 mod queue;
 mod track;

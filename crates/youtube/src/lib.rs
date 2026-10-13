@@ -110,6 +110,36 @@ impl YouTube {
         Ok(artists.into_iter().next().map(|artist| artist.browse_id.get_raw().to_owned()))
     }
 
+    /// The artist of exactly this name, as a list shows them. A name the catalog only knows
+    /// as an uploader's channel finds nobody.
+    pub async fn artist_named(&self, name: &str) -> Result<Option<ArtistRef>> {
+        let artists = self.music().await?.search_artists(name).await?;
+        let wanted = dnm_core::discover::plain(name);
+        Ok(artists.into_iter().find(|artist| dnm_core::discover::plain(&artist.artist) == wanted).map(|artist| ArtistRef {
+            id: artist.browse_id.get_raw().to_owned(),
+            name: artist.artist,
+            subscribers: artist.subscribers,
+            artwork_url: artwork(artist.thumbnails),
+        }))
+    }
+
+    /// An artist's albums, each naming them: the page without the songs, which cost a
+    /// second request.
+    pub async fn albums_of(&self, id: &str) -> Result<Vec<AlbumRef>> {
+        let artist = self.music().await?.get_artist(ArtistChannelID::from_raw(id)).await?;
+        let albums = artist.top_releases.albums.map(|albums| albums.results).unwrap_or_default();
+        Ok(albums
+            .into_iter()
+            .map(|album| AlbumRef {
+                id: album.album_id.get_raw().to_owned(),
+                title: album.title,
+                artist: Some(artist.name.clone()),
+                year: album.year,
+                artwork_url: artwork(album.thumbnails),
+            })
+            .collect())
+    }
+
     pub async fn artist(&self, id: &str) -> Result<Artist> {
         let artist = self.music().await?.get_artist(ArtistChannelID::from_raw(id)).await?;
         let releases = artist.top_releases;
