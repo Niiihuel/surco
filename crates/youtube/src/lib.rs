@@ -9,6 +9,7 @@ use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
 use ytmapi_rs::parse::{ParsedSongArtist, PlaylistItem};
+use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, SongsFilter, SpellingMode};
 
 pub use stream::{Audio, Stream};
 
@@ -38,11 +39,31 @@ impl YouTube {
         &self.http
     }
 
-    /// Songs, artists and albums for one query. Only the songs are required: a search that
-    /// finds them still answers when one of the other two fails.
+    /// Songs, artists and albums for one query. A query that finds nothing is tried again as
+    /// the service would complete it, which is how a misspelt title still finds its song.
     pub async fn search(&self, query: &str) -> Result<Found> {
+        let found = self.find(query).await?;
+        if !(found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty()) {
+            return Ok(found);
+        }
+        let suggestions = self.music().await?.get_search_suggestions(query).await.unwrap_or_default();
+        match suggestions.first().map(|suggestion| suggestion.get_text()).filter(|better| better != query) {
+            Some(better) => self.find(&better).await,
+            None => Ok(found),
+        }
+    }
+
+    /// Only the songs are required: a search that finds them still answers when the artists
+    /// or the albums fail.
+    async fn find(&self, query: &str) -> Result<Found> {
         let music = self.music().await?;
-        let (songs, artists, albums) = tokio::join!(music.search_songs(query), music.search_artists(query), music.search_albums(query));
+        // As the service itself searches: a misspelt title still finds its song. The library's
+        // own default is an exact match, which answers a typo with nothing.
+        let (songs, artists, albums) = tokio::join!(
+            music.search_songs(SearchQuery::new_filtered(query, SongsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
+            music.search_artists(SearchQuery::new_filtered(query, ArtistsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
+            music.search_albums(SearchQuery::new_filtered(query, AlbumsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
+        );
         let tracks = songs?
             .into_iter()
             .map(|song| Track {
