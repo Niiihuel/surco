@@ -37,6 +37,8 @@ pub enum Page {
     Settings,
     /// The lines of what plays, in the middle of the window.
     Lyrics,
+    /// What the artists the user follows have released, and a later version of the app.
+    News,
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -87,6 +89,14 @@ pub struct Collection {
     /// The tracks marked as liked, the last one first.
     #[serde(default)]
     pub liked: Vec<Track>,
+    /// What the artists followed have released since they were followed, the latest
+    /// found first, each with whether it is still to be looked at.
+    #[serde(default)]
+    pub news: Vec<(AlbumRef, bool)>,
+    /// The releases already known of each artist followed, by the artist's id: one that
+    /// is not among them is news.
+    #[serde(default)]
+    known: HashMap<String, Vec<String>>,
     /// The id the next playlist takes.
     #[serde(default)]
     next_playlist: u64,
@@ -217,6 +227,11 @@ impl Default for Settings {
     }
 }
 
+/// How many news are kept, and how many of an artist's releases of the year are listed
+/// when they are first followed.
+const NEWS_KEPT: usize = 60;
+const FIRST_NEWS: usize = 2;
+
 /// The narrowest and the widest the album column of a page's tracks is dragged to.
 const ALBUM_WIDTH: (f32, f32) = (80.0, 360.0);
 
@@ -304,6 +319,26 @@ impl Collection {
         if self.liked.len() == before {
             self.liked.insert(0, track.clone());
         }
+    }
+
+    /// Takes in what an artist followed has out. The first time, all of it is known and
+    /// only what came out in `year` is listed, as already seen; after that, whatever was
+    /// not known is news.
+    fn learn(&mut self, artist: String, releases: Vec<AlbumRef>, year: i32) {
+        let first = !self.known.contains_key(&artist);
+        let known = self.known.entry(artist).or_default();
+        let fresh: Vec<AlbumRef> = releases.into_iter().filter(|release| !known.contains(&release.id)).collect();
+        known.extend(fresh.iter().map(|release| release.id.clone()));
+        if first {
+            let of_the_year = fresh.into_iter().filter(|release| release.year == year.to_string());
+            self.news.extend(of_the_year.take(FIRST_NEWS).map(|release| (release, false)));
+        } else {
+            // They come the latest first, and so they stay.
+            for release in fresh.into_iter().rev() {
+                self.news.insert(0, (release, true));
+            }
+        }
+        self.news.truncate(NEWS_KEPT);
     }
 
     fn heard(&mut self, track: &Track) {
@@ -484,6 +519,12 @@ pub struct State {
     /// Who the artist of what plays is, asked by their name as the track writes it:
     /// nobody yet while they are looked for, and still nobody when the catalog knows none.
     pub about: Option<(String, Option<Known>)>,
+    /// A later version of the app, and the page it is fetched from.
+    pub update: Option<(String, String)>,
+    /// How many of the news were still to be looked at when their page was opened.
+    pub news_fresh: usize,
+    /// An address on its way to the browser; the window takes it.
+    pub open_url: Option<String>,
     /// What plays fills the window: its video, or its cover.
     pub cinema: bool,
     /// The song whose video's own sound plays in its place.
@@ -644,6 +685,9 @@ impl Default for State {
             picked_for: None,
             clip: None,
             about: None,
+            update: None,
+            news_fresh: 0,
+            open_url: None,
             cinema: false,
             swapped: None,
             page_sort: None,
@@ -826,6 +870,7 @@ impl State {
             ("kept", Some(index), _) => self.collection.kept.get(index).map(Entry::target),
             ("recent", Some(index), _) => self.collection.recent.get(index).map(Entry::target),
             ("about-artist", None, _) => self.about_artist().map(|(artist, _)| Target::Artist(artist.id.clone())),
+            ("news", Some(index), _) => self.collection.news.get(index).map(|(release, _)| album(release)),
             ("pick-artist", Some(index), _) => self.picked_artists.get(index).map(|artist| Target::Artist(artist.id.clone())),
             ("pick-album", Some(index), _) => self.picked_albums.get(index).map(album),
             ("now-artist", None, _) => self.current().map(artist_of),
@@ -1181,6 +1226,23 @@ impl State {
                 let line = id["lyric:".len()..].parse::<usize>().ok().and_then(|index| self.lines().get(index));
                 line.map(|line| Command::Seek(line.at_ms as f64 / 1000.0)).into_iter().collect()
             }
+            // The bell opens what is new, and leaves it for the page before. Opened, it has
+            // all been looked at; what was still to be stays apart while the page shows.
+            "news" => {
+                if self.page == Page::News {
+                    self.page = self.history.pop().unwrap_or(Page::Search);
+                    return Vec::new();
+                }
+                self.go(Page::News);
+                self.news_fresh = self.collection.news.iter().filter(|(_, unseen)| *unseen).count();
+                self.collection.news.iter_mut().for_each(|(_, unseen)| *unseen = false);
+                let covers: Vec<Option<String>> = self.collection.news.iter().map(|(album, _)| album.artwork_url.clone()).collect();
+                cover_requests(&mut self.covers, &covers)
+            }
+            "update-get" => {
+                self.open_url = self.update.as_ref().map(|(_, url)| url.clone());
+                Vec::new()
+            }
             // What plays over the whole window, and back.
             "cinema" => {
                 self.cinema = !self.cinema;
@@ -1481,6 +1543,14 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
+            Event::Releases { artist, releases } => {
+                self.collection.learn(artist, releases, chrono::Datelike::year(&chrono::Local::now()));
+                Vec::new()
+            }
+            Event::Update { version, url } => {
+                self.update = Some((version, url));
+                Vec::new()
+            }
             Event::About { artist, found } => {
                 let covers = cover_requests(&mut self.covers, found.iter().map(|(artist, _)| &artist.artwork_url));
                 if let Some((asked, known)) = &mut self.about {
@@ -1568,6 +1638,19 @@ impl State {
         commands.extend(self.ask_clip());
         commands.extend(self.ask_about());
         commands
+    }
+
+    /// Asks what the artists followed have out and whether the app has a later version:
+    /// once when the window opens.
+    pub fn ask_news(&mut self) -> Vec<Command> {
+        let followed: Vec<String> = self.collection.artists().map(|(_, artist)| artist.id.clone()).collect();
+        let news = (!followed.is_empty()).then_some(Command::News(followed));
+        news.into_iter().chain([Command::CheckUpdate]).collect()
+    }
+
+    /// Whether the bell has something to say: news not looked at yet, or a later version.
+    pub fn has_news(&self) -> bool {
+        self.update.is_some() || self.collection.news.iter().any(|(_, unseen)| *unseen)
     }
 
     /// The artist of what plays is looked for once, while the panel that presents them
@@ -2319,6 +2402,31 @@ mod tests {
         assert_eq!(state.album_width, 180.0, "a drag that is called off changes nothing");
         click(&mut state, "tracks:column:album");
         assert!(!state.album_shown);
+    }
+
+    #[test]
+    fn what_the_artists_followed_release_is_news_once_and_the_bell_says_so() {
+        let release = |id: &str, year: &str| AlbumRef { id: id.into(), title: id.into(), artist: Some("Who".into()), year: year.into(), artwork_url: None };
+        let year = chrono::Datelike::year(&chrono::Local::now()).to_string();
+        let mut state = State::default();
+        state.collection.toggle(Entry::Artist(ArtistRef { id: "who".into(), name: "Who".into(), subscribers: None, artwork_url: None }));
+        assert_eq!(state.ask_news(), vec![Command::News(vec!["who".into()]), Command::CheckUpdate]);
+        // What they already had out is not news: of this year's, a couple are listed as seen.
+        state.apply(Event::Releases { artist: "who".into(), releases: vec![release("new", &year), release("old", "1999")] });
+        assert_eq!(state.collection.news, [(release("new", &year), false)]);
+        assert!(!state.has_news());
+        state.apply(Event::Releases { artist: "who".into(), releases: vec![release("newer", &year), release("new", &year), release("old", "1999")] });
+        assert_eq!(state.collection.news.first(), Some(&(release("newer", &year), true)), "what was not known is news, first");
+        assert!(state.has_news());
+
+        click(&mut state, "news");
+        assert!(state.page == Page::News && state.news_fresh == 1 && !state.has_news(), "opened, it has been looked at");
+        assert_eq!(click(&mut state, "news:0"), vec![Command::Open(Target::Album("newer".into()))]);
+        // A later version of the app rings the bell too, and its button leads to its page.
+        state.apply(Event::Update { version: "9.0.0".into(), url: "https://example/releases/9".into() });
+        assert!(state.has_news());
+        click(&mut state, "update-get");
+        assert_eq!(state.open_url.as_deref(), Some("https://example/releases/9"));
     }
 
     /// The footage of a song whose video lasts `longer_ms` more than it does.

@@ -264,6 +264,55 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         .render()
 }
 
+/// A release in the feed of what is new: a row around its cover, larger than a track's.
+const NEWS_COVER: f32 = 56.0;
+const NEWS_ROW: RowSizing = RowSizing { height: Some(72.0), two_line_height: Some(72.0), leading_width: NEWS_COVER, ..TRACK_ROW };
+
+/// What the artists followed have released, what is still to be looked at first, under
+/// the notice of a later version of the app when there is one.
+fn news_page(state: &State, palette: ComponentPalette) -> Element {
+    let mut sections = vec![Element::column(vec![
+        Text::new("Novedades", palette).size(PAGE_TITLE).render(),
+        Text::new("Los últimos lanzamientos de los artistas que seguís.", palette).muted().render(),
+    ])
+    .gap(4.0)];
+    if let Some((version, _)) = &state.update {
+        let raised = ComponentPalette { surface: CHOSEN, ..palette };
+        let copy = Element::column(vec![
+            Text::new("Actualización disponible", raised).size(15.0).render(),
+            Text::new(format!("Está disponible la versión {version} de dnmusic. Tenés la {}.", env!("CARGO_PKG_VERSION")), raised).muted().render(),
+        ])
+        .gap(2.0)
+        .flex(1.0);
+        let get = Button::new("update-get", "Descargar", raised).size(ControlSize::Regular).render().centered_y();
+        sections.push(Element::panel(Element::row(vec![copy, get]).gap(12.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Panel.px()));
+    }
+    let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
+        let about = [release.artist.as_deref().unwrap_or_default(), release.year.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+        ListRow::new(format!("news:{index}"), &release.title, palette)
+            .sizing(NEWS_ROW)
+            .leading(middle(cover(state, &release.artwork_url, NEWS_COVER, palette)))
+            .subtitle(about)
+            .title_fade(true)
+            .radius(RadiusRole::Card)
+            .render()
+    };
+    let news = &state.collection.news;
+    let fresh = state.news_fresh.min(news.len());
+    if fresh > 0 {
+        sections.extend([heading("Nuevo", palette), Element::column(news[..fresh].iter().enumerate().map(row).collect()).gap(2.0)]);
+    }
+    if news.len() > fresh {
+        let earlier = news.iter().enumerate().skip(fresh).map(row).collect();
+        sections.extend([heading("Anterior", palette), Element::column(earlier).gap(2.0)]);
+    }
+    if news.is_empty() && state.update.is_none() {
+        let empty = Empty::new("Todavía no hay novedades", "Seguí a tus artistas favoritos y acá te avisamos cuando saquen algo.", palette).icon(Icon::Bell).render();
+        return Element::column(vec![sections.remove(0), centered(empty)]).gap(16.0).padding(12.0).flex(1.0);
+    }
+    ScrollArea::new("news", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+}
+
 /// The narrowest a tile of the library gets, and the width of the menu of its orders and views.
 const LIBRARY_GRID_TILE: f32 = 112.0;
 /// What the library's row of tools keeps for the cross of its search and the button of its order.
@@ -321,6 +370,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     }
     leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new("Volver"), palette).enabled(state.can_go_back()).render().centered_y());
     let mut trailing = vec![Element::spacer().flex(1.0)];
+    // The bell is full while it has something to say.
+    let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
+    trailing.push(header_button("news", bell, TooltipSpec::new("Novedades"), palette).active(state.page == Page::News).render().centered_y());
     trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new("Configuración"), palette).active(state.page == Page::Settings).render().centered_y());
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
@@ -927,6 +979,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Playlist(id) => format!("page:playlist:{id}"),
         Page::Settings => "page:settings".to_owned(),
         Page::Lyrics => "page:lyrics".to_owned(),
+        Page::News => "page:news".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
 }
@@ -954,6 +1007,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Downloads => downloads_page(state, width, palette),
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, palette),
+        Page::News => news_page(state, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),

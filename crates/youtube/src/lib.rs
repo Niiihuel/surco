@@ -139,18 +139,26 @@ impl YouTube {
     /// An artist's albums, each naming them: the page without the songs, which cost a
     /// second request.
     pub async fn albums_of(&self, id: &str) -> Result<Vec<AlbumRef>> {
+        Ok(self.releases(id).await?.0)
+    }
+
+    /// An artist's albums and their singles, as their page lists them, each naming them.
+    pub async fn releases(&self, id: &str) -> Result<(Vec<AlbumRef>, Vec<AlbumRef>)> {
         let artist = self.music().await?.get_artist(ArtistChannelID::from_raw(id)).await?;
-        let albums = artist.top_releases.albums.map(|albums| albums.results).unwrap_or_default();
-        Ok(albums
-            .into_iter()
-            .map(|album| AlbumRef {
-                id: album.album_id.get_raw().to_owned(),
-                title: album.title,
-                artist: Some(artist.name.clone()),
-                year: album.year,
-                artwork_url: artwork(album.thumbnails),
-            })
-            .collect())
+        let named = |albums: Option<ytmapi_rs::parse::GetArtistAlbums>| -> Vec<AlbumRef> {
+            let albums = albums.map(|albums| albums.results).unwrap_or_default();
+            albums
+                .into_iter()
+                .map(|album| AlbumRef {
+                    id: album.album_id.get_raw().to_owned(),
+                    title: album.title,
+                    artist: Some(artist.name.clone()),
+                    year: album.year,
+                    artwork_url: artwork(album.thumbnails),
+                })
+                .collect()
+        };
+        Ok((named(artist.top_releases.albums), named(artist.top_releases.singles)))
     }
 
     pub async fn artist(&self, id: &str) -> Result<Artist> {

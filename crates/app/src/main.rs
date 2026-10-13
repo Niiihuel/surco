@@ -157,6 +157,8 @@ impl eframe::App for Host {
             self.send(covers);
             let picks = self.state.ask_picks();
             self.send(picks);
+            let news = self.state.ask_news();
+            self.send(news);
         }
         limn_egui::normalize_keyboard_input(&ctx);
         // Motion stays on for a scripted run too: whoever looks at its window sees the app as
@@ -261,6 +263,9 @@ impl eframe::App for Host {
         }
         if let Some(text) = self.state.copy.take() {
             ctx.copy_text(text);
+        }
+        if let Some(url) = self.state.open_url.take() {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
         }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);

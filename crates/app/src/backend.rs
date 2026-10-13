@@ -104,6 +104,10 @@ pub enum Command {
     Swap(Track),
     /// Ask who the artist of a track is.
     About(Track),
+    /// Ask what each of these artists, by their ids, has released.
+    News(Vec<String>),
+    /// Ask whether a later version of the app has been published.
+    CheckUpdate,
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -160,6 +164,10 @@ pub enum Event {
     /// Who the artist a track names is, or nobody when the catalog knows no artist of
     /// that name.
     About { artist: String, found: Option<Known> },
+    /// What an artist has out, the albums and then the singles, the latest first.
+    Releases { artist: String, releases: Vec<AlbumRef> },
+    /// A later version of the app, and the page it is fetched from.
+    Update { version: String, url: String },
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -409,6 +417,25 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::About(track), Err(_)) => reply(Event::About { artist: track.artist, found: None }),
+        (Command::News(artists), Ok(shared)) => {
+            for artist in artists {
+                let shared = shared.clone();
+                tokio::spawn(async move {
+                    if let Ok((albums, singles)) = shared.youtube.releases(&artist).await {
+                        (shared.reply)(Event::Releases { artist, releases: albums.into_iter().chain(singles).collect() });
+                    }
+                });
+            }
+        }
+        (Command::CheckUpdate, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                if let Some((version, url)) = latest_release(&shared).await {
+                    (shared.reply)(Event::Update { version, url });
+                }
+            });
+        }
+        (Command::News(_) | Command::CheckUpdate, Err(_)) => {}
         (Command::Clip(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -568,6 +595,19 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
         engine.audio.play()
     })
     .await
+}
+
+/// Where the app's releases are published.
+const RELEASES: &str = "https://api.github.com/repos/Niiihuel/surco/releases/latest";
+
+/// The latest published release when it is later than this build: its version and its page.
+async fn latest_release(shared: &Shared) -> Option<(String, String)> {
+    // The service answers nobody who does not say who they are.
+    let request = shared.youtube.http().get(RELEASES).header("User-Agent", concat!("dnmusic/", env!("CARGO_PKG_VERSION")));
+    let release: serde_json::Value = request.send().await.ok()?.error_for_status().ok()?.json().await.ok()?;
+    let tag = release["tag_name"].as_str()?;
+    let later = discover::newer(tag, env!("CARGO_PKG_VERSION"));
+    later.then(|| Some((tag.trim_start_matches('v').to_owned(), release["html_url"].as_str()?.to_owned())))?
 }
 
 /// How far ahead of where the song is its other rendition is made ready, and how long the

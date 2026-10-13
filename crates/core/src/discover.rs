@@ -77,9 +77,31 @@ pub fn newcomers(lists: &[Vec<Track>], artists: &HashSet<String>, count: usize) 
     named.into_iter().take(count).map(|(_, name, _)| name.to_owned()).collect()
 }
 
+/// Whether the release tagged `tag` (`v1.4.0`, `1.4`) comes after version `current`.
+/// A tag that is not a version comes after nothing.
+pub fn newer(tag: &str, current: &str) -> bool {
+    let numbers = |version: &str| version.trim().trim_start_matches('v').split('.').map(|part| part.parse::<u64>().ok()).collect::<Option<Vec<u64>>>();
+    match (numbers(tag), numbers(current)) {
+        (Some(mut tag), Some(mut current)) => {
+            // "1.4" is "1.4.0".
+            let parts = tag.len().max(current.len());
+            tag.resize(parts, 0);
+            current.resize(parts, 0);
+            tag > current
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_release_is_newer_by_its_numbers_not_by_its_letters() {
+        assert!(newer("v0.2.0", "0.1.9") && newer("0.10.0", "0.9.0") && newer("v1.0", "0.9.9") && newer("1.0.1", "1.0"));
+        assert!(!newer("v0.1.0", "0.1.0") && !newer("0.1", "0.1.0") && !newer("nightly", "0.1.0") && !newer("v0.0.9", "0.1.0"));
+    }
 
     fn track(id: &str, artist: &str) -> Track {
         Track { id: id.into(), title: id.into(), artist: artist.into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 0 }
