@@ -25,11 +25,17 @@ const LIFT: [f32; BANDS] = [1.0, 1.6, 2.5, 4.0];
 const CEILING_KEPT: f32 = 0.99;
 /// A ceiling never falls under this, or the hiss of a silence would stand as tall as a song.
 const QUIET: f32 = 0.02;
+/// What a band keeps of its height from one span to the next when nothing as loud arrives.
+/// A peak shows at once and then falls back over a third of a second, as a meter's needle
+/// does, instead of dropping between one beat and the next.
+const FALL_KEPT: f32 = 0.86;
 
 /// Splits what a source plays into bands and publishes their peaks every 20 ms.
 pub(crate) struct Meter {
     filters: [Biquad; BANDS],
     peaks: [f32; BANDS],
+    /// What each band last showed, which it falls back from.
+    held: [f32; BANDS],
     /// The loudest lifted peak of late, which stands for full height.
     ceiling: f32,
     /// Only the first channel is measured: a filter's history is one signal's.
@@ -44,6 +50,7 @@ impl Meter {
         Self {
             filters: CENTRES.map(|hz| Biquad::band_pass(hz, sample_rate, Q)),
             peaks: [0.0; BANDS],
+            held: [0.0; BANDS],
             ceiling: QUIET,
             channels: channels.max(1),
             turn: 0,
@@ -71,13 +78,17 @@ impl Meter {
         }
     }
 
-    /// The peaks since the last reading as shares of the recent ceiling, and a fresh start.
+    /// What each band shows now: its peak since the last reading as a share of the recent
+    /// ceiling, or what is left of the height it had if that is more. And a fresh start.
     fn reading(&mut self) -> [f32; BANDS] {
         let lifted: [f32; BANDS] = std::array::from_fn(|band| self.peaks[band] * LIFT[band]);
         self.ceiling = lifted.iter().fold((self.ceiling * CEILING_KEPT).max(QUIET), |ceiling, peak| ceiling.max(*peak));
         self.peaks = [0.0; BANDS];
         self.fed = 0;
-        lifted.map(|peak| peak / self.ceiling)
+        for (held, peak) in self.held.iter_mut().zip(lifted) {
+            *held = (peak / self.ceiling).max(*held * FALL_KEPT);
+        }
+        self.held
     }
 }
 
@@ -95,6 +106,7 @@ mod tests {
                 // Past the filters' start-up, which rings in every band.
                 meter.reading();
                 meter.ceiling = QUIET;
+                meter.held = [0.0; BANDS];
             }
             let sample = amplitude * (std::f32::consts::TAU * hz * n as f32 / rate).sin();
             meter.feed(sample);
@@ -119,13 +131,22 @@ mod tests {
         let mut meter = Meter::new(48_000.0, 1);
         meter.peaks = [0.8, 0.0, 0.0, 0.0];
         assert_eq!(meter.reading()[0], 1.0);
-        meter.peaks = [0.4, 0.0, 0.0, 0.0];
-        let after = meter.reading()[0];
-        assert!(after > 0.5 && after < 0.52, "half as loud right after is half as tall: {after}");
         for _ in 0..500 {
             meter.reading();
         }
         meter.peaks = [0.4, 0.0, 0.0, 0.0];
         assert_eq!(meter.reading()[0], 1.0, "ten seconds on, the quieter level is the track's own");
+    }
+
+    #[test]
+    fn a_peak_shows_at_once_and_falls_back_little_by_little() {
+        let mut meter = Meter::new(48_000.0, 1);
+        meter.peaks = [0.8, 0.0, 0.0, 0.0];
+        assert_eq!(meter.reading()[0], 1.0);
+        let fall: Vec<f32> = (0..16).map(|_| meter.reading()[0]).collect();
+        assert!(fall.windows(2).all(|pair| pair[1] < pair[0]), "{fall:?}");
+        assert!(fall[0] > 0.8 && fall[15] < 0.12, "a third of a second takes it down: {fall:?}");
+        meter.peaks = [0.8, 0.0, 0.0, 0.0];
+        assert!(meter.reading()[0] > 0.95, "and the next beat lifts it again at once");
     }
 }
