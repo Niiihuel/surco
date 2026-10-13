@@ -9,6 +9,8 @@ use crate::discover::plain;
 pub enum Source {
     /// Spotify's: a `playlist` or an `album`.
     Spotify(&'static str, String),
+    /// Apple Music's, playlist or album: the address of its page.
+    Apple(String),
     /// YouTube's or YouTube Music's.
     YouTube(String),
 }
@@ -26,6 +28,10 @@ pub fn source(link: &str) -> Option<Source> {
         let said = parts.next()?;
         let kind = ["playlist", "album"].into_iter().find(|kind| *kind == said)?;
         return Some(Source::Spotify(kind, id(parts.next()?)?));
+    }
+    if let Some((_, path)) = link.split_once("music.apple.com/") {
+        let path = path.split(['?', '#']).next()?;
+        return (path.contains("/playlist/") || path.contains("/album/")).then(|| Source::Apple(format!("https://music.apple.com/{path}")));
     }
     if link.contains("youtube.com/") || link.contains("youtu.be/") {
         return Some(Source::YouTube(id(link.split(['?', '&']).find_map(|pair| pair.strip_prefix("list="))?)?));
@@ -54,8 +60,9 @@ const RENDITIONS: [&[&str]; 6] = [
     &["cover", "tribute", "tributo"],
 ];
 
-/// How good a match has to be to be taken, out of 1.
-const CLOSE_ENOUGH: f32 = 0.6;
+/// How good a match has to be to be taken, out of 1: more than a song of the same name
+/// and length by somebody else comes to, and no more than another cut of the song does.
+const CLOSE_ENOUGH: f32 = 0.7;
 
 impl Wanted {
     /// What to ask the catalog for: whose it is first, then its name.
@@ -64,9 +71,11 @@ impl Wanted {
     }
 
     fn likeness(&self, track: &Track) -> f32 {
-        let title = alike(&plain(name(&self.title)), &plain(name(&track.title)));
-        let (ours, theirs) = (plain(first(&self.artist)), plain(&track.artist));
-        let artist = if ours.is_empty() { 0.5 } else { f32::from(theirs.contains(&ours) || alike(&ours, &plain(first(&track.artist))) >= 0.8) };
+        let title = alike(&bare(name(&self.title)), &bare(name(&track.title)));
+        // Catalogs credit a song by several in their own order: any of ours among theirs will do.
+        let theirs = bare(&track.artist);
+        let mut ours = self.artist.split([',', '&']).map(bare).filter(|one| !one.is_empty()).peekable();
+        let artist = if ours.peek().is_none() { 0.5 } else { f32::from(ours.any(|one| theirs.contains(&one) || alike(&one, &theirs) >= 0.8)) };
         // Catalogs trim silence differently; past a few seconds it is another cut.
         let length = match self.duration_ms.abs_diff(track.duration_ms) / 1000 {
             _ if self.duration_ms == 0 || track.duration_ms == 0 => 0.5,
@@ -78,7 +87,9 @@ impl Wanted {
         };
         let (ours, theirs) = (self.title.to_lowercase(), track.title.to_lowercase());
         let other = RENDITIONS.iter().filter(|words| words.iter().any(|word| ours.contains(word)) != words.iter().any(|word| theirs.contains(word))).count();
-        title * 0.45 + length * 0.35 + artist * 0.2 - 0.3 * other as f32
+        // Of the very length wanted, it is the recording, whatever its title leaves unsaid.
+        let other = if length == 1.0 { 0 } else { other };
+        title * 0.4 + length * 0.25 + artist * 0.35 - 0.3 * other as f32
     }
 }
 
@@ -92,6 +103,21 @@ pub fn pick<'a>(wanted: &Wanted, found: &'a [Track]) -> Option<&'a Track> {
 /// A list as text, a song to a line: what the services that carry lists between apps read.
 pub fn as_text(tracks: &[Track]) -> String {
     tracks.iter().map(|track| format!("{} - {}", track.artist, track.title)).collect::<Vec<_>>().join("\n")
+}
+
+/// A name as two catalogs' spellings of it are compared: `plain`, and without its accents.
+fn bare(name: &str) -> String {
+    let unaccented = |c| match c {
+        'á' | 'à' | 'ä' | 'â' | 'ã' => 'a',
+        'é' | 'è' | 'ë' | 'ê' => 'e',
+        'í' | 'ì' | 'ï' | 'î' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'ñ' => 'n',
+        'ç' => 'c',
+        other => other,
+    };
+    plain(name).chars().map(unaccented).collect()
 }
 
 /// The first of several artists written as one text.
@@ -131,9 +157,10 @@ mod tests {
         let spotify = |kind, id: &str| Some(Source::Spotify(kind, id.into()));
         assert_eq!(source(" https://open.spotify.com/intl-es/playlist/37i9dQZF1DXcBWIGoYBM5M?si=abc "), spotify("playlist", "37i9dQZF1DXcBWIGoYBM5M"));
         assert_eq!(source("https://open.spotify.com/album/4aawyAB9vmqN3uQ7FjRGTy"), spotify("album", "4aawyAB9vmqN3uQ7FjRGTy"));
+        assert_eq!(source("https://music.apple.com/us/playlist/todays-hits/pl.f4d1?uo=4"), Some(Source::Apple("https://music.apple.com/us/playlist/todays-hits/pl.f4d1".into())));
         assert_eq!(source("https://music.youtube.com/playlist?list=PL_a-b1&si=x"), Some(Source::YouTube("PL_a-b1".into())));
         assert_eq!(source("https://www.youtube.com/watch?v=abc&list=OLAK5uy_x"), Some(Source::YouTube("OLAK5uy_x".into())));
-        for not_one in ["https://open.spotify.com/track/abc", "https://open.spotify.com/playlist/", "https://music.youtube.com/watch?v=abc", "labios rotos", "surco://lista/a?nombre=x"] {
+        for not_one in ["https://music.apple.com/us/artist/zoe/123", "https://open.spotify.com/track/abc", "https://open.spotify.com/playlist/", "https://music.youtube.com/watch?v=abc", "labios rotos", "surco://lista/a?nombre=x"] {
             assert_eq!(source(not_one), None, "{not_one}");
         }
     }
@@ -150,6 +177,11 @@ mod tests {
         ];
         assert_eq!(pick(&wanted, &found).map(|track| track.id.as_str()), Some("own"));
         assert_eq!(pick(&wanted, &found[..1]), None, "another rendition is not the song");
+        assert_eq!(pick(&wanted, &found[1..2]), None, "nor is somebody else's, of the same name and length");
+        let unsaid = Wanted { title: "Labios Rotos".into(), artist: "Zoé".into(), duration_ms: 262_000 };
+        assert_eq!(pick(&unsaid, &found).map(|track| track.id.as_str()), Some("live"), "a live cut of the very length is the one, though its name does not say so");
+        let spelt = Wanted { title: "Labios Rotos".into(), artist: "Otro & Zoe".into(), duration_ms: 0 };
+        assert_eq!(pick(&spelt, &found).map(|track| track.id.as_str()), Some("own"), "an accent or the order of its artists apart");
         assert_eq!(pick(&wanted, &found[3..]), None);
         let live = Wanted { title: "Labios Rotos - En Vivo".into(), artist: "Zoé".into(), duration_ms: 0 };
         assert_eq!(pick(&live, &found).map(|track| track.id.as_str()), Some("live"));

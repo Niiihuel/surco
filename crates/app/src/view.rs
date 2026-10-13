@@ -261,9 +261,9 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     let Some(link) = &state.importing else { return window_tree };
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
     let about = if state.import_unknown {
-        "Ese enlace no es de una playlist de Spotify ni de YouTube Music."
+        "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
     } else {
-        "De Spotify (playlist o álbum, hasta 100 canciones) o de YouTube Music. Tiene que ser pública."
+        "De Spotify (hasta 100 canciones), Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
     };
     let cancel = Button::new("import-cancel", "Cancelar", palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
     let go = Button::new("import-go", "Importar", palette).size(ControlSize::Regular).render();
@@ -307,7 +307,7 @@ fn import_card(width: f32, palette: ComponentPalette) -> Element {
         None => away,
     };
     let title = Text::new("Traé tu música de otras apps", raised).render();
-    let about = Text::new("Tus playlists de Spotify y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
+    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
     let go = Button::new("import-open", "Importar", raised).size(ControlSize::Compact).render();
     Element::panel(Element::column(vec![top, title, about, Element::row(vec![go])]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
 }
@@ -1262,7 +1262,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Biblioteca",
             vec![
-                row("Importar música de otras apps", "Trae playlists de Spotify y YouTube Music con su enlace.").trailing(action("import-open", "Importar", true)).stacked(compact).render(),
+                row("Importar música de otras apps", "Trae playlists de Spotify, Apple Music y YouTube Music con su enlace.").trailing(action("import-open", "Importar", true)).stacked(compact).render(),
             ],
         ),
         group(
