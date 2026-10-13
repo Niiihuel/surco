@@ -49,8 +49,9 @@ pub enum Content {
     Artist(Artist),
     Album(Album),
     Song(Track),
-    /// A list brought in, and how many of its songs the catalog does not have.
-    List { name: String, tracks: Vec<Track>, missed: usize },
+    /// A list brought in, and the songs of it the catalog does not have, each as it is
+    /// to be read.
+    List { name: String, tracks: Vec<Track>, missed: Vec<String> },
 }
 
 /// What the window asks for.
@@ -189,6 +190,8 @@ pub enum Event {
     Update(Release),
     /// How much of a later version's program has arrived, 0 to 1.
     UpdateProgress(f32),
+    /// How many of the songs of a list being brought in have been looked for, out of how many.
+    Importing { done: usize, of: usize },
     /// The later version is in place: the next start is it. Or why it is not.
     UpdateInstalled,
     UpdateFailed(String),
@@ -531,9 +534,13 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
             if tracks.is_empty() {
                 return Err("No pudimos traer ninguna de las canciones de esa playlist.".to_owned());
             }
-            Ok(Content::List { name: name.clone(), missed: ids.len() - tracks.len(), tracks })
+            let missed = ids.iter().filter(|id| tracks.iter().all(|track| track.id != **id)).cloned().collect();
+            Ok(Content::List { name: name.clone(), tracks, missed })
         }
-        Target::Import(link) => return crate::import::list(youtube, link).await.map(|(name, tracks, missed)| Content::List { name, tracks, missed }),
+        Target::Import(link) => {
+            let told = |done, of| (shared.reply)(Event::Importing { done, of });
+            return crate::import::list(youtube, link, &told).await.map(|(name, tracks, missed)| Content::List { name, tracks, missed });
+        }
     };
     content.map_err(|error| error.to_string())
 }

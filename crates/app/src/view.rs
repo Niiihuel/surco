@@ -210,7 +210,7 @@ pub fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = playlist_dialog(state, shared, window.width, palette);
-    let imported = import_dialog(state, created, window.width, palette);
+    let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     update_dialog(state, confirm_dialog(state, imported, palette), palette)
 }
 
@@ -275,6 +275,19 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, go))
         .initial_focus("import-link")
+        .render()
+}
+
+/// The songs of a list brought in that the catalog does not have, to be looked for by hand.
+fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let Some((_, missed)) = state.imported.as_ref().filter(|_| state.missed_open) else { return window_tree };
+    let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
+    let copy = Button::new("import-missed-copy", "Copiar la lista", palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Regular).render();
+    let close = Button::new("import-missed-close", "Cerrar", palette).size(ControlSize::Regular).render();
+    Modal::new(window_tree, true, "Canciones que no se encontraron", "No están en el catálogo con ese nombre. Podés buscarlas a mano y agregarlas.", "import-missed-close", palette)
+        .width(Modal::fit_width(width, 460.0).max(240.0))
+        .body(Element::column(rows).gap(6.0))
+        .footer(dialog_footer(copy, close))
         .render()
 }
 
@@ -1101,10 +1114,15 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, palette),
         // Each of its songs is looked for in the catalog, which takes a while.
-        Page::Loading(Target::Import(_)) => Element::column(vec![
-            Element::panel(Text::new("Buscando las canciones en el catálogo. Podés seguir escuchando: la playlist aparece en tu biblioteca.", palette).muted().render()).padding(12.0),
-            loading("opening", palette),
-        ]),
+        Page::Loading(Target::Import(_)) => {
+            let (said, done) = match state.import_progress {
+                Some((done, of)) if of > 0 => (format!("Buscando las canciones en el catálogo: {done} de {of}."), done as f32 / of as f32),
+                _ => ("Leyendo la lista…".to_owned(), 0.0),
+            };
+            let about = Text::new("Podés seguir escuchando o ir a otra página: la playlist aparece en tu biblioteca cuando termina.", palette).role(TextRole::Caption).muted().render();
+            let progress = Element::column(vec![Text::new(said, palette).render(), Progress::new(done, palette).height(6.0).render(), about]).gap(8.0);
+            Element::column(vec![Element::panel(progress).padding(12.0), loading("opening", palette)])
+        }
         Page::Loading(_) => loading("opening", palette),
         Page::Failed(_, message) => centered(
             Empty::new("No se pudo abrir", message, palette)
@@ -1162,23 +1180,18 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     } else {
         page_actions(state, vec![share, export, delete], palette)
     };
-    // What a list brought in from another app left behind.
-    let missed = match state.imported {
-        Some((id, missed)) if id == playlist.id && missed > 0 => format!(" · {} no se {}", missed, if missed == 1 { "encontró" } else { "encontraron" }),
-        _ => String::new(),
-    };
-    let header = Element::row(vec![
-        picture,
-        Element::column(vec![
-            Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
-            Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
-            Text::new(format!("{} · {length}{missed}", songs(playlist.tracks.len())), palette).muted().render(),
-        ])
-        .gap(10.0)
-        .flex(1.0)
-        .centered_y(),
-    ])
-    .gap(20.0);
+    let missed = state.imported.as_ref().filter(|(id, missed)| *id == playlist.id && !missed.is_empty()).map(|(_, missed)| {
+        let said = if missed.len() == 1 { "1 canción no se encontró".to_owned() } else { format!("{} canciones no se encontraron", missed.len()) };
+        Button::new("import-missed", said, palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render()
+    });
+    let mut about = vec![
+        Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
+        Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
+        Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
+    ];
+    // What a list brought in from another app left behind, a click from being read.
+    about.extend(missed.map(|missed| Element::row(vec![missed])));
+    let header = Element::row(vec![picture, Element::column(about).gap(10.0).flex(1.0).centered_y()]).gap(20.0);
     let list = if playlist.tracks.is_empty() {
         Element::panel(
             Empty::new("Todavía no tiene canciones", "Buscá una canción y elegí «Agregar a» en su menú.", palette).icon(Icon::MusicNote).render().centered_x(),

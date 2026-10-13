@@ -65,9 +65,18 @@ const RENDITIONS: [&[&str]; 6] = [
 const CLOSE_ENOUGH: f32 = 0.7;
 
 impl Wanted {
-    /// What to ask the catalog for: whose it is first, then its name.
-    pub fn query(&self) -> String {
-        format!("{} {}", first(&self.artist), self.title).trim().to_owned()
+    /// What to ask the catalog for, one way after another: whose it is and its name as it
+    /// is written, its bare name before whose it is, and its bare name alone. The catalog
+    /// answers a new song asked for one way with nothing, and asked for another with it.
+    pub fn queries(&self) -> Vec<String> {
+        let (artist, bare) = (first(&self.artist), name(&self.title));
+        let mut queries = vec![format!("{artist} {}", self.title).trim().to_owned()];
+        for other in [format!("{bare} {artist}").trim().to_owned(), bare.to_owned()] {
+            if !queries.contains(&other) {
+                queries.push(other);
+            }
+        }
+        queries
     }
 
     fn likeness(&self, track: &Track) -> f32 {
@@ -168,7 +177,8 @@ mod tests {
     #[test]
     fn the_song_wanted_is_the_answer_most_like_it_and_none_when_none_is() {
         let wanted = Wanted { title: "Labios Rotos - Remastered 2011".into(), artist: "Zoé, Otro".into(), duration_ms: 243_000 };
-        assert_eq!(wanted.query(), "Zoé Labios Rotos - Remastered 2011");
+        assert_eq!(wanted.queries(), ["Zoé Labios Rotos - Remastered 2011", "Labios Rotos Zoé", "Labios Rotos"]);
+        assert_eq!(Wanted { title: "Soñé".into(), artist: String::new(), duration_ms: 0 }.queries(), ["Soñé"]);
         let found = [
             track("live", "Labios Rotos (En Vivo)", "Zoé", 262),
             track("cover", "Labios Rotos", "Banda Tributo", 243),

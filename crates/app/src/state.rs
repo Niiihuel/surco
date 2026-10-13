@@ -476,8 +476,12 @@ pub struct State {
     /// what was typed is no such link.
     pub importing: Option<String>,
     pub import_unknown: bool,
-    /// The playlist just brought in and how many of its songs were not found, while its page says so.
-    pub imported: Option<(u64, usize)>,
+    /// The playlist just brought in and the songs of it that were not found, while its page
+    /// says so, and whether the list of them is open.
+    pub imported: Option<(u64, Vec<String>)>,
+    pub missed_open: bool,
+    /// How many songs of the list being brought in have been looked for, out of how many.
+    pub import_progress: Option<(usize, usize)>,
     pub confirm: Option<Confirm>,
     /// The room the downloads take on disk.
     pub saved_bytes: u64,
@@ -689,6 +693,8 @@ impl Default for State {
             importing: None,
             import_unknown: false,
             imported: None,
+            missed_open: false,
+            import_progress: None,
             confirm: None,
             saved_bytes: 0,
             left_width: Side::Left.limits().default,
@@ -875,6 +881,7 @@ impl State {
         self.list_copied = None;
         self.list_exported = None;
         self.imported = None;
+        self.missed_open = false;
         // A search and an order belong to the page they were made on.
         if self.page_searching {
             self.search_page(false);
@@ -1456,6 +1463,14 @@ impl State {
                 self.focus = Some("search".to_owned());
                 Vec::new()
             }
+            "import-missed" | "import-missed-close" => {
+                self.missed_open = id == "import-missed" && self.imported.as_ref().is_some_and(|(_, missed)| !missed.is_empty());
+                Vec::new()
+            }
+            "import-missed-copy" => {
+                self.copy = self.imported.as_ref().map(|(_, missed)| missed.join("\n"));
+                Vec::new()
+            }
             "import-open" => {
                 self.importing = Some(String::new());
                 self.import_unknown = false;
@@ -1476,6 +1491,7 @@ impl State {
                     return Vec::new();
                 }
                 self.importing = None;
+                self.import_progress = None;
                 // Used once, the offer has done its work.
                 self.settings.import_dismissed = true;
                 self.open(Target::Import(link))
@@ -1600,7 +1616,12 @@ impl State {
             }
             // A list brought in becomes one of the user's own, wherever they have walked to
             // meanwhile; where they waited for it, that is the page shown.
+            Event::Importing { done, of } => {
+                self.import_progress = Some((done, of));
+                Vec::new()
+            }
             Event::Opened { target, result: Ok(Content::List { name, tracks, missed }) } => {
+                self.import_progress = None;
                 let id = self.collection.create(Draft { name, collaborative: false, first: None });
                 for track in tracks {
                     self.collection.add(id, track);
@@ -2623,7 +2644,7 @@ mod tests {
         let mut state = State { query: link, ..State::default() };
         let target = Target::List { name: "Para el viaje & más".into(), ids: vec!["DdI598gKkKw".into(), "abc_-1".into()] };
         assert_eq!(state.search(), vec![Command::Open(target.clone())]);
-        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Para el viaje & más".into(), tracks: vec![track("a"), track("b")], missed: 0 }) });
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Para el viaje & más".into(), tracks: vec![track("a"), track("b")], missed: Vec::new() }) });
         let copy = &state.collection.playlists[0];
         assert_eq!((copy.name.as_str(), copy.tracks.len(), state.page.clone()), ("Para el viaje & más", 2, Page::Playlist(copy.id)));
 
@@ -2644,9 +2665,12 @@ mod tests {
         assert_eq!(state.update(&UiAction::Submitted { id: "import-link".into(), value: String::new() }), vec![Command::Open(target.clone())]);
         assert!(state.importing.is_none() && state.settings.import_dismissed, "the offer has done its work");
 
-        state.apply(Event::Opened { target: target.clone(), result: Ok(Content::List { name: "Viaje".into(), tracks: vec![track("a"), track("b")], missed: 3 }) });
+        state.apply(Event::Opened { target: target.clone(), result: Ok(Content::List { name: "Viaje".into(), tracks: vec![track("a"), track("b")], missed: vec!["Zoé — Soñé".into(), "Zoé — Azul".into()] }) });
         let id = state.collection.playlists[0].id;
-        assert_eq!((state.page.clone(), state.imported), (Page::Playlist(id), Some((id, 3))));
+        assert_eq!((state.page.clone(), state.imported.as_ref().map(|(list, missed)| (*list, missed.len()))), (Page::Playlist(id), Some((id, 2))));
+        click(&mut state, "import-missed");
+        click(&mut state, "import-missed-copy");
+        assert!(state.missed_open && state.copy.take().as_deref() == Some("Zoé — Soñé\nZoé — Azul"));
         click(&mut state, "playlist-export");
         assert_eq!((state.copy.as_deref(), state.list_exported), (Some("artist - a\nartist - b"), Some(id)));
 
@@ -2655,7 +2679,7 @@ mod tests {
         state.query = link.into();
         assert_eq!(state.search(), vec![Command::Open(target.clone())]);
         click(&mut state, "settings");
-        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Otra".into(), tracks: vec![track("c")], missed: 0 }) });
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Otra".into(), tracks: vec![track("c")], missed: Vec::new() }) });
         assert_eq!((state.collection.playlists.len(), state.page.clone(), state.imported), (2, Page::Settings, None));
     }
 

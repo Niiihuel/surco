@@ -21,6 +21,8 @@ surco-video = { path = "../video" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"
+# Already in the tree: the code Spotify's web player proves itself with, for a long playlist.
+sha1 = "0.10"
 # The index of what is kept for offline listening.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
