@@ -72,6 +72,8 @@ const LYRIC_GAP: f32 = 18.0;
 const LYRIC_BLUR: f32 = 2.2;
 /// How far up the panel the cover's colour reaches behind the lyrics.
 const LYRIC_WASH: f32 = 520.0;
+/// How far down a page the colour of its cover reaches, from behind its header.
+const HEADER_WASH: f32 = 360.0;
 /// The three qualities side by side in a settings row, and the choice of output under them.
 const QUALITY_WIDTH: f32 = 216.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
@@ -181,12 +183,13 @@ pub fn view(state: &State, window: Size) -> Element {
     }
     if right_slide > 0.0 {
         content -= right + GAP;
-        columns.push(surface(pane(state, content, palette)).flex(1.0));
+        columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
         columns.extend([handle(Side::Right, right_slide), sliding(panel(state, palette), right_whole, right)]);
     } else if state.queue_open && window.width < PANEL_FROM {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
-        columns.push(surface(pane(state, content, palette)).flex(1.0));
+        // A page's wash runs to the pane's edges: the mask keeps its corners round.
+        columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
     }
     columns.push(gap());
     let window_tree = Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
@@ -486,6 +489,15 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         sections.push(shelf("home-artists", "Tus artistas", artists, palette));
     }
     ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+}
+
+/// A page's content under the colour of its cover, which gives way to the surface below
+/// its header.
+fn washed(state: &State, artwork: &Option<String>, content: Element) -> Element {
+    match artwork.as_deref().and_then(|url| state.tints.get(url)) {
+        Some(tint) => content.top_background_fade(Color { a: 150, ..*tint }, HEADER_WASH),
+        None => content,
+    }
 }
 
 fn centered(element: Element) -> Element {
@@ -792,7 +804,8 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
         });
         Element::column(rows.collect()).keep_leaving("playlist-rows")
     };
-    ScrollArea::new("playlist", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
+    let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
+    ScrollArea::new("playlist", washed(state, &cover, Element::column(vec![header, list]).gap(16.0).padding(12.0))).render().flex(1.0)
 }
 
 /// A size on disk as people read it.
@@ -1004,7 +1017,7 @@ fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPal
         let tiles = release_tiles(state, "page-single", &artist.singles, palette);
         sections.push(shelf("artist-singles", "Sencillos y EP", tiles, palette));
     }
-    ScrollArea::new("artist", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
+    ScrollArea::new("artist", washed(state, &artist.artwork_url, Element::column(sections).gap(12.0).padding(12.0))).render().flex(1.0)
 }
 
 fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
@@ -1085,7 +1098,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
         .filter(|(_, track)| state.page_has(track))
         .map(|(index, track)| track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette));
     let sections = vec![header, Element::column(rows.collect()).gap(2.0)];
-    ScrollArea::new("album", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+    ScrollArea::new("album", washed(state, &album.artwork_url, Element::column(sections).gap(16.0).padding(12.0))).render().flex(1.0)
 }
 
 /// A panel's head: what it shows, and a muted line about it.
