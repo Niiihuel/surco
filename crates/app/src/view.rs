@@ -7,15 +7,16 @@ use limn::{
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, RowSizing, Scheme,
-    ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
+    Markdown, ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
 
 use crate::backend::{Release, Target};
 use crate::clip::Showing;
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
 };
+use crate::update::Note;
 
 /// The app's colors, one per role: near-black surfaces told apart by luminance, white ink.
 /// Every palette a component takes is derived from here, so that a control on a card, a
@@ -345,7 +346,7 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
 
 /// The card of a later version: what stands, how far taking it in has got, and what the
 /// user can do about it. While it comes down, a bar under the words fills with it.
-fn update_card(state: &State, release: &Release, palette: ComponentPalette) -> Element {
+fn update_card(state: &State, release: &Release, width: f32, palette: ComponentPalette) -> Element {
     let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render().centered_y();
     let version = &release.version;
     let (title, about, action) = match &state.updating {
@@ -369,11 +370,34 @@ fn update_card(state: &State, release: &Release, palette: ComponentPalette) -> E
     }
     head.extend(action);
     parts.insert(0, Element::row(head).gap(12.0));
+    parts.extend(release_notes(state, release, (width - 32.0).min(NOTES_WIDTH), palette));
     Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(palette.surface).radius(RadiusRole::Panel.px())
+}
+
+/// The widest what a release says of itself is set: a line longer than this is hard to read.
+const NOTES_WIDTH: f32 = 600.0;
+
+/// What a release says of itself: its text as it was written, and its pictures as wide
+/// as the text, each in a room of a screen's proportions.
+fn release_notes(state: &State, release: &Release, width: f32, palette: ComponentPalette) -> Vec<Element> {
+    let radius = limn::tokens().radius.control;
+    let part = |note: &Note| match note {
+        Note::Text(text) => Markdown::new(text, palette).width(width).link_action_prefix(RELEASE_LINK).render().element,
+        Note::Picture(address) => match state.artwork.get(address) {
+            Some(picture) => Element::raster_image(picture.clone().full_resolution()).size(Some(width), Some(width * 9.0 / 16.0)).radius(radius),
+            None => Element::panel(Element::spacer()).background(palette.selected).radius(radius).size(Some(width), Some(width * 9.0 / 16.0)),
+        },
+    };
+    release.notes.iter().map(part).collect()
 }
 
 /// A version that may not keep running stands in front of everything until the later one
 /// is taken in.
+/// How wide the notice of a version that has to be taken is, and how tall the room in it
+/// for what the version says of itself, which scrolls.
+const UPDATE_DIALOG: f32 = 520.0;
+const UPDATE_NOTES_ROOM: f32 = 240.0;
+
 fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| release.mandatory) else { return window_tree };
     let (about, action) = match &state.updating {
@@ -383,8 +407,17 @@ fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette)
         Updating::Ready => (format!("La versión {} ya está instalada.", release.version), ("update-restart", "Reiniciar ahora")),
         Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), ("update-get", "Reintentar")),
     };
+    let mut body = Vec::new();
+    if let Updating::Fetching(done) = &state.updating {
+        body.push(Progress::new(*done, palette).height(6.0).render());
+    }
+    let notes = release_notes(state, release, UPDATE_DIALOG - 48.0, palette);
+    if !notes.is_empty() {
+        body.push(ScrollArea::new("update-notes", Element::column(notes).gap(12.0)).render().size(None, Some(UPDATE_NOTES_ROOM)));
+    }
     // No way around it: the other button leads to the release's own page.
-    AlertDialog::new(window_tree, true, "Actualización obligatoria", about, action.0, "update-page", palette).confirm_label(action.1).cancel_label("Ver la versión").render()
+    let dialog = AlertDialog::new(window_tree, true, "Actualización obligatoria", about, action.0, "update-page", palette).confirm_label(action.1).cancel_label("Ver la versión").width(UPDATE_DIALOG);
+    if body.is_empty() { dialog } else { dialog.body(Element::column(body).gap(12.0)) }.render()
 }
 
 /// A release in the feed of what is new: a row around its cover, larger than a track's.
@@ -393,7 +426,7 @@ const NEWS_ROW: RowSizing = RowSizing { height: Some(72.0), two_line_height: Som
 
 /// What the artists followed have released, what is still to be looked at first, under
 /// the notice of a later version of the app when there is one.
-fn news_page(state: &State, palette: ComponentPalette) -> Element {
+fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut sections = vec![Element::column(vec![
         Text::new("Novedades", palette).size(PAGE_TITLE).render(),
         Text::new("Los últimos lanzamientos de los artistas que seguís.", palette).muted().render(),
@@ -401,7 +434,7 @@ fn news_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(4.0)];
     if let Some(release) = &state.update {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
-        sections.push(update_card(state, release, raised));
+        sections.push(update_card(state, release, width - 24.0, raised));
     }
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
         let about = [release.artist.as_deref().unwrap_or_default(), release.year.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
@@ -474,6 +507,9 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         .render()
 }
 
+/// The side of the chip on the bell's corner.
+const BELL_CHIP: f32 = 14.0;
+
 /// Across the top: the way back, home, and the search in the middle of the window. A side
 /// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
@@ -494,7 +530,17 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut trailing = vec![Element::spacer().flex(1.0)];
     // The bell is full while it has something to say.
     let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
-    trailing.push(header_button("news", bell, TooltipSpec::new("Novedades"), palette).active(state.page == Page::News).render().centered_y());
+    let bell = header_button("news", bell, TooltipSpec::new("Novedades"), palette).active(state.page == Page::News).render();
+    // How many things it has to say, on its corner.
+    let bell = match state.news_count() {
+        0 => bell,
+        count => {
+            let said = if count > 9 { "9+".to_owned() } else { count.to_string() };
+            let chip = Element::panel(Element::text(said).font_size(10.0).foreground(SCHEME.canvas).centered()).background(palette.text).radius(BELL_CHIP / 2.0).size(Some(if count > 9 { BELL_CHIP + 6.0 } else { BELL_CHIP }), Some(BELL_CHIP));
+            Element::stack(vec![bell, Element::row(vec![Element::spacer().flex(1.0), chip])])
+        }
+    };
+    trailing.push(bell.centered_y());
     trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new("Configuración"), palette).active(state.page == Page::Settings).render().centered_y());
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
@@ -1142,7 +1188,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Downloads => downloads_page(state, width, palette),
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, palette),
-        Page::News => news_page(state, palette),
+        Page::News => news_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
@@ -2073,7 +2119,7 @@ mod tests {
     fn the_card_of_a_later_version_shows_a_bar_while_it_comes_down_and_a_button_otherwise() {
         let size = Size::new(1400.0, 900.0);
         let mut state = State::default();
-        let release = Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: false };
+        let release = Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: false, notes: Vec::new() };
         state.apply(Event::Update(release));
         state.update(&limn::UiAction::Clicked { id: "news".into() });
         let shown = |state: &State| {

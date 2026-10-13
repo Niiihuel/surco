@@ -39,6 +39,53 @@ pub fn minimum(notes: &str) -> Option<&str> {
     (!version.is_empty()).then_some(version)
 }
 
+/// A part of what a release says of itself: text to read, as Markdown, or a picture by
+/// its address.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Note {
+    Text(String),
+    Picture(String),
+}
+
+/// What a release says of itself in its notes, in their order: its text between its
+/// pictures, which GitHub writes as Markdown or as an `img`. What the notes say to
+/// programs, in comments, is left out, and so is a picture not served over HTTPS.
+pub fn notes(body: &str) -> Vec<Note> {
+    let mut said = String::new();
+    let mut rest = body;
+    while let Some((before, comment)) = rest.split_once("<!--") {
+        said.push_str(before);
+        rest = comment.split_once("-->").map_or("", |(_, after)| after);
+    }
+    said.push_str(rest);
+
+    let mut notes = Vec::new();
+    let text = |notes: &mut Vec<Note>, text: &str| {
+        if !text.trim().is_empty() {
+            notes.push(Note::Text(text.trim().to_owned()));
+        }
+    };
+    let mut rest = said.as_str();
+    loop {
+        let picture = [("![", "](", ")"), ("<img", "src=\"", ">")].into_iter().filter_map(|(opens, before, closes)| {
+            let at = rest.find(opens)?;
+            let address = at + rest[at..].find(before)? + before.len();
+            let end = address + rest[address..].find(closes)?;
+            // The address ends where its quote or its title begins.
+            let address = rest[address..end].split(['"', ' ', ')']).next().unwrap_or_default();
+            Some((at, end + closes.len(), address))
+        });
+        let Some((at, end, address)) = picture.min_by_key(|(at, ..)| *at) else { break };
+        text(&mut notes, &rest[..at]);
+        if address.starts_with("https://") {
+            notes.push(Note::Picture(address.to_owned()));
+        }
+        rest = &rest[end..];
+    }
+    text(&mut notes, rest);
+    notes
+}
+
 /// The sum that a list of them, a `<sum>  <name>` to a line, gives for `name`.
 pub fn sum_for<'a>(sums: &'a str, name: &str) -> Option<&'a str> {
     sums.lines().find_map(|line| {
@@ -83,6 +130,16 @@ mod tests {
         assert_eq!(minimum("notes\n<!-- surco:minimum=0.10 -->"), Some("0.10"));
         assert_eq!(minimum("## What's Changed"), None);
         assert_eq!(minimum("surco:minimum= -->"), None);
+    }
+
+    #[test]
+    fn a_releases_notes_are_its_text_between_its_pictures() {
+        let body = "<!-- surco:minimum=0.1.0 -->\n## Novedades\n- Importar de Spotify\n\n![captura](https://github.com/user-attachments/assets/abc \"título\")\nY más.\n<img width=\"600\" alt=\"x\" src=\"https://example.com/b.png\" />\n![no](http://example.com/c.png)";
+        let text = |text: &str| Note::Text(text.into());
+        let picture = |address: &str| Note::Picture(address.into());
+        assert_eq!(notes(body), [text("## Novedades\n- Importar de Spotify"), picture("https://github.com/user-attachments/assets/abc"), text("Y más."), picture("https://example.com/b.png")]);
+        assert_eq!(notes("Solo texto, con un ![ suelto"), [text("Solo texto, con un ![ suelto")]);
+        assert!(notes("<!-- surco:minimum=0.1.0 -->\n").is_empty());
     }
 
     #[test]

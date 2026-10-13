@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 use limn::{RasterImage, ScalarTransition, TableSort, UiAction};
 
 use crate::backend::{Command, Content, Event, Footage, Known, Picks, Release, Target, Taste};
+use crate::update::Note;
 use crate::clip::Showing;
 use crate::player::PlayerView;
 
@@ -613,6 +614,9 @@ pub fn list_link(playlist: &Playlist) -> String {
     format!("surco://lista/{}?nombre={}", ids.join(","), percent_encoding::utf8_percent_encode(&playlist.name, LINK_NAME))
 }
 
+/// What the id of a link in a release's notes begins with.
+pub const RELEASE_LINK: &str = "release-link:";
+
 /// The name and the track ids a playlist's link carries. Anything else is not such a link.
 pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
     let rest = text.trim().strip_prefix("surco://lista/")?;
@@ -1137,6 +1141,11 @@ impl State {
     }
 
     fn click(&mut self, id: &str) -> Vec<Command> {
+        // A link in what a release says of itself: its address comes last in its id.
+        if let Some(link) = id.strip_prefix(RELEASE_LINK) {
+            self.open_url = link.splitn(3, ':').nth(2).filter(|address| address.starts_with("https://") || address.starts_with("http://")).map(str::to_owned);
+            return Vec::new();
+        }
         if let Some(key) = id.strip_prefix("pin:") {
             self.collection.pin(key);
             return Vec::new();
@@ -1673,8 +1682,10 @@ impl State {
                 Vec::new()
             }
             Event::Update(release) => {
+                // The pictures of what it says of itself are fetched as covers are.
+                let pictures: Vec<Option<String>> = release.notes.iter().filter_map(|note| if let Note::Picture(address) = note { Some(Some(address.clone())) } else { None }).collect();
                 self.update = Some(release);
-                Vec::new()
+                cover_requests(&mut self.covers, &pictures)
             }
             Event::UpdateProgress(done) => {
                 self.updating = Updating::Fetching(done);
@@ -1789,7 +1800,12 @@ impl State {
 
     /// Whether the bell has something to say: news not looked at yet, or a later version.
     pub fn has_news(&self) -> bool {
-        self.update.is_some() || self.collection.news.iter().any(|(_, unseen)| *unseen)
+        self.news_count() > 0
+    }
+
+    /// How many things the bell has to say.
+    pub fn news_count(&self) -> usize {
+        usize::from(self.update.is_some()) + self.collection.news.iter().filter(|(_, unseen)| *unseen).count()
     }
 
     /// The artist of what plays is looked for once, while the panel that presents them
@@ -2564,7 +2580,7 @@ mod tests {
         assert_eq!(click(&mut state, "news:0"), vec![Command::Open(Target::Album("newer".into()))]);
         // A later version of the app rings the bell too. One the app cannot take in by
         // itself is fetched from its page.
-        let release = Release { version: "9.0.0".into(), page: "https://example/releases/9".into(), program: None, mandatory: false };
+        let release = Release { version: "9.0.0".into(), page: "https://example/releases/9".into(), program: None, mandatory: false, notes: Vec::new() };
         state.apply(Event::Update(release.clone()));
         assert!(state.has_news());
         click(&mut state, "update-get");

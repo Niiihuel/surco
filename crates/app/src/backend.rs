@@ -131,6 +131,8 @@ pub struct Release {
     pub program: Option<(String, String)>,
     /// The release says versions as old as this one may not keep running.
     pub mandatory: bool,
+    /// What it says of itself, as whoever published it wrote it.
+    pub notes: Vec<update::Note>,
 }
 
 /// An artist as their own page presents them, and what it says of them.
@@ -669,7 +671,8 @@ async fn latest_release(shared: &Shared) -> Option<Release> {
     let program = update::program_name(&version).filter(|_| takes).and_then(|name| Some((file(&name)?, file("SHA256SUMS")?)));
     let minimum = release["body"].as_str().and_then(update::minimum);
     let mandatory = minimum.is_some_and(|minimum| discover::newer(minimum, env!("CARGO_PKG_VERSION")));
-    Some(Release { version, page: release["html_url"].as_str()?.to_owned(), program, mandatory })
+    let notes = update::notes(release["body"].as_str().unwrap_or_default());
+    Some(Release { version, page: release["html_url"].as_str()?.to_owned(), program, mandatory, notes })
 }
 
 /// Fetches the release's program for this system, checks it is the one the release
