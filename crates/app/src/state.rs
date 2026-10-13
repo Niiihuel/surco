@@ -74,6 +74,9 @@ pub struct Collection {
     pub recent: Vec<Entry>,
     #[serde(default)]
     pub playlists: Vec<Playlist>,
+    /// The tracks last played, newest first.
+    #[serde(default)]
+    pub heard: Vec<Track>,
     /// The id the next playlist takes.
     #[serde(default)]
     next_playlist: u64,
@@ -150,6 +153,9 @@ pub enum Lyrics {
     Missing,
 }
 
+/// How many tracks a shelf of the home page holds.
+pub const SHELF: usize = 12;
+
 /// The longest crossfade on offer, as in the players people know.
 pub const CROSSFADE_MAX: f32 = 12.0;
 
@@ -158,6 +164,11 @@ impl Default for Settings {
         Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High }
     }
 }
+
+/// How many played tracks are remembered, and from how many of them the home page asks
+/// the catalog for more.
+const HEARD_KEPT: usize = 20;
+const SEEDS: usize = 2;
 
 /// How many recent entries the home page offers.
 const RECENT_KEPT: usize = 8;
@@ -217,6 +228,12 @@ impl Collection {
                 playlist.tracks.push(track);
             }
         }
+    }
+
+    fn heard(&mut self, track: &Track) {
+        self.heard.retain(|heard| heard.id != track.id);
+        self.heard.insert(0, track.clone());
+        self.heard.truncate(HEARD_KEPT);
     }
 
     fn visited(&mut self, entry: Entry) {
@@ -344,6 +361,9 @@ pub struct State {
     pub save_error: Option<String>,
     /// The devices there are to play through, the one chosen (none for the system's own),
     /// and whether their list is open.
+    /// What the catalog offers after a track that was heard, by that track's id; empty
+    /// while the answer is on its way.
+    pub recommended: HashMap<String, Vec<Track>>,
     /// The right panel shows the lyrics of what plays.
     pub lyrics_open: bool,
     /// The lyrics asked for, with the track they belong to.
@@ -460,6 +480,7 @@ impl Default for State {
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
+            recommended: HashMap::new(),
             lyrics_open: false,
             lyrics: None,
             lyric_shown: None,
@@ -825,6 +846,16 @@ impl State {
                 self.open_side(Side::Right, self.lyrics_open);
                 self.ask_lyrics()
             }
+            _ if id.starts_with("heard:") => {
+                let index = id["heard:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.heard.len());
+                index.map(|index| Command::PlayList { tracks: self.collection.heard.clone(), index }).into_iter().collect()
+            }
+            _ if id.starts_with("rec:") => {
+                // A pick plays, and the rest of its shelf follows it.
+                let place = id["rec:".len()..].split_once(':').and_then(|(shelf, index)| Some((shelf.parse::<usize>().ok()?, index.parse::<usize>().ok()?)));
+                let shelf = place.and_then(|(shelf, index)| Some((self.recommended.get(&self.seeds().get(shelf)?.id)?, index)));
+                shelf.filter(|(tracks, index)| *index < tracks.len()).map(|(tracks, index)| Command::PlayList { tracks: tracks.clone(), index }).into_iter().collect()
+            }
             _ if id.starts_with("lyric:") => {
                 // A line that is clicked is sung from its start.
                 let line = id["lyric:".len()..].parse::<usize>().ok().and_then(|index| self.lines().get(index));
@@ -849,7 +880,7 @@ impl State {
                 self.searching = false;
                 self.search_error = None;
                 self.found = Found::default();
-                Vec::new()
+                self.ask_recommendations()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -1050,6 +1081,12 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
+            Event::Recommended { seed, tracks } => {
+                let tracks: Vec<Track> = tracks.into_iter().filter(|track| track.id != seed).take(SHELF).collect();
+                let covers = cover_requests(&mut self.covers, covers_of(&tracks));
+                self.recommended.insert(seed, tracks);
+                covers
+            }
             Event::Lyrics { track_id, lines } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
                     if *asked == track_id {
@@ -1083,12 +1120,38 @@ impl State {
 
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
+        let before = self.player.current.as_ref().map(|track| track.id.as_str());
+        if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str())) {
+            self.collection.heard(track);
+        }
         self.player = player;
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]));
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
+        commands
+    }
+
+    /// The tracks the home page asks the catalog about: the last heard, one for each artist.
+    pub fn seeds(&self) -> Vec<&Track> {
+        let mut seeds: Vec<&Track> = Vec::new();
+        for track in &self.collection.heard {
+            if seeds.len() < SEEDS && seeds.iter().all(|seed| seed.artist != track.artist) {
+                seeds.push(track);
+            }
+        }
+        seeds
+    }
+
+    /// Asks for what goes with each seed, once, and for the covers of what was heard.
+    pub fn ask_recommendations(&mut self) -> Vec<Command> {
+        let seeds: Vec<Track> = self.seeds().into_iter().filter(|seed| !self.recommended.contains_key(&seed.id)).cloned().collect();
+        let mut commands = cover_requests(&mut self.covers, covers_of(&self.collection.heard));
+        for seed in seeds {
+            self.recommended.insert(seed.id.clone(), Vec::new());
+            commands.push(Command::Recommend(seed));
+        }
         commands
     }
 
@@ -1545,6 +1608,24 @@ mod tests {
         click(&mut state, "recent-clear");
         click(&mut state, "confirm-yes");
         assert!(state.collection.recent.is_empty() && state.confirm.is_none());
+    }
+
+    #[test]
+    fn what_was_heard_is_offered_again_and_seeds_what_the_catalog_suggests() {
+        let playing = |id: &str| PlayerView { current: Some(track(id)), playing: true, ..PlayerView::default() };
+        let mut state = State::default();
+        state.show(playing("a"));
+        state.show(playing("a"));
+        state.show(playing("b"));
+        assert_eq!(state.collection.heard.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["b", "a"], "newest first, each once");
+        assert_eq!(state.seeds().len(), 1, "both are by the same artist");
+
+        assert!(click(&mut state, "home").contains(&Command::Recommend(track("b"))));
+        assert!(click(&mut state, "home").iter().all(|command| !matches!(command, Command::Recommend(_))), "asked once");
+        state.apply(Event::Recommended { seed: "b".into(), tracks: vec![track("b"), track("x"), track("y")] });
+        assert_eq!(click(&mut state, "rec:0:1"), vec![Command::PlayList { tracks: vec![track("x"), track("y")], index: 1 }], "without the seed itself");
+        assert!(click(&mut state, "rec:0:9").is_empty() && click(&mut state, "rec:3:0").is_empty());
+        assert_eq!(click(&mut state, "heard:1"), vec![Command::PlayList { tracks: vec![track("b"), track("a")], index: 1 }]);
     }
 
     #[test]

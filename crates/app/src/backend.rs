@@ -80,6 +80,8 @@ pub enum Command {
     Outputs,
     /// Look for the synced lyrics of a track.
     Lyrics(Track),
+    /// Ask the catalog what goes with a track the user heard.
+    Recommend(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -100,6 +102,8 @@ pub enum Event {
     Outputs(Vec<AudioOutputDevice>),
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
+    /// What the catalog would play after the track `seed`.
+    Recommended { seed: String, tracks: Vec<Track> },
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -325,6 +329,16 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Lyrics(track), Err(_)) => reply(Event::Lyrics { track_id: track.id, lines: None }),
+        (Command::Recommend(seed), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // Without an answer the home page simply has one shelf less.
+                if let Ok(tracks) = shared.youtube.radio(&seed.id).await {
+                    (shared.reply)(Event::Recommended { seed: seed.id, tracks });
+                }
+            });
+        }
+        (Command::Recommend(_), Err(_)) => {}
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {

@@ -12,7 +12,7 @@ use limn::{
 };
 
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -396,7 +396,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
 /// The page the app opens on: what was opened lately, a click away, and what the user keeps.
 fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let collection = &state.collection;
-    if collection.recent.is_empty() && collection.kept.is_empty() && state.saved.is_empty() {
+    if collection.recent.is_empty() && collection.kept.is_empty() && state.saved.is_empty() && collection.heard.is_empty() {
         return centered(
             Empty::new("Buscá algo para escuchar", "Escribí una canción o un artista arriba y apretá Enter.", palette).icon(Icon::Search).render(),
         );
@@ -427,6 +427,19 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         grid.push(Element::row(tiles.by_ref().take(columns).collect()).gap(GAP));
     }
     sections.push(Element::column(grid).gap(GAP));
+
+    // What was played, and what the catalog would play after the last of it.
+    let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
+    let heard: Vec<Element> = collection.heard.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("heard:{index}"), track)).collect();
+    if !heard.is_empty() {
+        sections.extend([heading("Volver a escuchar", palette), shelf("home-heard", heard)]);
+    }
+    for (shelf_index, seed) in state.seeds().into_iter().enumerate() {
+        let picks: Vec<Element> = state.recommended.get(&seed.id).into_iter().flatten().enumerate().map(|(index, track)| pick(format!("rec:{shelf_index}:{index}"), track)).collect();
+        if !picks.is_empty() {
+            sections.extend([heading(&format!("Porque escuchaste «{}»", seed.title), palette), shelf(&format!("home-rec:{shelf_index}"), picks)]);
+        }
+    }
 
     let albums: Vec<Element> = collection
         .albums()
