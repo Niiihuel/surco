@@ -155,5 +155,6 @@ fn load(path: &str, start_sec: Option<f64>, standby: bool) -> Result<Load, Strin
         duration_sec: None,
         start_sec,
         standby,
+        gain: 1.0,
     })
 }

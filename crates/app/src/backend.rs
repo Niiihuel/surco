@@ -64,6 +64,16 @@ pub enum Command {
     /// Queue a track by hand: right after the current one, or after the ones already queued.
     PlayNext(Track),
     Enqueue(Track),
+    /// Take the n-th of the upcoming tracks out of what follows.
+    Unqueue(usize),
+    /// Drop the tracks queued by hand.
+    ClearQueue,
+    /// Move the n-th of the upcoming tracks to where the m-th is.
+    MoveQueue(usize, usize),
+    /// Play the same in both speakers.
+    Mono(bool),
+    /// Turn the tracks louder than the reference down to it.
+    Normalize(bool),
     Previous,
     /// Seconds from the start of the current track.
     Seek(f64),
@@ -346,6 +356,8 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
         (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
+        (Command::Mono(on), _) => equalizer::set_mono(on),
+        (Command::Normalize(on), _) => equalizer::set_normalize(on),
         (Command::Quality(bps), Ok(shared)) => shared.quality.store(bps, Ordering::SeqCst),
         (Command::Quality(_), Err(_)) => {}
         (Command::Output(id), Ok(shared)) => {
@@ -724,14 +736,20 @@ async fn save(shared: &Arc<Shared>, track: &Track) -> Result<(), String> {
     let (shared, track) = (shared.clone(), track.clone());
     blocking(move || {
         let mut library = shared.library.lock().unwrap();
-        library.add(track, best.mime, &audio, cover.as_deref()).map_err(|error| format!("No se pudo guardar en el disco: {error}"))
+        library.add(track, best.mime, best.loudness_db, &audio, cover.as_deref()).map_err(|error| format!("No se pudo guardar en el disco: {error}"))
     })
     .await
 }
 
+/// What brings a track down to the reference loudness. One under it stays as it is, as in
+/// YouTube's own player: lifting it would need to know its peaks.
+fn gain(loudness_db: Option<f64>) -> f32 {
+    10f32.powf(-(loudness_db.unwrap_or(0.0).max(0.0) as f32) / 20.0)
+}
+
 /// A saved track as a load that needs no network.
 async fn saved(shared: &Arc<Shared>, track: &Track, standby: bool) -> Option<(Load, Download)> {
-    let (path, mime_type) = shared.library.lock().unwrap().audio(&track.id)?;
+    let (path, mime_type, loudness_db) = shared.library.lock().unwrap().audio(&track.id)?;
     // A file that went missing is not an error: the track is fetched like any other.
     let bytes = blocking(move || std::fs::read(path).map_err(|error| error.to_string())).await.ok()?;
     let buffer = MediaBuffer::new(Some(bytes.len()));
@@ -744,6 +762,7 @@ async fn saved(shared: &Arc<Shared>, track: &Track, standby: bool) -> Option<(Lo
         duration_sec: (track.duration_ms > 0).then_some(track.duration_ms as f64 / 1000.0),
         start_sec: None,
         standby,
+        gain: gain(loudness_db),
     };
     Some((load, Download { track_id: track.id.clone(), task: tokio::spawn(async {}), buffer }))
 }
@@ -764,6 +783,7 @@ async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Lo
         duration_sec: (stream.duration_seconds > 0.0).then_some(stream.duration_seconds),
         start_sec: None,
         standby,
+        gain: gain(best.loudness_db),
     };
     let task = tokio::spawn(download(shared.clone(), best, buffer.clone()));
     Ok((load, Download { track_id: track.id.clone(), task, buffer }))

@@ -21,6 +21,9 @@ pub struct Audio {
     pub mime: String,
     pub average_bitrate: u64,
     pub size: u64,
+    /// How much louder than YouTube's reference of -14 LUFS it is, in decibels; quieter when
+    /// negative. Its own player turns the louder ones down by this much.
+    pub loudness_db: Option<f64>,
     pub url: String,
 }
 
@@ -126,6 +129,7 @@ fn parse(response: &Value) -> Result<Stream> {
                 mime: mime.starts_with("audio/").then(|| mime.to_owned())?,
                 average_bitrate: number(&format["averageBitrate"]),
                 size: number(&format["contentLength"]),
+                loudness_db: format["loudnessDb"].as_f64(),
                 // A format without a URL is SABR-only or ciphered: not usable here.
                 url: format["url"].as_str()?.to_owned(),
             })
@@ -196,7 +200,7 @@ mod tests {
             "playabilityStatus": {"status": "OK"},
             "videoDetails": {"lengthSeconds": "290"},
             "streamingData": {"expiresInSeconds": "21540", "adaptiveFormats": [
-                {"itag": 251, "mimeType": "audio/webm; codecs=\"opus\"", "averageBitrate": 141572, "contentLength": "5134839", "url": "https://a/251"},
+                {"itag": 251, "mimeType": "audio/webm; codecs=\"opus\"", "averageBitrate": 141572, "contentLength": "5134839", "loudnessDb": 5.81, "url": "https://a/251"},
                 {"itag": 140, "mimeType": "audio/mp4; codecs=\"mp4a.40.2\"", "averageBitrate": "129524", "contentLength": "4697618", "url": "https://a/140"},
                 {"itag": 137, "mimeType": "video/mp4; codecs=\"avc1\"", "averageBitrate": 4000000, "contentLength": "9", "url": "https://v/137"},
                 {"itag": 250, "mimeType": "audio/webm; codecs=\"opus\"", "averageBitrate": 71994, "contentLength": "2611256"},
@@ -204,6 +208,7 @@ mod tests {
         });
         let stream = parse(&response).unwrap();
         assert_eq!(stream.duration_seconds, 290.0);
+        assert_eq!(stream.best().unwrap().loudness_db, Some(5.81));
         assert_eq!(stream.expires_in_seconds, 21540);
         assert_eq!(stream.audio.iter().map(|a| a.itag).collect::<Vec<_>>(), [251, 140]);
         assert_eq!(stream.at_most(135_000).map(|audio| audio.itag), Some(140));

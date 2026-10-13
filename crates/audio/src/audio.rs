@@ -90,6 +90,8 @@ pub struct Load {
     pub start_sec: Option<f64>,
     /// Decode onto the idle deck instead of the playing one, for `transition` to swap to.
     pub standby: bool,
+    /// What its samples are multiplied by while tracks are normalized; 1 for as it comes.
+    pub gain: f32,
 }
 
 /**
@@ -197,12 +199,12 @@ impl Seek for BufferReader {
  * The duration is read *before* wrapping: it is what the caller reports to the UI, and reading
  * it through two adapters is one more place for it to go missing.
  */
-fn equalized<S>(source: S) -> (BoxedSource, Option<f64>)
+fn equalized<S>(source: S, gain: f32) -> (BoxedSource, Option<f64>)
 where
     S: Source + Send + 'static,
 {
     let duration = source.total_duration().map(|value| value.as_secs_f64());
-    let shaped = EqualizedSource::new(source).limit(rodio::source::LimitSettings::new());
+    let shaped = EqualizedSource::new(source, gain).limit(rodio::source::LimitSettings::new());
     (Box::new(shaped), duration)
 }
 
@@ -363,7 +365,7 @@ impl NativeAudio {
          * what symphonia implements.
          */
         let decoded = if opus_source::is_opus(mime_type) {
-            OpusSource::new(Box::new(reader), mime_type).map(equalized)
+            OpusSource::new(Box::new(reader), mime_type).map(|source| equalized(source, load.gain))
         } else {
             let total = load.buffer.total();
             let builder = rodio::Decoder::builder().with_data(reader);
@@ -378,7 +380,7 @@ impl NativeAudio {
                 None => builder,
             }
             .build()
-            .map(equalized)
+            .map(|source| equalized(source, load.gain))
             .map_err(|error| format!("audio decode failed: {error}"))
         };
         let (source, decoded_duration) = decoded?;

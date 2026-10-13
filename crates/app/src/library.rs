@@ -15,6 +15,9 @@ const INDEX: &str = "index.json";
 struct Saved {
     track: Track,
     mime: String,
+    /// How much louder than the reference it is, as the catalog said when it was saved.
+    #[serde(default)]
+    loudness_db: Option<f64>,
 }
 
 pub struct Library {
@@ -47,10 +50,10 @@ impl Library {
         self.saved.iter().rev().map(|saved| saved.track.clone()).collect()
     }
 
-    /// Where a saved track's audio is, and its type.
-    pub fn audio(&self, track_id: &str) -> Option<(PathBuf, String)> {
+    /// Where a saved track's audio is, its type and its loudness.
+    pub fn audio(&self, track_id: &str) -> Option<(PathBuf, String, Option<f64>)> {
         let saved = self.saved.iter().find(|saved| saved.track.id == track_id)?;
-        Some((self.dir.join(file_name(track_id)), saved.mime.clone()))
+        Some((self.dir.join(file_name(track_id)), saved.mime.clone(), saved.loudness_db))
     }
 
     /// The room the saved audio takes on disk.
@@ -63,14 +66,14 @@ impl Library {
         fs::read(self.dir.join(file_name(url))).ok()
     }
 
-    pub fn add(&mut self, track: Track, mime: String, audio: &[u8], cover: Option<&[u8]>) -> io::Result<()> {
+    pub fn add(&mut self, track: Track, mime: String, loudness_db: Option<f64>, audio: &[u8], cover: Option<&[u8]>) -> io::Result<()> {
         fs::create_dir_all(&self.dir)?;
         write(&self.dir.join(file_name(&track.id)), audio)?;
         if let (Some(url), Some(cover)) = (&track.artwork_url, cover) {
             write(&self.dir.join(file_name(url)), cover)?;
         }
         self.saved.retain(|saved| saved.track.id != track.id);
-        self.saved.push(Saved { track, mime });
+        self.saved.push(Saved { track, mime, loudness_db });
         self.store()
     }
 
@@ -117,15 +120,15 @@ mod tests {
         let dir = scratch("keeps");
         let mut library = Library::open(dir.clone());
         assert!(library.tracks().is_empty() && library.audio("a").is_none());
-        library.add(track("a"), "audio/webm".into(), b"aaa", Some(b"cover")).unwrap();
-        library.add(track("b/..\\x"), "audio/mp4".into(), b"bbb", None).unwrap();
-        library.add(track("a"), "audio/webm".into(), b"again", None).unwrap();
+        library.add(track("a"), "audio/webm".into(), Some(3.0), b"aaa", Some(b"cover")).unwrap();
+        library.add(track("b/..\\x"), "audio/mp4".into(), None, b"bbb", None).unwrap();
+        library.add(track("a"), "audio/webm".into(), Some(5.5), b"again", None).unwrap();
 
         let library = Library::open(dir.clone());
         assert_eq!(library.tracks(), vec![track("a"), track("b/..\\x")], "newest first, each once");
         assert_eq!(library.bytes(), 8, "five bytes of one and three of the other");
-        let (path, mime) = library.audio("a").unwrap();
-        assert_eq!((fs::read(path).unwrap(), mime.as_str()), (b"again".to_vec(), "audio/webm"));
+        let (path, mime, loudness) = library.audio("a").unwrap();
+        assert_eq!((fs::read(path).unwrap(), mime.as_str(), loudness), (b"again".to_vec(), "audio/webm", Some(5.5)));
         assert!(library.audio("b/..\\x").unwrap().0.starts_with(&dir), "an id never names a path outside the library");
         assert_eq!(library.cover("https://img/a?size=1"), Some(b"cover".to_vec()));
         assert_eq!(library.cover("https://img/none"), None);

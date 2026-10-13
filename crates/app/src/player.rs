@@ -14,6 +14,8 @@ pub struct PlayerView {
     pub current: Option<Track>,
     /// What follows, in the order it will play.
     pub upcoming: Vec<Track>,
+    /// How many of `upcoming` were queued by hand. They come first.
+    pub queued: usize,
     /// What the user asked for, which the engine may not have reached yet.
     pub playing: bool,
     pub position: f64,
@@ -94,6 +96,7 @@ impl Player {
         PlayerView {
             current: self.queue.current().cloned(),
             upcoming: self.queue.upcoming().cloned().collect(),
+            queued: self.queue.queued(),
             playing: self.playing,
             position: self.position,
             duration: self.duration,
@@ -184,6 +187,18 @@ impl Player {
             }
             Command::Enqueue(track) => {
                 self.queue.enqueue(track);
+                Vec::new()
+            }
+            Command::Unqueue(upcoming) => {
+                self.queue.remove_upcoming(upcoming);
+                Vec::new()
+            }
+            Command::MoveQueue(from, to) => {
+                self.queue.move_upcoming(from, to);
+                Vec::new()
+            }
+            Command::ClearQueue => {
+                self.queue.clear_up_next();
                 Vec::new()
             }
             Command::Next => self.skip(1),

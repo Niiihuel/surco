@@ -90,6 +90,9 @@ pub struct Collection {
     /// The id the next playlist takes.
     #[serde(default)]
     next_playlist: u64,
+    /// What the library lists first, in the order it was pinned, by what each row is.
+    #[serde(default)]
+    pub pinned: Vec<String>,
 }
 
 /// A list the user makes. A collaborative one is meant for others to add to as well, which
@@ -117,6 +120,7 @@ pub enum Confirm {
     DeletePlaylist(u64),
     ClearDownloads,
     ClearRecent,
+    ClearQueue,
 }
 
 /// What the user set, kept between runs.
@@ -132,6 +136,40 @@ pub struct Settings {
     pub quality: Quality,
     /// Show a stretch of a song's own video where its cover is while it plays.
     pub clips: bool,
+    pub library_sort: Sort,
+    /// Play the same in both speakers.
+    pub mono: bool,
+    /// Turn the tracks louder than the reference down to it.
+    pub normalize: bool,
+}
+
+/// The order the library lists what is not pinned in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Sort {
+    /// As it was kept, the newest first.
+    #[default]
+    Added,
+    Alphabetical,
+    /// By whose it is.
+    Creator,
+}
+
+impl Sort {
+    pub fn label(self) -> &'static str {
+        match self {
+            Sort::Added => "Agregados",
+            Sort::Alphabetical => "A–Z",
+            Sort::Creator => "Creador",
+        }
+    }
+
+    fn next(self) -> Self {
+        match self {
+            Sort::Added => Sort::Alphabetical,
+            Sort::Alphabetical => Sort::Creator,
+            Sort::Creator => Sort::Added,
+        }
+    }
 }
 
 /// How much of a stream is asked for.
@@ -173,7 +211,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, mono: false, normalize: true }
     }
 }
 
@@ -249,6 +287,15 @@ impl Collection {
     }
 
     /// Marks a track as liked, or takes the mark off one that had it.
+    /// Pins a row of the library after the ones already pinned, or lets it go.
+    fn pin(&mut self, key: &str) {
+        let before = self.pinned.len();
+        self.pinned.retain(|pinned| pinned != key);
+        if self.pinned.len() == before {
+            self.pinned.push(key.to_owned());
+        }
+    }
+
     fn like(&mut self, track: &Track) {
         let before = self.liked.len();
         self.liked.retain(|liked| liked.id != track.id);
@@ -363,6 +410,8 @@ pub struct State {
     pub queue_open: bool,
     pub collection: Collection,
     pub filter: Filter,
+    /// What the library's rows are searched for.
+    pub library_search: String,
     pub settings: Settings,
     /// The playlist being made, while its dialog is open.
     pub creating: Option<Draft>,
@@ -555,6 +604,7 @@ impl Default for State {
             queue_open: false,
             collection: Collection::default(),
             filter: Filter::All,
+            library_search: String::new(),
             settings: Settings::default(),
             creating: None,
             confirm: None,
@@ -806,6 +856,7 @@ impl State {
                 Vec::new()
             }
             "unsave" => vec![Command::Unsave(track.id)],
+            "unqueue" => row.strip_prefix("upcoming:").and_then(|index| index.parse().ok()).map(Command::Unqueue).into_iter().collect(),
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
             // A track goes into a list that exists, or into one made for it.
@@ -883,6 +934,10 @@ impl State {
                 self.query = value.clone();
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "library-query" => {
+                self.library_search.clone_from(value);
+                Vec::new()
+            }
             UiAction::InputChanged { id, value } if id == "page-query" => {
                 // Typing into a search that was shut meanwhile changes nothing.
                 if self.page_searching {
@@ -948,9 +1003,14 @@ impl State {
                 }
                 Vec::new()
             }
-            UiAction::Dropped { .. } => {
+            UiAction::Dropped { id, target, .. } => {
                 (self.resizing, self.column_drag) = (None, None);
-                Vec::new()
+                // A row of the queue let go over another takes its place.
+                let place = |row: &str| row.strip_prefix("upcoming:").and_then(|index| index.parse::<usize>().ok());
+                match (place(id), target.as_deref().and_then(place)) {
+                    (Some(from), Some(to)) if from != to => vec![Command::MoveQueue(from, to)],
+                    _ => Vec::new(),
+                }
             }
             UiAction::DragCancelled { .. } => {
                 if let Some((_, width)) = self.column_drag.take() {
@@ -969,6 +1029,10 @@ impl State {
     }
 
     fn click(&mut self, id: &str) -> Vec<Command> {
+        if let Some(key) = id.strip_prefix("pin:") {
+            self.collection.pin(key);
+            return Vec::new();
+        }
         if let Some(row) = id.strip_prefix("more:") {
             self.menu = (self.menu.as_deref() != Some(row)).then(|| row.to_owned());
             return Vec::new();
@@ -1186,6 +1250,14 @@ impl State {
                 self.settings.autoplay = !self.settings.autoplay;
                 vec![Command::Autoplay(self.settings.autoplay)]
             }
+            "setting:mono" => {
+                self.settings.mono = !self.settings.mono;
+                vec![Command::Mono(self.settings.mono)]
+            }
+            "setting:normalize" => {
+                self.settings.normalize = !self.settings.normalize;
+                vec![Command::Normalize(self.settings.normalize)]
+            }
             "setting:motion" => {
                 self.settings.reduce_motion = !self.settings.reduce_motion;
                 Vec::new()
@@ -1260,6 +1332,7 @@ impl State {
                     self.collection.recent.clear();
                     Vec::new()
                 }
+                Some(Confirm::ClearQueue) => vec![Command::ClearQueue],
                 None => Vec::new(),
             },
             // Following from the panel that presents the artist of what plays.
@@ -1273,6 +1346,14 @@ impl State {
                 if let Some(entry) = self.page_entry() {
                     self.collection.toggle(entry);
                 }
+                Vec::new()
+            }
+            "library-sort" => {
+                self.settings.library_sort = self.settings.library_sort.next();
+                Vec::new()
+            }
+            "queue-clear" => {
+                self.confirm = Some(Confirm::ClearQueue);
                 Vec::new()
             }
             "filter:all" | "filter:lists" | "filter:artists" | "filter:albums" => {
@@ -1940,6 +2021,24 @@ mod tests {
         assert_eq!(state.filter, Filter::Artists);
         click(&mut state, "filter:all");
         assert_eq!(state.filter, Filter::All);
+
+        click(&mut state, "pin:liked");
+        click(&mut state, "pin:playlist:2");
+        click(&mut state, "pin:liked");
+        assert_eq!(state.collection.pinned, ["playlist:2"], "pinned twice is let go");
+        click(&mut state, "library-sort");
+        assert_eq!(state.settings.library_sort, Sort::Alphabetical);
+        state.update(&UiAction::InputChanged { id: "library-query".into(), value: "lu".into() });
+        assert_eq!(state.library_search, "lu");
+        assert!(click(&mut state, "queue-clear").is_empty() && state.confirm == Some(Confirm::ClearQueue), "it asks first");
+        assert_eq!(click(&mut state, "confirm-yes"), vec![Command::ClearQueue]);
+        let dropped = |id: &str, target: Option<&str>| UiAction::Dropped { id: id.into(), position: limn::Point::new(0.0, 0.0), target: target.map(str::to_owned) };
+        assert_eq!(state.update(&dropped("upcoming:2", Some("upcoming:0"))), vec![Command::MoveQueue(2, 0)]);
+        assert!(state.update(&dropped("upcoming:2", Some("upcoming:2"))).is_empty() && state.update(&dropped("upcoming:2", None)).is_empty());
+        assert_eq!(click(&mut state, "setting:mono"), vec![Command::Mono(true)]);
+        assert_eq!(click(&mut state, "setting:normalize"), vec![Command::Normalize(false)]);
+        state.show(PlayerView { upcoming: vec![track("a"), track("b")], ..PlayerView::default() });
+        assert_eq!(click(&mut state, "do:unqueue:upcoming:1"), vec![Command::Unqueue(1)]);
         assert_eq!((greeting(7), greeting(15), greeting(23), greeting(3)), ("Buenos días", "Buenas tardes", "Buenas noches", "Buenas noches"));
     }
 

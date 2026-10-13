@@ -153,6 +153,68 @@ impl Queue {
         self.up_next.push_front(track);
     }
 
+    /// How many of `upcoming` were queued by hand. They come first.
+    pub fn queued(&self) -> usize {
+        self.up_next.len()
+    }
+
+    /// Drops what was queued by hand; the list goes on as it would have.
+    pub fn clear_up_next(&mut self) {
+        self.up_next.clear();
+    }
+
+    /// Takes the n-th of `upcoming` out, whether it was queued by hand or is the list's own.
+    pub fn remove_upcoming(&mut self, upcoming: usize) -> Option<Track> {
+        if let Some(track) = self.up_next.remove(upcoming) {
+            return Some(track);
+        }
+        let from = self.position().map_or(0, |position| position + 1);
+        let index = self.at(from + upcoming - self.up_next.len())?;
+        let track = self.list.remove(index);
+        // Everything after it in the list is now one place earlier.
+        let moved = |held: &mut usize| *held -= usize::from(*held > index);
+        if let Some(order) = &mut self.shuffle {
+            order.retain(|held| *held != index);
+            order.iter_mut().for_each(moved);
+        }
+        self.index.iter_mut().for_each(moved);
+        self.guests_from.iter_mut().for_each(moved);
+        Some(track)
+    }
+
+    /// Moves the n-th of `upcoming` to where the m-th is. One queued by hand stays among
+    /// those; one of the list's own dropped among them becomes one of them.
+    pub fn move_upcoming(&mut self, from: usize, to: usize) {
+        let queued = self.up_next.len();
+        if from < queued {
+            if let Some(track) = self.up_next.remove(from) {
+                self.up_next.insert(to.min(queued - 1), track);
+            }
+        } else if to < queued {
+            if let Some(track) = self.remove_upcoming(from) {
+                self.up_next.insert(to, track);
+            }
+        } else {
+            let next = self.position().map_or(0, |position| position + 1);
+            let (from, to) = (next + from - queued, next + to - queued);
+            if from.max(to) >= self.list.len() {
+                return;
+            }
+            // A shuffled list is played in its order, so that is what changes.
+            match &mut self.shuffle {
+                Some(order) if from.max(to) < order.len() => {
+                    let index = order.remove(from);
+                    order.insert(to, index);
+                }
+                Some(_) => {}
+                None => {
+                    let track = self.list.remove(from);
+                    self.list.insert(to, track);
+                }
+            }
+        }
+    }
+
     /// What follows the current track, in the order it will play: hand-queued tracks first,
     /// then the rest of the list.
     pub fn upcoming(&self) -> impl Iterator<Item = &Track> {
@@ -306,6 +368,57 @@ mod tests {
         assert_eq!(id(q.advance()), Some("x"));
         assert_eq!(id(q.advance()), Some("y"));
         assert_eq!(id(q.advance()), Some("b"), "the list continues after the track it was on");
+    }
+
+    #[test]
+    fn an_upcoming_track_is_taken_out_from_either_source_and_the_hand_queued_cleared() {
+        let mut q = Queue::default();
+        q.start(tracks(&["a", "b", "c", "d", "e"]), 1, &mut rng());
+        q.set_shuffle(true, &mut rng());
+        q.enqueue(track("x"));
+        q.enqueue(track("y"));
+        let upcoming = |q: &Queue| q.upcoming().map(|track| track.id.clone()).collect::<Vec<_>>();
+        let before = upcoming(&q);
+        assert_eq!(q.queued(), 2);
+        q.remove_upcoming(0);
+        q.remove_upcoming(2);
+        q.remove_upcoming(9);
+        assert_eq!(upcoming(&q), [before[1].clone(), before[2].clone(), before[4].clone(), before[5].clone()], "x and the list's second, nothing else");
+        assert_eq!((id(q.current()), q.list().len(), q.queued()), (Some("b"), 4, 1));
+        q.clear_up_next();
+        assert_eq!(upcoming(&q), [before[2].clone(), before[4].clone(), before[5].clone()]);
+        let mut seen = vec![];
+        while let Some(t) = q.advance() {
+            seen.push(t.id.clone());
+        }
+        assert_eq!(seen.len(), 3, "the shuffle still visits each of the rest once");
+    }
+
+    #[test]
+    fn an_upcoming_track_moves_to_where_another_is() {
+        let upcoming = |q: &Queue| q.upcoming().map(|track| track.id.clone()).collect::<Vec<_>>().join("");
+        for shuffled in [false, true] {
+            let mut q = Queue::default();
+            q.start(tracks(&["b", "c", "d", "e"]), 0, &mut rng());
+            if shuffled {
+                q.set_shuffle(true, &mut rng());
+            }
+            q.enqueue(track("x"));
+            q.enqueue(track("y"));
+            let first: Vec<char> = upcoming(&q)[2..].chars().collect();
+            let own = |order: [usize; 3]| order.map(|place| first[place]).iter().collect::<String>();
+            q.move_upcoming(0, 1);
+            assert_eq!(upcoming(&q), format!("yx{}", own([0, 1, 2])));
+            q.move_upcoming(0, 4);
+            assert_eq!(upcoming(&q), format!("xy{}", own([0, 1, 2])), "one queued by hand goes no further than the last of them");
+            q.move_upcoming(2, 4);
+            assert_eq!(upcoming(&q), format!("xy{}", own([1, 2, 0])));
+            q.move_upcoming(4, 2);
+            q.move_upcoming(3, 9);
+            assert_eq!(upcoming(&q), format!("xy{}", own([0, 1, 2])), "back where it was, and nowhere is nowhere");
+            q.move_upcoming(3, 0);
+            assert_eq!((upcoming(&q), q.queued(), id(q.current())), (format!("{}xy{}{}", first[1], first[0], first[2]), 3, Some("b")), "among the hand-queued it is one of them");
+        }
     }
 
     #[test]

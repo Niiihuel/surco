@@ -13,7 +13,7 @@ use limn::{
 
 use crate::clip::Showing;
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, Sort, State, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -254,6 +254,7 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
             (format!("¿Eliminar «{name}»?"), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar")
         }
         Some(Confirm::ClearDownloads) => ("¿Eliminar las descargas?".to_owned(), "Ya no vas a tener acceso a lo que descargaste en este equipo.", "Eliminar"),
+        Some(Confirm::ClearQueue) => ("¿Borrar la cola?".to_owned(), "Se quitan las canciones que agregaste a la cola. Lo que venía sonando sigue.", "Borrar"),
         Some(Confirm::ClearRecent) => ("¿Borrar el historial de reproducciones?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
         None => (String::new(), "", ""),
     };
@@ -343,21 +344,35 @@ fn library_tile(icon: Icon, palette: ComponentPalette) -> Element {
         .size(Some(LIBRARY_TILE), Some(LIBRARY_TILE))
 }
 
+/// One row of the library.
+struct LibraryEntry<'a> {
+    /// What a click reports.
+    id: String,
+    /// What it is wherever it stands, for a pin to hold on to.
+    key: String,
+    picture: Element,
+    name: &'a str,
+    about: String,
+    /// Whose it is; empty for what is the user's own.
+    creator: &'a str,
+    /// Its page is the one shown.
+    here: bool,
+}
+
 /// The left panel: what the user keeps, under the filters that narrow it. Folded, it is a
 /// rail of pictures.
 fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> Element {
     let shows = |filter: Filter| state.filter == Filter::All || state.filter == filter;
-    // One entry: the id it reports, its picture, its name and what it is.
-    let mut entries: Vec<(String, Element, &str, String, bool)> = Vec::new();
+    let mut entries: Vec<LibraryEntry> = Vec::new();
     if shows(Filter::Lists) {
         let count = match state.saved.len() {
             1 => "Playlist · 1 canción".to_owned(),
             count => format!("Playlist · {count} canciones"),
         };
-        entries.push(("downloads".into(), library_tile(Icon::Custom(DOWNLOAD), palette), "Descargas", count, state.page == Page::Downloads));
+        entries.push(LibraryEntry { id: "downloads".into(), key: "downloads".into(), picture: library_tile(Icon::Custom(DOWNLOAD), palette), name: "Descargas", about: count, creator: "", here: state.page == Page::Downloads });
         if !state.collection.liked.is_empty() {
             let count = format!("Playlist · {}", songs(state.collection.liked.len()));
-            entries.push(("liked".into(), library_tile(Icon::HeartFill, palette), "Tus me gusta", count, state.page == Page::Liked));
+            entries.push(LibraryEntry { id: "liked".into(), key: "liked".into(), picture: library_tile(Icon::HeartFill, palette), name: "Tus me gusta", about: count, creator: "", here: state.page == Page::Liked });
         }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
             let picture = match playlist.tracks.first() {
@@ -365,25 +380,34 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                 None => library_tile(Icon::Playlist, palette),
             };
             let about = format!("{} · {}", if playlist.collaborative { "Playlist colaborativa" } else { "Playlist" }, songs(playlist.tracks.len()));
-            entries.push((format!("playlist:{index}"), picture, &playlist.name, about, state.page == Page::Playlist(playlist.id)));
+            entries.push(LibraryEntry { id: format!("playlist:{index}"), key: format!("playlist:{}", playlist.id), picture, name: &playlist.name, about, creator: "", here: state.page == Page::Playlist(playlist.id) });
         }
     }
     if shows(Filter::Artists) {
         for (index, artist) in state.collection.artists() {
             let picture = cover(state, &artist.artwork_url, LIBRARY_TILE, palette).radius(LIBRARY_TILE / 2.0);
             let here = matches!(&state.page, Page::Artist(page) if page.id == artist.id);
-            entries.push((format!("kept:{index}"), picture, &artist.name, "Artista".into(), here));
+            entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("artist:{}", artist.id), picture, name: &artist.name, about: "Artista".into(), creator: &artist.name, here });
         }
     }
     if shows(Filter::Albums) {
         for (index, album) in state.collection.albums() {
             let about = album.artist.as_ref().map_or_else(|| "Álbum".to_owned(), |artist| format!("Álbum · {artist}"));
             let here = matches!(&state.page, Page::Album(page) if page.id == album.id);
-            entries.push((format!("kept:{index}"), cover(state, &album.artwork_url, LIBRARY_TILE, palette), &album.title, about, here));
+            let picture = cover(state, &album.artwork_url, LIBRARY_TILE, palette);
+            entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("album:{}", album.id), picture, name: &album.title, about, creator: album.artist.as_deref().unwrap_or(""), here });
         }
     }
+    match state.settings.library_sort {
+        Sort::Added => {}
+        Sort::Alphabetical => entries.sort_by_cached_key(|entry| entry.name.to_lowercase()),
+        Sort::Creator => entries.sort_by_cached_key(|entry| (entry.creator.to_lowercase(), entry.name.to_lowercase())),
+    }
+    // What is pinned goes first, in the order it was pinned; the rest keeps its sort.
+    let pinned = |key: &str| state.collection.pinned.iter().position(|pinned| pinned == key);
+    entries.sort_by_key(|entry| pinned(&entry.key).unwrap_or(usize::MAX));
     if rail {
-        let pictures = entries.into_iter().map(|(id, picture, ..)| Element::clickable(id, picture));
+        let pictures = entries.into_iter().map(|entry| Element::clickable(entry.id, entry.picture));
         let shut = header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette);
         let head = Element::row(vec![Element::spacer().flex(1.0), shut.render().centered_y(), Element::spacer().flex(1.0)]).size(Some(LIBRARY_TILE), Some(40.0));
         return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
@@ -408,22 +432,33 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             filter("filter:albums", "Álbumes", Filter::Albums),
         ],
     );
+    let search = SearchField::new("library-query", &state.library_search, "Buscar en tu biblioteca", SCHEME.on_raised()).size(ControlSize::Compact).render().flex(1.0);
+    let sort = Button::new("library-sort", state.settings.library_sort.label(), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render().centered_y();
+    let tools = Element::row(vec![search, sort]).gap(8.0);
+    let wanted = state.library_search.trim().to_lowercase();
     let rows: Vec<Element> = entries
         .into_iter()
-        .map(|(id, picture, name, about, here)| {
+        .filter(|entry| entry.name.to_lowercase().contains(&wanted) || entry.about.to_lowercase().contains(&wanted))
+        .map(|LibraryEntry { id, key, picture, name, about, here, .. }| {
+            let held = pinned(&key).is_some();
+            let about = if held { format!("Fijado · {about}") } else { about };
             // The page being shown stands out by its fill.
             let palette = if here { ComponentPalette { surface: CHOSEN, ..palette } } else { palette };
             let row = ListRow::new(id, name, palette).sizing(LIBRARY_ROW).leading(picture).subtitle(about).title_fade(true).radius(RadiusRole::Card);
-            if here { row.filled() } else { row }.render()
+            let row = if here { row.filled() } else { row }.render();
+            let pin = ContextMenuItem::new(format!("pin:{key}"), if held { "Desfijar" } else { "Fijar arriba" });
+            ContextMenu::new(format!("library-context:{key}"), row, vec![ContextMenuEntry::Item(pin)], SCHEME.menu()).render()
         })
         .collect();
     let list = if rows.is_empty() {
-        let what = if state.filter == Filter::Artists { "Seguí a un artista desde su página y aparece acá." } else { "Guardá un álbum desde su página y aparece acá." };
+        let what = if !wanted.is_empty() {
+            "Nada de tu biblioteca coincide con lo que buscás."
+        } else if state.filter == Filter::Artists { "Seguí a un artista desde su página y aparece acá." } else { "Guardá un álbum desde su página y aparece acá." };
         Element::panel(Text::new(what, palette).muted().render()).padding(8.0)
     } else {
         ScrollArea::new("library", Element::column(rows).gap(2.0)).render().flex(1.0)
     };
-    Element::column(vec![Element::panel(header).padding(8.0), filters, list]).gap(6.0).padding(8.0)
+    Element::column(vec![Element::panel(header).padding(8.0), filters, tools, list]).gap(6.0).padding(8.0)
 }
 
 /// The page the app opens on: what was opened lately, a click away, and what the user keeps.
@@ -957,6 +992,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
             vec![
                 switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
                 row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
+                switch("Normalizar el volumen", "Baja las canciones más fuertes para que todas suenen al mismo nivel.", "setting:normalize", state.settings.normalize),
+                switch("Audio mono", "Los dos parlantes reproducen lo mismo.", "setting:mono", state.settings.mono),
                 row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
                 row("Dispositivo de salida", "Por dónde suena la música.").trailing(output).stacked(compact).render(),
@@ -1375,11 +1412,27 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
                 .subtitle(if state.player.picks.contains(&track.id) { format!("{} · Recomendada", track.artist) } else { track.artist.clone() })
                 .title_fade(true)
                 .radius(RadiusRole::Card)
-                .render();
+                .render()
+                // Taken by the pointer and let go over another row, it moves there.
+                .draggable()
+                .drop_target();
+            let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), "Quitar de la cola").icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
+            let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], SCHEME.menu()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.
             Element::column(vec![row]).animate_height(format!("upcoming-row:{}", track.id), false)
         })
         .collect();
+    // What was queued by hand is told apart from what the list brings, and can be dropped at once.
+    let mut rows = rows;
+    let queued = state.player.queued.min(rows.len());
+    if queued > 0 {
+        let title = |text: &str| Text::new(text, palette).muted().render().centered_y();
+        let clear = Button::new("queue-clear", "Borrar", palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
+        if queued < rows.len() {
+            rows.insert(queued, Element::panel(title("A continuación")).padding(PANEL_PAD / 2.0));
+        }
+        rows.insert(0, Element::panel(Element::row(vec![title("En la cola"), Element::spacer().flex(1.0), clear])).padding(PANEL_PAD / 2.0));
+    }
     if rows.is_empty() {
         return centered(Empty::new("Nada en la cola", "Elegí una canción y acá aparece lo que sigue.", palette).icon(Icon::Playlist).render());
     }
@@ -1706,6 +1759,21 @@ mod tests {
         assert!(has(&narrow, "downloads") && has(&narrow, "search"), "the rail and the search are still there");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(has(&at(&state, 1400.0), "upcoming:0") && has(&at(&state, 700.0), "upcoming:0"), "the queue shows at any width");
+        assert!(!has(&at(&state, 1400.0), "queue-clear"), "nothing was queued by hand");
+        state.show(PlayerView { current: Some(track("a")), upcoming: vec![track("b"), track("c")], queued: 1, duration: 200.0, ..PlayerView::default() });
+        assert!(has(&at(&state, 1400.0), "queue-clear") && has(&at(&state, 1400.0), "upcoming:1"));
+        // The library's search and its order share a row inside the panel.
+        let mut tree = UiTree::new(view(&state, Size::new(1400.0, 700.0)));
+        let frame = tree.layout(Size::new(1400.0, 700.0));
+        let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap();
+        let (query, sort, list) = (rect("library-query"), rect("library-sort"), rect("downloads"));
+        // A row of the queue taken by the pointer and let go over another is dropped on it.
+        let middle = |id: &str| limn::Point::new(rect(id).x + rect(id).width / 2.0, rect(id).y + rect(id).height / 2.0);
+        tree.handle_event(limn::UiEvent::PointerDown(middle("upcoming:1")));
+        tree.handle_event(limn::UiEvent::PointerMove(middle("upcoming:0")));
+        let dropped = tree.handle_event(limn::UiEvent::PointerUp(middle("upcoming:0")));
+        assert!(matches!(dropped.as_slice(), [limn::UiAction::Dropped { id, target: Some(target), .. }] if id == "upcoming:1" && target == "upcoming:0"), "{dropped:?}");
+        assert!(query.width > 80.0 && query.x + query.width <= sort.x && sort.x + sort.width <= state.left_width + 16.0 && query.y + query.height <= list.y, "{query:?} {sort:?} {list:?}");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
     }

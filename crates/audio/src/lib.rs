@@ -30,6 +30,7 @@
  *     duration_sec: Some(204.0),
  *     start_sec: None,
  *     standby: false,
+ *     gain: 1.0,
  * })?;
  * audio.play()?;
  * audio.seek(30.0)?;
@@ -55,7 +56,7 @@
  *   [`stop`](NativeAudio::stop), [`seek`](NativeAudio::seek),
  *   [`set_volume`](NativeAudio::set_volume), [`set_rate`](NativeAudio::set_rate).
  * - Equaliser, process-global: [`equalizer::set_values`], [`equalizer::values`],
- *   [`equalizer::BAND_HZ`].
+ *   [`equalizer::BAND_HZ`]. So are [`equalizer::set_mono`] and [`equalizer::set_normalize`].
  * - Output: [`list_output_devices`], [`NativeAudio::set_output_device`].
  * - Events: [`Event`], with a position every [`TICK`].
  *

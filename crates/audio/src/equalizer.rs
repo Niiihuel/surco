@@ -16,7 +16,7 @@
  */
 
 use crate::meter::Meter;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -210,6 +210,20 @@ impl Biquad {
     }
 }
 
+/// Whether both speakers play the same, and whether each track plays at its own gain.
+static MONO: AtomicBool = AtomicBool::new(false);
+static NORMALIZE: AtomicBool = AtomicBool::new(true);
+
+/// Left and right folded into one signal on both channels, for every deck, from the next frame.
+pub fn set_mono(on: bool) {
+    MONO.store(on, Ordering::Relaxed);
+}
+
+/// Whether tracks play at the gain they were loaded with, or as they come.
+pub fn set_normalize(on: bool) {
+    NORMALIZE.store(on, Ordering::Relaxed);
+}
+
 /// Wraps a decoded stream in the equaliser. Cheap when flat: the filters are skipped entirely.
 pub(crate) struct EqualizedSource<S> {
     inner: S,
@@ -224,10 +238,16 @@ pub(crate) struct EqualizedSource<S> {
     generation: u64,
     /// After the filters: the levels shown are those of what is heard.
     meter: Meter,
+    /// What the track is turned down by while tracks are normalized.
+    gain: f32,
+    /// The right sample of a folded frame, already read with its left.
+    held: Option<f32>,
+    /// Whether the next sample read opens a stereo frame.
+    left: bool,
 }
 
 impl<S: Source> EqualizedSource<S> {
-    pub(crate) fn new(inner: S) -> Self {
+    pub(crate) fn new(inner: S, gain: f32) -> Self {
         let channels = inner.channels().get() as usize;
         let sample_rate = inner.sample_rate().get() as f32;
         let mut source = Self {
@@ -242,9 +262,35 @@ impl<S: Source> EqualizedSource<S> {
             // whatever the user already had set before this track began.
             generation: u64::MAX,
             meter: Meter::new(sample_rate, channels.max(1)),
+            gain,
+            held: None,
+            left: true,
         };
         source.reload();
         source
+    }
+
+    /// The next sample at the track's gain; in mono, the mean of its stereo frame, twice.
+    #[inline]
+    fn pull(&mut self) -> Option<f32> {
+        if let Some(held) = self.held.take() {
+            return Some(held);
+        }
+        let gain = if NORMALIZE.load(Ordering::Relaxed) { self.gain } else { 1.0 };
+        let sample = self.inner.next()? * gain;
+        if self.filters.len() != 2 {
+            return Some(sample);
+        }
+        let left = self.left;
+        self.left = !left;
+        if left && MONO.load(Ordering::Relaxed) {
+            // A stream that ends on a left sample plays it on both sides.
+            let both = self.inner.next().map_or(sample, |right| (sample + right * gain) / 2.0);
+            self.held = Some(both);
+            self.left = true;
+            return Some(both);
+        }
+        Some(sample)
     }
 
     fn reload(&mut self) {
@@ -269,7 +315,7 @@ impl<S: Source> Iterator for EqualizedSource<S> {
 
     #[inline]
     fn next(&mut self) -> Option<f32> {
-        let sample = self.inner.next()?;
+        let sample = self.pull()?;
 
         if self.generation != EQUALIZER.generation.load(Ordering::Acquire) {
             self.reload();
@@ -343,6 +389,7 @@ impl<S: Source> Source for EqualizedSource<S> {
             }
         }
         self.channel_index = 0;
+        (self.held, self.left) = (None, true);
         Ok(())
     }
 }
@@ -447,10 +494,31 @@ mod tests {
                 SampleRate::new(rate).unwrap(),
                 vec![0.0f32; 8],
             );
-            EqualizedSource::new(buffer)
+            EqualizedSource::new(buffer, 1.0)
         };
         assert_eq!(source(2, 48_000).current_span_len(), Some(960 * 2));
         assert_eq!(source(1, 44_100).current_span_len(), Some(882));
+    }
+
+    #[test]
+    fn a_track_plays_at_its_gain_and_mono_folds_each_frame() {
+        use super::EqualizedSource;
+        use rodio::buffer::SamplesBuffer;
+        use rodio::{ChannelCount, SampleRate};
+
+        let played = |channels, samples: &[f32]| {
+            let buffer = SamplesBuffer::new(ChannelCount::new(channels).unwrap(), SampleRate::new(48_000).unwrap(), samples.to_vec());
+            EqualizedSource::new(buffer, 0.5).collect::<Vec<f32>>()
+        };
+        assert_eq!(played(2, &[1.0, 0.0, 0.5, 0.5]), [0.5, 0.0, 0.25, 0.25]);
+        super::set_mono(true);
+        let folded = (played(2, &[1.0, 0.0, 0.5, 0.5, 1.0]), played(1, &[1.0, 0.0]));
+        super::set_mono(false);
+        assert_eq!(folded, (vec![0.25, 0.25, 0.25, 0.25, 0.5, 0.5], vec![0.5, 0.0]), "a frame cut short is whole again, and one channel passes as it is");
+        super::set_normalize(false);
+        let plain = played(2, &[1.0, 0.0]);
+        super::set_normalize(true);
+        assert_eq!(plain, [1.0, 0.0]);
     }
 
     #[test]

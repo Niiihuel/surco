@@ -63,6 +63,7 @@ async fn main() -> dnm_youtube::Result<()> {
 
     let started = Instant::now();
     let stream = youtube.stream(&first.id).await?;
+    println!("loudness {:?} dB over the reference", stream.best().and_then(|audio| audio.loudness_db));
     println!("stream {}: {} s, {} formats in {:?}", first.id, stream.duration_seconds, stream.audio.len(), started.elapsed());
     for audio in &stream.audio {
         println!("  itag {} | {} | {} bps | {} bytes", audio.itag, audio.mime, audio.average_bitrate, audio.size);
