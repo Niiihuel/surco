@@ -5,7 +5,7 @@
 // Changed: no Tauri — the handle owns the thread and events go to a callback; every source is a
 // `MediaBuffer`, decoded here; a start position, `Failed`/`StreamFailed` events and a shutdown
 // on drop were added; our PipeWire stream is found by the running executable's name; the ALSA
-// device filter sees past cpal's host prefix.
+// device filter sees past cpal's host prefix; the end of a track is polled for in its last tick.
 
 /*!
  * Native decode and output.
@@ -43,6 +43,9 @@ pub const TICK: Duration = Duration::from_millis(250);
 /// Ramp granularity during a crossfade. 50 steps a second is well below what the ear resolves
 /// as stepping, and the thread is otherwise idle.
 const FADE_STEP: Duration = Duration::from_millis(20);
+
+/// How often the end of a track is looked for once it is within a tick of it.
+const END_POLL: Duration = Duration::from_millis(5);
 
 /// How long a decoder read waits for bytes that have not landed yet before giving up.
 const READ_TIMEOUT: Duration = Duration::from_secs(20);
@@ -433,7 +436,8 @@ impl NativeAudio {
     /// its download failed, and the caller should load normally.
     ///
     /// The single step is gapless only while the outgoing track is still playing. `Ended` is
-    /// noticed up to a `TICK` late, so a handover that waits for it has that much silence in it.
+    /// noticed within `END_POLL` when the duration is known and right, and up to a `TICK` late
+    /// otherwise, so a handover that waits for it has that much silence in it.
     pub fn transition(&self, track_id: &str, fade: Duration) -> Result<bool, String> {
         self.request(|reply| Command::Transition { track_id: track_id.to_string(), fade, reply })
     }
@@ -799,8 +803,15 @@ fn run(
     loop {
         let now = Instant::now();
         let until_tick = next_tick.saturating_duration_since(now);
-        // A fade needs finer steps than the position tick, so whichever is due first wins.
-        let timeout = if engine.fade.is_some() { until_tick.min(FADE_STEP) } else { until_tick };
+        // A fade and the last moments of a track need finer steps than the position tick, so
+        // whichever is due first wins.
+        let timeout = if engine.fade.is_some() {
+            until_tick.min(FADE_STEP)
+        } else if engine.is_ending() {
+            until_tick.min(END_POLL)
+        } else {
+            until_tick
+        };
 
         match rx.recv_timeout(timeout) {
             Ok(command) => {
@@ -816,6 +827,8 @@ fn run(
         if Instant::now() >= next_tick {
             engine.tick();
             next_tick = Instant::now() + TICK;
+        } else if engine.is_ending() {
+            engine.finish();
         }
     }
 }
@@ -1109,31 +1122,48 @@ impl Engine {
         }
     }
 
-    fn tick(&mut self) {
+    /// Whether the active track is within a tick of its end. `Ended` is then looked for every
+    /// `END_POLL`, so a handover that waits for it follows without an audible gap.
+    fn is_ending(&self) -> bool {
+        let deck = &self.decks[self.active];
+        self.playing
+            && self.fade.is_none()
+            && deck.duration_sec.is_some_and(|duration| {
+                duration - deck.sink.get_pos().as_secs_f64() < TICK.as_secs_f64()
+            })
+    }
+
+    /// Reports the end of the active track, and says whether it did.
+    fn finish(&mut self) -> bool {
         let index = self.active;
-        let Some(track_id) = self.decks[index].track_id.clone() else { return };
+        let Some(track_id) = self.decks[index].track_id.clone() else { return false };
 
         /*
          * An empty sink means the decoder ran out, which is the only end-of-track signal there
          * is. Suppressed mid-fade: the outgoing deck emptying there is the transition working,
          * not the new track finishing.
          */
-        if self.playing && self.fade.is_none() && self.decks[index].sink.empty() {
-            // A failed download reads as an end of stream, so the decoder ran out early.
-            let event = if self.decks[index].is_healthy() {
-                Event::Ended { track_id }
-            } else {
-                Event::Failed { track_id, message: "the audio download failed".to_string() }
-            };
-            self.decks[index].clear();
-            self.playing = false;
-            (self.emit)(event);
-            return;
+        if !(self.playing && self.fade.is_none() && self.decks[index].sink.empty()) {
+            return false;
         }
+        // A failed download reads as an end of stream, so the decoder ran out early.
+        let event = if self.decks[index].is_healthy() {
+            Event::Ended { track_id }
+        } else {
+            Event::Failed { track_id, message: "the audio download failed".to_string() }
+        };
+        self.decks[index].clear();
+        self.playing = false;
+        (self.emit)(event);
+        true
+    }
 
-        if !self.playing {
+    fn tick(&mut self) {
+        if self.finish() || !self.playing {
             return;
         }
+        let index = self.active;
+        let Some(track_id) = self.decks[index].track_id.clone() else { return };
         (self.emit)(Event::Position {
             track_id,
             position_sec: self.decks[index].sink.get_pos().as_secs_f64(),

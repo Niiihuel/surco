@@ -2,9 +2,12 @@
 //!
 //! `cargo run -p dnmusic` opens the player. For checking a build without touching it:
 //! `--search <text>` submits a search at startup, `--play <n>` plays the n-th result when
-//! it arrives, and `--screenshot <file.png>` saves the window after `--after <ms>` and exits.
+//! it arrives, `--seek <s>` jumps there once it sounds, `--click <id>@<ms>` presses a control
+//! that long after the window opened (give them in order), and `--screenshot <file.png>` saves
+//! the window after `--after <ms>` and exits.
 
 mod backend;
+mod player;
 mod state;
 mod view;
 
@@ -15,8 +18,10 @@ use std::time::{Duration, Instant};
 use eframe::egui;
 use limn::{Element, Size, UiAction, UiTree};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::watch;
 
 use backend::{Command, Event};
+use player::PlayerView;
 use state::State;
 
 struct Host {
@@ -24,6 +29,7 @@ struct Host {
     state: State,
     commands: UnboundedSender<Command>,
     events: Receiver<Event>,
+    player: watch::Receiver<PlayerView>,
     started: bool,
     opened: Instant,
     script: Script,
@@ -34,6 +40,8 @@ struct Host {
 struct Script {
     search: Option<String>,
     play: Option<usize>,
+    seek: Option<f64>,
+    clicks: Vec<(Duration, String)>,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -59,6 +67,15 @@ impl Host {
                 let commands = self.state.update(&UiAction::Clicked { id: format!("track:{index}") });
                 self.send(commands);
             }
+        }
+        if let Some(seconds) = self.script.seek.filter(|_| self.state.player.position > 0.0) {
+            self.script.seek = None;
+            self.send(vec![Command::Seek(seconds)]);
+        }
+        while self.script.clicks.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
+            let (_, id) = self.script.clicks.remove(0);
+            let commands = self.state.update(&UiAction::Clicked { id });
+            self.send(commands);
         }
     }
 
@@ -103,6 +120,11 @@ impl eframe::App for Host {
             let commands = self.state.apply(event);
             self.send(commands);
         }
+        if self.player.has_changed().unwrap_or(false) {
+            let view = self.player.borrow_and_update().clone();
+            let commands = self.state.show(view);
+            self.send(commands);
+        }
         self.run_script();
 
         self.tree.set_root(view::view(&self.state, window));
@@ -136,6 +158,12 @@ fn main() -> eframe::Result {
         match argument.as_str() {
             "--search" => script.search = Some(value()),
             "--play" => script.play = value().parse().ok(),
+            "--seek" => script.seek = value().parse().ok(),
+            "--click" => {
+                let value = value();
+                let (id, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                script.clicks.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned()));
+            }
             "--screenshot" => script.screenshot = Some(PathBuf::from(value())),
             "--after" => script.after = Duration::from_millis(value().parse().unwrap_or(900)),
             other => {
@@ -154,12 +182,13 @@ fn main() -> eframe::Result {
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
-            let (commands, events) = backend::spawn(creation.egui_ctx.clone());
+            let (commands, events, player) = backend::spawn(creation.egui_ctx.clone());
             Ok(Box::new(Host {
                 tree: UiTree::new(Element::spacer()),
                 state: State::default(),
                 commands,
                 events,
+                player,
                 started: false,
                 opened: Instant::now(),
                 script,

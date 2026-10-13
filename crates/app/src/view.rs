@@ -105,7 +105,7 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
             cover(state, track, 48.0, palette),
             Element::column(vec![
                 Element::faded_text(&track.title, 24.0).font_family(FontFamily::Sans).font_size(14.0).foreground(palette.text),
-                Element::faded_text(state.playback_error.as_deref().unwrap_or(&track.artist), 24.0)
+                Element::faded_text(state.player.error.as_deref().unwrap_or(&track.artist), 24.0)
                     .font_family(FontFamily::Sans)
                     .font_size(12.0)
                     .foreground(palette.muted),
@@ -117,15 +117,15 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
         .gap(12.0),
         None => Element::spacer(),
     };
-    let repeat_icon = if state.queue.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
+    let repeat_icon = if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
     let buttons = Element::row(vec![
         Element::spacer().flex(1.0),
-        transport("shuffle", Icon::Shuffle, "Aleatorio").active(state.queue.is_shuffled()).render(),
+        transport("shuffle", Icon::Shuffle, "Aleatorio").active(state.player.shuffle).render(),
         transport("previous", Icon::SkipBack, "Anterior").render(),
-        transport("play-pause", if state.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.playing { "Pausar" } else { "Reproducir" })
+        transport("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" })
             .render(),
         transport("next", Icon::SkipForward, "Siguiente").render(),
-        transport("repeat", repeat_icon, "Repetir").active(state.queue.repeat != Repeat::Off).render(),
+        transport("repeat", repeat_icon, "Repetir").active(state.player.repeat != Repeat::Off).render(),
         Element::spacer().flex(1.0),
     ])
     .gap(4.0);
@@ -133,9 +133,9 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
         Element::text(clock(seconds)).font_family(FontFamily::Monospace).font_size(11.0).foreground(palette.muted).centered_y()
     };
     let seek = Element::row(vec![
-        time(f64::from(state.progress()) * state.duration),
-        Slider::new("seek", state.progress(), palette).enabled(has_track && state.duration > 0.0).render().flex(1.0).centered_y(),
-        time(state.duration),
+        time(f64::from(state.progress()) * state.player.duration),
+        Slider::new("seek", state.progress(), palette).enabled(has_track && state.player.duration > 0.0).render().flex(1.0).centered_y(),
+        time(state.player.duration),
     ])
     .gap(10.0);
     let volume = Element::row(vec![
@@ -166,7 +166,8 @@ fn player(state: &State, palette: ComponentPalette) -> Element {
 mod tests {
     use super::*;
     use crate::backend::Event;
-    use limn::{HitKind, UiAction, UiTree};
+    use crate::player::PlayerView;
+    use limn::{HitKind, UiTree};
 
     fn track(id: &str) -> Track {
         Track {
@@ -182,9 +183,7 @@ mod tests {
     }
 
     fn asked(query: &str) -> State {
-        let mut state = State::default();
-        state.query = query.into();
-        state
+        State { query: query.into(), ..State::default() }
     }
 
     fn ids(state: &State, size: Size) -> Vec<String> {
@@ -224,7 +223,7 @@ mod tests {
             assert!(before.iter().any(|found| found == id), "{id} is a row");
         }
         assert!(!before.iter().any(|id| id == "play-pause"), "transport is passive with nothing loaded");
-        state.update(&UiAction::Clicked { id: "track:1".into() });
+        state.show(PlayerView { current: Some(track("b")), playing: true, duration: 200.0, ..PlayerView::default() });
         let after = ids(&state, size);
         for id in ["play-pause", "next", "previous", "shuffle", "repeat", "seek", "mute", "volume"] {
             assert!(after.iter().any(|found| found == id), "{id} is live while a track plays");

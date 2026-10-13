@@ -1,68 +1,107 @@
-//! The contract between the window and everything that takes time: the catalog, the network
-//! and the audio engine live on the other side of these two channels.
+//! The contract between the window and everything that takes time: the catalog, the network,
+//! the player and the audio engine live on the other side of these two channels.
 
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{channel, Receiver};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use base64::Engine as _;
+use dnm_audio::{Load, MediaBuffer, NativeAudio};
 use dnm_core::Track;
-use limn::RasterImage;
+use dnm_youtube::{Audio, YouTube};
+use eframe::egui;
+use limn::{RasterImage, RasterImageFormat};
+use sha2::{Digest, Sha256};
+use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+
+use crate::player::{Effect, Player, PlayerView};
 
 /// What the window asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Search(String),
-    /// Start this track from the beginning, replacing whatever plays.
-    Play(Track),
-    Pause,
-    Resume,
+    FetchArtwork(String),
+    /// Replace the queue with these tracks and play the one at `index`.
+    PlayList { tracks: Vec<Track>, index: usize },
+    PlayPause,
+    Next,
+    Previous,
     /// Seconds from the start of the current track.
     Seek(f64),
     /// 0 to 1.
     Volume(f32),
-    FetchArtwork(String),
+    /// Turns shuffle on or off.
+    Shuffle,
+    /// Steps repeat: off, the list, the track.
+    Repeat,
 }
 
-/// What comes back. Every variant names what it answers, because answers arrive late and
-/// out of order: a result for a query the user already replaced must be ignored.
+/// What comes back. A search answer names its query, because answers arrive late and out of
+/// order: a result for a query the user already replaced must be ignored.
 #[derive(Clone, Debug)]
 pub enum Event {
     SearchResults { query: String, tracks: Vec<Track> },
     SearchFailed { query: String, message: String },
     Artwork { url: String, image: RasterImage },
-    Position { track_id: String, seconds: f64, duration: f64 },
-    Ended { track_id: String },
-    PlaybackFailed { track_id: String, message: String },
 }
-
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{channel, Receiver};
-use std::sync::{Arc, Mutex};
-
-use base64::Engine as _;
-use dnm_audio::{Load, MediaBuffer, NativeAudio};
-use dnm_youtube::{Audio, YouTube};
-use eframe::egui;
-use limn::RasterImageFormat;
-use sha2::{Digest, Sha256};
-use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
-use tokio::task::JoinHandle;
 
 /// How many times a broken download resumes from where it stopped before the track fails.
 const DOWNLOAD_ATTEMPTS: u32 = 4;
+
+/// A track on its way into a deck.
+struct Download {
+    track_id: String,
+    task: JoinHandle<()>,
+    buffer: MediaBuffer,
+}
+
+impl Download {
+    fn cancel(self) {
+        self.task.abort();
+        // Whoever still reads the buffer gets an end of stream instead of waiting for bytes.
+        self.buffer.fail();
+    }
+}
+
+#[derive(Default)]
+struct Downloads {
+    active: Option<Download>,
+    standby: Option<Download>,
+}
 
 /// Everything a task needs, shared between them.
 struct Shared {
     reply: Box<dyn Fn(Event) + Send + Sync>,
     youtube: YouTube,
     audio: NativeAudio,
-    /// Bumped by every `Play`. A task that finds another number was overtaken and stops.
+    /// Bumped by every `Effect::Play`. A task that finds another number was overtaken and stops.
     generation: AtomicU64,
-    volume: Mutex<f32>,
-    download: Mutex<Option<JoinHandle<()>>>,
+    downloads: Mutex<Downloads>,
+    /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
+    decks: tokio::sync::Mutex<()>,
+    /// The way back into the player, for a track that never reached the engine.
+    engine: UnboundedSender<dnm_audio::Event>,
 }
 
-/// Starts the worker and returns its two ends. The worker wakes the window with
-/// `request_repaint` whenever it has something to say, so the window can sleep.
-pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>) {
+impl Shared {
+    fn is_current(&self, generation: u64) -> bool {
+        self.generation.load(Ordering::SeqCst) == generation
+    }
+}
+
+/// Starts the worker and returns its ends. The worker wakes the window with `request_repaint`
+/// whenever it has something to say, so the window can sleep.
+///
+/// The player is a value to read, not a stream of events: a hidden window stops repainting,
+/// and positions would pile up for as long as it stays hidden.
+pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, watch::Receiver<PlayerView>) {
     let (commands, mut inbox) = unbounded_channel::<Command>();
     let (outbox, events) = channel::<Event>();
+    let (views, player_view) = watch::channel(PlayerView::default());
+    let window = ctx.clone();
     let reply = move |event: Event| {
         // The window is gone when this fails, and the worker goes with its channel.
         let _ = outbox.send(event);
@@ -73,57 +112,66 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>) 
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("a tokio runtime");
             runtime.block_on(async move {
-                let shared = match start(reply.clone()).await {
-                    Ok(shared) => Arc::new(shared),
-                    Err(message) => {
-                        // Nothing can work: answer every request with the reason.
-                        while let Some(command) = inbox.recv().await {
-                            match command {
-                                Command::Search(query) => reply(Event::SearchFailed { query, message: message.clone() }),
-                                Command::Play(track) => reply(Event::PlaybackFailed { track_id: track.id, message: message.clone() }),
-                                _ => {}
+                let (engine, mut engine_events) = unbounded_channel();
+                let shared = start(reply.clone(), engine.clone()).await.map(Arc::new);
+                let mut player = Player::default();
+                loop {
+                    let effects = tokio::select! {
+                        command = inbox.recv() => match command {
+                            Some(command) => handle(&shared, &reply, &mut player, command),
+                            None => return,
+                        },
+                        Some(event) = engine_events.recv() => player.engine(event),
+                    };
+                    for effect in effects {
+                        match (&shared, effect) {
+                            (Ok(shared), effect) => run(shared, effect),
+                            // Nothing can play: the track fails with the reason the backend did not start.
+                            (Err(message), Effect::Play(track)) => {
+                                let _ = engine.send(dnm_audio::Event::Failed { track_id: track.id, message: message.clone() });
                             }
+                            _ => {}
                         }
-                        return;
                     }
-                };
-                while let Some(command) = inbox.recv().await {
-                    handle(&shared, command);
+                    let view = player.view();
+                    let changed = views.send_if_modified(|shown| {
+                        let changed = *shown != view;
+                        *shown = view;
+                        changed
+                    });
+                    if changed {
+                        window.request_repaint();
+                    }
                 }
             });
         })
         .expect("the backend thread starts");
-    (commands, events)
+    (commands, events, player_view)
 }
 
-async fn start(reply: impl Fn(Event) + Send + Sync + Clone + 'static) -> Result<Shared, String> {
+async fn start(
+    reply: impl Fn(Event) + Send + Sync + 'static,
+    engine: UnboundedSender<dnm_audio::Event>,
+) -> Result<Shared, String> {
     let youtube = YouTube::new().await.map_err(|error| format!("No se pudo conectar con el catálogo: {error}"))?;
-    let on_event = {
-        let reply = reply.clone();
-        move |event: dnm_audio::Event| match event {
-            dnm_audio::Event::Position { track_id, position_sec, duration_sec } => {
-                reply(Event::Position { track_id, seconds: position_sec, duration: duration_sec.unwrap_or(0.0) })
-            }
-            dnm_audio::Event::Ended { track_id } => reply(Event::Ended { track_id }),
-            dnm_audio::Event::Failed { track_id, message } => reply(Event::PlaybackFailed { track_id, message }),
-            // Both decks are gone; the next load reopens the device.
-            dnm_audio::Event::StreamFailed { .. } => {}
-        }
-    };
-    let audio = NativeAudio::start(None, on_event).map_err(|error| format!("No se pudo abrir la salida de audio: {error}"))?;
+    let events = engine.clone();
+    let audio = NativeAudio::start(None, move |event| drop(events.send(event)))
+        .map_err(|error| format!("No se pudo abrir la salida de audio: {error}"))?;
     Ok(Shared {
         reply: Box::new(reply),
         youtube,
         audio,
         generation: AtomicU64::new(0),
-        volume: Mutex::new(1.0),
-        download: Mutex::new(None),
+        downloads: Mutex::default(),
+        decks: tokio::sync::Mutex::default(),
+        engine,
     })
 }
 
-fn handle(shared: &Arc<Shared>, command: Command) {
-    match command {
-        Command::Search(query) => {
+/// Answers what needs no player and hands the rest to it.
+fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: &mut Player, command: Command) -> Vec<Effect> {
+    match (command, shared) {
+        (Command::Search(query), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
                 let event = match shared.youtube.search(&query).await {
@@ -133,7 +181,8 @@ fn handle(shared: &Arc<Shared>, command: Command) {
                 (shared.reply)(event);
             });
         }
-        Command::FetchArtwork(url) => {
+        (Command::Search(query), Err(message)) => reply(Event::SearchFailed { query, message: message.clone() }),
+        (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
                 // A cover that does not arrive leaves its placeholder; nothing to report.
@@ -142,66 +191,121 @@ fn handle(shared: &Arc<Shared>, command: Command) {
                 }
             });
         }
-        Command::Play(track) => {
+        // The engine only fails this when its thread is gone, which the next `Play` reports.
+        (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume, false)),
+        (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
+        (command, _) => return player.command(command),
+    }
+    Vec::new()
+}
+
+fn run(shared: &Arc<Shared>, effect: Effect) {
+    match effect {
+        Effect::Play(track) => {
             let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
-            if let Some(previous) = shared.download.lock().unwrap().take() {
-                previous.abort();
+            // The old track stops now, not when the new one has loaded.
+            drop(shared.audio.pause());
+            {
+                let mut downloads = shared.downloads.lock().unwrap();
+                if let Some(replaced) = downloads.active.take() {
+                    replaced.cancel();
+                }
+                if downloads.standby.as_ref().is_some_and(|download| download.track_id == track.id) {
+                    downloads.active = downloads.standby.take();
+                }
             }
             let shared = shared.clone();
             tokio::spawn(async move {
                 if let Err(message) = play(&shared, &track, generation).await {
-                    if shared.generation.load(Ordering::SeqCst) == generation {
-                        (shared.reply)(Event::PlaybackFailed { track_id: track.id, message });
+                    if shared.is_current(generation) {
+                        let _ = shared.engine.send(dnm_audio::Event::Failed { track_id: track.id, message });
                     }
                 }
             });
         }
-        // The engine only fails these when its thread is gone, which the next `Play` reports.
-        Command::Pause => drop(shared.audio.pause()),
-        Command::Resume => drop(shared.audio.play()),
-        Command::Seek(seconds) => drop(shared.audio.seek(seconds)),
-        Command::Volume(volume) => {
-            *shared.volume.lock().unwrap() = volume;
-            drop(shared.audio.set_volume(volume, false));
+        Effect::Preload(track) => {
+            let shared = shared.clone();
+            tokio::spawn(async move { preload(&shared, &track).await });
         }
+        // As with the volume: a dead engine is reported by the next `Play`.
+        Effect::Pause => drop(shared.audio.pause()),
+        Effect::Resume => drop(shared.audio.play()),
+        Effect::Seek(seconds) => drop(shared.audio.seek(seconds)),
     }
 }
 
+/// The engine answers these on its own thread, and `load` waits for the container header to
+/// arrive, so neither can run on a runtime thread.
+async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + Send + 'static) -> Result<T, String> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| error.to_string())?
+}
+
 async fn play(shared: &Arc<Shared>, track: &Track, generation: u64) -> Result<(), String> {
-    let current = |shared: &Shared| shared.generation.load(Ordering::SeqCst) == generation;
-    let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
-    let best = stream.best().ok_or("YouTube no ofreció audio para este tema.")?.clone();
-    if !current(shared) {
+    {
+        let _decks = shared.decks.lock().await;
+        if !shared.is_current(generation) {
+            return Ok(());
+        }
+        let (engine, id) = (shared.clone(), track.id.clone());
+        // A track that was preloaded starts in one step.
+        if blocking(move || engine.audio.transition(&id, Duration::ZERO)).await? {
+            return Ok(());
+        }
+    }
+    let (load, download) = fetch(shared, track, false).await?;
+    let _decks = shared.decks.lock().await;
+    if !shared.is_current(generation) {
+        download.cancel();
         return Ok(());
     }
-    let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
-    let download = tokio::spawn(download(shared.clone(), best.clone(), buffer.clone()));
-    *shared.download.lock().unwrap() = Some(download);
-
-    let load = Load {
-        track_id: track.id.clone(),
-        buffer,
-        mime_type: best.mime.clone(),
-        duration_sec: (stream.duration_seconds > 0.0).then_some(stream.duration_seconds),
-        start_sec: None,
-        standby: false,
-    };
+    let replaced = shared.downloads.lock().unwrap().active.replace(download);
+    if let Some(replaced) = replaced {
+        replaced.cancel();
+    }
     let engine = shared.clone();
-    // `load` waits for the container header to arrive, so it cannot run on a runtime thread.
-    tokio::task::spawn_blocking(move || {
-        if engine.generation.load(Ordering::SeqCst) != generation {
-            return Ok(());
-        }
+    blocking(move || {
         engine.audio.load(load)?;
-        if engine.generation.load(Ordering::SeqCst) != generation {
-            return Ok(());
-        }
-        let volume = *engine.volume.lock().unwrap();
-        engine.audio.set_volume(volume, false)?;
         engine.audio.play()
     })
     .await
-    .map_err(|error| error.to_string())?
+}
+
+/// A track that cannot be preloaded is loaded when its turn comes, and fails then if it must.
+async fn preload(shared: &Arc<Shared>, track: &Track) {
+    let generation = shared.generation.load(Ordering::SeqCst);
+    let (engine, id) = (shared.clone(), track.id.clone());
+    if blocking(move || engine.audio.has_standby(&id)).await != Ok(false) {
+        return;
+    }
+    let Ok((load, download)) = fetch(shared, track, true).await else { return };
+    // A `Play` in the meantime means the queue moved and this may not be what follows any more.
+    if !shared.is_current(generation) {
+        download.cancel();
+        return;
+    }
+    let replaced = shared.downloads.lock().unwrap().standby.replace(download);
+    if let Some(replaced) = replaced {
+        replaced.cancel();
+    }
+    let engine = shared.clone();
+    let _ = blocking(move || engine.audio.load(load)).await;
+}
+
+/// Resolves the track and starts downloading it into the buffer the returned load reads from.
+async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Load, Download), String> {
+    let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
+    let best = stream.best().ok_or("YouTube no ofreció audio para este tema.")?.clone();
+    let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
+    let load = Load {
+        track_id: track.id.clone(),
+        buffer: buffer.clone(),
+        mime_type: best.mime.clone(),
+        duration_sec: (stream.duration_seconds > 0.0).then_some(stream.duration_seconds),
+        start_sec: None,
+        standby,
+    };
+    let task = tokio::spawn(download(shared.clone(), best, buffer.clone()));
+    Ok((load, Download { track_id: track.id.clone(), task, buffer }))
 }
 
 /// Fills `buffer` with the stream. YouTube throttles a plain GET to a crawl, so every request
