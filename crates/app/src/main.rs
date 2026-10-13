@@ -295,6 +295,11 @@ impl eframe::App for Host {
                 self.send(commands);
             }
         }
+        // The field keeps what was typed in it: what the app itself empties or writes there
+        // has to be handed to it.
+        if self.tree.input_value("search").is_some_and(|shown| shown != self.state.query) {
+            self.tree.set_input_value("search", self.state.query.clone());
+        }
         if let Some(text) = self.state.copy.take() {
             ctx.copy_text(text);
         }

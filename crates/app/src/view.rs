@@ -419,7 +419,8 @@ fn news_page(state: &State, palette: ComponentPalette) -> Element {
 /// The narrowest a tile of the library gets, and the width of the menu of its orders and views.
 const LIBRARY_GRID_TILE: f32 = 112.0;
 /// What the library's row of tools keeps for the cross of its search and the button of its order.
-const LIBRARY_SORT_ROOM: f32 = 150.0;
+/// The share of its row the library's search has as it starts to open: about a magnifier's width.
+const LIBRARY_SEARCH_SHUT: f32 = 0.15;
 const LIBRARY_MENU_WIDTH: f32 = 220.0;
 
 /// A button of a header: quiet, small, with its hint under it.
@@ -611,15 +612,11 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     };
     let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
     let mut tools = if open > 0.0 {
-        // It grows out of where the magnifier was to what the row has left beside the order.
-        let whole = width - 16.0 - LIBRARY_SORT_ROOM;
-        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised())
-            .size(ControlSize::Compact)
-            .width(PAGE_SEARCH_SHUT + (whole - PAGE_SEARCH_SHUT).max(0.0) * open)
-            .render()
-            .centered_y()
-            .shrink_to_fit();
-        vec![field, header_button("library-search", Icon::Close, TooltipSpec::new("Cerrar la búsqueda"), palette).render().centered_y(), Element::spacer().flex(1.0)]
+        // It grows out of where the magnifier was to all the row has left beside the order,
+        // however wide the order's name leaves that: the room is shared out, not counted.
+        let grown = open.max(LIBRARY_SEARCH_SHUT);
+        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(ControlSize::Compact).render().centered_y().flex(grown);
+        vec![field, header_button("library-search", Icon::Close, TooltipSpec::new("Cerrar la búsqueda"), palette).render().centered_y(), Element::spacer().flex(1.0 - grown)]
     } else {
         vec![header_button("library-search", Icon::Search, TooltipSpec::new(looking), palette).render().centered_y(), Element::spacer().flex(1.0)]
     };
