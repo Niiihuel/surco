@@ -48,6 +48,15 @@ Wayland or X11 with libxkbcommon. `--search <text>`, `--play <n>` and
 `--screenshot <file.png> --after <ms>` drive the window from the command line, for
 checking a build without touching it.
 
+## Releases
+
+A tag `v1.2.3` that matches the version in `Cargo.toml` builds Linux, Windows and macOS
+and publishes them together. A running app finds the release, fetches the program of its
+system, checks it against the release's sums and puts it in its own place; the user
+restarts when they choose. `minimum` in `Cargo.toml` is the oldest version that may keep
+running: a build older than the minimum of the latest release has to take it in before
+it goes on.
+
 ## License
 
 Surco is free software under the [GNU General Public License](LICENSE), version 3 or

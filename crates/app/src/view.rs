@@ -11,9 +11,10 @@ use limn::{
     TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
 
+use crate::backend::Release;
 use crate::clip::Showing;
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -159,7 +160,7 @@ const PAGE_TITLE: f32 = 26.0;
 pub fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
     if state.cinema {
-        return cinema(state, window, palette);
+        return update_dialog(state, cinema(state, window, palette), palette);
     }
     let surface = |element: Element| Element::panel(element).background(SCHEME.canvas).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
@@ -202,7 +203,7 @@ pub fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = playlist_dialog(state, shared, window.width, palette);
-    confirm_dialog(state, created, palette)
+    update_dialog(state, confirm_dialog(state, created, palette), palette)
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -265,6 +266,35 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         .render()
 }
 
+/// Where taking a later version in stands, in words, and what the user can do about it.
+fn update_step(state: &State, release: &Release, palette: ComponentPalette) -> (String, Element) {
+    let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render();
+    match &state.updating {
+        Updating::Idle => {
+            let about = format!("Está disponible la versión {} de dnmusic. Tenés la {}.", release.version, env!("CARGO_PKG_VERSION"));
+            (about, button("update-get", if release.program.is_some() { "Actualizar" } else { "Descargar" }))
+        }
+        Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), Spinner::new("update-fetching", palette.muted).render()),
+        Updating::Ready => (format!("La versión {} ya está instalada. Reiniciá para usarla.", release.version), button("update-restart", "Reiniciar ahora")),
+        Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), button("update-get", "Reintentar")),
+    }
+}
+
+/// A version that may not keep running stands in front of everything until the later one
+/// is taken in.
+fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
+    let Some(release) = state.update.as_ref().filter(|release| release.mandatory) else { return window_tree };
+    let (about, action) = match &state.updating {
+        Updating::Idle if release.program.is_some() => (format!("Esta versión de dnmusic ya no se puede usar. Instalá la {} para seguir.", release.version), ("update-get", "Actualizar ahora")),
+        Updating::Idle => (format!("Esta versión de dnmusic ya no se puede usar. Descargá la {} para seguir.", release.version), ("update-get", "Descargar")),
+        Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), ("update-wait", "Descargando…")),
+        Updating::Ready => (format!("La versión {} ya está instalada.", release.version), ("update-restart", "Reiniciar ahora")),
+        Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), ("update-get", "Reintentar")),
+    };
+    // No way around it: the other button leads to the release's own page.
+    AlertDialog::new(window_tree, true, "Actualización obligatoria", about, action.0, "update-page", palette).confirm_label(action.1).cancel_label("Ver la versión").render()
+}
+
 /// A release in the feed of what is new: a row around its cover, larger than a track's.
 const NEWS_COVER: f32 = 56.0;
 const NEWS_ROW: RowSizing = RowSizing { height: Some(72.0), two_line_height: Some(72.0), leading_width: NEWS_COVER, ..TRACK_ROW };
@@ -277,16 +307,11 @@ fn news_page(state: &State, palette: ComponentPalette) -> Element {
         Text::new("Los últimos lanzamientos de los artistas que seguís.", palette).muted().render(),
     ])
     .gap(4.0)];
-    if let Some((version, _)) = &state.update {
+    if let Some(release) = &state.update {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
-        let copy = Element::column(vec![
-            Text::new("Actualización disponible", raised).size(15.0).render(),
-            Text::new(format!("Está disponible la versión {version} de dnmusic. Tenés la {}.", env!("CARGO_PKG_VERSION")), raised).muted().render(),
-        ])
-        .gap(2.0)
-        .flex(1.0);
-        let get = Button::new("update-get", "Descargar", raised).size(ControlSize::Regular).render().centered_y();
-        sections.push(Element::panel(Element::row(vec![copy, get]).gap(12.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Panel.px()));
+        let (about, action) = update_step(state, release, raised);
+        let copy = Element::column(vec![Text::new("Actualización disponible", raised).size(15.0).render(), Text::new(about, raised).muted().render()]).gap(2.0).flex(1.0);
+        sections.push(Element::panel(Element::row(vec![copy, action.centered_y()]).gap(12.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Panel.px()));
     }
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
         let about = [release.artist.as_deref().unwrap_or_default(), release.year.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");

@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarTransition, TableSort, UiAction};
 
-use crate::backend::{Command, Content, Event, Footage, Known, Picks, Target, Taste};
+use crate::backend::{Command, Content, Event, Footage, Known, Picks, Release, Target, Taste};
 use crate::clip::Showing;
 use crate::player::PlayerView;
 
@@ -225,6 +225,18 @@ impl Default for Settings {
     fn default() -> Self {
         Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true }
     }
+}
+
+/// How far taking a later version in has got.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Updating {
+    #[default]
+    Idle,
+    /// How much of its program has arrived, 0 to 1.
+    Fetching(f32),
+    /// In place: the next start is it.
+    Ready,
+    Failed(String),
 }
 
 /// How many news are kept, and how many of an artist's releases of the year are listed
@@ -519,8 +531,12 @@ pub struct State {
     /// Who the artist of what plays is, asked by their name as the track writes it:
     /// nobody yet while they are looked for, and still nobody when the catalog knows none.
     pub about: Option<(String, Option<Known>)>,
-    /// A later version of the app, and the page it is fetched from.
-    pub update: Option<(String, String)>,
+    /// A later version of the app, and how far taking it in has got.
+    pub update: Option<Release>,
+    pub updating: Updating,
+    /// The later version is in place and is to be started in this one's stead; the window
+    /// takes it.
+    pub restart: bool,
     /// How many of the news were still to be looked at when their page was opened.
     pub news_fresh: usize,
     /// An address on its way to the browser; the window takes it.
@@ -686,6 +702,8 @@ impl Default for State {
             clip: None,
             about: None,
             update: None,
+            updating: Updating::Idle,
+            restart: false,
             news_fresh: 0,
             open_url: None,
             cinema: false,
@@ -1240,8 +1258,25 @@ impl State {
                 let covers: Vec<Option<String>> = self.collection.news.iter().map(|(album, _)| album.artwork_url.clone()).collect();
                 cover_requests(&mut self.covers, &covers)
             }
-            "update-get" => {
-                self.open_url = self.update.as_ref().map(|(_, url)| url.clone());
+            // The later version is taken in by the app itself where its release has this
+            // system's program; where not, its page is opened for the user to fetch it.
+            "update-get" => match (&self.update, &self.updating) {
+                (Some(release), Updating::Idle | Updating::Failed(_)) if release.program.is_some() => {
+                    self.updating = Updating::Fetching(0.0);
+                    vec![Command::InstallUpdate(release.clone())]
+                }
+                (Some(release), Updating::Idle | Updating::Failed(_)) => {
+                    self.open_url = Some(release.page.clone());
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            },
+            "update-page" => {
+                self.open_url = self.update.as_ref().map(|release| release.page.clone());
+                Vec::new()
+            }
+            "update-restart" => {
+                self.restart = self.updating == Updating::Ready;
                 Vec::new()
             }
             // What plays over the whole window, and back.
@@ -1549,8 +1584,22 @@ impl State {
                 self.collection.learn(artist, releases, chrono::Datelike::year(&chrono::Local::now()));
                 Vec::new()
             }
-            Event::Update { version, url } => {
-                self.update = Some((version, url));
+            Event::Update(release) => {
+                self.update = Some(release);
+                Vec::new()
+            }
+            Event::UpdateProgress(done) => {
+                self.updating = Updating::Fetching(done);
+                Vec::new()
+            }
+            // One that had to be taken starts as soon as it is in place.
+            Event::UpdateInstalled => {
+                self.updating = Updating::Ready;
+                self.restart = self.update.as_ref().is_some_and(|release| release.mandatory);
+                Vec::new()
+            }
+            Event::UpdateFailed(why) => {
+                self.updating = Updating::Failed(why);
                 Vec::new()
             }
             Event::About { artist, found } => {
@@ -2424,11 +2473,36 @@ mod tests {
         click(&mut state, "news");
         assert!(state.page == Page::News && state.news_fresh == 1 && !state.has_news(), "opened, it has been looked at");
         assert_eq!(click(&mut state, "news:0"), vec![Command::Open(Target::Album("newer".into()))]);
-        // A later version of the app rings the bell too, and its button leads to its page.
-        state.apply(Event::Update { version: "9.0.0".into(), url: "https://example/releases/9".into() });
+        // A later version of the app rings the bell too. One the app cannot take in by
+        // itself is fetched from its page.
+        let release = Release { version: "9.0.0".into(), page: "https://example/releases/9".into(), program: None, mandatory: false };
+        state.apply(Event::Update(release.clone()));
         assert!(state.has_news());
         click(&mut state, "update-get");
-        assert_eq!(state.open_url.as_deref(), Some("https://example/releases/9"));
+        assert_eq!(state.open_url.take().as_deref(), Some("https://example/releases/9"));
+
+        // One that has this system's program is taken in when the user says, and started when they say.
+        let own = Release { program: Some(("https://example/program".into(), "https://example/sums".into())), ..release };
+        state.apply(Event::Update(own.clone()));
+        assert_eq!(click(&mut state, "update-get"), vec![Command::InstallUpdate(own.clone())]);
+        assert!(click(&mut state, "update-get").is_empty(), "once");
+        state.apply(Event::UpdateProgress(0.5));
+        assert_eq!(state.updating, Updating::Fetching(0.5));
+        click(&mut state, "update-restart");
+        assert!(!state.restart, "there is nothing to start yet");
+        state.apply(Event::UpdateInstalled);
+        assert!(state.updating == Updating::Ready && !state.restart);
+        click(&mut state, "update-restart");
+        assert!(state.restart);
+
+        // One that fails can be tried again; one that must be taken starts by itself.
+        let mut state = State::default();
+        state.apply(Event::Update(Release { mandatory: true, ..own.clone() }));
+        click(&mut state, "update-get");
+        state.apply(Event::UpdateFailed("sin red".into()));
+        assert_eq!(click(&mut state, "update-get").len(), 1);
+        state.apply(Event::UpdateInstalled);
+        assert!(state.restart);
     }
 
     /// The footage of a song whose video lasts `longer_ms` more than it does.

@@ -16,6 +16,7 @@ mod library;
 mod media_keys;
 mod player;
 mod state;
+mod update;
 mod view;
 
 use std::path::PathBuf;
@@ -270,6 +271,13 @@ impl eframe::App for Host {
         if let Some(url) = self.state.open_url.take() {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
+        // The later version is in place: it starts, and this one leaves.
+        if std::mem::take(&mut self.state.restart) {
+            if let Some(program) = update::running() {
+                let _ = std::process::Command::new(program).spawn();
+            }
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
         limn_egui::set_cursor(&ctx, self.tree.cursor());
@@ -292,6 +300,8 @@ fn icon() -> egui::IconData {
 }
 
 fn main() -> eframe::Result {
+    // Where this program is, while the system still says: a later version takes its place.
+    update::running();
     let mut script = Script { after: Duration::from_millis(900), ..Script::default() };
     let mut arguments = std::env::args().skip(1);
     while let Some(argument) = arguments.next() {

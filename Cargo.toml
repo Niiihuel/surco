@@ -9,6 +9,11 @@ rust-version = "1.95"
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Niiihuel/surco"
 
+# The oldest version that may keep running. A release carries it in its notes, and the
+# builds older than it must take that release in before they go on.
+[workspace.metadata.surco]
+minimum = "0.1.0"
+
 [profile.dev]
 debug = "line-tables-only"
 

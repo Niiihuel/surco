@@ -25,6 +25,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::library::Library;
+use crate::update;
 use crate::media_keys::{Key, MediaKeys};
 use crate::player::{Effect, Player, PlayerView};
 
@@ -108,9 +109,24 @@ pub enum Command {
     News(Vec<String>),
     /// Ask whether a later version of the app has been published.
     CheckUpdate,
+    /// Fetch this system's program of a release and put it where the running one is.
+    InstallUpdate(Release),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
+}
+
+/// A later version of the app, as its release presents it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Release {
+    pub version: String,
+    /// Its page, for whoever fetches it by hand.
+    pub page: String,
+    /// Where this system's program is and where the sums it is checked against are, when
+    /// the release has them and this build takes versions in by itself.
+    pub program: Option<(String, String)>,
+    /// The release says versions as old as this one may not keep running.
+    pub mandatory: bool,
 }
 
 /// An artist as their own page presents them, and what it says of them.
@@ -166,8 +182,13 @@ pub enum Event {
     About { artist: String, found: Option<Known> },
     /// What an artist has out, the albums and then the singles, the latest first.
     Releases { artist: String, releases: Vec<AlbumRef> },
-    /// A later version of the app, and the page it is fetched from.
-    Update { version: String, url: String },
+    /// A later version of the app.
+    Update(Release),
+    /// How much of a later version's program has arrived, 0 to 1.
+    UpdateProgress(f32),
+    /// The later version is in place: the next start is it. Or why it is not.
+    UpdateInstalled,
+    UpdateFailed(String),
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -430,11 +451,19 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::CheckUpdate, Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                if let Some((version, url)) = latest_release(&shared).await {
-                    (shared.reply)(Event::Update { version, url });
+                if let Some(release) = latest_release(&shared).await {
+                    (shared.reply)(Event::Update(release));
                 }
             });
         }
+        (Command::InstallUpdate(release), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let done = install_update(&shared, &release).await;
+                (shared.reply)(done.map_or_else(Event::UpdateFailed, |()| Event::UpdateInstalled));
+            });
+        }
+        (Command::InstallUpdate(_), Err(message)) => reply(Event::UpdateFailed(message.clone())),
         (Command::News(_) | Command::CheckUpdate, Err(_)) => {}
         (Command::Clip(track), Ok(shared)) => {
             let shared = shared.clone();
@@ -600,14 +629,59 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
 /// Where the app's releases are published.
 const RELEASES: &str = "https://api.github.com/repos/Niiihuel/surco/releases/latest";
 
-/// The latest published release when it is later than this build: its version and its page.
-async fn latest_release(shared: &Shared) -> Option<(String, String)> {
-    // The service answers nobody who does not say who they are.
-    let request = shared.youtube.http().get(RELEASES).header("User-Agent", concat!("dnmusic/", env!("CARGO_PKG_VERSION")));
+/// The service answers nobody who does not say who they are.
+const AGENT: &str = concat!("dnmusic/", env!("CARGO_PKG_VERSION"));
+
+/// The latest published release, when it is later than this build.
+async fn latest_release(shared: &Shared) -> Option<Release> {
+    let request = shared.youtube.http().get(RELEASES).header("User-Agent", AGENT);
     let release: serde_json::Value = request.send().await.ok()?.error_for_status().ok()?.json().await.ok()?;
     let tag = release["tag_name"].as_str()?;
-    let later = discover::newer(tag, env!("CARGO_PKG_VERSION"));
-    later.then(|| Some((tag.trim_start_matches('v').to_owned(), release["html_url"].as_str()?.to_owned())))?
+    if !discover::newer(tag, env!("CARGO_PKG_VERSION")) {
+        return None;
+    }
+    let version = tag.trim_start_matches('v').to_owned();
+    let file = |name: &str| {
+        let files = release["assets"].as_array()?;
+        files.iter().find(|file| file["name"].as_str() == Some(name))?["browser_download_url"].as_str().map(str::to_owned)
+    };
+    // A build made to be worked on is not replaced by a published one, unless it is asked to.
+    let takes = !cfg!(debug_assertions) || std::env::var_os("DNM_SELF_UPDATE").is_some();
+    let program = update::program_name(&version).filter(|_| takes).and_then(|name| Some((file(&name)?, file("SHA256SUMS")?)));
+    let minimum = release["body"].as_str().and_then(update::minimum);
+    let mandatory = minimum.is_some_and(|minimum| discover::newer(minimum, env!("CARGO_PKG_VERSION")));
+    Some(Release { version, page: release["html_url"].as_str()?.to_owned(), program, mandatory })
+}
+
+/// Fetches the release's program for this system, checks it is the one the release
+/// lists, and puts it where the program that runs is.
+async fn install_update(shared: &Shared, release: &Release) -> Result<(), String> {
+    let said = |error: &dyn std::fmt::Display| error.to_string();
+    let (program, sums) = release.program.as_ref().ok_or("Esta versión no trae un programa para este sistema.")?;
+    let http = shared.youtube.http();
+    let listed = http.get(sums).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
+    let listed = listed.error_for_status().map_err(|error| said(&error))?.text().await.map_err(|error| said(&error))?;
+    let name = program.rsplit('/').next().unwrap_or_default();
+    let sum = update::sum_for(&listed, name).ok_or("La versión no dice cómo comprobar su programa.")?.to_owned();
+
+    let fetched = http.get(program).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
+    let mut fetched = fetched.error_for_status().map_err(|error| said(&error))?;
+    let whole = fetched.content_length().filter(|whole| *whole > 0);
+    let (mut bytes, mut told) = (Vec::new(), 0);
+    while let Some(chunk) = fetched.chunk().await.map_err(|error| said(&error))? {
+        bytes.extend_from_slice(&chunk);
+        // A word for each hundredth, not for each piece.
+        let hundredths = whole.map_or(0, |whole| bytes.len() as u64 * 100 / whole);
+        if hundredths > told {
+            told = hundredths;
+            (shared.reply)(Event::UpdateProgress(hundredths as f32 / 100.0));
+        }
+    }
+    if !update::matches(&bytes, &sum) {
+        return Err("Lo que se bajó no es el programa que la versión publicó.".into());
+    }
+    let running = update::running().ok_or("No se sabe dónde está instalado el programa.")?;
+    tokio::task::spawn_blocking(move || update::install(&bytes, running)).await.map_err(|error| said(&error))?.map_err(|error| format!("No se pudo reemplazar el programa: {error}"))
 }
 
 /// How far ahead of where the song is its other rendition is made ready, and how long the
