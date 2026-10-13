@@ -12,7 +12,7 @@ use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-use limn::{RasterImage, ScalarTransition, UiAction};
+use limn::{RasterImage, ScalarTransition, TableSort, UiAction};
 
 use crate::backend::{Command, Content, Event, Footage, Known, Picks, Target, Taste};
 use crate::clip::Showing;
@@ -176,6 +176,9 @@ impl Default for Settings {
         Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true }
     }
 }
+
+/// The narrowest and the widest the album column of a page's tracks is dragged to.
+const ALBUM_WIDTH: (f32, f32) = (80.0, 360.0);
 
 /// A song and its video this close in length are taken to be the same recording.
 const SAME_LENGTH_MS: u64 = 2000;
@@ -371,6 +374,17 @@ pub struct State {
     pub right_width: f32,
     /// The handle being dragged: which one, where the pointer took it and the width it had.
     resizing: Option<(Side, f32, f32)>,
+    /// What the page's tracks are ordered by; their own order while it is nothing.
+    pub page_sort: Option<TableSort>,
+    /// The menu of the orders a page's tracks can take is open.
+    pub sort_open: bool,
+    /// The width of the album column of a page's tracks, and whether it and the lengths
+    /// are among the columns shown.
+    pub album_width: f32,
+    pub album_shown: bool,
+    pub duration_shown: bool,
+    /// The album column being dragged: where the drag started, and its width then.
+    column_drag: Option<(f32, f32)>,
     /// The row whose menu of actions is open.
     pub menu: Option<String>,
     pub equalizer_open: bool,
@@ -572,6 +586,12 @@ impl Default for State {
             about: None,
             cinema: false,
             swapped: None,
+            page_sort: None,
+            sort_open: false,
+            album_width: 180.0,
+            album_shown: true,
+            duration_shown: true,
+            column_drag: None,
             lyrics: None,
             lyric_shown: None,
             outputs: Vec::new(),
@@ -711,10 +731,11 @@ impl State {
     /// Leaves the current page for another. A page that never loaded is not one to return to.
     fn go(&mut self, page: Page) {
         self.list_copied = None;
-        // A search belongs to the page it was made on.
+        // A search and an order belong to the page they were made on.
         if self.page_searching {
             self.search_page(false);
         }
+        (self.page_sort, self.sort_open) = (None, false);
         let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
@@ -827,7 +848,33 @@ impl State {
         if index >= tracks.len() {
             return Vec::new();
         }
-        vec![Command::PlayList { tracks: tracks.to_vec(), index }]
+        // Ordered, the page plays as it reads.
+        let rows = self.page_rows();
+        match rows.iter().position(|(place, _)| *place == index).filter(|_| self.page_sort.is_some()) {
+            Some(index) => vec![Command::PlayList { tracks: rows.into_iter().map(|(_, track)| track.clone()).collect(), index }],
+            None => vec![Command::PlayList { tracks: tracks.to_vec(), index }],
+        }
+    }
+
+    /// The page's tracks as its table lists them, each with its place in the page's own
+    /// order: the ones its search is looking for, in the order asked for.
+    pub fn page_rows(&self) -> Vec<(usize, &Track)> {
+        let tracks = self.page_tracks();
+        // An artist's page shows the first of their songs, and all of them to its search.
+        let shown = if matches!(self.page, Page::Artist(_)) && self.page_search.trim().is_empty() { ARTIST_SONGS_SHOWN } else { tracks.len() };
+        let mut rows: Vec<(usize, &Track)> = tracks.iter().take(shown).enumerate().filter(|(_, track)| self.page_has(track)).collect();
+        if let Some(sort) = &self.page_sort {
+            match sort.key.as_str() {
+                "title" => rows.sort_by_cached_key(|(_, track)| track.title.to_lowercase()),
+                "album" => rows.sort_by_cached_key(|(_, track)| track.album.as_deref().unwrap_or_default().to_lowercase()),
+                "duration" => rows.sort_by_key(|(_, track)| track.duration_ms),
+                _ => {}
+            }
+            if sort.descending {
+                rows.reverse();
+            }
+        }
+        rows
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
@@ -882,6 +929,7 @@ impl State {
                 vec![Command::Equalizer(self.equalizer)]
             }
             UiAction::DragStarted { id, position } => {
+                self.column_drag = (id == "tracks:resize:album").then_some((position.x, self.album_width));
                 self.resizing = [Side::Left, Side::Right].into_iter().find(|side| side.handle() == id).map(|side| {
                     (side, position.x, if side == Side::Left { self.left_width } else { self.right_width })
                 });
@@ -894,13 +942,20 @@ impl State {
                     Some((Side::Right, from, width)) => self.right_width = Side::Right.width(width - (position.x - from)),
                     None => {}
                 }
+                // The album column follows the title, which gives way: wider as its edge goes left.
+                if let Some((from, width)) = self.column_drag {
+                    self.album_width = (width - (position.x - from)).clamp(ALBUM_WIDTH.0, ALBUM_WIDTH.1);
+                }
                 Vec::new()
             }
             UiAction::Dropped { .. } => {
-                self.resizing = None;
+                (self.resizing, self.column_drag) = (None, None);
                 Vec::new()
             }
             UiAction::DragCancelled { .. } => {
+                if let Some((_, width)) = self.column_drag.take() {
+                    self.album_width = width;
+                }
                 match self.resizing.take() {
                     Some((Side::Left, _, width)) => self.left_width = width,
                     Some((Side::Right, _, width)) => self.right_width = width,
@@ -976,8 +1031,35 @@ impl State {
                 }
                 Vec::new()
             }
-            // Shuffled, a page starts anywhere in itself.
-            "page-play" => self.play_page(if self.player.shuffle { fastrand::usize(..self.page_tracks().len().max(1)) } else { 0 }),
+            // Shuffled, a page starts anywhere in itself; otherwise, at the top of what it lists.
+            "page-play" => {
+                let top = self.page_rows().first().map_or(0, |(place, _)| *place);
+                self.play_page(if self.player.shuffle { fastrand::usize(..self.page_tracks().len().max(1)) } else { top })
+            }
+            "page-sort" | "page-sort-close" => {
+                self.sort_open = id == "page-sort" && !self.sort_open;
+                Vec::new()
+            }
+            // From the menu beside the search: the page's own order, or one of its columns.
+            _ if id.starts_with("page-sort:") => {
+                let key = &id["page-sort:".len()..];
+                self.page_sort = (key != "own").then(|| TableSort { key: key.to_owned(), descending: false });
+                self.sort_open = false;
+                Vec::new()
+            }
+            // From the head of a column: up, down, and the page's own order again.
+            _ if id.starts_with("tracks:sort:") => {
+                self.page_sort = TableSort::toggled(self.page_sort.take(), &id["tracks:sort:".len()..]);
+                Vec::new()
+            }
+            "tracks:column:album" => {
+                self.album_shown = !self.album_shown;
+                Vec::new()
+            }
+            "tracks:column:duration" => {
+                self.duration_shown = !self.duration_shown;
+                Vec::new()
+            }
             // The queue is a face of the right panel: its button opens the panel on it, and
             // closes the panel from it.
             "page-search" => {
@@ -2050,6 +2132,51 @@ mod tests {
         click(&mut state, "about-follow");
         assert!(!state.is_followed(&who));
         assert_eq!(click(&mut state, "about-artist"), vec![Command::Open(Target::Artist("who".into()))]);
+    }
+
+    #[test]
+    fn a_pages_tracks_take_the_order_of_a_column_and_play_as_they_read() {
+        let named = |id: &str, title: &str, seconds: u64| Track { title: title.into(), duration_ms: seconds * 1000, ..track(id) };
+        let tracks = vec![named("x", "Luna", 200), named("y", "arroz", 300), named("z", "Mar", 100)];
+        let album = Album { id: "lp".into(), title: "LP".into(), artist: "artist".into(), artist_id: None, year: String::new(), artwork_url: None, tracks: tracks.clone() };
+        let mut state = State { page: Page::Album(album), ..State::default() };
+        let listed = |state: &State| state.page_rows().iter().map(|(place, track)| (*place, track.id.clone())).collect::<Vec<_>>();
+        let ids = |ids: [(usize, &str); 3]| ids.map(|(place, id)| (place, id.to_owned())).to_vec();
+        assert_eq!(listed(&state), ids([(0, "x"), (1, "y"), (2, "z")]), "its own order");
+
+        click(&mut state, "tracks:sort:title");
+        assert_eq!(listed(&state), ids([(1, "y"), (0, "x"), (2, "z")]), "whatever the case of its letters");
+        // The row keeps the number of its place in the list; the list plays as it reads.
+        let ordered = vec![tracks[1].clone(), tracks[0].clone(), tracks[2].clone()];
+        assert_eq!(click(&mut state, "page-track:0"), vec![Command::PlayList { tracks: ordered.clone(), index: 1 }]);
+        assert_eq!(click(&mut state, "page-play"), vec![Command::PlayList { tracks: ordered, index: 0 }]);
+        click(&mut state, "tracks:sort:title");
+        assert_eq!(listed(&state), ids([(2, "z"), (0, "x"), (1, "y")]), "a second press turns it over");
+        click(&mut state, "tracks:sort:title");
+        assert!(state.page_sort.is_none(), "and a third gives the list its own order back");
+
+        click(&mut state, "page-sort");
+        assert!(state.sort_open);
+        click(&mut state, "page-sort:duration");
+        assert_eq!(listed(&state), ids([(2, "z"), (0, "x"), (1, "y")]));
+        assert!(!state.sort_open, "choosing shuts the menu");
+        click(&mut state, "page-sort:own");
+        assert!(state.page_sort.is_none());
+        click(&mut state, "page-sort:title");
+        click(&mut state, "downloads");
+        assert!(state.page_sort.is_none(), "another page starts in its own order");
+
+        // The album column is as wide as it is dragged, within its limits, and can be put away.
+        let at = |x: f32| limn::Point::new(x, 0.0);
+        state.update(&UiAction::DragStarted { id: "tracks:resize:album".into(), position: at(500.0) });
+        state.update(&UiAction::DragMoved { id: "tracks:resize:album".into(), position: at(460.0), over: None });
+        assert_eq!(state.album_width, 220.0, "40 to the left is 40 wider");
+        state.update(&UiAction::DragMoved { id: "tracks:resize:album".into(), position: at(2000.0), over: None });
+        assert_eq!(state.album_width, ALBUM_WIDTH.0);
+        state.update(&UiAction::DragCancelled { id: "tracks:resize:album".into() });
+        assert_eq!(state.album_width, 180.0, "a drag that is called off changes nothing");
+        click(&mut state, "tracks:column:album");
+        assert!(!state.album_shown);
     }
 
     /// The footage of a song whose video lasts `longer_ms` more than it does.

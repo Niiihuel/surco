@@ -7,13 +7,13 @@ use limn::{
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, RadiusRole, ResizeHandle, RowSizing, Scheme,
-    ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Tabs, Text, TextField, TextRole, Ticker,
-    TooltipPlacement, TooltipSpec,
+    ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
+    TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
 
 use crate::clip::Showing;
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -637,20 +637,11 @@ fn wave(state: &State, id: String, palette: ComponentPalette) -> Element {
     Element::level_bars(bars).size(Some(width), Some(16.0))
 }
 
-/// A track the way dnmusic lists it: its number where the list has an order, its cover, the
-/// title over a muted line, how long it lasts, and the dots that open its menu. The same menu
-/// answers a secondary click.
-fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, subtitle: &str, palette: ComponentPalette) -> Element {
+/// A track's cover as its row shows it. Over it, what plays wears its own sound; under
+/// the pointer every cover says what a click on the row does: it pauses what plays and
+/// plays the rest.
+fn sleeve(state: &State, row: &str, track: &Track, palette: ComponentPalette) -> Element {
     let current = state.current().is_some_and(|current| current.id == track.id);
-    let muted = |text: String| Element::text(text).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
-    let mut leading = Vec::new();
-    if let Some(number) = number {
-        let number = muted(number.to_string());
-        let number = if current { number.foreground(palette.text) } else { number };
-        leading.push(number.centered().size(Some(NUMBER_WIDTH), Some(COVER)));
-    }
-    // Over its cover, what plays wears its own sound. Under the pointer every cover says
-    // what a click on the row does: it pauses what plays and plays the rest.
     let over = |content: Element| {
         Element::panel(content.centered()).background(COVER_SCRIM).radius(limn::tokens().radius.control).size(Some(COVER), Some(COVER))
     };
@@ -660,12 +651,14 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         layers.push(over(wave(state, format!("wave:{row}"), palette)).conceal_on_hover(format!("sounding:{row}")));
     }
     layers.push(over(does).reveal_on_hover(format!("does:{row}")));
-    leading.push(Element::stack(layers));
+    Element::stack(layers)
+}
 
-    let sizing = RowSizing { leading_width: if number.is_some() { NUMBER_WIDTH + TRACK_ROW.gap + COVER } else { COVER }, ..TRACK_ROW };
-
-    let open = state.menu.as_deref() == Some(row.as_str());
-    let actions = track_actions(state, &row, track);
+/// The dots of a row with the menu they open, and the same actions for the menu the row
+/// opens where it is pressed.
+fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) -> (Element, Vec<ContextMenuEntry>) {
+    let open = state.menu.as_deref() == Some(row);
+    let actions = track_actions(state, row, track);
     let entries = actions.iter().map(|action| match action {
         Some(action) => {
             let item = DropdownMenuItem::new(&action.id, action.label).icon(action.icon);
@@ -686,14 +679,16 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::BottomEnd)
         .render();
+    let pressed = actions.into_iter().map(|action| match action {
+        Some(action) => ContextMenuEntry::Item(ContextMenuItem::new(action.id, action.label).icon(action.icon)),
+        None => ContextMenuEntry::Separator,
+    });
+    (menu, pressed.collect())
+}
 
-    let mut list_row = ListRow::new(&row, &track.title, palette)
-        .sizing(sizing)
-        .leading(middle(Element::row(leading).gap(TRACK_ROW.gap)))
-        .subtitle(subtitle)
-        .title_fade(true)
-        .radius(RadiusRole::Card);
-    // After the copy: that it plays, that it is kept on disk or on its way there, how long it lasts.
+/// After a row's copy: that the track is kept on disk or on its way there, and how long
+/// it lasts.
+fn row_facts(state: &State, row: &str, track: &Track, palette: ComponentPalette) -> Vec<Element> {
     let mut facts = Vec::new();
     if state.saving.contains(&track.id) {
         facts.push(Spinner::new(format!("saving:{row}"), palette.muted).size(12.0).render().centered_y());
@@ -701,8 +696,23 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         facts.push(Element::icon(Icon::Custom(DOWNLOAD)).foreground(palette.muted).size(Some(14.0), Some(14.0)).centered_y());
     }
     if track.duration_ms > 0 {
-        facts.push(muted(clock(track.duration_ms as f64 / 1000.0)).centered_x().size(Some(DURATION_WIDTH), None).centered_y());
+        let length = Element::text(clock(track.duration_ms as f64 / 1000.0)).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
+        facts.push(length.centered_x().size(Some(DURATION_WIDTH), None).centered_y());
     }
+    facts
+}
+
+/// A track among what a search found: its cover, what it is and whose, and after them
+/// what is known of it.
+fn track_row(state: &State, row: String, track: &Track, subtitle: &str, palette: ComponentPalette) -> Element {
+    let (menu, pressed) = row_menu(state, &row, track, palette);
+    let mut list_row = ListRow::new(&row, &track.title, palette)
+        .sizing(TRACK_ROW)
+        .leading(middle(sleeve(state, &row, track, palette)))
+        .subtitle(subtitle)
+        .title_fade(true)
+        .radius(RadiusRole::Card);
+    let facts = row_facts(state, &row, track, palette);
     if !facts.is_empty() {
         list_row = list_row.trailing(middle(Element::row(facts).gap(8.0)));
     }
@@ -710,11 +720,78 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     // action sits flush with the row's edge: the row's own padding keeps them off it.
     let dots = Element::row(vec![menu, Element::spacer().size(Some(TRACK_ROW.padding), None)]).reveal_on_hover(format!("dots:{row}"));
     let element = list_row.trailing_action(format!("more:{row}"), middle(dots)).render().hover_region();
-    let entries = actions.into_iter().map(|action| match action {
-        Some(action) => ContextMenuEntry::Item(ContextMenuItem::new(action.id, action.label).icon(action.icon)),
-        None => ContextMenuEntry::Separator,
+    ContextMenu::new(format!("context:{row}"), element, pressed, SCHEME.menu()).render()
+}
+
+/// The width a page's table has in a pane `width` wide: the pane's, less the page's margins
+/// and the room its scroll area keeps for its bar.
+fn table_width(width: f32) -> f32 {
+    width - 24.0 - 14.0
+}
+
+/// The narrowest a title gets, the table width under which the album gives its place,
+/// and the room of the last column, for a row's dots.
+const TITLE_MIN: f32 = 160.0;
+const ALBUM_FROM: f32 = 520.0;
+const MORE_WIDTH: f32 = 36.0;
+
+/// A page's tracks as a table `width` wide: what each is, the album it is on and how
+/// long it lasts, under heads that order them. `leaving` names the rows of a list that
+/// can lose one, which then closes where it was.
+fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Option<String>, width: f32, palette: ComponentPalette) -> Element {
+    let mut columns = vec![TableColumn::fixed("index", "#", NUMBER_WIDTH).align_end(), TableColumn::flexible("title", "Título", TITLE_MIN).sortable()];
+    if album {
+        columns.push(TableColumn::fixed("album", "Álbum", state.album_width).sortable().resizable(ALBUM_FROM - TITLE_MIN - 280.0).optional(state.album_shown).hide_below(ALBUM_FROM));
+    }
+    columns.push(TableColumn::fixed("duration", "Duración", DURATION_WIDTH + 22.0).icon(Icon::Clock).sortable().align_end().optional(state.duration_shown));
+    columns.push(TableColumn::fixed("more", "", MORE_WIDTH));
+    let mut menus = Vec::new();
+    let listed: Vec<TableRow> = rows
+        .iter()
+        .enumerate()
+        .map(|(position, (place, track))| {
+            let row = format!("page-track:{place}");
+            let current = state.current().is_some_and(|current| current.id == track.id);
+            // Numbered as they read, whatever their place in the list's own order.
+            let number = Element::text((position + 1).to_string()).font_family(FontFamily::Monospace).font_size(12.0).foreground(if current { palette.text } else { palette.muted });
+            let copy = Element::column(vec![
+                Text::new(&track.title, palette).size(TRACK_ROW.title_size).truncate().render(),
+                Text::new(&track.artist, palette).size(TRACK_ROW.subtitle_size).muted().truncate().render(),
+            ])
+            .gap(TRACK_ROW.copy_gap)
+            .flex(1.0)
+            .centered_y();
+            let mut cells = vec![number, Element::row(vec![sleeve(state, &row, track, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0)];
+            if album {
+                cells.push(Text::new(track.album.as_deref().unwrap_or_default(), palette).muted().truncate().render());
+            }
+            cells.push(Element::row(row_facts(state, &row, track, palette)).gap(8.0));
+            let (menu, pressed) = row_menu(state, &row, track, palette);
+            menus.push(pressed);
+            cells.push(menu.reveal_on_hover(format!("dots:{row}")));
+            TableRow::new(&row, cells).controls([format!("more:{row}")])
+        })
+        .collect();
+    let (header, built) = Table::new("tracks", columns, width, palette)
+        .rows(listed)
+        .sort(state.page_sort.clone())
+        .menu_palette(SCHEME.menu())
+        .radius(RadiusRole::Card)
+        .sizing(TableSizing { row_height: 60.0, ..TableSizing::ROOMY })
+        .into_parts();
+    let body = built.into_iter().zip(menus).zip(rows).map(|((element, pressed), (place, track))| {
+        let element = ContextMenu::new(format!("context:page-track:{place}"), element.hover_region(), pressed, SCHEME.menu()).render();
+        match &leaving {
+            Some(list) => Element::column(vec![element]).animate_height(format!("{list}:{}", track.id), false),
+            None => element,
+        }
     });
-    ContextMenu::new(format!("context:{row}"), element, entries.collect(), SCHEME.menu()).render()
+    let body = Element::column(body.collect());
+    let body = match &leaving {
+        Some(list) => body.keep_leaving(format!("{list}:rows")),
+        None => body,
+    };
+    Element::column(vec![header, body])
 }
 
 /// Rows that pulse where a list is on its way.
@@ -754,8 +831,8 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
                 .action("retry", "Reintentar", ButtonVariant::Secondary)
                 .render(),
         ),
-        Page::Artist(artist) => artist_page(state, artist, palette),
-        Page::Album(album) => album_page(state, album, palette),
+        Page::Artist(artist) => artist_page(state, artist, width, palette),
+        Page::Album(album) => album_page(state, album, width, palette),
         Page::Song(track) => centered(
             Element::column(vec![
                 media_card(state, "song-card", track, palette).centered_x(),
@@ -763,11 +840,11 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             ])
             .gap(12.0),
         ),
-        Page::Downloads => downloads_page(state, palette),
-        Page::Liked => liked_page(state, palette),
+        Page::Downloads => downloads_page(state, width, palette),
+        Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
-            Some(playlist) => playlist_page(state, playlist, palette),
+            Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
         },
         Page::Settings => settings_page(state, width, palette),
@@ -780,7 +857,7 @@ fn songs(count: usize) -> String {
 }
 
 /// One of the user's playlists: what it is, what to do with it, and its tracks in order.
-fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) -> Element {
+fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Element {
     let minutes = playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
     let picture = match playlist.tracks.first() {
@@ -819,11 +896,7 @@ fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) 
         )
         .padding(24.0)
     } else {
-        let rows = playlist.tracks.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
-            let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
-            Element::column(vec![row]).animate_height(format!("playlist-row:{}:{}", playlist.id, track.id), false)
-        });
-        Element::column(rows.collect()).keep_leaving("playlist-rows")
+        track_table(state, &state.page_rows(), true, Some(format!("playlist-row:{}", playlist.id)), table_width(width), palette)
     };
     let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
     ScrollArea::new("playlist", washed(state, &cover, Element::column(vec![header, actions, list]).gap(16.0).padding(12.0))).render().flex(1.0)
@@ -946,7 +1019,7 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
         sections.push(shelf("found-albums", "Álbumes", release_tiles(state, "album", &found.albums, palette), palette));
     }
     if !found.tracks.is_empty() {
-        let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, None, &track.artist, palette));
+        let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette));
         sections.extend([heading("Canciones", palette), Element::column(rows.collect()).gap(2.0)]);
     }
     ScrollArea::new("results", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
@@ -1003,10 +1076,18 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     } else {
         parts.push(toggle(Icon::Search, "Buscar en esta página"));
     }
+    // Beside it, the order the page's tracks are listed in.
+    let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());
+    let order = |key: &str, label: &str| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("page-sort:{key}"), label).selected(sorted == key));
+    let orders = vec![order("own", "Orden de la lista"), order("title", "Título"), order("album", "Álbum"), order("duration", "Duración")];
+    let button = header_button("page-sort", Icon::Sort, TooltipSpec::new("Ordenar"), palette).active(state.sort_open).render();
+    parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", SCHEME.menu()).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
     parts
 }
 
-fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Element {
+const SORT_MENU_WIDTH: f32 = 200.0;
+
+fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPalette) -> Element {
     let mut about = vec![Text::new(&artist.name, palette).size(PAGE_TITLE).truncate().render()];
     if let Some(subscribers) = &artist.subscribers {
         about.push(Text::new(format!("{subscribers} suscriptores"), palette).muted().render());
@@ -1019,12 +1100,7 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
     .gap(20.0);
     let mut sections = vec![header, play_buttons(state, Some(("Seguir", "Siguiendo")), palette)];
     if !artist.songs.is_empty() {
-        // Searched, an artist's page looks through all of their songs, not only the ones it shows.
-        let shown = if state.page_search.trim().is_empty() { ARTIST_SONGS_SHOWN } else { artist.songs.len() };
-        let rows = artist.songs.iter().take(shown).enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
-            track_row(state, format!("page-track:{index}"), track, Some(index + 1), track.album.as_deref().unwrap_or(&track.artist), palette)
-        });
-        sections.extend([heading("Canciones", palette), Element::column(rows.collect()).gap(2.0)]);
+        sections.extend([heading("Canciones", palette), track_table(state, &state.page_rows(), true, None, table_width(width), palette)]);
     }
     if !artist.albums.is_empty() {
         sections.push(shelf("artist-albums", "Álbumes", release_tiles(state, "page-album", &artist.albums, palette), palette));
@@ -1036,7 +1112,7 @@ fn artist_page(state: &State, artist: &Artist, palette: ComponentPalette) -> Ele
     ScrollArea::new("artist", washed(state, &artist.artwork_url, Element::column(sections).gap(12.0).padding(12.0))).render().flex(1.0)
 }
 
-fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
+fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let failure = state.save_error.as_ref().map(|error| Alert::new("No se pudo descargar", error, palette).render());
     if state.saved.is_empty() && state.saving.is_empty() {
         let empty = Empty::new("Nada descargado", "Lo que descargues desde el menú de una canción queda acá, para escucharlo sin conexión.", palette)
@@ -1057,16 +1133,12 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(10.0)];
     sections.extend(failure);
     // A download that is removed closes where it was.
-    let rows = state.saved.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
-        let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
-        Element::column(vec![row]).animate_height(format!("saved-row:{}", track.id), false)
-    });
-    sections.push(Element::column(rows.collect()).keep_leaving("saved-rows"));
+    sections.push(track_table(state, &state.page_rows(), true, Some("saved-row".into()), table_width(width), palette));
     ScrollArea::new("downloads", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
 /// The tracks marked with the heart, the last one first.
-fn liked_page(state: &State, palette: ComponentPalette) -> Element {
+fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let liked = &state.collection.liked;
     if liked.is_empty() {
         return centered(Empty::new("Todavía no marcaste nada", "El corazón de la barra de abajo guarda acá lo que te gusta.", palette).icon(Icon::Heart).render());
@@ -1078,15 +1150,11 @@ fn liked_page(state: &State, palette: ComponentPalette) -> Element {
     ])
     .gap(10.0);
     // A track that loses its heart closes where it was.
-    let rows = liked.iter().enumerate().filter(|(_, track)| state.page_has(track)).map(|(index, track)| {
-        let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
-        Element::column(vec![row]).animate_height(format!("liked-row:{}", track.id), false)
-    });
-    let list = Element::column(rows.collect()).keep_leaving("liked-rows");
+    let list = track_table(state, &state.page_rows(), true, Some("liked-row".into()), table_width(width), palette);
     ScrollArea::new("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
-fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Element {
+fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalette) -> Element {
     let minutes = album.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
     let count = match album.tracks.len() {
@@ -1106,13 +1174,9 @@ fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Elemen
         .centered_y(),
     ])
     .gap(20.0);
-    let rows = album
-        .tracks
-        .iter()
-        .enumerate()
-        .filter(|(_, track)| state.page_has(track))
-        .map(|(index, track)| track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette));
-    let sections = vec![header, play_buttons(state, Some(("Guardar", "En tu biblioteca")), palette), Element::column(rows.collect()).gap(2.0)];
+    // Every track is of this album: its table needs no column to say so.
+    let tracks = track_table(state, &state.page_rows(), false, None, table_width(width), palette);
+    let sections = vec![header, play_buttons(state, Some(("Guardar", "En tu biblioteca")), palette), tracks];
     ScrollArea::new("album", washed(state, &album.artwork_url, Element::column(sections).gap(16.0).padding(12.0))).render().flex(1.0)
 }
 
