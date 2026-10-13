@@ -173,6 +173,10 @@ impl eframe::App for Host {
         self.run_script();
 
         self.tree.set_root(view::view(&self.state, window));
+        // The line being sung stays in view, well clear of the panel's edges.
+        if let Some(line) = self.state.line_to_reveal() {
+            self.tree.reveal_with_margin(&line, 120.0);
+        }
         self.tree.layout(window);
         for event in limn_egui::events(&ctx, area.min) {
             for action in self.tree.handle_event(event) {

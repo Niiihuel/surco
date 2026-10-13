@@ -12,7 +12,7 @@ use limn::{
 };
 
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Lyrics, Page, Playlist, Quality, Side, State, ARTIST_SONGS_SHOWN, CROSSFADE_MAX, EQUALIZER_DB,
 };
 
 /// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
@@ -49,6 +49,9 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// A line of lyrics reads from across the room.
+const LYRIC_SIZE: f32 = 18.0;
+const LYRIC_GAP: f32 = 14.0;
 /// The three qualities side by side in a settings row, and the choice of output under them.
 const QUALITY_WIDTH: f32 = 216.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
@@ -158,7 +161,7 @@ pub fn view(state: &State, window: Size) -> Element {
         content -= right + GAP;
         columns.push(surface(pane(state, content, palette)).flex(1.0));
         columns.extend([handle(Side::Right, right_slide), sliding(panel(state, palette), right_whole, right)]);
-    } else if state.queue_open && window.width < PANEL_FROM {
+    } else if (state.queue_open || state.lyrics_open) && window.width < PANEL_FROM {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
         columns.push(surface(pane(state, content, palette)).flex(1.0));
@@ -950,6 +953,8 @@ fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Eleme
 fn panel(state: &State, palette: ComponentPalette) -> Element {
     let content = if state.queue_open {
         vec![panel_header("Lo que viene", "La cola, en su orden real", palette), upcoming(state, palette)]
+    } else if state.lyrics_open {
+        vec![panel_header("Letra", state.current().map_or("Nada por ahora", |track| track.title.as_str()), palette), lyrics(state, palette)]
     } else {
         match state.current() {
             Some(track) => {
@@ -972,7 +977,31 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
             ],
         }
     };
-    Element::column(content).gap(12.0).padding(16.0).animate_enter(if state.queue_open { "panel:queue" } else { "panel:playing" })
+    let face = match (state.queue_open, state.lyrics_open) {
+        (true, _) => "panel:queue",
+        (_, true) => "panel:lyrics",
+        _ => "panel:playing",
+    };
+    Element::column(content).gap(12.0).padding(16.0).animate_enter(face)
+}
+
+/// The lines of what plays, the one being sung in full ink. A line that is clicked is sung
+/// from its start.
+fn lyrics(state: &State, palette: ComponentPalette) -> Element {
+    let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Microphone).render());
+    let lines = match &state.lyrics {
+        _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
+        Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
+        Some((_, Lyrics::Missing)) => return note("Sin letra sincronizada", "Todavía nadie la cargó para esta canción."),
+        Some((_, Lyrics::Lines(_))) => state.lines(),
+    };
+    let sung = state.active_line();
+    let rows = lines.iter().enumerate().map(|(index, line)| {
+        let ink = if sung == Some(index) { palette.text } else { palette.muted };
+        let text = Text::new(&line.text, palette).size(LYRIC_SIZE).ink(ink).render().animate_foreground(format!("lyric-ink:{index}"));
+        Element::clickable(format!("lyric:{index}"), text)
+    });
+    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP)).render().flex(1.0)
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
@@ -1132,6 +1161,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         controls.push(Element::spacer().flex(1.0));
     }
     controls.extend([
+        side("lyrics", Icon::Microphone, "Letra", state.lyrics_open),
         side("queue", Icon::Playlist, "Cola", state.queue_open),
         equalizer,
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette)

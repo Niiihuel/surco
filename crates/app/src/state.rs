@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet};
 
 use dnm_audio::equalizer::EqualizerValues;
 use dnm_audio::AudioOutputDevice;
+use dnm_core::lyrics::{active, Line};
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -138,6 +139,15 @@ impl Quality {
             Quality::High => u64::MAX,
         }
     }
+}
+
+/// What is known of a track's lyrics.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Lyrics {
+    Loading,
+    Lines(Vec<Line>),
+    /// Nobody has synced them.
+    Missing,
 }
 
 /// The longest crossfade on offer, as in the players people know.
@@ -334,6 +344,12 @@ pub struct State {
     pub save_error: Option<String>,
     /// The devices there are to play through, the one chosen (none for the system's own),
     /// and whether their list is open.
+    /// The right panel shows the lyrics of what plays.
+    pub lyrics_open: bool,
+    /// The lyrics asked for, with the track they belong to.
+    pub lyrics: Option<(String, Lyrics)>,
+    /// The line the list was last scrolled to.
+    lyric_shown: Option<usize>,
     pub outputs: Vec<AudioOutputDevice>,
     pub output: Option<String>,
     pub output_open: bool,
@@ -444,6 +460,9 @@ impl Default for State {
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
+            lyrics_open: false,
+            lyrics: None,
+            lyric_shown: None,
             outputs: Vec::new(),
             output: None,
             output_open: false,
@@ -795,13 +814,27 @@ impl State {
             // closes the panel from it.
             "queue" => {
                 self.queue_open = !self.queue_open;
+                self.lyrics_open = false;
                 self.open_side(Side::Right, self.queue_open);
                 self.upcoming_covers()
+            }
+            // So are the lyrics.
+            "lyrics" => {
+                self.lyrics_open = !self.lyrics_open;
+                self.queue_open = false;
+                self.open_side(Side::Right, self.lyrics_open);
+                self.ask_lyrics()
+            }
+            _ if id.starts_with("lyric:") => {
+                // A line that is clicked is sung from its start.
+                let line = id["lyric:".len()..].parse::<usize>().ok().and_then(|index| self.lines().get(index));
+                line.map(|line| Command::Seek(line.at_ms as f64 / 1000.0)).into_iter().collect()
             }
             // Each panel is shut from its own header and opened from the bar above.
             "toggle-panel" | "toggle-panel-open" => {
                 self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
+                self.lyrics_open = false;
                 Vec::new()
             }
             "toggle-library" | "toggle-library-open" => {
@@ -1017,6 +1050,14 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
+            Event::Lyrics { track_id, lines } => {
+                if let Some((asked, lyrics)) = &mut self.lyrics {
+                    if *asked == track_id {
+                        *lyrics = lines.map_or(Lyrics::Missing, Lyrics::Lines);
+                    }
+                }
+                Vec::new()
+            }
             Event::Outputs(devices) => {
                 self.outputs = devices;
                 Vec::new()
@@ -1047,7 +1088,42 @@ impl State {
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]));
         commands.extend(self.upcoming_covers());
+        commands.extend(self.ask_lyrics());
         commands
+    }
+
+    /// The lyrics are only looked for while they are on screen, once for each track.
+    fn ask_lyrics(&mut self) -> Vec<Command> {
+        let Some(track) = self.player.current.as_ref().filter(|_| self.lyrics_open) else { return Vec::new() };
+        if self.lyrics.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
+            return Vec::new();
+        }
+        self.lyrics = Some((track.id.clone(), Lyrics::Loading));
+        self.lyric_shown = None;
+        vec![Command::Lyrics(track.clone())]
+    }
+
+    /// The lines of what plays, when they are known.
+    pub fn lines(&self) -> &[Line] {
+        match (&self.lyrics, &self.player.current) {
+            (Some((asked, Lyrics::Lines(lines))), Some(track)) if *asked == track.id => lines,
+            _ => &[],
+        }
+    }
+
+    /// The line being sung.
+    pub fn active_line(&self) -> Option<usize> {
+        active(self.lines(), (self.player.position.max(0.0) * 1000.0) as u64)
+    }
+
+    /// The line to bring into view, once each time the song moves on to another.
+    pub fn line_to_reveal(&mut self) -> Option<String> {
+        let line = self.active_line().filter(|_| self.lyrics_open);
+        if line == self.lyric_shown {
+            return None;
+        }
+        self.lyric_shown = line;
+        line.map(|index| format!("lyric:{index}"))
     }
 
     /// The queue's covers are only fetched while the queue is on screen.
@@ -1469,6 +1545,31 @@ mod tests {
         click(&mut state, "recent-clear");
         click(&mut state, "confirm-yes");
         assert!(state.collection.recent.is_empty() && state.confirm.is_none());
+    }
+
+    #[test]
+    fn lyrics_are_asked_once_for_what_plays_and_a_line_seeks_to_itself() {
+        let playing = |id: &str, position| PlayerView { current: Some(track(id)), position, duration: 200.0, playing: true, ..PlayerView::default() };
+        let mut state = State::default();
+        assert!(state.show(playing("a", 0.0)).iter().all(|command| !matches!(command, Command::Lyrics(_))), "not while they are not on screen");
+        assert_eq!(click(&mut state, "lyrics"), vec![Command::Lyrics(track("a"))]);
+        assert!(state.lyrics_open && state.panel_open && !state.queue_open);
+        assert!(state.show(playing("a", 1.0)).is_empty(), "already asked");
+
+        let lines = vec![Line { at_ms: 5_000, text: "one".into() }, Line { at_ms: 9_000, text: "two".into() }];
+        state.apply(Event::Lyrics { track_id: "other".into(), lines: None });
+        assert_eq!(state.lyrics, Some(("a".into(), Lyrics::Loading)), "an answer for another track changes nothing");
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines) });
+        assert_eq!((state.active_line(), state.line_to_reveal()), (None, None));
+        state.show(playing("a", 9.5));
+        assert_eq!(state.line_to_reveal().as_deref(), Some("lyric:1"));
+        assert_eq!(state.line_to_reveal(), None, "once for each line");
+        assert_eq!(click(&mut state, "lyric:0"), vec![Command::Seek(5.0)]);
+
+        assert!(state.show(playing("b", 0.0)).contains(&Command::Lyrics(track("b"))), "the next track brings its own");
+        state.apply(Event::Lyrics { track_id: "b".into(), lines: None });
+        assert_eq!(state.lyrics, Some(("b".into(), Lyrics::Missing)));
+        assert!(state.lines().is_empty());
     }
 
     #[test]

@@ -11,6 +11,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
+use dnm_core::lyrics::{parse_lrc, Line};
 use dnm_core::{Album, Artist, Found, Track};
 use dnm_youtube::{Audio, YouTube};
 use eframe::egui;
@@ -77,6 +78,8 @@ pub enum Command {
     Output(Option<String>),
     /// Ask which devices there are.
     Outputs,
+    /// Look for the synced lyrics of a track.
+    Lyrics(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -95,6 +98,8 @@ pub enum Event {
     /// A cover, and the color it lends to a card of its track when it could be read.
     Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
     Outputs(Vec<AudioOutputDevice>),
+    /// A track's lines and when each starts, or none when nobody has synced them.
+    Lyrics { track_id: String, lines: Option<Vec<Line>> },
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -312,6 +317,14 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Output(_) | Command::Outputs, Err(_)) => {}
+        (Command::Lyrics(track), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let lines = lyrics(&shared, &track).await;
+                (shared.reply)(Event::Lyrics { track_id: track.id, lines });
+            });
+        }
+        (Command::Lyrics(track), Err(_)) => reply(Event::Lyrics { track_id: track.id, lines: None }),
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
@@ -469,6 +482,19 @@ async fn preload(shared: &Arc<Shared>, track: &Track) {
     }
     let engine = shared.clone();
     let _ = blocking(move || engine.audio.load(load)).await;
+}
+
+/// Synced lyrics from LRCLIB. It is searched, not asked for the exact track, because an
+/// exact lookup misses on any difference in length; the entry closest in length wins.
+async fn lyrics(shared: &Shared, track: &Track) -> Option<Vec<Line>> {
+    let request = shared.youtube.http().get("https://lrclib.net/api/search").query(&[("artist_name", &track.artist), ("track_name", &track.title)]);
+    let body = request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
+    let found: Vec<serde_json::Value> = serde_json::from_slice(&body).ok()?;
+    let seconds = track.duration_ms as f64 / 1000.0;
+    let apart = |entry: &serde_json::Value| (entry["duration"].as_f64().unwrap_or(0.0) - seconds).abs();
+    let best = found.iter().filter(|entry| entry["syncedLyrics"].is_string()).min_by(|a, b| apart(a).total_cmp(&apart(b)))?;
+    let lines = parse_lrc(best["syncedLyrics"].as_str()?);
+    (!lines.is_empty()).then_some(lines)
 }
 
 const NO_AUDIO: &str = "YouTube no ofreció audio para este tema.";
