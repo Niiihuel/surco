@@ -1,13 +1,13 @@
 //! Checks the two things this crate does against the real service:
-//! `cargo run -p dnm-youtube --example probe -- "<search text>"`
+//! `cargo run -p surco-youtube --example probe -- "<search text>"`
 //! searches, asks for the radio of the first result, resolves it and downloads its best audio stream.
 
 use std::time::Instant;
 
 #[tokio::main]
-async fn main() -> dnm_youtube::Result<()> {
+async fn main() -> surco_youtube::Result<()> {
     let query = std::env::args().nth(1).unwrap_or_else(|| "apocalypse cigarettes after sex".into());
-    let youtube = dnm_youtube::YouTube::new()?;
+    let youtube = surco_youtube::YouTube::new()?;
 
     let started = Instant::now();
     let found = youtube.search(&query).await?;

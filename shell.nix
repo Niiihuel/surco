@@ -9,7 +9,7 @@ pkgs.mkShell {
   # The H.264 decoder is C++. The player is told where its standard library is when it is
   # linked (see crates/app/build.rs): on the library path it would also reach every program
   # started from this shell, and the system's own are built against a newer one.
-  DNM_CXX_RUNTIME = "${pkgs.stdenv.cc.cc.lib}/lib";
+  SURCO_CXX_RUNTIME = "${pkgs.stdenv.cc.cc.lib}/lib";
   # cpal talks ALSA; on a PipeWire system the default device is PipeWire's ALSA plugin.
   ALSA_PLUGIN_DIR = "${pkgs.pipewire}/lib/alsa-lib";
 }

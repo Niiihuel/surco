@@ -5,7 +5,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use dnm_core::Track;
+use surco_core::Track;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -110,7 +110,7 @@ mod tests {
     }
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("dnm-library-{name}-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("surco-library-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         dir
     }

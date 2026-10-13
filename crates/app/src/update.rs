@@ -98,7 +98,7 @@ mod tests {
     fn the_new_program_takes_the_place_of_the_one_that_runs() {
         let directory = std::env::temp_dir().join(format!("surco-update-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
-        let running = directory.join("dnmusic");
+        let running = directory.join("surco");
         fs::write(&running, b"old").unwrap();
         install(b"new", &running).unwrap();
         assert_eq!(fs::read(&running).unwrap(), b"new");

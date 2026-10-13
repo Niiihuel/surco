@@ -1,7 +1,7 @@
 //! The window, described from the state. Rebuilt on every frame.
 
-use dnm_audio::equalizer::BAND_HZ;
-use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
+use surco_audio::equalizer::BAND_HZ;
+use surco_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
@@ -17,7 +17,7 @@ use crate::state::{
     clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, SHELF,
 };
 
-/// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
+/// The app's colors, one per role: near-black surfaces told apart by luminance, white ink.
 /// Every palette a component takes is derived from here, so that a control on a card, a
 /// menu and a page cannot disagree about a shared color.
 pub const SCHEME: Scheme = Scheme {
@@ -143,7 +143,7 @@ const LIBRARY_ROW: RowSizing = RowSizing {
 const LIBRARY_TILE: f32 = 48.0;
 /// A quick-access entry of the home page: a short row around the same tile.
 const QUICK_ROW: RowSizing = RowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..RowSizing::COMPACT };
-/// dnmusic's track row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
+/// A track's row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
 const TRACK_ROW: RowSizing = RowSizing {
     height: Some(60.0),
     two_line_height: Some(60.0),
@@ -276,7 +276,7 @@ fn update_step(state: &State, release: &Release, palette: ComponentPalette) -> (
     let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render();
     match &state.updating {
         Updating::Idle => {
-            let about = format!("Está disponible la versión {} de dnmusic. Tenés la {}.", release.version, env!("CARGO_PKG_VERSION"));
+            let about = format!("Está disponible la versión {} de Surco. Tenés la {}.", release.version, env!("CARGO_PKG_VERSION"));
             (about, button("update-get", if release.program.is_some() { "Actualizar" } else { "Descargar" }))
         }
         Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), Spinner::new("update-fetching", palette.muted).render()),
@@ -290,8 +290,8 @@ fn update_step(state: &State, release: &Release, palette: ComponentPalette) -> (
 fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| release.mandatory) else { return window_tree };
     let (about, action) = match &state.updating {
-        Updating::Idle if release.program.is_some() => (format!("Esta versión de dnmusic ya no se puede usar. Instalá la {} para seguir.", release.version), ("update-get", "Actualizar ahora")),
-        Updating::Idle => (format!("Esta versión de dnmusic ya no se puede usar. Descargá la {} para seguir.", release.version), ("update-get", "Descargar")),
+        Updating::Idle if release.program.is_some() => (format!("Esta versión de Surco ya no se puede usar. Instalá la {} para seguir.", release.version), ("update-get", "Actualizar ahora")),
+        Updating::Idle => (format!("Esta versión de Surco ya no se puede usar. Descargá la {} para seguir.", release.version), ("update-get", "Descargar")),
         Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), ("update-wait", "Descargando…")),
         Updating::Ready => (format!("La versión {} ya está instalada.", release.version), ("update-restart", "Reiniciar ahora")),
         Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), ("update-get", "Reintentar")),
@@ -381,7 +381,7 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         None => (Element::spacer(), String::new()),
     };
     let copy = if state.copied { Button::new("share-copy", "Enlace copiado", palette).icon(Icon::Check) } else { Button::new("share-copy", "Copiar enlace", palette).icon(Icon::Copy) };
-    Modal::new(window_tree, state.sharing.is_some(), "Compartir canción", "Quien abra el enlace la escucha en dnmusic.", "share-close", palette)
+    Modal::new(window_tree, state.sharing.is_some(), "Compartir canción", "El enlace la abre en YouTube Music; pegado en el buscador de Surco, se abre acá.", "share-close", palette)
         .width(Modal::fit_width(width, 420.0))
         .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
         .footer(ButtonGroup::new(vec![copy.size(ControlSize::Regular).render()]).align_end().render())
@@ -1121,7 +1121,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Compact).enabled(enabled).render();
     let group = |title: &str, rows: Vec<Element>| PreferencesGroup::new(title, rows, card).render();
 
-    let equalizer = if state.equalizer == dnm_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
+    let equalizer = if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
     let devices = std::iter::once(device("", SYSTEM_OUTPUT)).chain(state.outputs.iter().map(|output| device(&output.id, &output.name)));
@@ -1186,7 +1186,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Acerca de",
             vec![
-                row("Versión", "dnmusic para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
+                row("Versión", "Surco para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
                 row("Licencias de terceros", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
             ],
         ),
@@ -1478,7 +1478,7 @@ const CINEMA_TOP: f32 = 48.0;
 
 /// The size a film takes while it fills the window: all of it, as large as fits over the
 /// playback bar.
-pub fn cinema_picture(film: &dnm_video::Film, window: Size) -> Size {
+pub fn cinema_picture(film: &surco_video::Film, window: Size) -> Size {
     let (width, height) = (film.width.max(1) as f32, film.height.max(1) as f32);
     let scale = (window.width / width).min((window.height - PLAYER_HEIGHT - CINEMA_TOP) / height);
     Size::new(width * scale, height * scale)
@@ -1816,7 +1816,7 @@ mod tests {
     use super::*;
     use crate::backend::{Content, Event, Target};
     use crate::player::PlayerView;
-    use dnm_core::{ArtistRef, Found};
+    use surco_core::{ArtistRef, Found};
     use limn::{HitKind, UiTree};
 
     fn track(id: &str) -> Track {
@@ -1906,7 +1906,7 @@ mod tests {
             assert!(ids(&state, size).iter().any(|id| id == "downloads"), "{view} still lists what the library holds");
         }
         state.show(PlayerView { current: Some(track("a")), upcoming: vec![track("b")], duration: 200.0, playing: true, ..PlayerView::default() });
-        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![dnm_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
         let found = ids(&state, size);
         // The card of the lines leads to all of them, and the one of what is next plays it or opens the queue.
         for id in ["lyrics", "upcoming:0", "next-queue"] {
@@ -1964,7 +1964,7 @@ mod tests {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), duration: 200.0, playing: true, ..PlayerView::default() });
         state.update(&limn::UiAction::Clicked { id: "lyrics".into() });
-        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![dnm_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
         let size = Size::new(1400.0, 800.0);
         let mut tree = UiTree::new(view(&state, size));
         let frame = tree.layout(size);

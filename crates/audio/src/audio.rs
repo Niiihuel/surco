@@ -316,7 +316,7 @@ impl NativeAudio {
         let (ready_tx, ready_rx) = mpsc::channel();
         let commands = tx.clone();
         std::thread::Builder::new()
-            .name("dnm-audio".into())
+            .name("surco-audio".into())
             .spawn(move || run(Box::new(on_event), rx, commands, ready_tx, device))
             .map_err(|error| format!("audio thread failed to start: {error}"))?;
 
@@ -652,7 +652,7 @@ fn move_our_stream_to_pipewire_sink(sink_name: &str) {
 /// The freshest sink-input opened by this executable — cpal opens a brand new PipeWire client
 /// on every device switch, so the highest index among ours is the one that was just opened.
 ///
-/// The ALSA plugin names its client after the binary, "PipeWire ALSA [dnmusic]", and that name
+/// The ALSA plugin names its client after the binary, "PipeWire ALSA [surco]", and that name
 /// is all a sink-input carries: the process id is only on the client object.
 #[cfg(target_os = "linux")]
 fn our_sink_input_id() -> Option<u64> {

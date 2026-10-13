@@ -9,14 +9,14 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
-use dnm_audio::equalizer::{self, EqualizerValues};
-use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
-use dnm_core::discover;
-use dnm_core::lyrics::{parse_lrc, Line};
-use dnm_video::{Clip, Film};
+use surco_audio::equalizer::{self, EqualizerValues};
+use surco_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
+use surco_core::discover;
+use surco_core::lyrics::{parse_lrc, Line};
+use surco_video::{Clip, Film};
 use futures_util::future::join_all;
-use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
-use dnm_youtube::{Audio, YouTube};
+use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
+use surco_youtube::{Audio, YouTube};
 use eframe::egui;
 use limn::{RasterImage, RasterImageFormat};
 use sha2::{Digest, Sha256};
@@ -198,7 +198,7 @@ const DOWNLOAD_ATTEMPTS: u32 = 4;
 
 /// What reaches the player from the worker's own side.
 enum Input {
-    Engine(dnm_audio::Event),
+    Engine(surco_audio::Event),
     Key(Key),
     Radio { seed: String, tracks: Vec<Track> },
 }
@@ -306,7 +306,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                             (Ok(shared), effect) => run(shared, effect),
                             // Nothing can play: the track fails with the reason the backend did not start.
                             (Err(message), Effect::Play(track)) => {
-                                let failed = dnm_audio::Event::Failed { track_id: track.id, message: message.clone() };
+                                let failed = surco_audio::Event::Failed { track_id: track.id, message: message.clone() };
                                 let _ = inputs.send(Input::Engine(failed));
                             }
                             _ => {}
@@ -402,7 +402,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 // Listing may ask the sound server, which takes a moment.
-                if let Ok(devices) = blocking(dnm_audio::list_output_devices).await {
+                if let Ok(devices) = blocking(surco_audio::list_output_devices).await {
                     (shared.reply)(Event::Outputs(devices));
                 }
             });
@@ -577,7 +577,7 @@ fn begin(shared: &Arc<Shared>, track: Track, fade: Duration, resume: Option<(f64
     tokio::spawn(async move {
         if let Err(message) = play(&shared, &track, generation, fade, resume).await {
             if shared.is_current(generation) {
-                let failed = dnm_audio::Event::Failed { track_id: track.id, message };
+                let failed = surco_audio::Event::Failed { track_id: track.id, message };
                 let _ = shared.inputs.send(Input::Engine(failed));
             }
         }
@@ -630,7 +630,7 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
 const RELEASES: &str = "https://api.github.com/repos/Niiihuel/surco/releases/latest";
 
 /// The service answers nobody who does not say who they are.
-const AGENT: &str = concat!("dnmusic/", env!("CARGO_PKG_VERSION"));
+const AGENT: &str = concat!("surco/", env!("CARGO_PKG_VERSION"));
 
 /// The latest published release, when it is later than this build.
 async fn latest_release(shared: &Shared) -> Option<Release> {
@@ -646,7 +646,7 @@ async fn latest_release(shared: &Shared) -> Option<Release> {
         files.iter().find(|file| file["name"].as_str() == Some(name))?["browser_download_url"].as_str().map(str::to_owned)
     };
     // A build made to be worked on is not replaced by a published one, unless it is asked to.
-    let takes = !cfg!(debug_assertions) || std::env::var_os("DNM_SELF_UPDATE").is_some();
+    let takes = !cfg!(debug_assertions) || std::env::var_os("SURCO_SELF_UPDATE").is_some();
     let program = update::program_name(&version).filter(|_| takes).and_then(|name| Some((file(&name)?, file("SHA256SUMS")?)));
     let minimum = release["body"].as_str().and_then(update::minimum);
     let mandatory = minimum.is_some_and(|minimum| discover::newer(minimum, env!("CARGO_PKG_VERSION")));
@@ -770,15 +770,15 @@ async fn footage(shared: &Shared, track: &Track) -> Option<Footage> {
         // Of two renditions as tall, the one with fewer pictures a second: it is decoded on a core.
         let video = stream.video.iter().filter(|video| video.mime.contains("avc1")).min_by_key(|video| (video.height.abs_diff(height), video.fps))?;
         let head = shared.youtube.bytes(&video.url, 0, video.index.1).await.ok()?;
-        let header = dnm_video::header(head.get(..=usize::try_from(video.init.1).ok()?)?)?;
-        let fragments = dnm_video::fragments(head.get(usize::try_from(video.index.0).ok()?..)?, video.index.1);
+        let header = surco_video::header(head.get(..=usize::try_from(video.init.1).ok()?)?)?;
+        let fragments = surco_video::fragments(head.get(usize::try_from(video.index.0).ok()?..)?, video.index.1);
         let (width, height) = (usize::try_from(video.width).ok()?, usize::try_from(video.height).ok()?);
         Some((Film { header, fragments, width, height }, video.url.clone()))
     };
     let (small, large) = tokio::join!(film(CLIP_HEIGHT), film(FILM_HEIGHT));
     let (small, large) = (small?, large?);
-    let (from, to) = dnm_video::stretch(&small.0.fragments, CLIP_SECONDS)?;
-    let samples = dnm_video::samples(&shared.youtube.bytes(&small.1, from, to).await.ok()?, &small.0.header);
+    let (from, to) = surco_video::stretch(&small.0.fragments, CLIP_SECONDS)?;
+    let samples = surco_video::samples(&shared.youtube.bytes(&small.1, from, to).await.ok()?, &small.0.header);
     let video = Track { id, duration_ms: (stream.duration_seconds * 1000.0) as u64, ..track.clone() };
     (!samples.is_empty()).then(|| Footage { clip: Clip { parameters: small.0.header.parameters.clone(), samples }, small, large, video })
 }

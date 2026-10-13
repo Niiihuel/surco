@@ -1,6 +1,6 @@
-//! dnmusic for the desktop.
+//! Surco: a music player for the desktop.
 //!
-//! `cargo run -p dnmusic` opens the player. For checking a build without touching it:
+//! `cargo run -p surco` opens the player. For checking a build without touching it:
 //! `--search <text>` submits a search at startup, `--play <n>` plays the n-th result when
 //! it arrives, `--seek <s>` jumps there once it sounds, `--click <id>@<ms>` presses a control
 //! and `--slide <id>=<fraction>@<ms>` sets a slider that long after the window opened (give them
@@ -116,8 +116,8 @@ impl Host {
     }
 }
 
-/// Its own id, and with it its own settings folder: the Electron app is "dnmusic".
-const APP_ID: &str = "dnmusic-native";
+/// Its own id, and with it its own settings folder.
+const APP_ID: &str = "surco";
 const VOLUME_KEY: &str = "volume";
 const COLLECTION_KEY: &str = "collection";
 const SETTINGS_KEY: &str = "settings";
@@ -188,7 +188,7 @@ impl eframe::App for Host {
         self.run_script();
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
         let sounding = self.state.player.playing && !self.state.settings.reduce_motion;
-        self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
+        self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
         // Escape leaves the whole window to the app again, and the screen follows.
@@ -291,7 +291,7 @@ impl eframe::App for Host {
     }
 }
 
-/// dnmusic's own mark, for the window and the task bar where the system takes it from the window.
+/// The app's own mark, for the window and the task bar where the system takes it from the window.
 fn icon() -> egui::IconData {
     let mark = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|mark| mark.to_rgba8());
     mark.map_or_else(|_| egui::IconData::default(), |mark| egui::IconData { width: mark.width(), height: mark.height(), rgba: mark.into_raw() })
@@ -333,7 +333,7 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
-            .with_title("dnmusic")
+            .with_title("Surco")
             .with_icon(icon())
             .with_inner_size([1180.0, 780.0])
             .with_min_inner_size([720.0, 480.0]),

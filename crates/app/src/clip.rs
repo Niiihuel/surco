@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use dnm_video::{Clip, Decoder, Film, Frame, Sample};
+use surco_video::{Clip, Decoder, Film, Frame, Sample};
 use limn_egui::SurfaceFrame;
 
 use crate::backend::Footage;
@@ -161,7 +161,7 @@ const LEAD: f64 = 0.08;
 fn keep_time(film: &Film, url: &str, shared: &Shared, repaint: &impl Fn()) {
     let Ok(runtime) = tokio::runtime::Builder::new_multi_thread().worker_threads(1).enable_all().build() else { return };
     // A client of its own: connections belong to the runtime that opened them.
-    let Ok(youtube) = dnm_youtube::YouTube::new().map(Arc::new) else { return };
+    let Ok(youtube) = surco_youtube::YouTube::new().map(Arc::new) else { return };
     let fetch = |index: usize| {
         let fragment = *film.fragments.get(index)?;
         let (youtube, url) = (youtube.clone(), url.to_owned());
@@ -193,7 +193,7 @@ fn keep_time(film: &Film, url: &str, shared: &Shared, repaint: &impl Fn()) {
                 _ => Decoder::new(&film.header.parameters),
             };
             let Ok(decoder) = decoder else { return };
-            showing = Some((index, decoder, dnm_video::samples(&bytes, &film.header).into(), starts));
+            showing = Some((index, decoder, surco_video::samples(&bytes, &film.header).into(), starts));
             ahead = fetch(index + 1);
             continue;
         }

@@ -1,7 +1,7 @@
 //! The player: the queue and what the engine is doing with it. It runs on the backend's
 //! thread, so the music moves on while the window is hidden and nothing repaints.
 
-use dnm_core::{Queue, Repeat, Track};
+use surco_core::{Queue, Repeat, Track};
 
 use crate::backend::Command;
 
@@ -262,8 +262,8 @@ impl Player {
     }
 
     /// Engine events arrive late: one for a track the user already left changes nothing.
-    pub fn engine(&mut self, event: dnm_audio::Event) -> Vec<Effect> {
-        use dnm_audio::Event;
+    pub fn engine(&mut self, event: surco_audio::Event) -> Vec<Effect> {
+        use surco_audio::Event;
         match event {
             Event::Position { track_id, position_sec, .. } if self.outgoing.as_deref() == Some(track_id.as_str()) => {
                 self.position = position_sec;
@@ -332,7 +332,7 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dnm_audio::Event;
+    use surco_audio::Event;
 
     fn track(id: &str) -> Track {
         Track {

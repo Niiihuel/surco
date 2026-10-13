@@ -5,7 +5,7 @@
 
 mod stream;
 
-use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
+use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use ytmapi_rs::parse::SearchResultVideo;
 use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
@@ -120,8 +120,8 @@ impl YouTube {
     /// as an uploader's channel finds nobody.
     pub async fn artist_named(&self, name: &str) -> Result<Option<ArtistRef>> {
         let artists = self.music().await?.search_artists(name).await?;
-        let wanted = dnm_core::discover::plain(name);
-        Ok(artists.into_iter().find(|artist| dnm_core::discover::plain(&artist.artist) == wanted).map(|artist| ArtistRef {
+        let wanted = surco_core::discover::plain(name);
+        Ok(artists.into_iter().find(|artist| surco_core::discover::plain(&artist.artist) == wanted).map(|artist| ArtistRef {
             id: artist.browse_id.get_raw().to_owned(),
             name: artist.artist,
             subscribers: artist.subscribers,

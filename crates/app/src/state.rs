@@ -3,12 +3,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use dnm_audio::equalizer::EqualizerValues;
-use dnm_audio::AudioOutputDevice;
-use dnm_core::discover;
-use dnm_core::lyrics::{active, Line};
+use surco_audio::equalizer::EqualizerValues;
+use surco_audio::AudioOutputDevice;
+use surco_core::discover;
+use surco_core::lyrics::{active, Line};
 use std::sync::Arc;
-use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
+use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
@@ -514,7 +514,7 @@ pub struct State {
     /// The devices there are to play through, the one chosen (none for the system's own),
     /// and whether their list is open.
     /// What sounds right now, in the engine's four bands; silence while nothing plays.
-    pub levels: [f32; dnm_audio::meter::BANDS],
+    pub levels: [f32; surco_audio::meter::BANDS],
     /// What the catalog offers after a track that was heard, by that track's id; empty
     /// while the answer is on its way.
     /// The catalog's picks for the home page: a mix out of what goes with what the user
@@ -566,21 +566,22 @@ fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
     tracks.iter().map(|track| &track.artwork_url)
 }
 
-/// Where the app's links live. It is dnmusic's own site, so a link made here opens in any
-/// of its clients.
-pub const SITE: &str = "https://dnmusic-production-c3f4.up.railway.app";
-
-/// The link that shares a track.
+/// The link that shares a track: the catalog's own address for it, which opens for
+/// anyone, and which the search box here takes for the track itself.
 pub fn share_link(track: &Track) -> String {
-    format!("{SITE}/cancion/{}", track.id)
+    format!("https://music.youtube.com/watch?v={}", track.id)
 }
 
-/// The id of the track a dnmusic link shares, for any of the forms such a link takes.
-/// Anything else is not a link: a search.
+/// The id of the track a link shares: the catalog's address for it in any of its forms,
+/// or the app's own `surco://cancion/<id>`. Anything else is not a link: a search.
 pub fn shared_song(text: &str) -> Option<&str> {
     let text = text.trim();
-    let rest = [SITE, "https://dnmusic-app.vercel.app", "dnmusic:/", "app://dnmusic"].iter().find_map(|origin| text.strip_prefix(origin))?;
-    let id = rest.strip_prefix("/cancion/")?.split(['/', '?', '#']).next()?;
+    let watched = ["https://music.youtube.com/watch?", "https://www.youtube.com/watch?", "https://youtube.com/watch?"];
+    let id = match watched.iter().find_map(|address| text.strip_prefix(address)) {
+        Some(asked) => asked.split('&').find_map(|pair| pair.strip_prefix("v="))?,
+        None => ["surco://cancion/", "https://youtu.be/"].iter().find_map(|address| text.strip_prefix(address))?,
+    };
+    let id = id.split(['/', '?', '&', '#']).next()?;
     (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then_some(id)
 }
 
@@ -594,12 +595,12 @@ const LINK_NAME: &percent_encoding::AsciiSet = &percent_encoding::NON_ALPHANUMER
 /// search box gets a copy.
 pub fn list_link(playlist: &Playlist) -> String {
     let ids: Vec<&str> = playlist.tracks.iter().map(|track| track.id.as_str()).collect();
-    format!("dnmusic://lista/{}?nombre={}", ids.join(","), percent_encoding::utf8_percent_encode(&playlist.name, LINK_NAME))
+    format!("surco://lista/{}?nombre={}", ids.join(","), percent_encoding::utf8_percent_encode(&playlist.name, LINK_NAME))
 }
 
 /// The name and the track ids a playlist's link carries. Anything else is not such a link.
 pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
-    let rest = text.trim().strip_prefix("dnmusic://lista/")?;
+    let rest = text.trim().strip_prefix("surco://lista/")?;
     let (ids, query) = rest.split_once('?').unwrap_or((rest, ""));
     let valid = |id: &&str| !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
     let ids: Vec<String> = ids.split(',').filter(valid).take(SHARED_LIST_MOST).map(str::to_owned).collect();
@@ -693,7 +694,7 @@ impl Default for State {
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
-            levels: [0.0; dnm_audio::meter::BANDS],
+            levels: [0.0; surco_audio::meter::BANDS],
             mix: Vec::new(),
             because: Vec::new(),
             picked_artists: Vec::new(),
@@ -741,7 +742,7 @@ impl State {
         if query.is_empty() {
             return Vec::new();
         }
-        // A dnmusic link is not searched for: it opens the track it shares.
+        // A link to a track is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
             return self.open(Target::Song(id.to_owned()));
         }
@@ -2230,7 +2231,7 @@ mod tests {
         state.show(playing("b"));
         assert_eq!(click(&mut state, "share-card"), vec![Command::PlayPause], "the one playing is paused");
         click(&mut state, "share-copy");
-        assert_eq!(state.copy.take().as_deref(), Some("https://dnmusic-production-c3f4.up.railway.app/cancion/b"));
+        assert_eq!(state.copy.take().as_deref(), Some("https://music.youtube.com/watch?v=b"));
         assert!(state.copied);
         click(&mut state, "share-close");
         assert!(state.sharing.is_none());
@@ -2240,14 +2241,15 @@ mod tests {
 
     #[test]
     fn a_pasted_link_opens_the_track_it_shares_and_anything_else_is_searched() {
-        let link = format!("{SITE}/cancion/DdI598gKkKw");
-        assert_eq!(shared_song(&link), Some("DdI598gKkKw"));
-        assert_eq!(shared_song("  dnmusic://cancion/abc_-1?x=1 "), Some("abc_-1"));
-        assert_eq!(shared_song("app://dnmusic/cancion/abc/extra"), Some("abc"));
-        for other in ["apocalypse", "https://example.com/cancion/abc", &format!("{SITE}/lista/abc"), &format!("{SITE}/cancion/"), &format!("{SITE}/cancion/a%20b")] {
+        let link = "https://music.youtube.com/watch?v=DdI598gKkKw";
+        assert_eq!(shared_song(link), Some("DdI598gKkKw"));
+        assert_eq!(shared_song("https://www.youtube.com/watch?list=x&v=abc_-1&t=4"), Some("abc_-1"));
+        assert_eq!(shared_song("  surco://cancion/abc_-1?x=1 "), Some("abc_-1"));
+        assert_eq!(shared_song("https://youtu.be/abc/extra"), Some("abc"));
+        for other in ["apocalypse", "https://example.com/watch?v=abc", "https://music.youtube.com/playlist?list=abc", "surco://cancion/", "https://music.youtube.com/watch?v=a%20b"] {
             assert_eq!(shared_song(other), None, "{other}");
         }
-        let mut state = State { query: link, ..State::default() };
+        let mut state = State { query: link.to_owned(), ..State::default() };
         assert_eq!(state.search(), vec![Command::Open(Target::Song("DdI598gKkKw".into()))]);
         assert!(state.submitted.is_none(), "no search was started");
         state.apply(Event::Opened { target: Target::Song("DdI598gKkKw".into()), result: Ok(Content::Song(track("a"))) });
@@ -2508,7 +2510,7 @@ mod tests {
     /// The footage of a song whose video lasts `longer_ms` more than it does.
     fn footage_of(song: &Track, longer_ms: u64) -> Arc<Footage> {
         let video = Track { id: format!("{}-video", song.id), duration_ms: song.duration_ms + longer_ms, ..song.clone() };
-        Arc::new(Footage { clip: dnm_video::Clip { parameters: vec![0], samples: Vec::new() }, small: Default::default(), large: Default::default(), video })
+        Arc::new(Footage { clip: surco_video::Clip { parameters: vec![0], samples: Vec::new() }, small: Default::default(), large: Default::default(), video })
     }
 
     #[test]
@@ -2546,9 +2548,9 @@ mod tests {
     fn a_playlist_travels_in_its_link_and_arrives_as_a_copy() {
         let list = Playlist { id: 7, name: "Para el viaje & más".into(), collaborative: false, tracks: vec![track("DdI598gKkKw"), track("abc_-1")] };
         let link = list_link(&list);
-        assert_eq!(link, "dnmusic://lista/DdI598gKkKw,abc_-1?nombre=Para%20el%20viaje%20%26%20m%C3%A1s");
+        assert_eq!(link, "surco://lista/DdI598gKkKw,abc_-1?nombre=Para%20el%20viaje%20%26%20m%C3%A1s");
         assert_eq!(shared_list(&format!("  {link} ")), Some(("Para el viaje & más".into(), vec!["DdI598gKkKw".into(), "abc_-1".into()])));
-        for not_one in ["dnmusic://lista/?nombre=x", "dnmusic://lista/a,b", "dnmusic://cancion/abc", "viaje"] {
+        for not_one in ["surco://lista/?nombre=x", "surco://lista/a,b", "surco://cancion/abc", "viaje"] {
             assert_eq!(shared_list(not_one), None, "{not_one}");
         }
 
@@ -2560,7 +2562,7 @@ mod tests {
         assert_eq!((copy.name.as_str(), copy.tracks.len(), state.page.clone()), ("Para el viaje & más", 2, Page::Playlist(copy.id)));
 
         click(&mut state, "playlist-share");
-        assert_eq!(state.copy.as_deref(), Some("dnmusic://lista/a,b?nombre=Para%20el%20viaje%20%26%20m%C3%A1s"));
+        assert_eq!(state.copy.as_deref(), Some("surco://lista/a,b?nombre=Para%20el%20viaje%20%26%20m%C3%A1s"));
         assert_eq!(state.list_copied, Some(state.collection.playlists[0].id));
     }
 

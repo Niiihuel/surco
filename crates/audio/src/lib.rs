@@ -1,5 +1,5 @@
 /*!
- * The audio core of dnmusic: decode, two-deck output, equaliser. No UI and no networking.
+ * The audio core of Surco: decode, two-deck output, equaliser. No UI and no networking.
  *
  * Adapted from the Apache-2.0 project noFAYZ/zuno; each adapted file says what it came from.
  *
@@ -10,7 +10,7 @@
  *
  * ```no_run
  * use std::time::Duration;
- * use dnm_audio::{equalizer, Event, Load, MediaBuffer, NativeAudio};
+ * use surco_audio::{equalizer, Event, Load, MediaBuffer, NativeAudio};
  *
  * # fn main() -> Result<(), String> {
  * let audio = NativeAudio::start(None, |event| match event {
@@ -75,5 +75,5 @@ pub use audio::{list_output_devices, AudioOutputDevice, Event, Load, NativeAudio
 pub use media_buffer::MediaBuffer;
 
 fn warn(message: impl std::fmt::Display) {
-    eprintln!("[dnm-audio] {message}");
+    eprintln!("[surco-audio] {message}");
 }

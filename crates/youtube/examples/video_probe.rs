@@ -1,11 +1,11 @@
 //! Looks for the video that goes with a song and lists what pictures it offers:
-//! `cargo run -p dnm-youtube --example video_probe -- <video id>`
+//! `cargo run -p surco-youtube --example video_probe -- <video id>`
 
 use ytmapi_rs::common::{VideoID, YoutubeID};
 use ytmapi_rs::query::GetWatchPlaylistQuery;
 
 #[tokio::main]
-async fn main() -> dnm_youtube::Result<()> {
+async fn main() -> surco_youtube::Result<()> {
     let id = std::env::args().nth(1).unwrap_or_else(|| "DdI598gKkKw".into());
     let music = ytmapi_rs::YtMusicBuilder::new_rustls_tls().build().await?;
     let raw = music.raw_json_query(GetWatchPlaylistQuery::new_from_video_id(VideoID::from_raw(&id))).await?;
@@ -22,7 +22,7 @@ async fn main() -> dnm_youtube::Result<()> {
     for video in videos.iter().take(5) {
         println!("  {video:?}");
     }
-    let youtube = dnm_youtube::YouTube::new()?;
+    let youtube = surco_youtube::YouTube::new()?;
     for (label, video_id) in std::iter::once(("song".to_owned(), id.clone())).chain(found.iter().filter(|(kind, _)| kind == "counterpart").take(1).cloned()) {
         let stream = youtube.stream(&video_id).await?;
         println!("{label} {video_id}: {} s, {} pictures", stream.duration_seconds, stream.video.len());

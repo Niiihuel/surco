@@ -1054,68 +1054,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dnm-audio"
-version = "0.1.0"
-dependencies = [
- "opus",
- "rodio",
- "serde_json",
- "symphonia",
-]
-
-[[package]]
-name = "dnm-core"
-version = "0.1.0"
-dependencies = [
- "fastrand 2.5.0",
- "serde",
-]
-
-[[package]]
-name = "dnm-video"
-version = "0.1.0"
-dependencies = [
- "dnm-youtube",
- "openh264",
- "tokio",
-]
-
-[[package]]
-name = "dnm-youtube"
-version = "0.1.0"
-dependencies = [
- "dnm-core",
- "reqwest 0.12.28",
- "serde_json",
- "tokio",
- "ytmapi-rs",
-]
-
-[[package]]
-name = "dnmusic"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "dnm-audio",
- "dnm-core",
- "dnm-video",
- "dnm-youtube",
- "eframe",
- "fastrand 2.5.0",
- "futures-util",
- "image",
- "limn",
- "limn-egui",
- "percent-encoding",
- "serde",
- "serde_json",
- "sha2",
- "souvlaki",
- "tokio",
-]
-
-[[package]]
 name = "document-features"
 version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4524,6 +4462,68 @@ name = "subtle"
 version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
+
+[[package]]
+name = "surco"
+version = "0.1.1"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "eframe",
+ "fastrand 2.5.0",
+ "futures-util",
+ "image",
+ "limn",
+ "limn-egui",
+ "percent-encoding",
+ "serde",
+ "serde_json",
+ "sha2",
+ "souvlaki",
+ "surco-audio",
+ "surco-core",
+ "surco-video",
+ "surco-youtube",
+ "tokio",
+]
+
+[[package]]
+name = "surco-audio"
+version = "0.1.1"
+dependencies = [
+ "opus",
+ "rodio",
+ "serde_json",
+ "symphonia",
+]
+
+[[package]]
+name = "surco-core"
+version = "0.1.1"
+dependencies = [
+ "fastrand 2.5.0",
+ "serde",
+]
+
+[[package]]
+name = "surco-video"
+version = "0.1.1"
+dependencies = [
+ "openh264",
+ "surco-youtube",
+ "tokio",
+]
+
+[[package]]
+name = "surco-youtube"
+version = "0.1.1"
+dependencies = [
+ "reqwest 0.12.28",
+ "serde_json",
+ "surco-core",
+ "tokio",
+ "ytmapi-rs",
+]
 
 [[package]]
 name = "svgtypes"

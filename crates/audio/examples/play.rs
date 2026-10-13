@@ -1,9 +1,9 @@
 //! Plays a file through the engine and prints every event.
 //!
 //! ```text
-//! cargo run -p dnm-audio --example play -- <file> [--seek S] [--volume V]
+//! cargo run -p surco-audio --example play -- <file> [--seek S] [--volume V]
 //!     [--eq "preamp,b1,...,b10"] [--next <file> [--crossfade S]] [--device ID] [--seconds N]
-//! cargo run -p dnm-audio --example play -- --list-devices
+//! cargo run -p surco-audio --example play -- --list-devices
 //! ```
 //!
 //! `--next` alone hands over when the first track ends. With `--crossfade S` the handover
@@ -15,8 +15,8 @@ use std::str::FromStr;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-use dnm_audio::equalizer::{self, EqualizerValues, BAND_COUNT};
-use dnm_audio::{list_output_devices, Event, Load, MediaBuffer, NativeAudio, TICK};
+use surco_audio::equalizer::{self, EqualizerValues, BAND_COUNT};
+use surco_audio::{list_output_devices, Event, Load, MediaBuffer, NativeAudio, TICK};
 
 fn main() -> Result<(), String> {
     let mut file = None;

@@ -1,8 +1,8 @@
 # Surco
 
-The native desktop player of [dnmusic](https://github.com/Niiihuel/dnmusic), written
-entirely in Rust. The interface is drawn with [limn](https://github.com/Niiihuel/limn);
-there is no web view. *Surco* is the groove of a record: where the needle travels.
+A native music player for the desktop, written entirely in Rust. The interface is drawn
+with [limn](https://github.com/Niiihuel/limn); there is no web view. *Surco* is the
+groove of a record: where the needle travels.
 
 It plays without an account. What is liked, kept and listed stays on the machine that
 plays it; a playlist is shared as a link that carries it whole.
@@ -33,14 +33,14 @@ plays it; a playlist is shared as a link that carries it whole.
 limn is used by path and must sit next to this repository as `../lienzo`.
 
 ```sh
-cargo run -p dnmusic
+cargo run -p surco
 cargo test --workspace
 ```
 
 On NixOS, through the shell that brings the system libraries:
 
 ```sh
-nix-shell shell.nix --run "cargo run -p dnmusic"
+nix-shell shell.nix --run "cargo run -p surco"
 ```
 
 On other Linux systems the build needs the development packages of ALSA, and at run time

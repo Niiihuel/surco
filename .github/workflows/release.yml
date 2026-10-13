@@ -35,9 +35,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { name: Linux, os: ubuntu-24.04, target: linux-x86_64, binary: dnmusic }
-          - { name: Windows, os: windows-2022, target: windows-x86_64, binary: dnmusic.exe }
-          - { name: macOS, os: macos-14, target: macos-arm64, binary: dnmusic }
+          - { name: Linux, os: ubuntu-24.04, target: linux-x86_64, binary: surco }
+          - { name: Windows, os: windows-2022, target: windows-x86_64, binary: surco.exe }
+          - { name: macOS, os: macos-14, target: macos-arm64, binary: surco }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -76,7 +76,7 @@ jobs:
 
       - name: Build
         working-directory: surco
-        run: cargo build --release -p dnmusic
+        run: cargo build --release -p surco
 
       - name: Package
         id: package

@@ -1,23 +1,23 @@
 [package]
-name = "dnmusic"
+name = "surco"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "dnmusic for the desktop: a native music player drawn with limn."
+description = "Surco: a native music player for the desktop, drawn with limn."
 
 [dependencies]
-dnm-core = { path = "../core" }
+surco-core = { path = "../core" }
 limn = { path = "../../../lienzo/crates/limn", default-features = false }
 limn-egui = { path = "../../../lienzo/crates/limn-egui", default-features = false }
 eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence"] }
 # Saves the frame for `--screenshot`, and reads a cover's colors for the tint of its card.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 fastrand = "2"
-dnm-audio = { path = "../audio" }
-dnm-youtube = { path = "../youtube" }
-dnm-video = { path = "../video" }
+surco-audio = { path = "../audio" }
+surco-youtube = { path = "../youtube" }
+surco-video = { path = "../video" }
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"

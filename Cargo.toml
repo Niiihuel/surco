@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/*"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 rust-version = "1.95"
 license = "GPL-3.0-or-later"
@@ -23,5 +23,5 @@ opt-level = 2
 debug = false
 
 # The equaliser and the Opus decoder run per sample on the mixing thread.
-[profile.dev.package.dnm-audio]
+[profile.dev.package.surco-audio]
 opt-level = 2

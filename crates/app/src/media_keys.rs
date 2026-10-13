@@ -48,8 +48,8 @@ impl MediaKeys {
             use souvlaki::{MediaControlEvent, MediaControls, PlatformConfig, SeekDirection};
             // A name of its own for each process, as browsers do: a second window would
             // otherwise find the first one's taken.
-            let name = format!("dnmusic.instance{}", std::process::id());
-            let config = PlatformConfig { display_name: "dnmusic", dbus_name: &name, hwnd: None };
+            let name = format!("surco.instance{}", std::process::id());
+            let config = PlatformConfig { display_name: "Surco", dbus_name: &name, hwnd: None };
             MediaControls::new(config).ok().and_then(|mut controls| {
                 let attached = controls.attach(move |event| {
                     let signed = |direction, seconds: f64| if direction == SeekDirection::Forward { seconds } else { -seconds };

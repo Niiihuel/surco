@@ -1,11 +1,11 @@
 [package]
-name = "dnm-audio"
+name = "surco-audio"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Audio engine for dnmusic: decode, two-deck output with gapless and crossfade, equaliser. No UI, no networking."
+description = "Audio engine for Surco: decode, two-deck output with gapless and crossfade, equaliser. No UI, no networking."
 
 [dependencies]
 rodio = { version = "0.22.2", default-features = false, features = ["playback", "symphonia-all"] }
