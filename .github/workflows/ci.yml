@@ -14,8 +14,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # The branch of limn the app is built against.
-  LIMN_REF: feat/slider-and-media-icons
+  # The commit of limn the app is built against: limn moves on its own, and a build of
+  # the app must not change under it. Its branch is feat/slider-and-media-icons.
+  LIMN_REF: a55130e795f3aa060da0845dea9654d57887e85a
 
 jobs:
   build:
@@ -52,10 +53,10 @@ jobs:
 
       - name: Build
         working-directory: surco
-        run: cargo build --workspace --locked
+        run: cargo build --workspace
 
       # The tests touch no window and no sound card; once is enough.
       - name: Test
         if: runner.os == 'Linux'
         working-directory: surco
-        run: cargo test --workspace --locked
+        run: cargo test --workspace

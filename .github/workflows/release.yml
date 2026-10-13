@@ -22,7 +22,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  LIMN_REF: feat/slider-and-media-icons
+  # The commit of limn the app is built against: limn moves on its own, and a build of
+  # the app must not change under it. Its branch is feat/slider-and-media-icons.
+  LIMN_REF: a55130e795f3aa060da0845dea9654d57887e85a
 
 jobs:
   build:
@@ -74,7 +76,7 @@ jobs:
 
       - name: Build
         working-directory: surco
-        run: cargo build --release --locked -p dnmusic
+        run: cargo build --release -p dnmusic
 
       - name: Package
         id: package
