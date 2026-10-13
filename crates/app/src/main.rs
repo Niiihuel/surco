@@ -108,6 +108,8 @@ impl Host {
 const APP_ID: &str = "dnmusic-native";
 const VOLUME_KEY: &str = "volume";
 const COLLECTION_KEY: &str = "collection";
+const LIBRARY_OPEN_KEY: &str = "library-open";
+const PANEL_OPEN_KEY: &str = "panel-open";
 const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
@@ -118,6 +120,8 @@ impl eframe::App for Host {
         if let Ok(collection) = serde_json::to_string(&self.state.collection) {
             storage.set_string(COLLECTION_KEY, collection);
         }
+        storage.set_string(LIBRARY_OPEN_KEY, self.state.library_open.to_string());
+        storage.set_string(PANEL_OPEN_KEY, self.state.panel_open.to_string());
         storage.set_string(LEFT_KEY, self.state.left_width.to_string());
         storage.set_string(RIGHT_KEY, self.state.right_width.to_string());
         storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
@@ -139,6 +143,11 @@ impl eframe::App for Host {
         let area = ui.max_rect();
         let window = Size::new(area.width(), area.height());
 
+        // Ctrl+B folds the library, as it folds a sidebar anywhere.
+        if ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::B)) {
+            let commands = self.state.update(&UiAction::Clicked { id: "toggle-library".into() });
+            self.send(commands);
+        }
         while let Ok(event) = self.events.try_recv() {
             let commands = self.state.apply(event);
             self.send(commands);
@@ -168,7 +177,7 @@ impl eframe::App for Host {
 
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
-        } else if self.state.panel_slide.is_active(Instant::now()) {
+        } else if self.state.is_sliding(Instant::now()) {
             ctx.request_repaint();
         } else if let Some(after) = self.tree.animation_repaint_after() {
             ctx.request_repaint_after(after);
@@ -230,6 +239,8 @@ fn main() -> eframe::Result {
                 let width = |key: &str, side: Side| storage.get_string(key).and_then(|width| width.parse::<f32>().ok()).map(|width| side.width(width));
                 state.left_width = width(LEFT_KEY, Side::Left).unwrap_or(state.left_width);
                 state.right_width = width(RIGHT_KEY, Side::Right).unwrap_or(state.right_width);
+                let open = |key: &str| storage.get_string(key).and_then(|open| open.parse::<bool>().ok()).unwrap_or(true);
+                state.restore_sides(open(LIBRARY_OPEN_KEY), open(PANEL_OPEN_KEY));
                 let collection = storage.get_string(COLLECTION_KEY).and_then(|text| serde_json::from_str(&text).ok());
                 state.collection = collection.unwrap_or_default();
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));

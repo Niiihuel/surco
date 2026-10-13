@@ -6,7 +6,8 @@ use limn::{
     Alert, Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
     ControlSize, DropdownMenu, DropdownMenuEntry, DropdownMenuItem, Element, Empty, FontFamily, Icon, IconButton, Link,
     ListRow, MediaCard, MediaTile, Modal, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField,
-    SegmentedControl, Size, SkeletonGroup, Slider, Spinner, Tab, Text, TextRole, Theme, Ticker,
+    SegmentedControl, Size, SkeletonGroup, Slider, Spinner, Tab, Text, TextRole, Theme, Ticker, TooltipPlacement,
+    TooltipSpec,
 };
 
 use crate::state::{clock, greeting, large_cover, share_link, Entry, Filter, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
@@ -27,6 +28,13 @@ const GAP: f32 = 8.0;
 const PANEL_RADIUS: f32 = 8.0;
 const TOP_BAR_HEIGHT: f32 = 56.0;
 const SEARCH_MAX_WIDTH: f32 = 474.0;
+/// The room each end of the top bar keeps: two header buttons.
+const TOP_BAR_END: f32 = 56.0;
+/// The round button's fill under the pointer and while held, and what it shows disabled.
+const ROUND_HOVER: Color = Color::rgb(224, 224, 224);
+const ROUND_HELD: Color = Color::rgb(204, 204, 204);
+const ROUND_OFF: Color = Color::rgb(54, 54, 54);
+const ROUND_OFF_INK: Color = Color::rgb(117, 117, 117);
 const PLAYER_HEIGHT: f32 = 76.0;
 const VOLUME_WIDTH: f32 = 93.0;
 const VOLUME_WIDTH_NARROW: f32 = 64.0;
@@ -85,25 +93,34 @@ pub fn view(state: &State, window: Size) -> Element {
     let palette = THEME.palette();
     let surface = |element: Element| Element::panel(element).background(THEME.background).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
+    // A panel on its way open or shut is drawn part of its width, uncovering content that
+    // keeps the width it has at rest.
+    let sliding = |content: Element, whole: f32, shown: f32| surface(Element::row(vec![content.size(Some(whole), None)])).size(Some(shown), None).clip_children();
+    let now = std::time::Instant::now();
+    let left_slide = state.library_slide.value(now).clamp(0.0, 1.0);
+    let right_slide = if window.width >= PANEL_FROM { state.panel_slide.value(now).clamp(0.0, 1.0) } else { 0.0 };
     let rail = window.width < RAIL_BELOW;
-    // The right panel slides open and shut: while it travels it is drawn part of its width.
-    let slide = state.panel_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
-    let beside = slide > 0.0 && window.width >= PANEL_FROM;
     // The side panels give way before the content does.
     let right_whole = state.right_width.min(window.width - 4.0 * GAP - RAIL_WIDTH - CONTENT_MIN_WIDTH);
-    let right = if beside { right_whole * slide } else { 0.0 };
-    let left = if rail { RAIL_WIDTH } else { state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH) };
-
-    let content = window.width - 3.0 * GAP - left - if beside { right + GAP } else { 0.0 };
-    let mut columns = vec![gap(), surface(library(state, rail, left, palette)).size(Some(left), None)];
-    columns.push(if rail { gap() } else { ResizeHandle::vertical(Side::Left.handle(), palette).thickness(GAP).render() });
-    if beside {
-        columns.push(surface(pane(state, content, palette)).flex(1.0));
+    let right = right_whole * right_slide;
+    let left_whole = if rail { RAIL_WIDTH } else { state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH) };
+    let left = left_whole * left_slide;
+    let handle = |side: Side, slide: f32| {
         // Only a panel at rest can be resized.
-        columns.push(if slide < 1.0 { gap() } else { ResizeHandle::vertical(Side::Right.handle(), palette).thickness(GAP).render() });
-        // Its content keeps its width and is uncovered as the panel opens.
-        columns.push(surface(Element::row(vec![panel(state, palette).size(Some(right_whole), None)])).size(Some(right), None).clip_children());
-    } else if state.queue_open {
+        if slide < 1.0 || (side == Side::Left && rail) { gap() } else { ResizeHandle::vertical(side.handle(), palette).thickness(GAP).render() }
+    };
+
+    let mut columns = vec![gap()];
+    let mut content = window.width - 2.0 * GAP;
+    if left_slide > 0.0 {
+        columns.extend([sliding(library(state, rail, left_whole, palette), left_whole, left), handle(Side::Left, left_slide)]);
+        content -= left + GAP;
+    }
+    if right_slide > 0.0 {
+        content -= right + GAP;
+        columns.push(surface(pane(state, content, palette)).flex(1.0));
+        columns.extend([handle(Side::Right, right_slide), sliding(panel(state, palette), right_whole, right)]);
+    } else if state.queue_open && window.width < PANEL_FROM {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
         columns.push(surface(pane(state, content, palette)).flex(1.0));
@@ -113,6 +130,11 @@ pub fn view(state: &State, window: Size) -> Element {
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
     share_dialog(state, window_tree, window.width, palette)
+}
+
+/// A button of a header: quiet, small, with its hint under it.
+fn header_button(id: &str, icon: Icon, hint: TooltipSpec, palette: ComponentPalette) -> IconButton {
+    IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip_with(hint.placement(TooltipPlacement::Below))
 }
 
 /// A track as the card that is handed around: its sleeve plays it, and while it plays the
@@ -148,22 +170,32 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         .render()
 }
 
-/// Across the top: the way back, home, and the search in the middle of the window.
+/// Across the top: the way back, home, and the search in the middle of the window. A side
+/// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let button = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).tooltip(hint);
     let search = SearchField::new("search", &state.query, "¿Qué querés escuchar?", ComponentPalette { surface: CHOSEN, ..palette })
-        .width((width - 240.0).clamp(160.0, SEARCH_MAX_WIDTH))
+        .width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH))
         .render()
         .centered_y();
+    let mut leading = Vec::new();
+    if !state.library_open {
+        leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new("Mostrar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
+    }
+    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new("Volver"), palette).enabled(state.can_go_back()).render().centered_y());
+    let mut trailing = vec![Element::spacer().flex(1.0)];
+    if !state.panel_open && width >= PANEL_FROM {
+        trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
+    }
+    // Both ends take the same room, so the search stays in the middle of the window.
+    let end = |children: Vec<Element>| Element::row(children).gap(4.0).size(Some(TOP_BAR_END), None);
     Element::panel(
         Element::row(vec![
-            button("back", Icon::ArrowLeft, "Volver").enabled(state.can_go_back()).render().centered_y(),
+            end(leading),
             Element::spacer().flex(1.0),
-            button("home", Icon::Home, "Inicio").render().centered_y(),
+            header_button("home", Icon::Home, TooltipSpec::new("Inicio"), palette).render().centered_y(),
             search,
             Element::spacer().flex(1.0),
-            // As wide as the button on the other side, so the search stays in the middle.
-            Element::spacer().size(Some(32.0), None),
+            end(trailing),
         ])
         .gap(GAP),
     )
@@ -208,14 +240,16 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     }
     if rail {
         let pictures = entries.into_iter().map(|(id, picture, ..)| Element::clickable(id, picture));
-        let head = Element::icon(Icon::Library).foreground(palette.muted).size(Some(LIBRARY_TILE), Some(40.0));
+        let shut = header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette);
+        let head = Element::row(vec![Element::spacer().flex(1.0), shut.render().centered_y(), Element::spacer().flex(1.0)]).size(Some(LIBRARY_TILE), Some(40.0));
         return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
     }
+    // A panel is shut from its own header.
     let header = Element::row(vec![
-        Element::icon(Icon::Library).foreground(palette.muted).centered_y(),
+        header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y(),
         Text::new("Tu biblioteca", palette).size(15.0).muted().render().centered_y(),
     ])
-    .gap(10.0)
+    .gap(8.0)
     .size(None, Some(40.0));
     let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, (width - 16.0) / 4.0).active(state.filter == filter);
     let filters = SegmentedControl::new(
@@ -632,7 +666,10 @@ fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Elemen
 
 /// A panel's head: what it shows, and a muted line about it.
 fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Element {
-    Element::column(vec![Text::new(title, palette).size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0)
+    let copy = Element::column(vec![Text::new(title, palette).size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
+    // A panel is shut from its own header.
+    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new("Ocultar este panel"), palette).render();
+    Element::row(vec![copy.flex(1.0), shut])
 }
 
 /// The right-hand column: what plays, or what comes after it while the queue is open.
@@ -770,10 +807,20 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         None => Element::spacer(),
     };
     let repeat_icon = if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
-    // Play is the one filled control of the bar.
-    let play = transport("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" })
-        .variant(ButtonVariant::Default)
-        .render();
+    // Play is the one filled control of the bar: a white circle.
+    let round = if has_track {
+        ComponentPalette { surface: palette.text, text: THEME.background, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette }
+    } else {
+        ComponentPalette { surface: ROUND_OFF, muted: ROUND_OFF_INK, ..palette }
+    };
+    let play = IconButton::new("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, round)
+        .variant(ButtonVariant::Subtle)
+        .size(ControlSize::Regular)
+        .round()
+        .tooltip(if state.player.playing { "Pausar" } else { "Reproducir" })
+        .enabled(has_track)
+        .render()
+        .center_content();
     let buttons = Element::row(vec![
         transport("shuffle", Icon::Shuffle, "Aleatorio").active(state.player.shuffle).render(),
         transport("previous", Icon::SkipBack, "Anterior").render(),
@@ -809,10 +856,6 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut controls = Vec::new();
     if wide {
         controls.push(Element::spacer().flex(1.0));
-        // Only where the panel has a column to show in.
-        if width >= PANEL_FROM {
-            controls.push(side("now-playing-view", Icon::PanelRight, "Vista de lo que suena", state.panel_open && !state.queue_open));
-        }
     }
     controls.extend([
         side("queue", Icon::Playlist, "Cola", state.queue_open),
@@ -926,6 +969,22 @@ mod tests {
         assert!(has(&at(&state, 1400.0), "upcoming:0") && has(&at(&state, 700.0), "upcoming:0"), "the queue shows at any width");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
+    }
+
+    #[test]
+    fn each_panel_is_shut_from_its_own_header_and_opened_from_the_bar_above() {
+        let mut state = State::default();
+        let at = |state: &State| ids(state, Size::new(1400.0, 700.0));
+        let has = |found: &[String], id: &str| found.iter().any(|found| found == id);
+        let open = at(&state);
+        assert!(has(&open, "toggle-library") && has(&open, "toggle-panel"));
+        assert!(!has(&open, "toggle-library-open") && !has(&open, "toggle-panel-open"));
+        state.update(&limn::UiAction::Clicked { id: "toggle-library".into() });
+        state.update(&limn::UiAction::Clicked { id: "toggle-panel".into() });
+        let shut = at(&state);
+        assert!(has(&shut, "toggle-library-open") && has(&shut, "toggle-panel-open"), "the bar above opens them: {shut:?}");
+        assert!(!has(&shut, "downloads") && !has(&shut, "resize:left") && !has(&shut, "resize:right"), "nothing of a shut panel is left");
+        assert!(has(&shut, "search") && has(&shut, "home"), "the bars stay");
     }
 
     #[test]

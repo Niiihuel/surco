@@ -179,6 +179,9 @@ pub struct State {
     /// Where the seek thumb is while it is being dragged.
     pub seek_preview: Option<f32>,
     pub volume: f32,
+    /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
+    pub library_open: bool,
+    pub library_slide: ScalarTransition,
     /// Whether the right panel shows, and whether it shows the queue instead of what plays.
     pub panel_open: bool,
     /// How far open the right panel is drawn, from 0 to 1, on its way to `panel_open`.
@@ -293,6 +296,8 @@ impl Default for State {
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
+            library_open: true,
+            library_slide: ScalarTransition::new(1.0, Instant::now()),
             panel_open: true,
             panel_slide: ScalarTransition::new(1.0, Instant::now()),
             motion: false,
@@ -383,11 +388,29 @@ impl State {
         cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork))
     }
 
-    /// Opens or closes the right panel, which slides to its place.
-    fn open_panel(&mut self, open: bool) {
-        self.panel_open = open;
+    /// Opens or closes a side panel, which slides to its place.
+    fn open_side(&mut self, side: Side, open: bool) {
+        let (flag, slide) = match side {
+            Side::Left => (&mut self.library_open, &mut self.library_slide),
+            Side::Right => (&mut self.panel_open, &mut self.panel_slide),
+        };
+        *flag = open;
         let travel = Duration::from_millis(u64::from(limn::tokens().motion.move_ms));
-        self.panel_slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
+        slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
+    }
+
+    /// Puts the panels where a saved session left them, with no travel.
+    pub fn restore_sides(&mut self, library_open: bool, panel_open: bool) {
+        let now = Instant::now();
+        self.library_open = library_open;
+        self.library_slide = ScalarTransition::new(if library_open { 1.0 } else { 0.0 }, now);
+        self.panel_open = panel_open;
+        self.panel_slide = ScalarTransition::new(if panel_open { 1.0 } else { 0.0 }, now);
+    }
+
+    /// Whether a side panel is on its way open or shut.
+    pub fn is_sliding(&self, now: Instant) -> bool {
+        self.library_slide.is_active(now) || self.panel_slide.is_active(now)
     }
 
     pub fn is_saved(&self, track_id: &str) -> bool {
@@ -597,15 +620,21 @@ impl State {
                 // The player keeps shuffle on across lists, so it is only switched on.
                 (!self.player.shuffle).then_some(Command::Shuffle).into_iter().chain([start]).collect()
             }
-            // Each button shows its face of the right panel, and closes the panel from that face.
+            // The queue is a face of the right panel: its button opens the panel on it, and
+            // closes the panel from it.
             "queue" => {
                 self.queue_open = !self.queue_open;
-                self.open_panel(self.queue_open);
+                self.open_side(Side::Right, self.queue_open);
                 self.upcoming_covers()
             }
-            "now-playing-view" => {
-                self.open_panel(!self.panel_open || self.queue_open);
+            // Each panel is shut from its own header and opened from the bar above.
+            "toggle-panel" | "toggle-panel-open" => {
+                self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
+                Vec::new()
+            }
+            "toggle-library" | "toggle-library-open" => {
+                self.open_side(Side::Left, !self.library_open);
                 Vec::new()
             }
             "home" => {
@@ -988,14 +1017,25 @@ mod tests {
         assert!(state.panel_open && !state.queue_open, "what plays shows at first");
         click(&mut state, "queue");
         assert!(state.panel_open && state.queue_open);
-        click(&mut state, "now-playing-view");
-        assert!(state.panel_open && !state.queue_open, "from the queue to what plays");
-        click(&mut state, "now-playing-view");
-        assert!(!state.panel_open);
+        click(&mut state, "toggle-panel");
+        assert!(!state.panel_open && !state.queue_open, "shut from its own header");
+        click(&mut state, "toggle-panel-open");
+        assert!(state.panel_open && !state.queue_open, "opened from the bar above, on what plays");
         click(&mut state, "queue");
         assert!(state.panel_open && state.queue_open);
         click(&mut state, "queue");
         assert!(!state.panel_open && !state.queue_open);
+
+        click(&mut state, "toggle-library");
+        assert!(!state.library_open);
+        assert_eq!(state.library_slide.value(Instant::now()), 0.0, "without motion it is shut at once");
+        click(&mut state, "toggle-library-open");
+        assert!(state.library_open && !state.is_sliding(Instant::now()));
+        state.motion = true;
+        click(&mut state, "toggle-library");
+        assert!(state.is_sliding(Instant::now()), "with motion it travels");
+        state.restore_sides(false, true);
+        assert!(!state.library_open && state.panel_open && !state.is_sliding(Instant::now()));
     }
 
     #[test]
