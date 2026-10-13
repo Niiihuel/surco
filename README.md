@@ -4,6 +4,8 @@ A native music player for the desktop, written entirely in Rust. The interface i
 with [limn](https://github.com/Niiihuel/limn); there is no web view. *Surco* is the
 groove of a record: where the needle travels.
 
+![The home page: what was played, and picks made from it](docs/screenshots/home.jpg)
+
 It plays without an account. What is liked, kept and listed stays on the machine that
 plays it; a playlist is shared as a link that carries it whole.
 
@@ -17,6 +19,10 @@ plays it; a playlist is shared as a link that carries it whole.
 - A library that searches, sorts, pins and lists as lines, rows or tiles; local
   playlists, likes and downloads for listening without a network.
 - A bell for what the artists followed release, and for later versions of the app.
+
+| | |
+|---|---|
+| ![An artist's page, with its tracks as a table](docs/screenshots/artist.jpg) | ![Synced lyrics beside the song's own video](docs/screenshots/lyrics.jpg) |
 
 ## Crates
 
