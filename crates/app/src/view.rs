@@ -1385,7 +1385,7 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
 fn next_up(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
     let next = state.player.upcoming.first()?;
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let queue = Link::new("next-queue", "Abrir la cola", raised).font_size(12.0).render().dispatch_as("queue");
+    let queue = Link::new("next-queue", "Abrir la cola", raised).font_size(12.0).render();
     let head = Element::row(vec![Text::eyebrow("A CONTINUACIÓN", raised).render().centered_y(), Element::spacer().flex(1.0), queue.centered_y()]);
     let row = ListRow::new("upcoming:0", &next.title, raised)
         .sizing(TRACK_ROW)
@@ -1438,7 +1438,7 @@ fn on_picture(id: &str, icon: Icon, hint: &str, palette: ComponentPalette) -> El
 /// Turns the videos of what plays off and on, from where they are seen.
 fn footage_switch(state: &State, palette: ComponentPalette) -> Element {
     let (icon, hint) = if state.settings.clips { (Icon::Image, "Ver la tapa") } else { (Icon::Video, "Ver el video") };
-    on_picture("cover-clips", icon, hint, palette).dispatch_as("setting:clips")
+    on_picture("cover-clips", icon, hint, palette)
 }
 
 /// The bar over what plays while it fills the window.
@@ -1880,6 +1880,37 @@ mod tests {
         for id in ["lyrics", "upcoming:0", "next-queue"] {
             assert!(found.iter().filter(|found| *found == id).count() >= 1, "{id} among {found:?}");
         }
+    }
+
+    #[test]
+    fn the_buttons_of_the_panel_of_what_plays_do_what_they_say_when_pressed() {
+        let size = Size::new(1400.0, 900.0);
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), upcoming: vec![track("b")], duration: 200.0, playing: true, ..PlayerView::default() });
+        // A press as the window gives it: down and up in the middle of the control.
+        let press = |state: &mut State, id: &str| {
+            let mut tree = UiTree::new(view(state, size));
+            let frame = tree.layout(size);
+            let rect = frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap_or_else(|| panic!("no {id}"));
+            let middle = limn::Point::new(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0);
+            tree.handle_event(limn::UiEvent::PointerMove(middle));
+            tree.layout(size);
+            tree.handle_event(limn::UiEvent::PointerDown(middle));
+            for action in tree.handle_event(limn::UiEvent::PointerUp(middle)) {
+                state.update(&action);
+            }
+        };
+        assert!(state.settings.clips);
+        press(&mut state, "cover-clips");
+        assert!(!state.settings.clips, "the cover is shown in the video's place");
+        press(&mut state, "cover-clips");
+        assert!(state.settings.clips);
+        press(&mut state, "cinema");
+        assert!(state.cinema, "what plays takes the whole window");
+        press(&mut state, "cinema");
+        assert!(!state.cinema, "and gives it back from the same button");
+        press(&mut state, "next-queue");
+        assert!(state.queue_open, "the link under what comes next opens the queue");
     }
 
     #[test]

@@ -1185,7 +1185,8 @@ impl State {
                 self.search_page(!self.page_searching);
                 Vec::new()
             }
-            "queue" => {
+            // Its button in the bar, and the link under what comes next in the panel.
+            "queue" | "next-queue" => {
                 self.queue_open = !self.queue_open;
                 self.open_side(Side::Right, self.queue_open);
                 let mut commands = self.upcoming_covers();
@@ -1334,7 +1335,8 @@ impl State {
                 self.settings.reduce_motion = !self.settings.reduce_motion;
                 Vec::new()
             }
-            "setting:clips" => {
+            // From the settings, and from the button over the cover.
+            "setting:clips" | "cover-clips" => {
                 self.settings.clips = !self.settings.clips;
                 self.ask_clip()
             }
