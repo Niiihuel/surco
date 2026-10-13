@@ -94,6 +94,14 @@ impl Queue {
         self.up_next.push_front(track);
     }
 
+    /// What follows the current track, in the order it will play: hand-queued tracks first,
+    /// then the rest of the list.
+    pub fn upcoming(&self) -> impl Iterator<Item = &Track> {
+        let from = self.position().map_or(0, |position| position + 1);
+        let rest = (from..self.list.len()).filter_map(|position| self.at(position)).filter_map(|index| self.list.get(index));
+        self.up_next.iter().chain(rest)
+    }
+
     /// What `advance` would play, without moving. The engine preloads this.
     pub fn peek_next(&self) -> Option<&Track> {
         if self.repeat == Repeat::One {
@@ -230,6 +238,8 @@ mod tests {
         q.enqueue(track("y"));
         q.enqueue_next(track("w"));
         assert_eq!(id(q.peek_next()), Some("w"));
+        let upcoming: Vec<&str> = q.upcoming().map(|t| t.id.as_str()).collect();
+        assert_eq!(upcoming, ["w", "x", "y", "b", "c"]);
         assert_eq!(id(q.advance()), Some("w"));
         assert_eq!(id(q.advance()), Some("x"));
         assert_eq!(id(q.advance()), Some("y"));

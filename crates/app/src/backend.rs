@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
+use dnm_audio::equalizer::{self, EqualizerValues};
 use dnm_audio::{Load, MediaBuffer, NativeAudio};
 use dnm_core::Track;
 use dnm_youtube::{Audio, YouTube};
@@ -28,6 +29,8 @@ pub enum Command {
     PlayList { tracks: Vec<Track>, index: usize },
     PlayPause,
     Next,
+    /// Play the n-th of the upcoming tracks, skipping the ones before it.
+    Jump(usize),
     Previous,
     /// Seconds from the start of the current track.
     Seek(f64),
@@ -37,6 +40,7 @@ pub enum Command {
     Shuffle,
     /// Steps repeat: off, the list, the track.
     Repeat,
+    Equalizer(EqualizerValues),
 }
 
 /// What comes back. A search answer names its query, because answers arrive late and out of
@@ -50,6 +54,12 @@ pub enum Event {
 
 /// How many times a broken download resumes from where it stopped before the track fails.
 const DOWNLOAD_ATTEMPTS: u32 = 4;
+
+/// What reaches the player from the worker's own side.
+enum Input {
+    Engine(dnm_audio::Event),
+    Radio { seed: String, tracks: Vec<Track> },
+}
 
 /// A track on its way into a deck.
 struct Download {
@@ -82,8 +92,8 @@ struct Shared {
     downloads: Mutex<Downloads>,
     /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
     decks: tokio::sync::Mutex<()>,
-    /// The way back into the player, for a track that never reached the engine.
-    engine: UnboundedSender<dnm_audio::Event>,
+    /// The way back into the player.
+    inputs: UnboundedSender<Input>,
 }
 
 impl Shared {
@@ -112,8 +122,8 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, 
         .spawn(move || {
             let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("a tokio runtime");
             runtime.block_on(async move {
-                let (engine, mut engine_events) = unbounded_channel();
-                let shared = start(reply.clone(), engine.clone()).await.map(Arc::new);
+                let (inputs, mut inbox_own) = unbounded_channel();
+                let shared = start(reply.clone(), inputs.clone()).await.map(Arc::new);
                 let mut player = Player::default();
                 loop {
                     let effects = tokio::select! {
@@ -121,14 +131,21 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, 
                             Some(command) => handle(&shared, &reply, &mut player, command),
                             None => return,
                         },
-                        Some(event) = engine_events.recv() => player.engine(event),
+                        Some(input) = inbox_own.recv() => match input {
+                            Input::Engine(event) => player.engine(event),
+                            Input::Radio { seed, tracks } => {
+                                player.radio(&seed, tracks);
+                                Vec::new()
+                            }
+                        },
                     };
                     for effect in effects {
                         match (&shared, effect) {
                             (Ok(shared), effect) => run(shared, effect),
                             // Nothing can play: the track fails with the reason the backend did not start.
                             (Err(message), Effect::Play(track)) => {
-                                let _ = engine.send(dnm_audio::Event::Failed { track_id: track.id, message: message.clone() });
+                                let failed = dnm_audio::Event::Failed { track_id: track.id, message: message.clone() };
+                                let _ = inputs.send(Input::Engine(failed));
                             }
                             _ => {}
                         }
@@ -151,11 +168,11 @@ pub fn spawn(ctx: egui::Context) -> (UnboundedSender<Command>, Receiver<Event>, 
 
 async fn start(
     reply: impl Fn(Event) + Send + Sync + 'static,
-    engine: UnboundedSender<dnm_audio::Event>,
+    inputs: UnboundedSender<Input>,
 ) -> Result<Shared, String> {
     let youtube = YouTube::new().await.map_err(|error| format!("No se pudo conectar con el catálogo: {error}"))?;
-    let events = engine.clone();
-    let audio = NativeAudio::start(None, move |event| drop(events.send(event)))
+    let events = inputs.clone();
+    let audio = NativeAudio::start(None, move |event| drop(events.send(Input::Engine(event))))
         .map_err(|error| format!("No se pudo abrir la salida de audio: {error}"))?;
     Ok(Shared {
         reply: Box::new(reply),
@@ -164,7 +181,7 @@ async fn start(
         generation: AtomicU64::new(0),
         downloads: Mutex::default(),
         decks: tokio::sync::Mutex::default(),
-        engine,
+        inputs,
     })
 }
 
@@ -194,6 +211,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         // The engine only fails this when its thread is gone, which the next `Play` reports.
         (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume, false)),
         (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
+        (Command::Equalizer(values), _) => equalizer::set_values(values),
         (command, _) => return player.command(command),
     }
     Vec::new()
@@ -218,7 +236,8 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
             tokio::spawn(async move {
                 if let Err(message) = play(&shared, &track, generation).await {
                     if shared.is_current(generation) {
-                        let _ = shared.engine.send(dnm_audio::Event::Failed { track_id: track.id, message });
+                        let failed = dnm_audio::Event::Failed { track_id: track.id, message };
+                        let _ = shared.inputs.send(Input::Engine(failed));
                     }
                 }
             });
@@ -226,6 +245,15 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
         Effect::Preload(track) => {
             let shared = shared.clone();
             tokio::spawn(async move { preload(&shared, &track).await });
+        }
+        Effect::Radio(track) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // Without an answer the track simply ends the queue.
+                if let Ok(tracks) = shared.youtube.radio(&track.id).await {
+                    let _ = shared.inputs.send(Input::Radio { seed: track.id, tracks });
+                }
+            });
         }
         // As with the volume: a dead engine is reported by the next `Play`.
         Effect::Pause => drop(shared.audio.pause()),

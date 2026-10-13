@@ -1,8 +1,9 @@
 //! Everything the window shows, and the two ways it changes: an action from the user
 //! (`update`) or an answer from the backend (`apply`). Both return the commands to send.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use dnm_audio::equalizer::EqualizerValues;
 use dnm_core::Track;
 use limn::{RasterImage, UiAction};
 
@@ -21,8 +22,22 @@ pub struct State {
     /// Where the seek thumb is while it is being dragged.
     pub seek_preview: Option<f32>,
     pub volume: f32,
+    pub queue_open: bool,
+    pub equalizer_open: bool,
+    pub equalizer: EqualizerValues,
     pub artwork: HashMap<String, RasterImage>,
+    /// Covers already asked for, arrived or not.
+    covers: HashSet<String>,
 }
+
+/// One request per cover, however many rows show it and however often it comes up.
+fn cover_requests<'a>(asked: &mut HashSet<String>, tracks: impl IntoIterator<Item = &'a Track>) -> Vec<Command> {
+    let urls = tracks.into_iter().filter_map(|track| track.artwork_url.as_ref());
+    urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
+}
+
+/// The equaliser's range, each side of zero.
+pub const EQUALIZER_DB: f32 = 12.0;
 
 impl Default for State {
     fn default() -> Self {
@@ -35,7 +50,11 @@ impl Default for State {
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
+            queue_open: false,
+            equalizer_open: false,
+            equalizer: EqualizerValues::FLAT,
             artwork: HashMap::new(),
+            covers: HashSet::new(),
         }
     }
 }
@@ -88,6 +107,15 @@ impl State {
                 self.volume = *fraction;
                 vec![Command::Volume(self.volume)]
             }
+            UiAction::SliderChanged { id, fraction, .. } if id.starts_with("equalizer:") => {
+                let gain = ((fraction * 2.0 - 1.0) * EQUALIZER_DB).round();
+                match id["equalizer:".len()..].parse::<usize>() {
+                    Ok(band) if band < self.equalizer.bands_db.len() => self.equalizer.bands_db[band] = gain,
+                    Ok(_) => return Vec::new(),
+                    Err(_) => self.equalizer.preamp_db = gain,
+                }
+                vec![Command::Equalizer(self.equalizer)]
+            }
             UiAction::Clicked { id } => self.click(id),
             _ => Vec::new(),
         }
@@ -95,9 +123,29 @@ impl State {
 
     fn click(&mut self, id: &str) -> Vec<Command> {
         if let Some(index) = id.strip_prefix("track:").and_then(|i| i.parse::<usize>().ok()) {
-            return vec![Command::PlayList { tracks: self.results.clone(), index }];
+            // A result plays on its own and the player follows it with its radio.
+            return self.results.get(index).map(|track| Command::PlayList { tracks: vec![track.clone()], index: 0 }).into_iter().collect();
+        }
+        if let Some(upcoming) = id.strip_prefix("upcoming:").and_then(|i| i.parse::<usize>().ok()) {
+            return vec![Command::Jump(upcoming)];
         }
         match id {
+            "queue" => {
+                self.queue_open = !self.queue_open;
+                self.upcoming_covers()
+            }
+            "equalizer" => {
+                self.equalizer_open = !self.equalizer_open;
+                Vec::new()
+            }
+            "equalizer-close" => {
+                self.equalizer_open = false;
+                Vec::new()
+            }
+            "equalizer-reset" => {
+                self.equalizer = EqualizerValues::FLAT;
+                vec![Command::Equalizer(self.equalizer)]
+            }
             "play-pause" => vec![Command::PlayPause],
             "next" => vec![Command::Next],
             "previous" => vec![Command::Previous],
@@ -116,11 +164,7 @@ impl State {
             Event::SearchResults { query, tracks } if self.submitted.as_deref() == Some(&query) => {
                 self.searching = false;
                 self.results = tracks;
-                let mut urls: Vec<&String> =
-                    self.results.iter().filter_map(|t| t.artwork_url.as_ref()).filter(|u| !self.artwork.contains_key(*u)).collect();
-                urls.sort();
-                urls.dedup();
-                urls.into_iter().map(|url| Command::FetchArtwork(url.clone())).collect()
+                cover_requests(&mut self.covers, &self.results)
             }
             Event::SearchFailed { query, message } if self.submitted.as_deref() == Some(&query) => {
                 self.searching = false;
@@ -137,10 +181,18 @@ impl State {
 
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
-        let cover = player.current.as_ref().and_then(|track| track.artwork_url.clone());
-        let changed = player.current != self.player.current;
         self.player = player;
-        cover.filter(|url| changed && !self.artwork.contains_key(url)).map(Command::FetchArtwork).into_iter().collect()
+        let mut commands = cover_requests(&mut self.covers, &self.player.current);
+        commands.extend(self.upcoming_covers());
+        commands
+    }
+
+    /// The queue's covers are only fetched while the queue is on screen.
+    fn upcoming_covers(&mut self) -> Vec<Command> {
+        if !self.queue_open {
+            return Vec::new();
+        }
+        cover_requests(&mut self.covers, &self.player.upcoming)
     }
 }
 
@@ -196,9 +248,11 @@ mod tests {
         let mut state = State { query: "q".into(), ..State::default() };
         state.search();
         state.apply(Event::SearchResults { query: "q".into(), tracks: vec![track("a"), track("b")] });
-        assert_eq!(click(&mut state, "track:1"), vec![Command::PlayList { tracks: vec![track("a"), track("b")], index: 1 }]);
+        assert_eq!(click(&mut state, "track:1"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
+        assert!(click(&mut state, "track:9").is_empty());
         assert!(state.current().is_none(), "the player says what plays, not the click");
         for (id, command) in [
+            ("upcoming:3", Command::Jump(3)),
             ("play-pause", Command::PlayPause),
             ("next", Command::Next),
             ("previous", Command::Previous),
@@ -219,6 +273,35 @@ mod tests {
         assert_eq!(state.show(playing("a")), vec![Command::FetchArtwork("https://img/a".into())]);
         assert!(state.show(playing("a")).is_empty(), "the same track again is only a position");
         assert_eq!(state.current(), Some(&track("a")));
+    }
+
+    #[test]
+    fn the_queue_fetches_its_covers_only_while_it_is_open() {
+        let mut state = State::default();
+        let view = PlayerView { upcoming: vec![track("b"), track("c")], ..playing("a") };
+        assert_eq!(state.show(view.clone()), vec![Command::FetchArtwork("https://img/a".into())]);
+        let opened = click(&mut state, "queue");
+        assert_eq!(opened, vec![Command::FetchArtwork("https://img/b".into()), Command::FetchArtwork("https://img/c".into())]);
+        assert!(state.show(view).is_empty(), "nothing is asked for twice");
+        click(&mut state, "queue");
+        assert!(!state.queue_open);
+    }
+
+    #[test]
+    fn the_equalizer_sliders_set_whole_decibels() {
+        let mut state = State::default();
+        let slide = |id: &str, fraction| UiAction::SliderChanged { id: id.into(), fraction, committed: false };
+        let mut expected = EqualizerValues::FLAT;
+        expected.bands_db[5] = 6.0;
+        assert_eq!(state.update(&slide("equalizer:5", 0.76)), vec![Command::Equalizer(expected)]);
+        expected.preamp_db = -12.0;
+        assert_eq!(state.update(&slide("equalizer:preamp", 0.0)), vec![Command::Equalizer(expected)]);
+        assert!(state.update(&slide("equalizer:42", 1.0)).is_empty(), "there is no such band");
+        assert_eq!(click(&mut state, "equalizer-reset"), vec![Command::Equalizer(EqualizerValues::FLAT)]);
+        click(&mut state, "equalizer");
+        assert!(state.equalizer_open);
+        click(&mut state, "equalizer-close");
+        assert!(!state.equalizer_open);
     }
 
     #[test]

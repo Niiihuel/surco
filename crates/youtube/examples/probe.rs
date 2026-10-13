@@ -1,6 +1,6 @@
 //! Checks the two things this crate does against the real service:
 //! `cargo run -p dnm-youtube --example probe -- "<search text>"`
-//! searches, resolves the first result and downloads its best audio stream.
+//! searches, asks for the radio of the first result, resolves it and downloads its best audio stream.
 
 use std::time::Instant;
 
@@ -24,6 +24,13 @@ async fn main() -> dnm_youtube::Result<()> {
         );
     }
     let first = tracks.first().ok_or("no results")?;
+
+    let started = Instant::now();
+    let radio = youtube.radio(&first.id).await?;
+    println!("radio of {}: {} tracks in {:?}", first.title, radio.len(), started.elapsed());
+    for track in radio.iter().take(12) {
+        println!("  {} | {} | {} ms | artwork {}", track.title, track.artist, track.duration_ms, track.artwork_url.as_deref().map_or("no", |_| "yes"));
+    }
 
     let started = Instant::now();
     let stream = youtube.stream(&first.id).await?;

@@ -12,6 +12,8 @@ const PRELOAD_AHEAD: f64 = 20.0;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlayerView {
     pub current: Option<Track>,
+    /// What follows, in the order it will play.
+    pub upcoming: Vec<Track>,
     /// What the user asked for, which the engine may not have reached yet.
     pub playing: bool,
     pub position: f64,
@@ -28,6 +30,8 @@ pub enum Effect {
     Play(Track),
     /// Get this track ready on the standby deck.
     Preload(Track),
+    /// Nothing follows this track: ask the catalog what would.
+    Radio(Track),
     Pause,
     Resume,
     Seek(f64),
@@ -51,6 +55,7 @@ impl Player {
     pub fn view(&self) -> PlayerView {
         PlayerView {
             current: self.queue.current().cloned(),
+            upcoming: self.queue.upcoming().cloned().collect(),
             playing: self.playing,
             position: self.position,
             duration: self.duration,
@@ -68,7 +73,30 @@ impl Player {
         self.duration = track.duration_ms as f64 / 1000.0;
         self.error = None;
         self.preloading = None;
-        vec![Effect::Play(track)]
+        // A lone track and the last of a list are followed by their radio, as long as the
+        // user did not ask for the list to repeat.
+        let radio = self.queue.peek_next().is_none().then(|| Effect::Radio(track.clone()));
+        std::iter::once(Effect::Play(track)).chain(radio).collect()
+    }
+
+    /// The catalog's answer to `Effect::Radio`. One that arrives after the user moved on to
+    /// something else is dropped.
+    pub fn radio(&mut self, seed: &str, tracks: Vec<Track>) {
+        if self.is_current(seed) && self.queue.peek_next().is_none() {
+            self.queue.extend(tracks, &mut self.rng);
+        }
+    }
+
+    /// Moves forward `count` tracks at once.
+    fn skip(&mut self, count: usize) -> Vec<Effect> {
+        let mut reached = None;
+        for _ in 0..count {
+            match self.queue.skip_next() {
+                Some(track) => reached = Some(track.clone()),
+                None => break,
+            }
+        }
+        self.start(reached)
     }
 
     pub fn command(&mut self, command: Command) -> Vec<Effect> {
@@ -83,10 +111,8 @@ impl Player {
                 self.playing = !self.playing;
                 vec![if self.playing { Effect::Resume } else { Effect::Pause }]
             }
-            Command::Next => {
-                let next = self.queue.skip_next().cloned();
-                self.start(next)
-            }
+            Command::Next => self.skip(1),
+            Command::Jump(upcoming) => self.skip(upcoming + 1),
             // Like every player: a few seconds in, "previous" restarts the track.
             Command::Previous if self.loaded && self.position > 3.0 => {
                 self.position = 0.0;
@@ -203,11 +229,12 @@ mod tests {
         assert!(player.command(Command::PlayList { tracks: tracks.clone(), index: 9 }).is_empty());
         assert_eq!(player.command(Command::PlayList { tracks, index: 1 }), vec![Effect::Play(track("b"))]);
         assert_eq!(player.view().duration, 200.0);
-        assert_eq!(player.engine(ended("b")), vec![Effect::Play(track("c"))]);
+        assert_eq!(player.view().upcoming, vec![track("c")]);
+        assert_eq!(player.engine(ended("b")), vec![Effect::Play(track("c")), Effect::Radio(track("c"))]);
         assert!(player.engine(ended("c")).is_empty());
         let view = player.view();
         assert!(!view.playing && view.position == view.duration, "the queue ended on its last track");
-        assert_eq!(player.command(Command::PlayPause), vec![Effect::Play(track("c"))], "play starts it again");
+        assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("c"))), "play starts it again");
     }
 
     #[test]
@@ -231,7 +258,7 @@ mod tests {
         assert!(!view.playing);
         assert_eq!(view.error.as_deref(), Some("sin red"));
         assert!(player.command(Command::Seek(10.0)).is_empty(), "nothing is loaded to seek in");
-        assert_eq!(player.command(Command::PlayPause), vec![Effect::Play(track("a"))]);
+        assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("a"))));
         assert!(player.view().error.is_none());
     }
 
@@ -261,12 +288,34 @@ mod tests {
     }
 
     #[test]
+    fn a_lone_track_is_followed_by_its_radio() {
+        let mut player = Player::default();
+        let effects = player.command(Command::PlayList { tracks: vec![track("a")], index: 0 });
+        assert_eq!(effects, vec![Effect::Play(track("a")), Effect::Radio(track("a"))]);
+        player.radio("other", vec![track("x")]);
+        assert!(player.view().upcoming.is_empty(), "the answer to another seed is dropped");
+        player.radio("a", vec![track("a"), track("b"), track("c")]);
+        assert_eq!(player.view().upcoming, vec![track("b"), track("c")], "the seed is not repeated");
+        player.radio("a", vec![track("d")]);
+        assert_eq!(player.view().upcoming.len(), 2, "a second answer adds nothing");
+        assert_eq!(player.command(Command::Jump(1)), vec![Effect::Play(track("c")), Effect::Radio(track("c"))]);
+        assert!(player.command(Command::Jump(5)).is_empty(), "nowhere to jump to");
+    }
+
+    #[test]
+    fn a_list_that_repeats_asks_for_no_radio() {
+        let mut player = playing(&["a", "b"], 0);
+        player.command(Command::Repeat);
+        assert_eq!(player.command(Command::Next), vec![Effect::Play(track("b"))]);
+    }
+
+    #[test]
     fn the_next_track_is_preloaded_once_near_the_end() {
         let mut player = playing(&["a", "b"], 0);
         assert!(player.engine(at("a", 100.0)).is_empty(), "too early");
         assert_eq!(player.engine(at("a", 185.0)), vec![Effect::Preload(track("b"))]);
         assert!(player.engine(at("a", 186.0)).is_empty(), "asked once");
-        assert_eq!(player.engine(ended("a")), vec![Effect::Play(track("b"))]);
+        assert_eq!(player.engine(ended("a")).first(), Some(&Effect::Play(track("b"))));
         assert!(player.engine(at("b", 190.0)).is_empty(), "nothing follows the last track");
         player.command(Command::Repeat);
         assert_eq!(player.engine(at("b", 191.0)), vec![Effect::Preload(track("a"))], "repeat-all wraps around");

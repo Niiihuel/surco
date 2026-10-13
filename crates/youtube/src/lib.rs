@@ -7,7 +7,7 @@ mod stream;
 
 use dnm_core::Track;
 use ytmapi_rs::auth::noauth::NoAuthToken;
-use ytmapi_rs::common::YoutubeID;
+use ytmapi_rs::common::{VideoID, YoutubeID};
 
 pub use stream::{Audio, Stream};
 
@@ -46,6 +46,25 @@ impl YouTube {
                 album: song.album.map(|album| album.name),
                 artwork_url: song.thumbnails.into_iter().max_by_key(|t| t.width).map(|t| t.url),
                 duration_ms: duration_ms(&song.duration),
+            })
+            .collect())
+    }
+
+    /// What YouTube Music would play after this track: more of its artist and album, with
+    /// other artists in between. The track itself usually comes first.
+    pub async fn radio(&self, video_id: &str) -> Result<Vec<Track>> {
+        let tracks = self.music.get_watch_playlist_from_video_id(VideoID::from_raw(video_id)).await?;
+        Ok(tracks
+            .into_iter()
+            .map(|track| Track {
+                id: track.video_id.get_raw().to_owned(),
+                title: track.title,
+                artist: track.author,
+                artist_id: None,
+                album: None,
+                album_id: None,
+                artwork_url: track.thumbnails.into_iter().max_by_key(|t| t.width).map(|t| t.url),
+                duration_ms: duration_ms(&track.duration),
             })
             .collect())
     }
