@@ -5,7 +5,7 @@ use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
-    DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, Link, ListRow, MediaCard, MediaTile,
+    DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, RadiusRole, ResizeHandle, RowSizing, Scheme,
     ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Tabs, Text, TextField, TextRole, Ticker,
     TooltipPlacement, TooltipSpec,
@@ -49,6 +49,9 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
+/// A bar of the playing row's wave, and the space between two.
+const WAVE_BAR: f32 = 3.0;
+const WAVE_GAP: f32 = 2.0;
 /// A line of lyrics reads from across the room.
 const LYRIC_SIZE: f32 = 18.0;
 const LYRIC_GAP: f32 = 14.0;
@@ -551,6 +554,17 @@ fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>>
     actions
 }
 
+/// What plays says so with its own sound: a bar for each band of the engine's meter, on
+/// springs. With movement reduced it is the still glyph.
+fn wave(state: &State, id: String, palette: ComponentPalette) -> Element {
+    if state.settings.reduce_motion {
+        return Element::icon(Icon::Audio).foreground(palette.text).size(Some(16.0), Some(16.0));
+    }
+    let bars = LevelBars { id, levels: state.levels.to_vec(), bar: WAVE_BAR, gap: WAVE_GAP, color: palette.text, rest: palette.text };
+    let width = state.levels.len() as f32 * (WAVE_BAR + WAVE_GAP) - WAVE_GAP;
+    Element::level_bars(bars).size(Some(width), Some(16.0))
+}
+
 /// A track the way dnmusic lists it: its number where the list has an order, its cover, the
 /// title over a muted line, how long it lasts, and the dots that open its menu. The same menu
 /// answers a secondary click.
@@ -561,7 +575,7 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     if let Some(number) = number {
         // The playing track shows that it plays where its number was.
         let mark = match (current, state.player.playing) {
-            (true, true) => Element::icon(Icon::Audio).foreground(palette.text),
+            (true, true) => wave(state, format!("wave:{row}"), palette),
             (true, false) => Element::icon(Icon::PlayFill).foreground(palette.text),
             (false, _) => muted(number.to_string()),
         };
@@ -602,7 +616,7 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
     // After the copy: that it plays, that it is kept on disk or on its way there, how long it lasts.
     let mut facts = Vec::new();
     if current && number.is_none() {
-        facts.push(Element::icon(Icon::Audio).foreground(palette.text).size(Some(16.0), Some(16.0)).centered_y());
+        facts.push(wave(state, format!("wave:{row}"), palette).centered_y());
     }
     if state.saving.contains(&track.id) {
         facts.push(Spinner::new(format!("saving:{row}"), palette.muted).size(12.0).render().centered_y());

@@ -173,6 +173,9 @@ impl eframe::App for Host {
             self.send(commands);
         }
         self.run_script();
+        // The row of what plays draws its sound: a reading each frame keeps its bars moving.
+        let sounding = self.state.player.playing && !self.state.settings.reduce_motion;
+        self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
         // The line being sung stays in view, well clear of the panel's edges.

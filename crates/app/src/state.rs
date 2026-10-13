@@ -361,6 +361,8 @@ pub struct State {
     pub save_error: Option<String>,
     /// The devices there are to play through, the one chosen (none for the system's own),
     /// and whether their list is open.
+    /// What sounds right now, in the engine's four bands; silence while nothing plays.
+    pub levels: [f32; dnm_audio::meter::BANDS],
     /// What the catalog offers after a track that was heard, by that track's id; empty
     /// while the answer is on its way.
     pub recommended: HashMap<String, Vec<Track>>,
@@ -480,6 +482,7 @@ impl Default for State {
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
+            levels: [0.0; dnm_audio::meter::BANDS],
             recommended: HashMap::new(),
             lyrics_open: false,
             lyrics: None,
@@ -786,6 +789,11 @@ impl State {
             return self.act(action, row);
         }
         let indexed = |prefix: &str| id.strip_prefix(prefix).and_then(|index| index.parse::<usize>().ok());
+        // The row of what plays pauses it and takes it up again; any other row starts its track.
+        let row = indexed("track:").or(indexed("page-track:")).and_then(|_| self.track_at(id));
+        if row.is_some_and(|track| self.current().is_some_and(|current| current.id == track.id)) {
+            return vec![Command::PlayPause];
+        }
         if let Some(index) = indexed("track:") {
             // A result plays on its own and the player follows it with its radio.
             let track = self.found.tracks.get(index);
@@ -1577,6 +1585,16 @@ mod tests {
         assert_eq!(serde_json::from_str::<Collection>(&written).unwrap(), state.collection);
         let older: Collection = serde_json::from_str(r#"{"kept":[],"recent":[]}"#).unwrap();
         assert!(older.playlists.is_empty(), "a collection saved before lists existed still loads");
+    }
+
+    #[test]
+    fn the_row_of_what_plays_pauses_it_and_any_other_starts_its_own() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
+        state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
+        assert_eq!(click(&mut state, "track:0"), vec![Command::PlayPause]);
+        assert_eq!(click(&mut state, "track:1"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
     }
 
     #[test]

@@ -15,6 +15,7 @@
  * one — so a source reads shared state rather than capturing gains when it was built.
  */
 
+use crate::meter::Meter;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -125,7 +126,7 @@ pub fn values() -> EqualizerValues {
  * coefficients change under it — and here they change every time a slider moves, mid-note.
  */
 #[derive(Clone, Copy)]
-struct Biquad {
+pub(crate) struct Biquad {
     b0: f32,
     b1: f32,
     b2: f32,
@@ -149,6 +150,16 @@ impl Biquad {
         y1: 0.0,
         y2: 0.0,
     };
+
+    /// Lets a band through at its own level and turns the rest down: the RBJ cookbook's
+    /// band-pass with a peak of 0 dB.
+    pub(crate) fn band_pass(frequency: f32, sample_rate: f32, q: f32) -> Self {
+        let omega = std::f32::consts::TAU * frequency.min(sample_rate * 0.45) / sample_rate;
+        let (sin, cos) = omega.sin_cos();
+        let alpha = sin / (2.0 * q);
+        let a0 = 1.0 + alpha;
+        Self { b0: alpha / a0, b1: 0.0, b2: -alpha / a0, a1: (-2.0 * cos) / a0, a2: (1.0 - alpha) / a0, ..Self::PASSTHROUGH }
+    }
 
     fn peaking(frequency: f32, sample_rate: f32, gain_db: f32) -> Self {
         // Above Nyquist there is nothing to boost, and the coefficients go to nonsense.
@@ -174,7 +185,7 @@ impl Biquad {
     }
 
     #[inline]
-    fn process(&mut self, input: f32) -> f32 {
+    pub(crate) fn process(&mut self, input: f32) -> f32 {
         let output = self.b0 * input + self.b1 * self.x1 + self.b2 * self.x2
             - self.a1 * self.y1
             - self.a2 * self.y2;
@@ -211,6 +222,8 @@ pub(crate) struct EqualizedSource<S> {
     preamp: f32,
     bypass: bool,
     generation: u64,
+    /// After the filters: the levels shown are those of what is heard.
+    meter: Meter,
 }
 
 impl<S: Source> EqualizedSource<S> {
@@ -228,6 +241,7 @@ impl<S: Source> EqualizedSource<S> {
             // Not the live generation: starting one behind forces the first sample to load
             // whatever the user already had set before this track began.
             generation: u64::MAX,
+            meter: Meter::new(sample_rate, channels.max(1)),
         };
         source.reload();
         source
@@ -261,6 +275,7 @@ impl<S: Source> Iterator for EqualizedSource<S> {
             self.reload();
         }
         if self.bypass {
+            self.meter.feed(sample);
             return Some(sample);
         }
 
@@ -271,6 +286,7 @@ impl<S: Source> Iterator for EqualizedSource<S> {
         for filter in &mut self.filters[channel] {
             output = filter.process(output);
         }
+        self.meter.feed(output);
         Some(output)
     }
 
