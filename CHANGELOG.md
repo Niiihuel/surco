@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.4
+
+### Added
+
+- While the app is open, a later version is looked for every 15 minutes and announced in a notice over the corner of the window, which leads to what it brings.
+
+### Changed
+
+- Built with limn 0.1.39.
+
 ## 0.1.3
 
 ### Added
