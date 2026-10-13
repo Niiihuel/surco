@@ -550,6 +550,9 @@ pub struct State {
     /// A later version of the app, and how far taking it in has got.
     pub update: Option<Release>,
     pub updating: Updating,
+    /// The later version is still to be said over the window: its card there has been
+    /// neither closed nor followed.
+    pub update_toast: bool,
     /// The later version is in place and is to be started in this one's stead; the window
     /// takes it.
     pub restart: bool,
@@ -729,6 +732,7 @@ impl Default for State {
             about: None,
             update: None,
             updating: Updating::Idle,
+            update_toast: false,
             restart: false,
             news_fresh: 0,
             open_url: None,
@@ -1292,6 +1296,7 @@ impl State {
             // The bell opens what is new, and leaves it for the page before. Opened, it has
             // all been looked at; what was still to be stays apart while the page shows.
             "news" => {
+                self.update_toast = false;
                 if self.page == Page::News {
                     self.page = self.history.pop().unwrap_or(Page::Search);
                     return Vec::new();
@@ -1301,6 +1306,12 @@ impl State {
                 self.collection.news.iter_mut().for_each(|(_, unseen)| *unseen = false);
                 let covers: Vec<Option<String>> = self.collection.news.iter().map(|(album, _)| album.artwork_url.clone()).collect();
                 cover_requests(&mut self.covers, &covers)
+            }
+            // The card of a later version leads to what is new, where what it brings is said.
+            "update-toast" if self.page != Page::News => self.click("news"),
+            "update-toast" | "update-toast-close" => {
+                self.update_toast = false;
+                Vec::new()
             }
             // The later version is taken in by the app itself where its release has this
             // system's program; where not, its page is opened for the user to fetch it.
@@ -1684,6 +1695,8 @@ impl State {
             Event::Update(release) => {
                 // The pictures of what it says of itself are fetched as covers are.
                 let pictures: Vec<Option<String>> = release.notes.iter().filter_map(|note| if let Note::Picture(address) = note { Some(Some(address.clone())) } else { None }).collect();
+                // It is found again for as long as the app stays open, and said once.
+                self.update_toast |= self.update.as_ref().is_none_or(|known| known.version != release.version);
                 self.update = Some(release);
                 cover_requests(&mut self.covers, &pictures)
             }
@@ -2582,7 +2595,14 @@ mod tests {
         // itself is fetched from its page.
         let release = Release { version: "9.0.0".into(), page: "https://example/releases/9".into(), program: None, mandatory: false, notes: Vec::new() };
         state.apply(Event::Update(release.clone()));
-        assert!(state.has_news());
+        assert!(state.has_news() && state.update_toast, "and is said over the window");
+        click(&mut state, "update-toast-close");
+        state.apply(Event::Update(release.clone()));
+        assert!(state.has_news() && !state.update_toast, "found again, it has been said");
+        state.apply(Event::Update(Release { version: "9.1.0".into(), ..release.clone() }));
+        assert!(state.update_toast, "a later one still is news");
+        click(&mut state, "update-toast");
+        assert!(state.page == Page::News && !state.update_toast, "its card leads to what is new");
         click(&mut state, "update-get");
         assert_eq!(state.open_url.take().as_deref(), Some("https://example/releases/9"));
 

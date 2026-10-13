@@ -464,11 +464,15 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 });
             }
         }
+        // Asked once, as the app opens: it is looked for again for as long as the app stays open.
         (Command::CheckUpdate, Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                if let Some(release) = latest_release(&shared).await {
-                    (shared.reply)(Event::Update(release));
+                loop {
+                    if let Some(release) = latest_release(&shared).await {
+                        (shared.reply)(Event::Update(release));
+                    }
+                    tokio::time::sleep(UPDATE_EVERY).await;
                 }
             });
         }
@@ -649,6 +653,11 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
 
 /// Where the app's releases are published.
 const RELEASES: &str = "https://api.github.com/repos/Niiihuel/surco/releases/latest";
+
+/// How long an open app waits before it looks for a later version again.
+// shortcut: each look is one of the sixty an hour the service answers an address, shared by
+// all behind it; look at where the releases' page leads instead when users share addresses.
+const UPDATE_EVERY: Duration = Duration::from_secs(15 * 60);
 
 /// The service answers nobody who does not say who they are.
 const AGENT: &str = concat!("surco/", env!("CARGO_PKG_VERSION"));

@@ -8,7 +8,7 @@ use limn::{
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
-    TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
+    TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec,
 };
 
 use crate::backend::{Release, Target};
@@ -212,7 +212,18 @@ pub fn view(state: &State, window: Size) -> Element {
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = playlist_dialog(state, shared, window.width, palette);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
-    update_dialog(state, confirm_dialog(state, imported, palette), palette)
+    let whole = update_dialog(state, confirm_dialog(state, imported, palette), palette);
+    Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
+}
+
+/// A later version found while the app is open, said over the window's corner until it
+/// is closed or followed. One that has to be taken is said by its dialog.
+fn update_toast(state: &State, palette: ComponentPalette) -> Vec<Element> {
+    let release = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory);
+    let card = |release: &Release| {
+        Toast::new(format!("Surco {} está disponible", release.version), palette).description("Mirá qué trae y actualizá cuando quieras.").action("update-toast").dismissible("update-toast-close").render()
+    };
+    release.map(card).into_iter().collect()
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -2121,7 +2132,6 @@ mod tests {
         let mut state = State::default();
         let release = Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: false, notes: Vec::new() };
         state.apply(Event::Update(release));
-        state.update(&limn::UiAction::Clicked { id: "news".into() });
         let shown = |state: &State| {
             let mut tree = UiTree::new(view(state, size));
             let frame = tree.layout(size);
@@ -2132,7 +2142,10 @@ mod tests {
             (texts, frame.regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>())
         };
         let (texts, ids) = shown(&state);
-        assert!(texts.iter().any(|text| text == "Actualización disponible") && ids.iter().any(|id| id == "update-get"));
+        assert!(texts.iter().any(|text| text == "Surco 9.0.0 está disponible") && ids.iter().any(|id| id == "update-toast"), "found, it is said over the window: {texts:?}");
+        state.update(&limn::UiAction::Clicked { id: "update-toast".into() });
+        let (texts, ids) = shown(&state);
+        assert!(texts.iter().any(|text| text == "Actualización disponible") && ids.iter().any(|id| id == "update-get") && !ids.iter().any(|id| id == "update-toast"));
         state.apply(Event::UpdateProgress(0.42));
         let (texts, ids) = shown(&state);
         assert!(texts.iter().any(|text| text == "Descargando Surco 9.0.0") && texts.iter().any(|text| text == "42 %"), "{texts:?}");
