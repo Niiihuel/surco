@@ -4,6 +4,7 @@
 use std::collections::{HashMap, HashSet};
 
 use dnm_audio::equalizer::EqualizerValues;
+use dnm_audio::AudioOutputDevice;
 use dnm_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
@@ -331,6 +332,11 @@ pub struct State {
     pub saving: HashSet<String>,
     /// Why the last track asked for could not be kept.
     pub save_error: Option<String>,
+    /// The devices there are to play through, the one chosen (none for the system's own),
+    /// and whether their list is open.
+    pub outputs: Vec<AudioOutputDevice>,
+    pub output: Option<String>,
+    pub output_open: bool,
 }
 
 /// One request per cover, however many rows show it and however often it comes up.
@@ -438,6 +444,9 @@ impl Default for State {
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
+            outputs: Vec::new(),
+            output: None,
+            output_open: false,
         }
     }
 }
@@ -835,7 +844,25 @@ impl State {
                 if self.page != Page::Settings {
                     self.go(Page::Settings);
                 }
+                // The page names the chosen device, so it needs their list.
+                vec![Command::Outputs]
+            }
+            "setting:output" => {
+                self.output_open = !self.output_open;
+                if self.output_open { vec![Command::Outputs] } else { Vec::new() }
+            }
+            "setting:output-dismiss" => {
+                self.output_open = false;
                 Vec::new()
+            }
+            _ if id.starts_with("setting:output:") => {
+                self.output_open = false;
+                let chosen = Some(id["setting:output:".len()..].to_owned()).filter(|device| !device.is_empty());
+                if chosen == self.output {
+                    return Vec::new();
+                }
+                self.output = chosen;
+                vec![Command::Output(self.output.clone())]
             }
             "setting:autoplay" => {
                 self.settings.autoplay = !self.settings.autoplay;
@@ -989,6 +1016,14 @@ impl State {
                 self.saving = saving;
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
+            }
+            Event::Outputs(devices) => {
+                self.outputs = devices;
+                Vec::new()
+            }
+            Event::OutputLost => {
+                self.output = None;
+                Vec::new()
             }
             Event::SaveFailed { title, message } => {
                 self.save_error = Some(format!("{title}: {message}"));
@@ -1415,6 +1450,13 @@ mod tests {
         assert!(!state.settings.autoplay && state.settings.reduce_motion);
         let half = UiAction::SliderChanged { id: "setting:crossfade".into(), fraction: 0.5, committed: true };
         assert_eq!(state.update(&half), vec![Command::Crossfade(6.0)]);
+        assert_eq!(click(&mut state, "setting:output"), vec![Command::Outputs]);
+        assert_eq!(click(&mut state, "setting:output:alsa:pipewire"), vec![Command::Output(Some("alsa:pipewire".into()))]);
+        assert!(!state.output_open && click(&mut state, "setting:output:alsa:pipewire").is_empty(), "it is already the one");
+        assert_eq!(click(&mut state, "setting:output:"), vec![Command::Output(None)]);
+        state.output = Some("gone".into());
+        state.apply(Event::OutputLost);
+        assert_eq!(state.output, None);
         assert_eq!(click(&mut state, "setting:quality:normal"), vec![Command::Quality(96_000)]);
         assert_eq!(state.settings.quality, Quality::Normal);
         assert!(click(&mut state, "downloads-clear").is_empty() && state.confirm.is_none(), "nothing to clear");

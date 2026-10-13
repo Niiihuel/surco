@@ -5,9 +5,9 @@ use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
-    DropdownMenuItem, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, Link, ListRow, MediaCard, MediaTile,
+    DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, Link, ListRow, MediaCard, MediaTile,
     Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, RadiusRole, ResizeHandle, RowSizing, Scheme,
-    ScrollArea, SearchField, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Tabs, Text, TextField, TextRole, Ticker,
+    ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Tabs, Text, TextField, TextRole, Ticker,
     TooltipPlacement, TooltipSpec,
 };
 
@@ -49,8 +49,9 @@ fn segmented_palette() -> ComponentPalette {
 
 /// A choice among a few, as wide as the room it is given. `group` names it, so the
 /// selection travels from one segment to the next.
-/// The three qualities side by side in a settings row.
+/// The three qualities side by side in a settings row, and the choice of output under them.
 const QUALITY_WIDTH: f32 = 216.0;
+const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).fill_width(width).render()
@@ -738,6 +739,13 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 
     let equalizer = if state.equalizer == dnm_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
+    let devices = std::iter::once(device("", SYSTEM_OUTPUT)).chain(state.outputs.iter().map(|output| device(&output.id, &output.name)));
+    let playing_through = state.outputs.iter().find(|output| state.output.as_deref() == Some(output.id.as_str())).map_or(SYSTEM_OUTPUT, |output| output.name.as_str());
+    let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", control)
+        .menu_palette(SCHEME.menu())
+        .width(QUALITY_WIDTH)
+        .render();
     let chosen = state.settings.quality;
     let quality = segments(
         "setting-quality",
@@ -764,6 +772,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
                 row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
                 row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
+                row("Dispositivo de salida", "Por dónde suena la música.").trailing(output).stacked(compact).render(),
             ],
         ),
         group("Visualización", vec![switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)]),

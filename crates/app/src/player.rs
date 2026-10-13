@@ -30,6 +30,8 @@ pub enum Effect {
     Play(Track),
     /// Bring this track in over so many seconds, under the end of the one that plays.
     Fade(Track, f64),
+    /// Load this track again and go on from so many seconds in, sounding or not.
+    Restore(Track, f64, bool),
     /// Get this track ready on the standby deck.
     Preload(Track),
     /// Nothing follows this track: ask the catalog what would.
@@ -104,6 +106,14 @@ impl Player {
         let radio = (self.autoplay && self.queue.peek_next().is_none()).then(|| Effect::Radio(track.clone()));
         let play = if fade > 0.0 { Effect::Fade(track, fade) } else { Effect::Play(track) };
         std::iter::once(play).chain(radio).collect()
+    }
+
+    /// The engine lost its decks, as when its output changes: the current track goes back
+    /// in where it was.
+    pub fn reload(&mut self) -> Vec<Effect> {
+        self.preloading = None;
+        let current = self.queue.current().filter(|_| self.loaded);
+        current.map(|track| Effect::Restore(track.clone(), self.position, self.playing)).into_iter().collect()
     }
 
     /// The catalog's answer to `Effect::Radio`. One that arrives after the user moved on to
@@ -390,6 +400,15 @@ mod tests {
         let mut plain = playing(&["a", "b"], 0);
         plain.engine(at(194.0));
         assert!(plain.engine(at(195.5)).is_empty(), "with none set the track plays to its end");
+    }
+
+    #[test]
+    fn a_reload_puts_the_current_track_back_where_it_was() {
+        let mut player = playing(&["a", "b"], 0);
+        assert!(Player::default().reload().is_empty(), "nothing was loaded");
+        player.engine(Event::Position { track_id: "a".into(), position_sec: 42.0, duration_sec: Some(200.0) });
+        player.command(Command::PlayPause);
+        assert_eq!(player.reload(), vec![Effect::Restore(track("a"), 42.0, false)]);
     }
 
     #[test]

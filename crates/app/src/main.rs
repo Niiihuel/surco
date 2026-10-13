@@ -115,6 +115,7 @@ const PANEL_OPEN_KEY: &str = "panel-open";
 const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
+const OUTPUT_KEY: &str = "output";
 
 impl eframe::App for Host {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
@@ -130,6 +131,7 @@ impl eframe::App for Host {
         storage.set_string(LEFT_KEY, self.state.left_width.to_string());
         storage.set_string(RIGHT_KEY, self.state.right_width.to_string());
         storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
+        storage.set_string(OUTPUT_KEY, self.state.output.clone().unwrap_or_default());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -139,6 +141,9 @@ impl eframe::App for Host {
             limn_egui::attach_fonts(&mut self.tree, &ctx);
             // The engine starts at full volume and flat; the window owns both settings.
             self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay), Command::Crossfade(f64::from(self.state.settings.crossfade)), Command::Quality(self.state.settings.quality.bps())]);
+            if self.state.output.is_some() {
+                self.send(vec![Command::Output(self.state.output.clone())]);
+            }
             let covers = self.state.collection_covers();
             self.send(covers);
         }
@@ -255,6 +260,7 @@ fn main() -> eframe::Result {
                 state.settings = settings.unwrap_or_default();
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
+                state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
             }
             Ok(Box::new(Host {
                 tree: UiTree::new(Element::spacer()),

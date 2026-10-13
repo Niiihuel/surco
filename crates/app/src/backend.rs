@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use base64::Engine as _;
 use dnm_audio::equalizer::{self, EqualizerValues};
-use dnm_audio::{Load, MediaBuffer, NativeAudio};
+use dnm_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
 use dnm_core::{Album, Artist, Found, Track};
 use dnm_youtube::{Audio, YouTube};
 use eframe::egui;
@@ -73,6 +73,10 @@ pub enum Command {
     Crossfade(f64),
     /// The most bits per second a stream may have, from the next track on.
     Quality(u64),
+    /// Play through this device, or through the system's own when there is none.
+    Output(Option<String>),
+    /// Ask which devices there are.
+    Outputs,
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -90,6 +94,9 @@ pub enum Event {
     SaveFailed { title: String, message: String },
     /// A cover, and the color it lends to a card of its track when it could be read.
     Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
+    Outputs(Vec<AudioOutputDevice>),
+    /// The device that was asked for is gone: the system's own plays instead.
+    OutputLost,
 }
 
 /// How many times a broken download resumes from where it stopped before the track fails.
@@ -286,6 +293,25 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Quality(bps), Ok(shared)) => shared.quality.store(bps, Ordering::SeqCst),
         (Command::Quality(_), Err(_)) => {}
+        (Command::Output(id), Ok(shared)) => {
+            // The engine reopens its stream and both decks go with the old one. A device
+            // that is gone gives way to the system's.
+            if shared.audio.set_output_device(id.clone()).is_err() && id.is_some() {
+                let _ = shared.audio.set_output_device(None);
+                reply(Event::OutputLost);
+            }
+            return player.reload();
+        }
+        (Command::Outputs, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // Listing may ask the sound server, which takes a moment.
+                if let Ok(devices) = blocking(dnm_audio::list_output_devices).await {
+                    (shared.reply)(Event::Outputs(devices));
+                }
+            });
+        }
+        (Command::Output(_) | Command::Outputs, Err(_)) => {}
         (Command::Save(track), Ok(shared)) => {
             let known = shared.library.lock().unwrap().audio(&track.id).is_some();
             if known || !shared.saving.lock().unwrap().insert(track.id.clone()) {
@@ -330,8 +356,9 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
 
 fn run(shared: &Arc<Shared>, effect: Effect) {
     match effect {
-        Effect::Play(track) => begin(shared, track, Duration::ZERO),
-        Effect::Fade(track, seconds) => begin(shared, track, Duration::from_secs_f64(seconds)),
+        Effect::Play(track) => begin(shared, track, Duration::ZERO, None),
+        Effect::Fade(track, seconds) => begin(shared, track, Duration::from_secs_f64(seconds), None),
+        Effect::Restore(track, at, playing) => begin(shared, track, Duration::ZERO, Some((at, playing))),
         Effect::Preload(track) => {
             let shared = shared.clone();
             tokio::spawn(async move { preload(&shared, &track).await });
@@ -353,7 +380,8 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
 }
 
 /// Starts a track: at once, or under the end of the one that plays when `fade` is not zero.
-fn begin(shared: &Arc<Shared>, track: Track, fade: Duration) {
+/// With `resume` it goes on from so many seconds in, sounding or not.
+fn begin(shared: &Arc<Shared>, track: Track, fade: Duration, resume: Option<(f64, bool)>) {
     let generation = shared.generation.fetch_add(1, Ordering::SeqCst) + 1;
     // The old track stops now, not when the new one has loaded. One that fades out plays on.
     if fade.is_zero() {
@@ -371,7 +399,7 @@ fn begin(shared: &Arc<Shared>, track: Track, fade: Duration) {
     }
     let shared = shared.clone();
     tokio::spawn(async move {
-        if let Err(message) = play(&shared, &track, generation, fade).await {
+        if let Err(message) = play(&shared, &track, generation, fade, resume).await {
             if shared.is_current(generation) {
                 let failed = dnm_audio::Event::Failed { track_id: track.id, message };
                 let _ = shared.inputs.send(Input::Engine(failed));
@@ -386,7 +414,7 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
     tokio::task::spawn_blocking(work).await.map_err(|error| error.to_string())?
 }
 
-async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Duration) -> Result<(), String> {
+async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Duration, resume: Option<(f64, bool)>) -> Result<(), String> {
     {
         let _decks = shared.decks.lock().await;
         if !shared.is_current(generation) {
@@ -399,7 +427,8 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
             return Ok(());
         }
     }
-    let (load, download) = fetch(shared, track, false).await?;
+    let (mut load, download) = fetch(shared, track, false).await?;
+    load.start_sec = resume.map(|(at, _)| at);
     let _decks = shared.decks.lock().await;
     if !shared.is_current(generation) {
         download.cancel();
@@ -412,6 +441,10 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
     let engine = shared.clone();
     blocking(move || {
         engine.audio.load(load)?;
+        // What was paused comes back paused.
+        if resume.is_some_and(|(_, playing)| !playing) {
+            return Ok(());
+        }
         engine.audio.play()
     })
     .await
