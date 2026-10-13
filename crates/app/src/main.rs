@@ -47,6 +47,8 @@ struct Host {
     /// The shelf an arrow is carrying along, and where it is on its way.
     glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
+    /// When something other than the song going on last happened to the window.
+    stirred: Instant,
     script: Script,
 }
 
@@ -117,6 +119,15 @@ impl Host {
     }
 }
 
+/// For this long after something happened to it the window draws at the display's own
+/// rate. After that only what plays moves it, and its bars and its video gain nothing
+/// from more than thirty frames a second, each of which draws the whole window. A video
+/// wakes the window for each of its own pictures: beside one, the bars only make sure
+/// of a frame now and then.
+const SETTLED_AFTER: Duration = Duration::from_millis(500);
+const SETTLED_FRAME: Duration = Duration::from_millis(33);
+const SETTLED_FRAME_BESIDE_VIDEO: Duration = Duration::from_millis(100);
+
 /// Its own id, and with it its own settings folder.
 const APP_ID: &str = "surco";
 const VOLUME_KEY: &str = "volume";
@@ -180,9 +191,14 @@ impl eframe::App for Host {
         while let Ok(event) = self.events.try_recv() {
             let commands = self.state.apply(event);
             self.send(commands);
+            self.stirred = Instant::now();
         }
         if self.player.has_changed().unwrap_or(false) {
             let view = self.player.borrow_and_update().clone();
+            // Another track, or the same one stopping or starting: more than its going on.
+            if view.current != self.state.player.current || view.playing != self.state.player.playing {
+                self.stirred = Instant::now();
+            }
             let commands = self.state.show(view);
             self.send(commands);
         }
@@ -219,7 +235,7 @@ impl eframe::App for Host {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
                     limn_egui::forget_surface(view::CLIP_BACKDROP);
                     let wake = ctx.clone();
-                    self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint()));
+                    self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint_after(backend::SOON)));
                 }
                 if let Some(screen) = &self.clip {
                     screen.follow(self.state.player.playing, self.state.player.position, fit);
@@ -264,9 +280,11 @@ impl eframe::App for Host {
         // The line being sung is kept in the middle of its list.
         if let Some(line) = self.state.line_to_reveal() {
             self.tree.center(&line);
+            self.stirred = Instant::now();
         }
         self.tree.layout(window);
         for event in limn_egui::events(&ctx, area.min) {
+            self.stirred = Instant::now();
             for action in self.tree.handle_event(event) {
                 let commands = self.state.update(&action);
                 self.send(commands);
@@ -295,7 +313,11 @@ impl eframe::App for Host {
         } else if self.state.is_sliding(Instant::now()) {
             ctx.request_repaint();
         } else if let Some(after) = self.tree.animation_repaint_after() {
-            ctx.request_repaint_after(after);
+            let settled = self.stirred.elapsed() > SETTLED_AFTER && self.glide.is_none();
+            let frame = if self.clip.is_some() && self.state.player.playing { SETTLED_FRAME_BESIDE_VIDEO } else { SETTLED_FRAME };
+            // egui draws a frame's length ahead of the time it is asked for.
+            let ahead = Duration::try_from_secs_f32(ctx.input(|input| input.predicted_dt)).unwrap_or_default();
+            ctx.request_repaint_after(if settled { after.max(frame + ahead) } else { after });
         }
     }
 }
@@ -386,6 +408,7 @@ fn main() -> eframe::Result {
                 fullscreen: false,
                 glide: None,
                 opened: Instant::now(),
+                stirred: Instant::now(),
                 script,
             }))
         }),

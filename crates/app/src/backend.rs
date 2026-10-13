@@ -263,8 +263,13 @@ impl Shared {
     }
 }
 
-/// Starts the worker and returns its ends. The worker wakes the window with `request_repaint`
-/// whenever it has something to say, so the window can sleep.
+/// How soon the window is asked to draw when something outside it changed. Asked for at
+/// once, egui draws two frames for each asking; asked for a moment on, the one that shows
+/// the change.
+pub const SOON: Duration = Duration::from_millis(1);
+
+/// Starts the worker and returns its ends. The worker wakes the window whenever it has
+/// something to say, so the window can sleep.
 ///
 /// The player is a value to read, not a stream of events: a hidden window stops repainting,
 /// and positions would pile up for as long as it stays hidden.
@@ -276,7 +281,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
     let reply = move |event: Event| {
         // The window is gone when this fails, and the worker goes with its channel.
         let _ = outbox.send(event);
-        ctx.request_repaint();
+        ctx.request_repaint_after(SOON);
     };
     std::thread::Builder::new()
         .name("backend".into())
@@ -325,7 +330,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         changed
                     });
                     if changed {
-                        window.request_repaint();
+                        window.request_repaint_after(SOON);
                     }
                 }
             });
