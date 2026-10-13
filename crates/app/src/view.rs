@@ -334,6 +334,10 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             count => format!("Playlist · {count} canciones"),
         };
         entries.push(("downloads".into(), library_tile(Icon::Custom(DOWNLOAD), palette), "Descargas", count, state.page == Page::Downloads));
+        if !state.collection.liked.is_empty() {
+            let count = format!("Playlist · {}", songs(state.collection.liked.len()));
+            entries.push(("liked".into(), library_tile(Icon::HeartFill, palette), "Tus me gusta", count, state.page == Page::Liked));
+        }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
             let picture = match playlist.tracks.first() {
                 Some(track) => cover(state, &track.artwork_url, LIBRARY_TILE, palette),
@@ -530,6 +534,11 @@ fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>>
         item("queue", "Agregar a la cola", include_str!("../assets/icons/list-plus.svg"), None),
         item("next", "Poner a continuación", include_str!("../assets/icons/list-start.svg"), None),
         item("share", "Compartir", include_str!("../assets/icons/share-2.svg"), None),
+        Some(if state.is_liked(&track.id) {
+            Action { id: format!("do:like:{row}"), label: "Quitar de Tus me gusta", icon: Icon::HeartFill, detail: None }
+        } else {
+            Action { id: format!("do:like:{row}"), label: "Me gusta", icon: Icon::Heart, detail: None }
+        }),
         None,
         item("add-new", "Agregar a una playlist nueva", include_str!("../assets/icons/list-plus.svg"), None),
     ];
@@ -668,6 +677,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Album(album) => format!("page:album:{}", album.id),
         Page::Song(track) => format!("page:song:{}", track.id),
         Page::Downloads => "page:downloads".to_owned(),
+        Page::Liked => "page:liked".to_owned(),
         Page::Playlist(id) => format!("page:playlist:{id}"),
         Page::Settings => "page:settings".to_owned(),
     };
@@ -695,6 +705,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .gap(12.0),
         ),
         Page::Downloads => downloads_page(state, palette),
+        Page::Liked => liked_page(state, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
@@ -948,6 +959,27 @@ fn downloads_page(state: &State, palette: ComponentPalette) -> Element {
     ScrollArea::new("downloads", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
+/// The tracks marked with the heart, the last one first.
+fn liked_page(state: &State, palette: ComponentPalette) -> Element {
+    let liked = &state.collection.liked;
+    if liked.is_empty() {
+        return centered(Empty::new("Todavía no marcaste nada", "El corazón de la barra de abajo guarda acá lo que te gusta.", palette).icon(Icon::Heart).render());
+    }
+    let header = Element::column(vec![
+        Text::new("Tus me gusta", palette).size(PAGE_TITLE).render(),
+        Text::new(songs(liked.len()), palette).muted().render(),
+        play_buttons(state, None, palette),
+    ])
+    .gap(10.0);
+    // A track that loses its heart closes where it was.
+    let rows = liked.iter().enumerate().map(|(index, track)| {
+        let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
+        Element::column(vec![row]).animate_height(format!("liked-row:{}", track.id), false)
+    });
+    let list = Element::column(rows.collect()).keep_leaving("liked-rows");
+    ScrollArea::new("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
+}
+
 fn album_page(state: &State, album: &Album, palette: ComponentPalette) -> Element {
     let minutes = album.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
@@ -1177,6 +1209,15 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .gap(2.0)
             .flex(1.0)
             .centered_y(),
+            {
+                let liked = state.is_liked(&track.id);
+                IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Compact)
+                    .tooltip(if liked { "Quitar de Tus me gusta" } else { "Me gusta" })
+                    .render()
+                    .centered_y()
+            },
         ])
         .gap(12.0),
         None => Element::spacer(),

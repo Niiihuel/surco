@@ -27,6 +27,8 @@ pub enum Page {
     Song(Track),
     /// What is kept on disk to listen to without a network.
     Downloads,
+    /// The tracks the user marked as liked.
+    Liked,
     /// One of the user's lists, by its id.
     Playlist(u64),
     Settings,
@@ -77,6 +79,9 @@ pub struct Collection {
     /// The tracks last played, newest first.
     #[serde(default)]
     pub heard: Vec<Track>,
+    /// The tracks marked as liked, the last one first.
+    #[serde(default)]
+    pub liked: Vec<Track>,
     /// The id the next playlist takes.
     #[serde(default)]
     next_playlist: u64,
@@ -227,6 +232,15 @@ impl Collection {
             if !playlist.tracks.iter().any(|held| held.id == track.id) {
                 playlist.tracks.push(track);
             }
+        }
+    }
+
+    /// Marks a track as liked, or takes the mark off one that had it.
+    fn like(&mut self, track: &Track) {
+        let before = self.liked.len();
+        self.liked.retain(|liked| liked.id != track.id);
+        if self.liked.len() == before {
+            self.liked.insert(0, track.clone());
         }
     }
 
@@ -590,6 +604,10 @@ impl State {
         self.library_slide.is_active(now) || self.panel_slide.is_active(now)
     }
 
+    pub fn is_liked(&self, track_id: &str) -> bool {
+        self.collection.liked.iter().any(|track| track.id == track_id)
+    }
+
     pub fn is_saved(&self, track_id: &str) -> bool {
         self.saved.iter().any(|track| track.id == track_id)
     }
@@ -658,6 +676,10 @@ impl State {
                 self.save_error = None;
                 vec![Command::Save(track)]
             }
+            "like" => {
+                self.collection.like(&track);
+                Vec::new()
+            }
             "unsave" => vec![Command::Unsave(track.id)],
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
@@ -690,6 +712,7 @@ impl State {
             Page::Album(album) => &album.tracks,
             Page::Song(track) => std::slice::from_ref(track),
             Page::Downloads => &self.saved,
+            Page::Liked => &self.collection.liked,
             Page::Playlist(id) => self.collection.playlist(*id).map_or(&[], |playlist| &playlist.tracks),
             _ => &[],
         }
@@ -822,6 +845,19 @@ impl State {
                     self.go(Page::Downloads);
                 }
                 cover_requests(&mut self.covers, covers_of(&self.saved))
+            }
+            "liked" => {
+                if self.page != Page::Liked {
+                    self.go(Page::Liked);
+                }
+                cover_requests(&mut self.covers, covers_of(&self.collection.liked))
+            }
+            // The heart of the playback bar marks what plays.
+            "like" => {
+                if let Some(track) = self.player.current.clone() {
+                    self.collection.like(&track);
+                }
+                Vec::new()
             }
             "back" => {
                 if let Some(page) = self.history.pop() {
@@ -1626,6 +1662,22 @@ mod tests {
         click(&mut state, "recent-clear");
         click(&mut state, "confirm-yes");
         assert!(state.collection.recent.is_empty() && state.confirm.is_none());
+    }
+
+    #[test]
+    fn a_liked_track_is_kept_first_and_the_same_heart_takes_it_off() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
+        click(&mut state, "do:like:track:0");
+        click(&mut state, "do:like:track:1");
+        assert_eq!(state.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["b", "a"]);
+        state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
+        click(&mut state, "like");
+        assert!(!state.is_liked("a") && state.is_liked("b"));
+        click(&mut state, "liked");
+        assert_eq!(state.page, Page::Liked);
+        assert_eq!(click(&mut state, "page-track:0"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
     }
 
     #[test]
