@@ -178,9 +178,9 @@ impl eframe::App for Host {
         self.state.levels = if sounding { dnm_audio::meter::levels() } else { Default::default() };
 
         self.tree.set_root(view::view(&self.state, window));
-        // The line being sung stays in view, well clear of the panel's edges.
+        // The line being sung is kept in the middle of its list.
         if let Some(line) = self.state.line_to_reveal() {
-            self.tree.reveal_with_margin(&line, 120.0);
+            self.tree.center(&line);
         }
         self.tree.layout(window);
         for event in limn_egui::events(&ctx, area.min) {

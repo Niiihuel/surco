@@ -52,9 +52,12 @@ fn segmented_palette() -> ComponentPalette {
 /// A bar of the playing row's wave, and the space between two.
 const WAVE_BAR: f32 = 3.0;
 const WAVE_GAP: f32 = 2.0;
-/// A line of lyrics reads from across the room.
-const LYRIC_SIZE: f32 = 18.0;
-const LYRIC_GAP: f32 = 14.0;
+/// A line of lyrics reads from across the room; the furthest off are this much out of focus.
+const LYRIC_SIZE: f32 = 24.0;
+const LYRIC_GAP: f32 = 18.0;
+const LYRIC_BLUR: f32 = 2.2;
+/// How far up the panel the cover's colour reaches behind the lyrics.
+const LYRIC_WASH: f32 = 520.0;
 /// The three qualities side by side in a settings row, and the choice of output under them.
 const QUALITY_WIDTH: f32 = 216.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
@@ -1021,7 +1024,13 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
     };
     // The column's gap, plus this, is the margin over the header.
     let top = Element::spacer().size(None, Some(PANEL_PAD - 12.0));
-    Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face)
+    let panel = Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face);
+    // The lyrics stand over a wash of the cover's own colour.
+    let wash = state.current().filter(|_| state.lyrics_open).and_then(|track| state.tints.get(track.artwork_url.as_deref()?));
+    match wash {
+        Some(tint) => panel.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
+        None => panel,
+    }
 }
 
 /// The lines of what plays, the one being sung in full ink. A line that is clicked is sung
@@ -1034,13 +1043,28 @@ fn lyrics(state: &State, palette: ComponentPalette) -> Element {
         Some((_, Lyrics::Missing)) => return note("Sin letra sincronizada", "Todavía nadie la cargó para esta canción."),
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
-    let sung = state.active_line();
+    // Before the first line everything is still to come.
+    let sung = state.active_line().map_or(-1, |index| index as i64);
     let rows = lines.iter().enumerate().map(|(index, line)| {
-        let ink = if sung == Some(index) { palette.text } else { palette.muted };
-        let text = Text::new(&line.text, palette).size(LYRIC_SIZE).ink(ink).render().animate_foreground(format!("lyric-ink:{index}"));
+        // The line being sung is sharp and in full ink. What was sung stays back, a little
+        // out of focus; what is coming fades and blurs the further off it is.
+        let (ink, blur) = match index as i64 - sung {
+            0 => (1.0, 0.0),
+            ahead @ 1.. => ((0.5 - 0.07 * (ahead - 1) as f32).max(0.18), (0.3 + 0.6 * (ahead - 1) as f32).min(LYRIC_BLUR)),
+            _ => (0.3, 0.8),
+        };
+        let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
+        let text = Element::text(&line.text)
+            .font_family(FontFamily::SansBold)
+            .font_size(LYRIC_SIZE)
+            .foreground(ink)
+            .animate_foreground(format!("lyric-ink:{index}"))
+            .soft_focus(format!("lyric:{index}"), blur);
         Element::clickable(format!("lyric:{index}"), text)
     });
-    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0)
+    // The list glides to each new line rather than stepping to it.
+    let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
+    ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP).padding(PANEL_PAD)).motion(glide).render().flex(1.0)
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
