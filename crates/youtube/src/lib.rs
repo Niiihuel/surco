@@ -129,6 +129,13 @@ impl YouTube {
         }))
     }
 
+    /// An artist as their own page presents them, and what it says of them.
+    pub async fn about(&self, id: &str) -> Result<(ArtistRef, Option<String>)> {
+        let artist = self.music().await?.get_artist(ArtistChannelID::from_raw(id)).await?;
+        let known = ArtistRef { id: id.to_owned(), name: artist.name, subscribers: artist.subscribers, artwork_url: artwork(artist.thumbnails) };
+        Ok((known, artist.description))
+    }
+
     /// An artist's albums, each naming them: the page without the songs, which cost a
     /// second request.
     pub async fn albums_of(&self, id: &str) -> Result<Vec<AlbumRef>> {

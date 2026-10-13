@@ -92,10 +92,15 @@ pub enum Command {
     Clip(Track),
     /// Go on from where the track that plays is with another rendition of it in its place.
     Swap(Track),
+    /// Ask who the artist of a track is.
+    About(Track),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
 }
+
+/// An artist as their own page presents them, and what it says of them.
+pub type Known = (ArtistRef, Option<String>);
 
 /// What the home page's picks are made from: what the user plays and what they already have.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -142,6 +147,9 @@ pub enum Event {
     Clip { track_id: String, footage: Option<Arc<Footage>> },
     /// A part of the home page's picks.
     Discovered(Picks),
+    /// Who the artist a track names is, or nobody when the catalog knows no artist of
+    /// that name.
+    About { artist: String, found: Option<Known> },
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -372,6 +380,23 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             tokio::spawn(async move { discover(&shared, taste).await });
         }
         (Command::Discover(_), Err(_)) => {}
+        (Command::About(track), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // A track by several names them all; the first is whose it is.
+                let name = track.artist.split(',').next().unwrap_or_default().trim();
+                let id = match &track.artist_id {
+                    Some(id) => Some(id.clone()),
+                    None => shared.youtube.artist_named(name).await.ok().flatten().map(|artist| artist.id),
+                };
+                let found = match id {
+                    Some(id) => shared.youtube.about(&id).await.ok(),
+                    None => None,
+                };
+                (shared.reply)(Event::About { artist: track.artist, found });
+            });
+        }
+        (Command::About(track), Err(_)) => reply(Event::About { artist: track.artist, found: None }),
         (Command::Clip(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {

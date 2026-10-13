@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarTransition, UiAction};
 
-use crate::backend::{Command, Content, Event, Footage, Picks, Target, Taste};
+use crate::backend::{Command, Content, Event, Footage, Known, Picks, Target, Taste};
 use crate::clip::Showing;
 use crate::player::PlayerView;
 
@@ -411,6 +411,9 @@ pub struct State {
     /// The footage asked for, with the song it belongs to; none yet while it is fetched,
     /// and still none when the song has no video of its own.
     pub clip: Option<(String, Option<Arc<Footage>>)>,
+    /// Who the artist of what plays is, asked by their name as the track writes it:
+    /// nobody yet while they are looked for, and still nobody when the catalog knows none.
+    pub about: Option<(String, Option<Known>)>,
     /// What plays fills the window: its video, or its cover.
     pub cinema: bool,
     /// The song whose video's own sound plays in its place.
@@ -566,6 +569,7 @@ impl Default for State {
             picked_albums: Vec::new(),
             picked_for: None,
             clip: None,
+            about: None,
             cinema: false,
             swapped: None,
             lyrics: None,
@@ -740,6 +744,7 @@ impl State {
             ("retry", None, Page::Failed(target, _)) => Some(target.clone()),
             ("kept", Some(index), _) => self.collection.kept.get(index).map(Entry::target),
             ("recent", Some(index), _) => self.collection.recent.get(index).map(Entry::target),
+            ("about-artist", None, _) => self.about_artist().map(|(artist, _)| Target::Artist(artist.id.clone())),
             ("pick-artist", Some(index), _) => self.picked_artists.get(index).map(|artist| Target::Artist(artist.id.clone())),
             ("pick-album", Some(index), _) => self.picked_albums.get(index).map(album),
             ("now-artist", None, _) => self.current().map(artist_of),
@@ -984,6 +989,7 @@ impl State {
                 self.open_side(Side::Right, self.queue_open);
                 let mut commands = self.upcoming_covers();
                 commands.extend(self.ask_clip());
+                commands.extend(self.ask_about());
                 commands
             }
             // The lyrics are a page: their button opens it, and leaves it for the one before.
@@ -1030,7 +1036,9 @@ impl State {
             "toggle-panel" | "toggle-panel-open" => {
                 self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
-                self.ask_clip()
+                let mut commands = self.ask_clip();
+                commands.extend(self.ask_about());
+                commands
             }
             "toggle-library" | "toggle-library-open" => {
                 self.open_side(Side::Left, !self.library_open);
@@ -1172,6 +1180,13 @@ impl State {
                 }
                 None => Vec::new(),
             },
+            // Following from the panel that presents the artist of what plays.
+            "about-follow" => {
+                if let Some((artist, _)) = self.about_artist().cloned() {
+                    self.collection.toggle(Entry::Artist(artist));
+                }
+                Vec::new()
+            }
             "keep" => {
                 if let Some(entry) = self.page_entry() {
                     self.collection.toggle(entry);
@@ -1270,6 +1285,15 @@ impl State {
                 self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
+            Event::About { artist, found } => {
+                let covers = cover_requests(&mut self.covers, found.iter().map(|(artist, _)| &artist.artwork_url));
+                if let Some((asked, known)) = &mut self.about {
+                    if *asked == artist {
+                        *known = found;
+                    }
+                }
+                covers
+            }
             Event::Clip { track_id, footage } => {
                 if let Some((asked, found)) = &mut self.clip {
                     if *asked == track_id {
@@ -1344,7 +1368,30 @@ impl State {
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
         commands.extend(self.ask_clip());
+        commands.extend(self.ask_about());
         commands
+    }
+
+    /// The artist of what plays is looked for once, while the panel that presents them
+    /// shows: by their name, so the next track of theirs asks nothing.
+    fn ask_about(&mut self) -> Vec<Command> {
+        let shown = self.shows_playing();
+        let Some(track) = self.player.current.as_ref().filter(|_| shown) else { return Vec::new() };
+        if self.about.as_ref().is_some_and(|(asked, _)| *asked == track.artist) {
+            return Vec::new();
+        }
+        self.about = Some((track.artist.clone(), None));
+        vec![Command::About(track.clone())]
+    }
+
+    pub fn is_followed(&self, artist: &ArtistRef) -> bool {
+        self.collection.artists().any(|(_, followed)| followed.id == artist.id)
+    }
+
+    /// The artist of what plays as the catalog presents them, once that is known.
+    pub fn about_artist(&self) -> Option<&Known> {
+        let (asked, found) = self.about.as_ref()?;
+        (*asked == self.player.current.as_ref()?.artist).then_some(found.as_ref()?)
     }
 
     /// Whether the right panel shows what plays, the one place a clip is seen.
@@ -1559,6 +1606,11 @@ mod tests {
 
     fn click(state: &mut State, id: &str) -> Vec<Command> {
         state.update(&UiAction::Clicked { id: id.into() })
+    }
+
+    /// The covers among what was asked for.
+    fn covers(commands: Vec<Command>) -> Vec<Command> {
+        commands.into_iter().filter(|command| matches!(command, Command::FetchArtwork(_))).collect()
     }
 
     /// A state that looks for no clips, for the tests that count what a new track asks for.
@@ -1978,6 +2030,28 @@ mod tests {
         assert!(asks(&click(&mut state, "setting:clips")), "and back on, it is looked for");
     }
 
+    #[test]
+    fn the_artist_of_what_plays_is_asked_once_by_name_and_followed_from_their_card() {
+        let playing = |id: &str| PlayerView { current: Some(track(id)), playing: true, ..PlayerView::default() };
+        let asks = |commands: &[Command]| commands.iter().any(|command| matches!(command, Command::About(_)));
+        let mut state = without_clips();
+        assert!(asks(&state.show(playing("a"))));
+        assert!(!asks(&state.show(playing("b"))), "another track of the same artist");
+        assert!(state.about_artist().is_none(), "not known yet");
+        let who = ArtistRef { id: "who".into(), name: "artist".into(), subscribers: Some("4.36M".into()), artwork_url: None };
+        state.apply(Event::About { artist: "Someone else".into(), found: Some((who.clone(), None)) });
+        assert!(state.about_artist().is_none(), "an answer for another artist changes nothing");
+        state.apply(Event::About { artist: "artist".into(), found: Some((who.clone(), Some("Una banda.".into()))) });
+        assert_eq!(state.about_artist().map(|(artist, _)| &artist.id), Some(&who.id));
+
+        assert!(!state.is_followed(&who));
+        click(&mut state, "about-follow");
+        assert!(state.is_followed(&who), "kept as the artist's own page keeps them");
+        click(&mut state, "about-follow");
+        assert!(!state.is_followed(&who));
+        assert_eq!(click(&mut state, "about-artist"), vec![Command::Open(Target::Artist("who".into()))]);
+    }
+
     /// The footage of a song whose video lasts `longer_ms` more than it does.
     fn footage_of(song: &Track, longer_ms: u64) -> Arc<Footage> {
         let video = Track { id: format!("{}-video", song.id), duration_ms: song.duration_ms + longer_ms, ..song.clone() };
@@ -2134,14 +2208,14 @@ mod tests {
         let mut state = without_clips();
         let mut track = track("a");
         track.artwork_url = Some("https://lh3.example/a=w120-h120-rj".into());
-        let asked = state.show(PlayerView { current: Some(track), ..PlayerView::default() });
+        let asked = covers(state.show(PlayerView { current: Some(track), ..PlayerView::default() }));
         assert_eq!(asked.len(), 2, "the row's size and the panel's: {asked:?}");
     }
 
     #[test]
     fn a_new_track_asks_for_its_cover_once() {
         let mut state = without_clips();
-        assert_eq!(state.show(playing("a")), vec![Command::FetchArtwork("https://img/a".into())]);
+        assert_eq!(covers(state.show(playing("a"))), vec![Command::FetchArtwork("https://img/a".into())]);
         assert!(state.show(playing("a")).is_empty(), "the same track again is only a position");
         assert_eq!(state.current(), Some(&track("a")));
     }
@@ -2150,7 +2224,7 @@ mod tests {
     fn the_queue_fetches_its_covers_only_while_it_is_open() {
         let mut state = without_clips();
         let view = PlayerView { upcoming: vec![track("b"), track("c")], ..playing("a") };
-        assert_eq!(state.show(view.clone()), vec![Command::FetchArtwork("https://img/a".into())]);
+        assert_eq!(covers(state.show(view.clone())), vec![Command::FetchArtwork("https://img/a".into())]);
         let opened = click(&mut state, "queue");
         assert_eq!(opened, vec![Command::FetchArtwork("https://img/b".into()), Command::FetchArtwork("https://img/c".into())]);
         assert!(state.show(view).is_empty(), "nothing is asked for twice");

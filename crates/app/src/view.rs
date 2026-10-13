@@ -1124,6 +1124,38 @@ fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Eleme
     inset(Element::row(vec![copy.flex(1.0), shut]))
 }
 
+/// The height of the artist's picture in the card that presents them, and how much of
+/// what their page says of them the card quotes.
+const ABOUT_PICTURE: f32 = 150.0;
+const ABOUT_WORDS: usize = 220;
+
+/// Who plays what plays, as their own page presents them, with the way to follow them.
+fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
+    let (artist, words) = state.about_artist()?;
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let follows = state.is_followed(artist);
+    let follow = Button::new("about-follow", if follows { "Siguiendo" } else { "Seguir" }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
+    let name = Element::clickable("about-artist", Text::new(&artist.name, raised).size(16.0).truncate().render());
+    let mut copy = vec![Text::eyebrow("SOBRE EL ARTISTA", raised).render(), Element::row(vec![name.flex(1.0).centered_y(), follow.centered_y()]).gap(8.0)];
+    if let Some(subscribers) = &artist.subscribers {
+        copy.push(Text::new(format!("{subscribers} suscriptores"), raised).muted().render());
+    }
+    if let Some(words) = words.as_deref().map(str::trim).filter(|words| !words.is_empty()) {
+        // The opening of it, cut at a word.
+        let quoted = match words.char_indices().nth(ABOUT_WORDS) {
+            Some((end, _)) => format!("{}…", words[..end].rsplit_once(char::is_whitespace).map_or(&words[..end], |(kept, _)| kept)),
+            None => words.to_owned(),
+        };
+        copy.push(Text::new(quoted, raised).role(TextRole::Caption).muted().render());
+    }
+    let mut parts = Vec::new();
+    if let Some(image) = artist.artwork_url.as_ref().and_then(|url| state.artwork.get(url)) {
+        parts.push(Element::raster_image(image.clone().cover()).size(Some(width), Some(ABOUT_PICTURE)));
+    }
+    parts.push(Element::column(copy).gap(6.0).padding(12.0));
+    Some(Element::panel(Element::column(parts)).background(CHOSEN).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).size(Some(width), None))
+}
+
 /// A round button that stands on a picture, over a scrim of its own.
 fn on_picture(id: &str, icon: Icon, hint: &str, palette: ComponentPalette) -> Element {
     let scrim = ComponentPalette { surface: COVER_SCRIM, hover: COVER_SCRIM, selected: COVER_SCRIM, ..palette };
@@ -1185,9 +1217,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
             Some(track) => {
                 let side = state.right_width - 32.0;
                 let link = |id: &str, action: &str, text: Element| inset(Element::clickable(id, text).dispatch_as(action));
-                vec![
-                    panel_header("Sonando", track.album.as_deref().unwrap_or(&track.artist), palette),
-                    {
+                let picture = {
                         // The large rendition once it has arrived; until then, the row's.
                         let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
                         let cover = cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px());
@@ -1201,10 +1231,17 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                         layers.push(Element::column(vec![controls, Element::spacer().flex(1.0)]).reveal_on_hover("cover-controls"));
                         let cover = Element::stack(layers).size(Some(side), Some(side)).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).hover_region();
                         Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
-                    },
+                };
+                let mut playing = vec![
+                    picture,
                     link("panel-album", "now-album", Text::new(&track.title, palette).size(18.0).truncate().render()),
                     link("panel-artist", "now-artist", Text::new(&track.artist, palette).muted().truncate().render()),
-                ]
+                ];
+                playing.extend(about_artist(state, side, palette).map(inset));
+                // Under its header the panel scrolls: on a short window the artist is below the fold.
+                playing.push(Element::spacer().size(None, Some(PANEL_PAD - 12.0)));
+                let below = Element::column(playing).gap(12.0);
+                vec![panel_header("Sonando", track.album.as_deref().unwrap_or(&track.artist), palette), ScrollArea::new("playing", below).render().flex(1.0)]
             }
             None => vec![
                 panel_header("Sonando", "Nada por ahora", palette),
