@@ -25,6 +25,9 @@ pub enum Page {
     Song(Track),
     /// What is kept on disk to listen to without a network.
     Downloads,
+    /// One of the user's lists, by its id.
+    Playlist(u64),
+    Settings,
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -67,6 +70,53 @@ impl Entry {
 pub struct Collection {
     pub kept: Vec<Entry>,
     pub recent: Vec<Entry>,
+    #[serde(default)]
+    pub playlists: Vec<Playlist>,
+    /// The id the next playlist takes.
+    #[serde(default)]
+    next_playlist: u64,
+}
+
+/// A list the user makes. A collaborative one is meant for others to add to as well, which
+/// they can once accounts carry it; until then it is a mark on a list of this machine.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Playlist {
+    pub id: u64,
+    pub name: String,
+    pub collaborative: bool,
+    pub tracks: Vec<Track>,
+}
+
+/// A playlist being made in the dialog.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Draft {
+    pub name: String,
+    pub collaborative: bool,
+    /// The track that asked for a new list, which goes into it.
+    pub first: Option<Track>,
+}
+
+/// Something that cannot be undone, waiting for a yes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Confirm {
+    DeletePlaylist(u64),
+    ClearDownloads,
+    ClearRecent,
+}
+
+/// What the user set, kept between runs.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Settings {
+    /// Go on with similar music when what was asked for runs out.
+    pub autoplay: bool,
+    /// Show changes at once instead of moving to them.
+    pub reduce_motion: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self { autoplay: true, reduce_motion: false }
+    }
 }
 
 /// How many recent entries the home page offers.
@@ -96,6 +146,36 @@ impl Collection {
             self.kept.retain(|kept| !kept.is(&entry));
         } else {
             self.kept.insert(0, entry);
+        }
+    }
+
+    pub fn playlist(&self, id: u64) -> Option<&Playlist> {
+        self.playlists.iter().find(|playlist| playlist.id == id)
+    }
+
+    /// The name a playlist takes when it is given none.
+    pub fn default_name(&self) -> String {
+        format!("Mi playlist n.º {}", self.playlists.len() + 1)
+    }
+
+    /// Makes a playlist, newest first, and returns its id.
+    fn create(&mut self, draft: Draft) -> u64 {
+        self.next_playlist += 1;
+        let id = self.next_playlist;
+        let name = match draft.name.trim() {
+            "" => self.default_name(),
+            name => name.to_owned(),
+        };
+        self.playlists.insert(0, Playlist { id, name, collaborative: draft.collaborative, tracks: draft.first.into_iter().collect() });
+        id
+    }
+
+    /// Adds a track to a list once: a list holds each track one time.
+    fn add(&mut self, id: u64, track: Track) {
+        if let Some(playlist) = self.playlists.iter_mut().find(|playlist| playlist.id == id) {
+            if !playlist.tracks.iter().any(|held| held.id == track.id) {
+                playlist.tracks.push(track);
+            }
         }
     }
 
@@ -192,6 +272,12 @@ pub struct State {
     pub queue_open: bool,
     pub collection: Collection,
     pub filter: Filter,
+    pub settings: Settings,
+    /// The playlist being made, while its dialog is open.
+    pub creating: Option<Draft>,
+    pub confirm: Option<Confirm>,
+    /// The room the downloads take on disk.
+    pub saved_bytes: u64,
     /// The widths the user gave the side panels.
     pub left_width: f32,
     pub right_width: f32,
@@ -304,6 +390,10 @@ impl Default for State {
             queue_open: false,
             collection: Collection::default(),
             filter: Filter::All,
+            settings: Settings::default(),
+            creating: None,
+            confirm: None,
+            saved_bytes: 0,
             left_width: Side::Left.limits().default,
             right_width: Side::Right.limits().default,
             resizing: None,
@@ -380,6 +470,12 @@ impl State {
     /// Whether the page being shown is in the library.
     pub fn keeps_page(&self) -> bool {
         self.page_entry().is_some_and(|entry| self.collection.keeps(&entry))
+    }
+
+    /// The covers of the tracks the page being shown lists.
+    fn page_covers(&mut self) -> Vec<Command> {
+        let urls: Vec<Option<String>> = self.page_tracks().iter().map(|track| track.artwork_url.clone()).collect();
+        cover_requests(&mut self.covers, &urls)
     }
 
     /// The covers of everything the library and the home page show.
@@ -484,7 +580,25 @@ impl State {
             "unsave" => vec![Command::Unsave(track.id)],
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
-            _ => Vec::new(),
+            // A track goes into a list that exists, or into one made for it.
+            "add-new" => {
+                self.creating = Some(Draft { first: Some(track), ..Draft::default() });
+                Vec::new()
+            }
+            "remove" => {
+                if let (Page::Playlist(id), Some(index)) = (&self.page, row.strip_prefix("page-track:").and_then(|index| index.parse::<usize>().ok())) {
+                    if let Some(playlist) = self.collection.playlists.iter_mut().find(|playlist| playlist.id == *id) {
+                        playlist.tracks.remove(index);
+                    }
+                }
+                Vec::new()
+            }
+            add => {
+                if let Some(id) = add.strip_prefix("add-").and_then(|id| id.parse::<u64>().ok()) {
+                    self.collection.add(id, track);
+                }
+                Vec::new()
+            }
         }
     }
 
@@ -495,6 +609,7 @@ impl State {
             Page::Album(album) => &album.tracks,
             Page::Song(track) => std::slice::from_ref(track),
             Page::Downloads => &self.saved,
+            Page::Playlist(id) => self.collection.playlist(*id).map_or(&[], |playlist| &playlist.tracks),
             _ => &[],
         }
     }
@@ -513,6 +628,13 @@ impl State {
                 self.query = value.clone();
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "playlist-name" => {
+                if let Some(draft) = &mut self.creating {
+                    draft.name = value.clone();
+                }
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "playlist-name" => self.click("playlist-create"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
             UiAction::SliderChanged { id, fraction, committed } if id == "seek" => {
                 if !*committed {
@@ -589,6 +711,13 @@ impl State {
         }
         if let Some(upcoming) = indexed("upcoming:") {
             return vec![Command::Jump(upcoming)];
+        }
+        if let Some(playlist) = indexed("playlist:").and_then(|index| self.collection.playlists.get(index)) {
+            let id = playlist.id;
+            if self.page != Page::Playlist(id) {
+                self.go(Page::Playlist(id));
+            }
+            return self.page_covers();
         }
         if let Some(index) = indexed("page-track:") {
             return self.play_page(index);
@@ -669,6 +798,76 @@ impl State {
                 self.sharing = None;
                 Vec::new()
             }
+            "settings" => {
+                if self.page != Page::Settings {
+                    self.go(Page::Settings);
+                }
+                Vec::new()
+            }
+            "setting:autoplay" => {
+                self.settings.autoplay = !self.settings.autoplay;
+                vec![Command::Autoplay(self.settings.autoplay)]
+            }
+            "setting:motion" => {
+                self.settings.reduce_motion = !self.settings.reduce_motion;
+                Vec::new()
+            }
+            "playlist-new" => {
+                self.creating = Some(Draft::default());
+                Vec::new()
+            }
+            "playlist-kind:normal" | "playlist-kind:collaborative" => {
+                if let Some(draft) = &mut self.creating {
+                    draft.collaborative = id == "playlist-kind:collaborative";
+                }
+                Vec::new()
+            }
+            "playlist-cancel" => {
+                self.creating = None;
+                Vec::new()
+            }
+            "playlist-create" => {
+                if let Some(draft) = self.creating.take() {
+                    let id = self.collection.create(draft);
+                    self.go(Page::Playlist(id));
+                    return self.page_covers();
+                }
+                Vec::new()
+            }
+            "playlist-delete" => {
+                if let Page::Playlist(id) = self.page {
+                    self.confirm = Some(Confirm::DeletePlaylist(id));
+                }
+                Vec::new()
+            }
+            "downloads-clear" => {
+                self.confirm = (!self.saved.is_empty()).then_some(Confirm::ClearDownloads);
+                Vec::new()
+            }
+            "recent-clear" => {
+                self.confirm = (!self.collection.recent.is_empty()).then_some(Confirm::ClearRecent);
+                Vec::new()
+            }
+            "confirm-cancel" => {
+                self.confirm = None;
+                Vec::new()
+            }
+            "confirm-yes" => match self.confirm.take() {
+                Some(Confirm::DeletePlaylist(id)) => {
+                    self.collection.playlists.retain(|playlist| playlist.id != id);
+                    self.history.retain(|page| *page != Page::Playlist(id));
+                    if self.page == Page::Playlist(id) {
+                        self.page = self.history.pop().unwrap_or(Page::Search);
+                    }
+                    Vec::new()
+                }
+                Some(Confirm::ClearDownloads) => self.saved.iter().map(|track| Command::Unsave(track.id.clone())).collect(),
+                Some(Confirm::ClearRecent) => {
+                    self.collection.recent.clear();
+                    Vec::new()
+                }
+                None => Vec::new(),
+            },
             "keep" => {
                 if let Some(entry) = self.page_entry() {
                     self.collection.toggle(entry);
@@ -747,9 +946,10 @@ impl State {
                 self.search_error = Some(message);
                 Vec::new()
             }
-            Event::Library { saved, saving } => {
+            Event::Library { saved, saving, bytes } => {
                 self.saved = saved;
                 self.saving = saving;
+                self.saved_bytes = bytes;
                 if self.page == Page::Downloads { cover_requests(&mut self.covers, covers_of(&self.saved)) } else { Vec::new() }
             }
             Event::SaveFailed { title, message } => {
@@ -966,12 +1166,12 @@ mod tests {
         state.search();
         state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
         assert_eq!(click(&mut state, "do:save:track:1"), vec![Command::Save(track("b"))]);
-        state.apply(Event::Library { saved: Vec::new(), saving: HashSet::from(["b".to_owned()]) });
+        state.apply(Event::Library { saved: Vec::new(), saving: HashSet::from(["b".to_owned()]), bytes: 0 });
         assert!(state.saving.contains("b") && !state.is_saved("b"));
         state.apply(Event::SaveFailed { title: "b".into(), message: "sin red".into() });
         assert_eq!(state.save_error.as_deref(), Some("b: sin red"));
 
-        state.apply(Event::Library { saved: vec![track("b"), track("a")], saving: HashSet::new() });
+        state.apply(Event::Library { saved: vec![track("b"), track("a")], saving: HashSet::new(), bytes: 9 });
         assert!(state.is_saved("b"));
         assert!(click(&mut state, "downloads").is_empty(), "both covers were asked for with the search");
         assert_eq!(state.page, Page::Downloads);
@@ -1119,6 +1319,72 @@ mod tests {
         state.apply(Event::Opened { target: Target::Song("DdI598gKkKw".into()), result: Ok(Content::Song(track("a"))) });
         assert_eq!(state.page, Page::Song(track("a")));
         assert_eq!(click(&mut state, "song-card"), vec![Command::PlayList { tracks: vec![track("a")], index: 0 }]);
+    }
+
+    #[test]
+    fn a_playlist_is_made_in_its_dialog_filled_from_the_menus_and_deleted_after_a_yes() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
+
+        click(&mut state, "playlist-new");
+        assert_eq!(state.creating, Some(Draft::default()));
+        state.update(&UiAction::InputChanged { id: "playlist-name".into(), value: "  Para correr ".into() });
+        click(&mut state, "playlist-kind:collaborative");
+        click(&mut state, "playlist-create");
+        assert!(state.creating.is_none());
+        let made = state.collection.playlists[0].clone();
+        assert_eq!((made.name.as_str(), made.collaborative, made.tracks.len()), ("Para correr", true, 0));
+        assert_eq!(state.page, Page::Playlist(made.id), "the new list opens");
+
+        click(&mut state, "back");
+        click(&mut state, &format!("do:add-{}:track:1", made.id));
+        click(&mut state, &format!("do:add-{}:track:1", made.id));
+        assert_eq!(state.collection.playlist(made.id).unwrap().tracks, vec![track("b")], "a list holds a track once");
+
+        click(&mut state, "do:add-new:track:0");
+        assert_eq!(state.creating.as_ref().and_then(|draft| draft.first.clone()), Some(track("a")));
+        state.update(&UiAction::Submitted { id: "playlist-name".into(), value: String::new() });
+        let second = state.collection.playlists[0].clone();
+        assert_eq!((second.name.as_str(), second.collaborative, second.tracks.clone()), ("Mi playlist n.º 2", false, vec![track("a")]), "Enter makes it, with a name of its own");
+        assert_eq!(click(&mut state, "page-play"), vec![Command::PlayList { tracks: vec![track("a")], index: 0 }]);
+        click(&mut state, "do:remove:page-track:0");
+        assert!(state.collection.playlist(second.id).unwrap().tracks.is_empty());
+
+        click(&mut state, "playlist-delete");
+        assert_eq!(state.confirm, Some(Confirm::DeletePlaylist(second.id)));
+        click(&mut state, "confirm-cancel");
+        assert_eq!(state.collection.playlists.len(), 2, "a no deletes nothing");
+        click(&mut state, "playlist-delete");
+        click(&mut state, "confirm-yes");
+        assert_eq!(state.collection.playlists.len(), 1);
+        assert_ne!(state.page, Page::Playlist(second.id), "the page of a deleted list is left");
+        click(&mut state, "playlist-cancel");
+
+        let written = serde_json::to_string(&state.collection).unwrap();
+        assert_eq!(serde_json::from_str::<Collection>(&written).unwrap(), state.collection);
+        let older: Collection = serde_json::from_str(r#"{"kept":[],"recent":[]}"#).unwrap();
+        assert!(older.playlists.is_empty(), "a collection saved before lists existed still loads");
+    }
+
+    #[test]
+    fn settings_toggle_and_the_destructive_ones_wait_for_a_yes() {
+        let mut state = State::default();
+        click(&mut state, "settings");
+        assert_eq!(state.page, Page::Settings);
+        assert_eq!(click(&mut state, "setting:autoplay"), vec![Command::Autoplay(false)]);
+        click(&mut state, "setting:motion");
+        assert!(!state.settings.autoplay && state.settings.reduce_motion);
+        assert!(click(&mut state, "downloads-clear").is_empty() && state.confirm.is_none(), "nothing to clear");
+        state.apply(Event::Library { saved: vec![track("a"), track("b")], saving: HashSet::new(), bytes: 2048 });
+        assert_eq!(state.saved_bytes, 2048);
+        click(&mut state, "downloads-clear");
+        assert_eq!(state.confirm, Some(Confirm::ClearDownloads));
+        assert_eq!(click(&mut state, "confirm-yes"), vec![Command::Unsave("a".into()), Command::Unsave("b".into())]);
+        state.collection.visited(Entry::Album(AlbumRef { id: "lp".into(), title: "lp".into(), artist: None, year: String::new(), artwork_url: None }));
+        click(&mut state, "recent-clear");
+        click(&mut state, "confirm-yes");
+        assert!(state.collection.recent.is_empty() && state.confirm.is_none());
     }
 
     #[test]

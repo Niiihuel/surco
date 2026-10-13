@@ -66,6 +66,8 @@ pub enum Command {
     /// Steps repeat: off, the list, the track.
     Repeat,
     Equalizer(EqualizerValues),
+    /// Whether a queue that runs out goes on with its last track's radio.
+    Autoplay(bool),
     /// Keep a track on disk to play it without a network, or stop keeping it.
     Save(Track),
     Unsave(String),
@@ -78,8 +80,8 @@ pub enum Event {
     SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
-    /// What is kept on disk, newest first, and the ids on their way there.
-    Library { saved: Vec<Track>, saving: HashSet<String> },
+    /// What is kept on disk, newest first, the ids on their way there, and the room it takes.
+    Library { saved: Vec<Track>, saving: HashSet<String>, bytes: u64 },
     SaveFailed { title: String, message: String },
     /// A cover, and the color it lends to a card of its track when it could be read.
     Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
@@ -138,9 +140,12 @@ impl Shared {
 
     /// Tells the window what the library holds now.
     fn announce(&self) {
-        let saved = self.library.lock().unwrap().tracks();
+        let (saved, bytes) = {
+            let library = self.library.lock().unwrap();
+            (library.tracks(), library.bytes())
+        };
         let saving = self.saving.lock().unwrap().clone();
-        (self.reply)(Event::Library { saved, saving });
+        (self.reply)(Event::Library { saved, saving, bytes });
     }
 }
 

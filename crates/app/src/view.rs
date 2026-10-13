@@ -3,21 +3,55 @@
 use dnm_audio::equalizer::BAND_HZ;
 use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    Alert, Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
-    ControlSize, DropdownMenu, DropdownMenuEntry, DropdownMenuItem, Element, Empty, FontFamily, Icon, IconButton, Link,
-    ListRow, MediaCard, MediaTile, Modal, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField,
-    SegmentedControl, Size, SkeletonGroup, Slider, Spinner, Tab, Text, TextRole, Theme, Ticker, TooltipPlacement,
-    TooltipSpec,
+    ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
+    ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
+    DropdownMenuItem, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, Link, ListRow, MediaCard, MediaTile,
+    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, RadiusRole, ResizeHandle, RowSizing, Scheme,
+    ScrollArea, SearchField, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Tabs, Text, TextField, TextRole, Ticker,
+    TooltipPlacement, TooltipSpec,
 };
 
-use crate::state::{clock, greeting, large_cover, share_link, Entry, Filter, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
-
-/// dnmusic's palette: near-black surfaces told apart by luminance, white ink.
-pub const THEME: Theme = Theme {
-    background: Color::rgb(18, 18, 18),
-    foreground: Color::rgb(255, 255, 255),
-    accent: Color::rgb(255, 255, 255),
+use crate::state::{
+    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, Page, Playlist, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB,
 };
+
+/// dnmusic's colors, one per role: near-black surfaces told apart by luminance, white ink.
+/// Every palette a component takes is derived from here, so that a control on a card, a
+/// menu and a page cannot disagree about a shared color.
+pub const SCHEME: Scheme = Scheme {
+    canvas: Color::rgb(18, 18, 18),
+    panel: Color::rgb(18, 18, 18),
+    raised: Color::rgb(28, 28, 28),
+    hover: Color::rgb(34, 34, 34),
+    selected: Color::rgb(42, 42, 42),
+    border: Color::rgb(46, 46, 46),
+    text: Color::rgb(255, 255, 255),
+    muted: Color::rgb(179, 179, 179),
+    muted_on_raised: Color::rgb(179, 179, 179),
+    menu: Color::rgb(36, 36, 38),
+    menu_hover: Color::rgb(52, 52, 54),
+    menu_muted: Color::rgb(179, 179, 179),
+    shadow: Color::rgba(0, 0, 0, 140),
+    control: ControlColors {
+        surface: Color::rgb(42, 42, 42),
+        hover: Color::rgb(52, 52, 52),
+        pressed: Color::rgb(60, 60, 60),
+        border: Color::rgb(60, 60, 60),
+        text: Color::rgb(255, 255, 255),
+    },
+};
+
+/// A segmented control: a track a step above its surface, the chosen segment sunk to the
+/// page's color under it.
+fn segmented_palette() -> ComponentPalette {
+    ComponentPalette { surface: SCHEME.selected, raised: SCHEME.selected, hover: SCHEME.control.hover, selected: SCHEME.canvas, ..SCHEME.palette() }
+}
+
+/// A choice among a few, as wide as the room it is given. `group` names it, so the
+/// selection travels from one segment to the next.
+fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
+    Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).fill_width(width).render()
+}
 
 /// The window is laid out as Spotify's: a bar with the search across the top, three rounded
 /// panels a gap apart on a black floor, and the playback bar across the bottom. The gaps
@@ -90,8 +124,8 @@ const ARTIST_PICTURE: f32 = 128.0;
 const PAGE_TITLE: f32 = 26.0;
 
 pub fn view(state: &State, window: Size) -> Element {
-    let palette = THEME.palette();
-    let surface = |element: Element| Element::panel(element).background(THEME.background).radius(PANEL_RADIUS);
+    let palette = SCHEME.palette();
+    let surface = |element: Element| Element::panel(element).background(SCHEME.canvas).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
     // A panel on its way open or shut is drawn part of its width, uncovering content that
     // keeps the width it has at rest.
@@ -129,7 +163,69 @@ pub fn view(state: &State, window: Size) -> Element {
     let window_tree = Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
-    share_dialog(state, window_tree, window.width, palette)
+    let shared = share_dialog(state, window_tree, window.width, palette);
+    let created = playlist_dialog(state, shared, window.width, palette);
+    confirm_dialog(state, created, palette)
+}
+
+/// How a form's field reads in a dialog: its label a step up, its hint under the control.
+const DIALOG_FIELD: FormFieldSizing = FormFieldSizing { label_role: TextRole::Label, hint_role: TextRole::Caption, gap: 8.0, ..FormFieldSizing::DEFAULT };
+
+/// A dialog's footer: the way out first, what goes ahead last, at the end.
+fn dialog_footer(cancel: Element, confirm: Element) -> Element {
+    ButtonGroup::new(vec![cancel, confirm]).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render()
+}
+
+/// Making a playlist: its name, and whether others will add to it.
+fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let Some(draft) = &state.creating else { return window_tree };
+    let dialog = Modal::fit_width(width, 440.0).max(240.0);
+    // This dialog is short enough never to scroll: its form reaches both paddings.
+    let form = Modal::fitted_body_width(dialog);
+    let name = TextField::new("playlist-name", &draft.name, state.collection.default_name(), palette).size(ControlSize::Regular).render();
+    let kind = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
+    let kinds = segments(
+        "playlist-kind",
+        form,
+        vec![kind("playlist-kind:normal", "Normal", !draft.collaborative), kind("playlist-kind:collaborative", "Colaborativa", draft.collaborative)],
+    );
+    let about = if draft.collaborative {
+        "Otras personas van a poder agregar canciones con un enlace. Por ahora queda marcada en este equipo: invitar llega con las cuentas."
+    } else {
+        "Solo vos agregás y quitás canciones."
+    };
+    let mut fields: Vec<Element> = FormField::new("Título", name, palette).sizing(DIALOG_FIELD).rows();
+    fields.extend(FormField::new("Tipo", kinds, palette).hint(about).sizing(DIALOG_FIELD).rows());
+    if let Some(track) = &draft.first {
+        fields.push(Text::new(format!("Empieza con «{}».", track.title), palette).role(TextRole::Caption).muted().truncate().render());
+    }
+    let cancel = Button::new("playlist-cancel", "Cancelar", palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let create = Button::new("playlist-create", "Crear", palette).size(ControlSize::Regular).render();
+    Modal::new(window_tree, true, "Nueva playlist", "Juntá canciones bajo un nombre.", "playlist-cancel", palette)
+        .width(dialog)
+        .body(Element::column(fields).gap(8.0))
+        .footer(dialog_footer(cancel, create))
+        .initial_focus("playlist-name")
+        .return_focus("playlist-new")
+        .render()
+}
+
+/// What cannot be undone asks before it is done.
+fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
+    let (title, about, yes) = match &state.confirm {
+        Some(Confirm::DeletePlaylist(id)) => {
+            let name = state.collection.playlist(*id).map_or("esta playlist", |playlist| playlist.name.as_str());
+            (format!("¿Eliminar «{name}»?"), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar")
+        }
+        Some(Confirm::ClearDownloads) => ("¿Borrar todas las descargas?".to_owned(), "Vas a necesitar conexión para volver a escucharlas.", "Borrar")
+        ,
+        Some(Confirm::ClearRecent) => ("¿Borrar lo escuchado recientemente?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
+        None => (String::new(), "", ""),
+    };
+    AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", palette)
+        .confirm_label(yes)
+        .cancel_label("Cancelar")
+        .render()
 }
 
 /// A button of a header: quiet, small, with its hint under it.
@@ -166,14 +262,14 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
     Modal::new(window_tree, state.sharing.is_some(), "Compartir canción", "Quien abra el enlace la escucha en dnmusic.", "share-close", palette)
         .width(Modal::fit_width(width, 420.0))
         .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
-        .footer(Element::row(vec![Element::spacer().flex(1.0), copy.render()]))
+        .footer(ButtonGroup::new(vec![copy.size(ControlSize::Regular).render()]).align_end().render())
         .render()
 }
 
 /// Across the top: the way back, home, and the search in the middle of the window. A side
 /// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let search = SearchField::new("search", &state.query, "¿Qué querés escuchar?", ComponentPalette { surface: CHOSEN, ..palette })
+    let search = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
         .width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH))
         .render()
         .centered_y();
@@ -183,6 +279,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     }
     leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new("Volver"), palette).enabled(state.can_go_back()).render().centered_y());
     let mut trailing = vec![Element::spacer().flex(1.0)];
+    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new("Configuración"), palette).active(state.page == Page::Settings).render().centered_y());
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
     }
@@ -219,10 +316,18 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut entries: Vec<(String, Element, &str, String, bool)> = Vec::new();
     if shows(Filter::Lists) {
         let count = match state.saved.len() {
-            1 => "Lista · 1 canción".to_owned(),
-            count => format!("Lista · {count} canciones"),
+            1 => "Playlist · 1 canción".to_owned(),
+            count => format!("Playlist · {count} canciones"),
         };
         entries.push(("downloads".into(), library_tile(Icon::Custom(DOWNLOAD), palette), "Descargas", count, state.page == Page::Downloads));
+        for (index, playlist) in state.collection.playlists.iter().enumerate() {
+            let picture = match playlist.tracks.first() {
+                Some(track) => cover(state, &track.artwork_url, LIBRARY_TILE, palette),
+                None => library_tile(Icon::Playlist, palette),
+            };
+            let about = format!("{} · {}", if playlist.collaborative { "Playlist colaborativa" } else { "Playlist" }, songs(playlist.tracks.len()));
+            entries.push((format!("playlist:{index}"), picture, &playlist.name, about, state.page == Page::Playlist(playlist.id)));
+        }
     }
     if shows(Filter::Artists) {
         for (index, artist) in state.collection.artists() {
@@ -248,20 +353,22 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let header = Element::row(vec![
         header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y(),
         Text::new("Tu biblioteca", palette).size(15.0).muted().render().centered_y(),
+        Element::spacer().flex(1.0),
+        header_button("playlist-new", Icon::Add, TooltipSpec::new("Crear playlist"), palette).render().centered_y(),
     ])
     .gap(8.0)
     .size(None, Some(40.0));
-    let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, (width - 16.0) / 4.0).active(state.filter == filter);
-    let filters = SegmentedControl::new(
+    let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
+    let filters = segments(
+        "library-filter",
+        width - 16.0,
         vec![
             filter("filter:all", "Todo", Filter::All),
-            filter("filter:lists", "Listas", Filter::Lists),
+            filter("filter:lists", "Playlists", Filter::Lists),
             filter("filter:artists", "Artistas", Filter::Artists),
             filter("filter:albums", "Álbumes", Filter::Albums),
         ],
-        palette,
-    )
-    .render();
+    );
     let rows: Vec<Element> = entries
         .into_iter()
         .map(|(id, picture, name, about, here)| {
@@ -397,7 +504,21 @@ fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>>
         item("next", "Poner a continuación", include_str!("../assets/icons/list-start.svg"), None),
         item("share", "Compartir", include_str!("../assets/icons/share-2.svg"), None),
         None,
+        item("add-new", "Agregar a una playlist nueva", include_str!("../assets/icons/list-plus.svg"), None),
     ];
+    // Each of the user's playlists that does not hold the track yet.
+    for playlist in state.collection.playlists.iter().filter(|playlist| !playlist.tracks.iter().any(|held| held.id == track.id)) {
+        actions.push(Some(Action {
+            id: format!("do:add-{}:{row}", playlist.id),
+            label: "Agregar a",
+            icon: Icon::Playlist,
+            detail: Some(playlist.name.clone()),
+        }));
+    }
+    if matches!(state.page, Page::Playlist(_)) && row.starts_with("page-track:") {
+        actions.push(item("remove", "Quitar de esta playlist", include_str!("../assets/icons/circle-minus.svg"), None));
+    }
+    actions.push(None);
     if track.album_id.is_some() {
         actions.push(item("album", "Ir al álbum", include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
     }
@@ -448,7 +569,7 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         .tooltip("Opciones")
         .active(open)
         .render();
-    let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", palette)
+    let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", SCHEME.menu())
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::BottomEnd)
         .render();
@@ -482,7 +603,7 @@ fn track_row(state: &State, row: String, track: &Track, number: Option<usize>, s
         Some(action) => ContextMenuEntry::Item(ContextMenuItem::new(action.id, action.label).icon(action.icon)),
         None => ContextMenuEntry::Separator,
     });
-    ContextMenu::new(format!("context:{row}"), element, entries.collect(), palette).render()
+    ContextMenu::new(format!("context:{row}"), element, entries.collect(), SCHEME.menu()).render()
 }
 
 /// Rows that pulse where a list is on its way.
@@ -503,6 +624,8 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Album(album) => format!("page:album:{}", album.id),
         Page::Song(track) => format!("page:song:{}", track.id),
         Page::Downloads => "page:downloads".to_owned(),
+        Page::Playlist(id) => format!("page:playlist:{id}"),
+        Page::Settings => "page:settings".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
 }
@@ -528,7 +651,119 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .gap(12.0),
         ),
         Page::Downloads => downloads_page(state, palette),
+        Page::Playlist(id) => match state.collection.playlist(*id) {
+            Some(playlist) => playlist_page(state, playlist, palette),
+            None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
+        },
+        Page::Settings => settings_page(state, width, palette),
     }
+}
+
+/// "1 canción", "12 canciones".
+fn songs(count: usize) -> String {
+    if count == 1 { "1 canción".to_owned() } else { format!("{count} canciones") }
+}
+
+/// One of the user's playlists: what it is, what to do with it, and its tracks in order.
+fn playlist_page(state: &State, playlist: &Playlist, palette: ComponentPalette) -> Element {
+    let minutes = playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
+    let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
+    let picture = match playlist.tracks.first() {
+        Some(track) => cover(state, &track.artwork_url, ALBUM_COVER, palette),
+        None => Element::panel(Element::icon(Icon::Playlist).large_icon(48.0).foreground(palette.muted).centered())
+            .background(CHOSEN)
+            .radius(limn::tokens().radius.control)
+            .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
+    };
+    let mut actions = vec![
+        Button::new("page-play", "Reproducir", palette).icon(Icon::PlayFill).render(),
+        Button::new("page-shuffle", "Aleatorio", palette).icon(Icon::Shuffle).variant(ButtonVariant::Secondary).render(),
+        Button::new("playlist-delete", "Eliminar", palette).icon(Icon::Trash).variant(ButtonVariant::Ghost).render(),
+    ];
+    if playlist.tracks.is_empty() {
+        // Nothing to play yet.
+        actions.drain(..2);
+    }
+    let header = Element::row(vec![
+        picture,
+        Element::column(vec![
+            Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
+            Text::new(&playlist.name, palette).size(PAGE_TITLE).truncate().render(),
+            Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
+            Element::row(actions).gap(8.0),
+        ])
+        .gap(10.0)
+        .flex(1.0)
+        .centered_y(),
+    ])
+    .gap(20.0);
+    let list = if playlist.tracks.is_empty() {
+        Element::panel(
+            Empty::new("Todavía no tiene canciones", "Buscá una canción y elegí «Agregar a» en su menú.", palette).icon(Icon::MusicNote).render().centered_x(),
+        )
+        .padding(24.0)
+    } else {
+        let rows = playlist.tracks.iter().enumerate().map(|(index, track)| {
+            let row = track_row(state, format!("page-track:{index}"), track, Some(index + 1), &track.artist, palette);
+            Element::column(vec![row]).animate_height(format!("playlist-row:{}:{}", playlist.id, track.id), false)
+        });
+        Element::column(rows.collect()).keep_leaving("playlist-rows")
+    };
+    ScrollArea::new("playlist", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
+}
+
+/// A size on disk as people read it.
+fn megabytes(bytes: u64) -> String {
+    let megabytes = bytes as f64 / 1_048_576.0;
+    if megabytes >= 1024.0 { format!("{:.1} GB", megabytes / 1024.0) } else { format!("{megabytes:.0} MB") }
+}
+
+/// A settings row's measures: its name over what it does, a control at the end.
+const SETTINGS_ROW: ActionRowSizing = ActionRowSizing { gap: 16.0, copy_gap: 4.0, icon_column: 20.0, min_height: 34.0, min_height_with_subtitle: 34.0 };
+
+/// What the user can set: one page of groups, each row its name and what it does beside
+/// its control. A narrow page stacks the control under the copy.
+fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let column = PageColumn::new("settings", width, palette).gutter(12.0, 20.0, 600.0).gap(12.0).reserve_rail(true);
+    // A switch or a short button fits beside its row's copy in less room than a field would.
+    let compact = column.content_width() < 480.0;
+    let (card, control) = (SCHEME.card(), SCHEME.on_raised());
+    let row = |title: &str, about: &str| ActionRow::new(title, card).subtitle(about).wrap_title(true).align_top(true).sizing(SETTINGS_ROW);
+    let switch = |title: &str, about: &str, id: &str, on: bool| row(title, about).trailing(Switch::new(id, on, control).render()).stacked(compact).render();
+    let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Compact).enabled(enabled).render();
+    let group = |title: &str, rows: Vec<Element>| PreferencesGroup::new(title, rows, card).render();
+
+    let equalizer = if state.equalizer == dnm_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
+    let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let body = vec![
+        PageHeader::new("Configuración", card).description("Lo que elegís acá vale para este equipo.").stacked(compact).render(),
+        group(
+            "Reproducción",
+            vec![
+                switch("Reproducción automática", "Cuando termina lo que elegiste, sigue con música parecida.", "setting:autoplay", state.settings.autoplay),
+                row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
+            ],
+        ),
+        group("Pantalla", vec![switch("Reducir el movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)]),
+        group(
+            "Almacenamiento",
+            vec![
+                row("Descargas", &format!("Guardadas en este equipo para escuchar sin conexión: {downloads}."))
+                    .trailing(action("downloads-clear", "Borrar todas", !state.saved.is_empty()))
+                    .stacked(compact)
+                    .render(),
+                row("Escuchado recientemente", "Los accesos rápidos de Inicio.").trailing(action("recent-clear", "Borrar", !state.collection.recent.is_empty())).stacked(compact).render(),
+            ],
+        ),
+        group(
+            "Acerca de",
+            vec![
+                row("Versión", "dnmusic para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
+                row("Licencias", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
+            ],
+        ),
+    ];
+    column.children(body).render().flex(1.0)
 }
 
 fn results(state: &State, palette: ComponentPalette) -> Element {
@@ -809,7 +1044,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let repeat_icon = if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
     // Play is the one filled control of the bar: a white circle.
     let round = if has_track {
-        ComponentPalette { surface: palette.text, text: THEME.background, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette }
+        ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette }
     } else {
         ComponentPalette { surface: ROUND_OFF, muted: ROUND_OFF_INK, ..palette }
     };
@@ -847,7 +1082,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         equalizer(state, palette),
         state.equalizer_open,
         "equalizer-close",
-        palette,
+        SCHEME.menu(),
     )
     .placement(PopoverPlacement::TopEnd)
     .width(36.0 + EQUALIZER_SLIDER + 44.0 + 16.0 + 24.0)
@@ -969,6 +1204,62 @@ mod tests {
         assert!(has(&at(&state, 1400.0), "upcoming:0") && has(&at(&state, 700.0), "upcoming:0"), "the queue shows at any width");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
+    }
+
+    #[test]
+    fn playlists_settings_and_their_dialogs_offer_their_controls() {
+        let mut state = State::default();
+        let size = Size::new(1400.0, 1000.0);
+        let has = |state: &State, wanted: &[&str]| {
+            let found = ids(state, size);
+            for id in wanted {
+                assert!(found.iter().any(|found| found == id), "{id} is there: {found:?}");
+            }
+        };
+        has(&state, &["playlist-new", "settings"]);
+        let click = |state: &mut State, id: &str| drop(state.update(&limn::UiAction::Clicked { id: id.into() }));
+
+        click(&mut state, "playlist-new");
+        has(&state, &["playlist-name", "playlist-kind:normal", "playlist-kind:collaborative", "playlist-create", "playlist-cancel"]);
+        click(&mut state, "playlist-kind:collaborative");
+        click(&mut state, "playlist-create");
+        has(&state, &["playlist:0", "playlist-delete"]);
+        click(&mut state, "playlist-delete");
+        has(&state, &["confirm-yes", "confirm-cancel"]);
+        click(&mut state, "confirm-cancel");
+
+        click(&mut state, "settings");
+        has(&state, &["setting:autoplay", "setting:motion"]);
+        assert!(ids(&state, Size::new(720.0, 1000.0)).iter().any(|id| id == "setting:autoplay"), "and in a narrow window");
+    }
+
+    #[test]
+    fn the_chosen_filter_travels_to_its_place_instead_of_jumping() {
+        use std::time::{Duration, Instant};
+        let mut state = State::default();
+        let size = Size::new(1400.0, 900.0);
+        let start = Instant::now();
+        let mut tree = UiTree::new(view(&state, size));
+        // Where the chosen segment's fill is drawn, and where each filter sits.
+        let mut chosen = |state: &State, now: Instant| {
+            tree.set_root(view(state, size));
+            let frame = tree.layout_at(size, now);
+            let at = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap();
+            let (all, albums) = (at("filter:all"), at("filter:albums"));
+            let fill = frame.commands.iter().find_map(|command| match command {
+                limn::DrawCommand::FillRect { rect, color, .. } if *color == SCHEME.canvas && rect.height == all.height && rect.y == all.y => Some(rect.x),
+                _ => None,
+            });
+            (fill.expect("the chosen segment is filled"), all.x, albums.x)
+        };
+        let (rest, all, albums) = chosen(&state, start);
+        assert_eq!(rest, all);
+        state.update(&limn::UiAction::Clicked { id: "filter:albums".into() });
+        chosen(&state, start + Duration::from_millis(1));
+        let (midway, ..) = chosen(&state, start + Duration::from_millis(60));
+        assert!(midway > all && midway < albums, "on its way: {midway} between {all} and {albums}");
+        let (arrived, ..) = chosen(&state, start + Duration::from_millis(600));
+        assert!((arrived - albums).abs() < 0.5, "and there: {arrived} at {albums}");
     }
 
     #[test]

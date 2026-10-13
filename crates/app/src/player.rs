@@ -37,7 +37,6 @@ pub enum Effect {
     Seek(f64),
 }
 
-#[derive(Default)]
 pub struct Player {
     queue: Queue,
     playing: bool,
@@ -48,7 +47,25 @@ pub struct Player {
     error: Option<String>,
     /// The track already asked onto the standby deck, so it is asked for once.
     preloading: Option<String>,
+    /// Whether a queue that runs out goes on with its last track's radio.
+    autoplay: bool,
     rng: fastrand::Rng,
+}
+
+impl Default for Player {
+    fn default() -> Self {
+        Self {
+            queue: Queue::default(),
+            playing: false,
+            loaded: false,
+            position: 0.0,
+            duration: 0.0,
+            error: None,
+            preloading: None,
+            autoplay: true,
+            rng: fastrand::Rng::default(),
+        }
+    }
 }
 
 impl Player {
@@ -75,7 +92,7 @@ impl Player {
         self.preloading = None;
         // A lone track and the last of a list are followed by their radio, as long as the
         // user did not ask for the list to repeat.
-        let radio = self.queue.peek_next().is_none().then(|| Effect::Radio(track.clone()));
+        let radio = (self.autoplay && self.queue.peek_next().is_none()).then(|| Effect::Radio(track.clone()));
         std::iter::once(Effect::Play(track)).chain(radio).collect()
     }
 
@@ -138,6 +155,10 @@ impl Player {
             Command::Seek(seconds) if self.loaded => {
                 self.position = seconds;
                 vec![Effect::Seek(seconds)]
+            }
+            Command::Autoplay(on) => {
+                self.autoplay = on;
+                Vec::new()
             }
             Command::Shuffle => {
                 self.queue.set_shuffle(!self.queue.is_shuffled(), &mut self.rng);
@@ -325,6 +346,16 @@ mod tests {
         assert!(player.command(Command::PlayNext(track("w"))).is_empty());
         assert_eq!(player.view().upcoming, vec![track("w"), track("x"), track("y"), track("b")]);
         assert_eq!(player.command(Command::Next), vec![Effect::Play(track("w"))]);
+    }
+
+    #[test]
+    fn with_autoplay_off_a_queue_that_runs_out_just_ends() {
+        let mut player = Player::default();
+        player.command(Command::Autoplay(false));
+        assert_eq!(player.command(Command::PlayList { tracks: vec![track("a")], index: 0 }), vec![Effect::Play(track("a"))]);
+        player.command(Command::Autoplay(true));
+        assert_eq!(player.command(Command::PlayPause), vec![Effect::Pause]);
+        assert_eq!(player.command(Command::PlayList { tracks: vec![track("a")], index: 0 }).len(), 2, "on again, the radio is asked for");
     }
 
     #[test]

@@ -53,6 +53,12 @@ impl Library {
         Some((self.dir.join(file_name(track_id)), saved.mime.clone()))
     }
 
+    /// The room the saved audio takes on disk.
+    pub fn bytes(&self) -> u64 {
+        let size = |saved: &Saved| fs::metadata(self.dir.join(file_name(&saved.track.id))).map_or(0, |file| file.len());
+        self.saved.iter().map(size).sum()
+    }
+
     pub fn cover(&self, url: &str) -> Option<Vec<u8>> {
         fs::read(self.dir.join(file_name(url))).ok()
     }
@@ -117,6 +123,7 @@ mod tests {
 
         let library = Library::open(dir.clone());
         assert_eq!(library.tracks(), vec![track("a"), track("b/..\\x")], "newest first, each once");
+        assert_eq!(library.bytes(), 8, "five bytes of one and three of the other");
         let (path, mime) = library.audio("a").unwrap();
         assert_eq!((fs::read(path).unwrap(), mime.as_str()), (b"again".to_vec(), "audio/webm"));
         assert!(library.audio("b/..\\x").unwrap().0.starts_with(&dir), "an id never names a path outside the library");

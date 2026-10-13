@@ -108,6 +108,7 @@ impl Host {
 const APP_ID: &str = "dnmusic-native";
 const VOLUME_KEY: &str = "volume";
 const COLLECTION_KEY: &str = "collection";
+const SETTINGS_KEY: &str = "settings";
 const LIBRARY_OPEN_KEY: &str = "library-open";
 const PANEL_OPEN_KEY: &str = "panel-open";
 const LEFT_KEY: &str = "left-width";
@@ -119,6 +120,9 @@ impl eframe::App for Host {
         storage.set_string(VOLUME_KEY, self.state.volume.to_string());
         if let Ok(collection) = serde_json::to_string(&self.state.collection) {
             storage.set_string(COLLECTION_KEY, collection);
+        }
+        if let Ok(settings) = serde_json::to_string(&self.state.settings) {
+            storage.set_string(SETTINGS_KEY, settings);
         }
         storage.set_string(LIBRARY_OPEN_KEY, self.state.library_open.to_string());
         storage.set_string(PANEL_OPEN_KEY, self.state.panel_open.to_string());
@@ -133,13 +137,16 @@ impl eframe::App for Host {
             self.started = true;
             limn_egui::attach_fonts(&mut self.tree, &ctx);
             // The engine starts at full volume and flat; the window owns both settings.
-            self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer)]);
+            self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay)]);
             let covers = self.state.collection_covers();
             self.send(covers);
         }
         limn_egui::normalize_keyboard_input(&ctx);
-        self.tree.set_reduced_motion(self.script.screenshot.is_some());
-        self.state.motion = self.script.screenshot.is_none();
+        // Motion stays on for a scripted run too: whoever looks at its window sees the app as
+        // it is, and the screenshot is taken once things have settled.
+        let still = self.state.settings.reduce_motion;
+        self.tree.set_reduced_motion(still);
+        self.state.motion = !still;
         let area = ui.max_rect();
         let window = Size::new(area.width(), area.height());
 
@@ -243,6 +250,8 @@ fn main() -> eframe::Result {
                 state.restore_sides(open(LIBRARY_OPEN_KEY), open(PANEL_OPEN_KEY));
                 let collection = storage.get_string(COLLECTION_KEY).and_then(|text| serde_json::from_str(&text).ok());
                 state.collection = collection.unwrap_or_default();
+                let settings = storage.get_string(SETTINGS_KEY).and_then(|text| serde_json::from_str(&text).ok());
+                state.settings = settings.unwrap_or_default();
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
             }
