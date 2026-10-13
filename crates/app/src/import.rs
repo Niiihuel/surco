@@ -93,6 +93,34 @@ fn spotify(page: &str) -> Option<(String, Vec<Wanted>)> {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    #[ignore = "reads public YouTube Music lists over the network"]
+    async fn public_youtube_music_album_and_playlist_links_import() {
+        let youtube = YouTube::new().unwrap();
+        let album = "https://music.youtube.com/playlist?list=OLAK5uy_khL-3qIv3An2R3B0mBXdO7vgCo3P-GA5c";
+        let (name, tracks, missed) = list(&youtube, album).await.unwrap();
+        assert_eq!(name, "Cigarettes After Sex");
+        assert_eq!(tracks.len(), 10);
+        assert_eq!(missed, 0);
+        assert_eq!(tracks.first().unwrap().title, "K.");
+        assert_eq!(tracks.last().unwrap().title, "Young & Dumb");
+
+        let playlist = "https://music.youtube.com/playlist?list=PLcU2QLIBn7eo";
+        let (name, tracks, missed) = list(&youtube, playlist).await.unwrap();
+        assert_eq!(name, "睡前");
+        assert!(!tracks.is_empty());
+        assert_eq!(missed, 0);
+    }
+
+    #[tokio::test]
+    #[ignore = "reads a public YouTube Music playlist with multiple pages over the network"]
+    async fn public_youtube_music_playlist_imports_past_its_first_page() {
+        let youtube = YouTube::new().unwrap();
+        let (name, tracks, _) = list(&youtube, "https://music.youtube.com/playlist?list=PLFDRC9rgfQf8").await.unwrap();
+        assert_eq!(name, "SjK 1000 Songs");
+        assert!(tracks.len() > 100, "only {} tracks imported", tracks.len());
+    }
+
     #[test]
     fn spotifys_page_for_embedded_players_names_the_list_and_its_songs() {
         let page = r#"<html><script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"state":{"data":{"entity":{"name":"Viaje",

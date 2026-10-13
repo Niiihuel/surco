@@ -5,11 +5,13 @@
 
 mod stream;
 
+use futures_util::TryStreamExt;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use ytmapi_rs::parse::{SearchResultSong, SearchResultVideo};
 use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
 use ytmapi_rs::parse::{ParsedSongArtist, PlaylistItem};
+use ytmapi_rs::query::GetPlaylistTracksQuery;
 use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, SongsFilter, SpellingMode};
 
 pub use stream::{Audio, Stream, Video};
@@ -104,8 +106,13 @@ impl YouTube {
 
     /// One of the service's playlists by its id: its name, and what it lists in order.
     pub async fn playlist_named(&self, id: &str) -> Result<(String, Vec<Track>)> {
-        let details = self.music().await?.get_playlist_details(PlaylistID::from_raw(id)).await?;
-        Ok((details.title, self.playlist(PlaylistID::from_raw(id)).await?))
+        let id = playlist_browse_id(id);
+        let tracks = self.playlist(PlaylistID::from_raw(&id)).await?;
+        let name = match album_playlist_name(&id, &tracks) {
+            Some(name) => name.to_owned(),
+            None => self.music().await?.get_playlist_details(PlaylistID::from_raw(&id)).await?.title,
+        };
+        Ok((name, tracks))
     }
 
     /// The id of the artist a name most likely means, for a track that names its artist
@@ -230,7 +237,8 @@ impl YouTube {
     }
 
     async fn playlist(&self, id: PlaylistID<'_>) -> Result<Vec<Track>> {
-        let items = self.music().await?.get_playlist_tracks(id).await?;
+        let query = GetPlaylistTracksQuery::new(id);
+        let items = self.music().await?.stream(&query).try_concat().await?;
         Ok(items
             .into_iter()
             .filter_map(|item| match item {
@@ -305,6 +313,17 @@ impl YouTube {
     }
 }
 
+fn playlist_browse_id(id: &str) -> String {
+    // Public links carry playlist IDs; the browse endpoint needs its VL prefix.
+    format!("VL{}", id.strip_prefix("VL").unwrap_or(id))
+}
+
+fn album_playlist_name<'a>(id: &str, tracks: &'a [Track]) -> Option<&'a str> {
+    // Auto album playlists have no header; their tracks carry the album's name.
+    id.strip_prefix("VLOLAK5uy_")?;
+    tracks.first()?.album.as_deref()
+}
+
 fn found_song(song: SearchResultSong) -> Track {
     Track {
         id: song.video_id.get_raw().to_owned(),
@@ -353,7 +372,29 @@ fn duration_ms(text: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{duration_ms, official};
+    use super::{album_playlist_name, duration_ms, official, playlist_browse_id};
+    use surco_core::Track;
+
+    #[test]
+    fn public_playlist_ids_are_browse_ids_without_a_second_prefix() {
+        assert_eq!(playlist_browse_id("PLcU2QLIBn7eo"), "VLPLcU2QLIBn7eo");
+        assert_eq!(playlist_browse_id("VLPLcU2QLIBn7eo"), "VLPLcU2QLIBn7eo");
+        assert_eq!(playlist_browse_id("OLAK5uy_album"), "VLOLAK5uy_album");
+    }
+
+    #[test]
+    fn only_auto_album_playlists_get_their_name_from_a_tracks_album() {
+        let mut track = Track {
+            id: "song".into(), title: "K.".into(), artist: "Cigarettes After Sex".into(),
+            album: Some("Cigarettes After Sex".into()), album_id: None, artist_id: None,
+            artwork_url: None, duration_ms: 320_000,
+        };
+        assert_eq!(album_playlist_name("VLOLAK5uy_album", std::slice::from_ref(&track)), Some("Cigarettes After Sex"));
+        assert_eq!(album_playlist_name("VLPLcU2QLIBn7eo", std::slice::from_ref(&track)), None);
+        assert_eq!(album_playlist_name("VLOLAK5uy_album", &[]), None);
+        track.album = None;
+        assert_eq!(album_playlist_name("VLOLAK5uy_album", &[track]), None);
+    }
 
     #[test]
     fn a_songs_video_is_the_one_its_own_artist_published_under_its_name() {
