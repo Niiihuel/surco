@@ -5,11 +5,11 @@ use dnm_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     Alert, Button, ButtonVariant, Color, Component, ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem,
     ControlSize, DropdownMenu, DropdownMenuEntry, DropdownMenuItem, Element, Empty, FontFamily, Icon, IconButton, Link,
-    ListRow, MediaTile, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField,
+    ListRow, MediaCard, MediaTile, Modal, Popover, PopoverPlacement, RadiusRole, ResizeHandle, RowSizing, ScrollArea, SearchField,
     SegmentedControl, Size, SkeletonGroup, Slider, Spinner, Tab, Text, TextRole, Theme, Ticker,
 };
 
-use crate::state::{clock, greeting, large_cover, Entry, Filter, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
+use crate::state::{clock, greeting, large_cover, share_link, Entry, Filter, Page, Side, State, ARTIST_SONGS_SHOWN, EQUALIZER_DB};
 
 /// dnmusic's palette: near-black surfaces told apart by luminance, white ink.
 pub const THEME: Theme = Theme {
@@ -109,9 +109,43 @@ pub fn view(state: &State, window: Size) -> Element {
         columns.push(surface(pane(state, content, palette)).flex(1.0));
     }
     columns.push(gap());
-    Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
+    let window_tree = Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
         .background(CANVAS)
-        .size(Some(window.width), Some(window.height))
+        .size(Some(window.width), Some(window.height));
+    share_dialog(state, window_tree, window.width, palette)
+}
+
+/// A track as the card that is handed around: its sleeve plays it, and while it plays the
+/// record is out and turning.
+fn media_card(state: &State, id: &str, track: &Track, palette: ComponentPalette) -> Element {
+    let playing = state.player.playing && state.current().is_some_and(|current| current.id == track.id);
+    let mut card = MediaCard::new(id, &track.title, palette)
+        .artist(&track.artist)
+        .playing(playing)
+        .mark(Element::icon(Icon::Audio).foreground(palette.muted));
+    if let Some(url) = &track.artwork_url {
+        if let Some(image) = state.artwork.get(url) {
+            card = card.artwork(image.clone());
+        }
+        if let Some(tint) = state.tints.get(url) {
+            card = card.tint(*tint);
+        }
+    }
+    card.render()
+}
+
+/// Sharing a track: its card, as whoever opens the link will see it, over the link itself.
+fn share_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let (card, link) = match &state.sharing {
+        Some(track) => (media_card(state, "share-card", track, palette), share_link(track)),
+        None => (Element::spacer(), String::new()),
+    };
+    let copy = if state.copied { Button::new("share-copy", "Enlace copiado", palette).icon(Icon::Check) } else { Button::new("share-copy", "Copiar enlace", palette).icon(Icon::Copy) };
+    Modal::new(window_tree, state.sharing.is_some(), "Compartir canción", "Quien abra el enlace la escucha en dnmusic.", "share-close", palette)
+        .width(Modal::fit_width(width, 420.0))
+        .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
+        .footer(Element::row(vec![Element::spacer().flex(1.0), copy.render()]))
+        .render()
 }
 
 /// Across the top: the way back, home, and the search in the middle of the window.
@@ -327,6 +361,7 @@ fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>>
     let mut actions = vec![
         item("queue", "Agregar a la cola", include_str!("../assets/icons/list-plus.svg"), None),
         item("next", "Poner a continuación", include_str!("../assets/icons/list-start.svg"), None),
+        item("share", "Compartir", include_str!("../assets/icons/share-2.svg"), None),
         None,
     ];
     if track.album_id.is_some() {
@@ -432,6 +467,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Failed(..) => "page:failed".to_owned(),
         Page::Artist(artist) => format!("page:artist:{}", artist.id),
         Page::Album(album) => format!("page:album:{}", album.id),
+        Page::Song(track) => format!("page:song:{}", track.id),
         Page::Downloads => "page:downloads".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
@@ -450,6 +486,13 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         ),
         Page::Artist(artist) => artist_page(state, artist, palette),
         Page::Album(album) => album_page(state, album, palette),
+        Page::Song(track) => centered(
+            Element::column(vec![
+                media_card(state, "song-card", track, palette).centered_x(),
+                Text::new("Tocá la tapa para escucharla.", palette).muted().render().centered_x(),
+            ])
+            .gap(12.0),
+        ),
         Page::Downloads => downloads_page(state, palette),
     }
 }
@@ -959,7 +1002,10 @@ mod tests {
         };
         has(&state, &["artist:0", "album:0", "track:0", "more:track:0"]);
         state.update(&limn::UiAction::Clicked { id: "more:track:0".into() });
-        has(&state, &["do:queue:track:0", "do:next:track:0", "do:artist:track:0", "do:save:track:0"]);
+        has(&state, &["do:queue:track:0", "do:next:track:0", "do:share:track:0", "do:artist:track:0", "do:save:track:0"]);
+        state.update(&limn::UiAction::Clicked { id: "do:share:track:0".into() });
+        has(&state, &["share-card", "share-copy"]);
+        state.update(&limn::UiAction::Clicked { id: "share-close".into() });
         state.update(&limn::UiAction::Clicked { id: "menu-close".into() });
 
         state.update(&limn::UiAction::Clicked { id: "artist:0".into() });

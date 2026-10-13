@@ -158,6 +158,9 @@ impl eframe::App for Host {
                 self.send(commands);
             }
         }
+        if let Some(text) = self.state.copy.take() {
+            ctx.copy_text(text);
+        }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
         limn_egui::set_cursor(&ctx, self.tree.cursor());

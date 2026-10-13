@@ -30,12 +30,15 @@ pub enum Target {
     /// A track that names its artist without linking to it.
     ArtistNamed(String),
     Album(String),
+    /// A track someone shared, by its id.
+    Song(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Content {
     Artist(Artist),
     Album(Album),
+    Song(Track),
 }
 
 /// What the window asks for.
@@ -78,7 +81,8 @@ pub enum Event {
     /// What is kept on disk, newest first, and the ids on their way there.
     Library { saved: Vec<Track>, saving: HashSet<String> },
     SaveFailed { title: String, message: String },
-    Artwork { url: String, image: RasterImage },
+    /// A cover, and the color it lends to a card of its track when it could be read.
+    Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
 }
 
 /// How many times a broken download resumes from where it stopped before the track fails.
@@ -251,8 +255,8 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 // A cover that does not arrive leaves its placeholder; nothing to report.
-                if let Some(image) = artwork(&shared, &url).await {
-                    (shared.reply)(Event::Artwork { url, image });
+                if let Some((image, tint)) = artwork(&shared, &url).await {
+                    (shared.reply)(Event::Artwork { url, image, tint });
                 }
             });
         }
@@ -299,6 +303,7 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
             Err(error) => Err(error),
         },
         Target::Album(id) => youtube.album(id).await.map(Content::Album),
+        Target::Song(id) => youtube.song(id).await.map(Content::Song),
     };
     content.map_err(|error| error.to_string())
 }
@@ -497,7 +502,21 @@ async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
     }
 }
 
-async fn artwork(shared: &Shared, url: &str) -> Option<RasterImage> {
+/// The color a cover lends its card: the mean of its pixels, the vivid ones counting more
+/// than its blacks, whites and grays.
+fn tint_of(bytes: &[u8]) -> Option<[u8; 3]> {
+    let small = image::load_from_memory(bytes).ok()?.thumbnail(24, 24).to_rgb8();
+    let (mut sum, mut weight) = ([0f32; 3], 0f32);
+    for pixel in small.pixels() {
+        let [red, green, blue] = pixel.0.map(f32::from);
+        let vivid = 1.0 + (red.max(green).max(blue) - red.min(green).min(blue)) / 16.0;
+        sum = [sum[0] + red * vivid, sum[1] + green * vivid, sum[2] + blue * vivid];
+        weight += vivid;
+    }
+    (weight > 0.0).then(|| sum.map(|channel| (channel / weight).round() as u8))
+}
+
+async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8; 3]>)> {
     let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
         [0xFF, 0xD8, ..] => RasterImageFormat::Jpeg,
@@ -508,5 +527,27 @@ async fn artwork(shared: &Shared, url: &str) -> Option<RasterImage> {
     };
     let digest: String = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
     let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), "Portada")
+    let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), "Portada")?;
+    Some((image, tint_of(&bytes)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tint_of;
+
+    /// A square cover whose first `red_columns` columns are red and the rest black.
+    fn cover(side: u32, red_columns: u32) -> Vec<u8> {
+        let raw: Vec<u8> = (0..side * side).flat_map(|pixel| if pixel % side < red_columns { [220, 20, 20] } else { [0, 0, 0] }).collect();
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::write_buffer_with_format(&mut bytes, &raw, side, side, image::ColorType::Rgb8, image::ImageFormat::Png).unwrap();
+        bytes.into_inner()
+    }
+
+    #[test]
+    fn a_cover_lends_its_vivid_color_more_than_its_grays() {
+        assert_eq!(tint_of(&cover(48, 48)), Some([220, 20, 20]));
+        let [red, green, blue] = tint_of(&cover(48, 12)).unwrap();
+        assert!(red > 150 && green < 30 && blue < 30, "a quarter of red outweighs three of black: {red} {green} {blue}");
+        assert_eq!(tint_of(b"not a picture"), None);
+    }
 }

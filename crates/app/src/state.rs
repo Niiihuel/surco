@@ -21,6 +21,8 @@ pub enum Page {
     Failed(Target, String),
     Artist(Artist),
     Album(Album),
+    /// A track someone shared, as its card.
+    Song(Track),
     /// What is kept on disk to listen to without a network.
     Downloads,
 }
@@ -197,6 +199,13 @@ pub struct State {
     pub equalizer_open: bool,
     pub equalizer: EqualizerValues,
     pub artwork: HashMap<String, RasterImage>,
+    /// The color each cover lends to a card, by the cover's address.
+    pub tints: HashMap<String, limn::Color>,
+    /// The track whose share card is open, and whether its link was just copied.
+    pub sharing: Option<Track>,
+    pub copied: bool,
+    /// Text on its way to the clipboard; the window takes it.
+    pub copy: Option<String>,
     /// Covers already asked for, arrived or not.
     covers: HashSet<String>,
     /// The tracks kept on disk, newest first, and the ids on their way there.
@@ -216,6 +225,24 @@ fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item 
 
 fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
     tracks.iter().map(|track| &track.artwork_url)
+}
+
+/// Where the app's links live. It is dnmusic's own site, so a link made here opens in any
+/// of its clients.
+pub const SITE: &str = "https://dnmusic-production-c3f4.up.railway.app";
+
+/// The link that shares a track.
+pub fn share_link(track: &Track) -> String {
+    format!("{SITE}/cancion/{}", track.id)
+}
+
+/// The id of the track a dnmusic link shares, for any of the forms such a link takes.
+/// Anything else is not a link: a search.
+pub fn shared_song(text: &str) -> Option<&str> {
+    let text = text.trim();
+    let rest = [SITE, "https://dnmusic-app.vercel.app", "dnmusic:/", "app://dnmusic"].iter().find_map(|origin| text.strip_prefix(origin))?;
+    let id = rest.strip_prefix("/cancion/")?.split(['/', '?', '#']).next()?;
+    (!id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')).then_some(id)
 }
 
 /// A cover's address at the size a large picture needs. The catalog's addresses end in the size
@@ -279,6 +306,10 @@ impl Default for State {
             equalizer_open: false,
             equalizer: EqualizerValues::FLAT,
             artwork: HashMap::new(),
+            tints: HashMap::new(),
+            sharing: None,
+            copied: false,
+            copy: None,
             covers: HashSet::new(),
             saved: Vec::new(),
             saving: HashSet::new(),
@@ -304,6 +335,10 @@ impl State {
         let query = self.query.trim().to_owned();
         if query.is_empty() {
             return Vec::new();
+        }
+        // A dnmusic link is not searched for: it opens the track it shares.
+        if let Some(id) = shared_song(&query) {
+            return self.open(Target::Song(id.to_owned()));
         }
         self.submitted = Some(query.clone());
         self.searching = true;
@@ -414,6 +449,11 @@ impl State {
         match action {
             "queue" => vec![Command::Enqueue(track)],
             "next" => vec![Command::PlayNext(track)],
+            "share" => {
+                self.sharing = Some(track);
+                self.copied = false;
+                Vec::new()
+            }
             "save" => {
                 self.save_error = None;
                 vec![Command::Save(track)]
@@ -430,6 +470,7 @@ impl State {
         match &self.page {
             Page::Artist(artist) => &artist.songs,
             Page::Album(album) => &album.tracks,
+            Page::Song(track) => std::slice::from_ref(track),
             Page::Downloads => &self.saved,
             _ => &[],
         }
@@ -581,6 +622,24 @@ impl State {
                 self.equalizer_open = !self.equalizer_open;
                 Vec::new()
             }
+            // The sleeve of a card plays its track, or pauses it when it is the one playing.
+            "share-card" | "song-card" => {
+                let track = if id == "share-card" { self.sharing.clone() } else { self.page_tracks().first().cloned() };
+                match track {
+                    Some(track) if self.current().is_some_and(|current| current.id == track.id) => vec![Command::PlayPause],
+                    Some(track) => vec![Command::PlayList { tracks: vec![track], index: 0 }],
+                    None => Vec::new(),
+                }
+            }
+            "share-copy" => {
+                self.copy = self.sharing.as_ref().map(share_link);
+                self.copied = self.copy.is_some();
+                Vec::new()
+            }
+            "share-close" => {
+                self.sharing = None;
+                Vec::new()
+            }
             "keep" => {
                 if let Some(entry) = self.page_entry() {
                     self.collection.toggle(entry);
@@ -636,6 +695,7 @@ impl State {
                 self.page = match result {
                     Ok(Content::Artist(artist)) => Page::Artist(artist),
                     Ok(Content::Album(album)) => Page::Album(album),
+                    Ok(Content::Song(track)) => Page::Song(track),
                     Err(message) => Page::Failed(target, message),
                 };
                 // What was opened is what the home page offers next time.
@@ -649,6 +709,7 @@ impl State {
                         cover_requests(&mut self.covers, std::iter::once(&artist.artwork_url).chain(covers_of(shown)).chain(releases))
                     }
                     Page::Album(album) => cover_requests(&mut self.covers, [&album.artwork_url]),
+                    Page::Song(track) => cover_requests(&mut self.covers, [&track.artwork_url]),
                     _ => Vec::new(),
                 }
             }
@@ -666,7 +727,10 @@ impl State {
                 self.save_error = Some(format!("{title}: {message}"));
                 Vec::new()
             }
-            Event::Artwork { url, image } => {
+            Event::Artwork { url, image, tint } => {
+                if let Some([red, green, blue]) = tint {
+                    self.tints.insert(url.clone(), limn::Color::rgb(red, green, blue));
+                }
                 self.artwork.insert(url, image);
                 Vec::new()
             }
@@ -979,6 +1043,42 @@ mod tests {
         click(&mut state, "filter:all");
         assert_eq!(state.filter, Filter::All);
         assert_eq!((greeting(7), greeting(15), greeting(23), greeting(3)), ("Buenos días", "Buenas tardes", "Buenas noches", "Buenas noches"));
+    }
+
+    #[test]
+    fn sharing_a_track_opens_its_card_copies_its_link_and_plays_it() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        state.apply(Event::SearchResults { query: "q".into(), found: found(&["a", "b"]) });
+        click(&mut state, "do:share:track:1");
+        assert_eq!(state.sharing, Some(track("b")));
+        assert_eq!(click(&mut state, "share-card"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
+        state.show(playing("b"));
+        assert_eq!(click(&mut state, "share-card"), vec![Command::PlayPause], "the one playing is paused");
+        click(&mut state, "share-copy");
+        assert_eq!(state.copy.take().as_deref(), Some("https://dnmusic-production-c3f4.up.railway.app/cancion/b"));
+        assert!(state.copied);
+        click(&mut state, "share-close");
+        assert!(state.sharing.is_none());
+        click(&mut state, "share-copy");
+        assert!(state.copy.is_none(), "nothing to copy once closed");
+    }
+
+    #[test]
+    fn a_pasted_link_opens_the_track_it_shares_and_anything_else_is_searched() {
+        let link = format!("{SITE}/cancion/DdI598gKkKw");
+        assert_eq!(shared_song(&link), Some("DdI598gKkKw"));
+        assert_eq!(shared_song("  dnmusic://cancion/abc_-1?x=1 "), Some("abc_-1"));
+        assert_eq!(shared_song("app://dnmusic/cancion/abc/extra"), Some("abc"));
+        for other in ["apocalypse", "https://example.com/cancion/abc", &format!("{SITE}/lista/abc"), &format!("{SITE}/cancion/"), &format!("{SITE}/cancion/a%20b")] {
+            assert_eq!(shared_song(other), None, "{other}");
+        }
+        let mut state = State { query: link, ..State::default() };
+        assert_eq!(state.search(), vec![Command::Open(Target::Song("DdI598gKkKw".into()))]);
+        assert!(state.submitted.is_none(), "no search was started");
+        state.apply(Event::Opened { target: Target::Song("DdI598gKkKw".into()), result: Ok(Content::Song(track("a"))) });
+        assert_eq!(state.page, Page::Song(track("a")));
+        assert_eq!(click(&mut state, "song-card"), vec![Command::PlayList { tracks: vec![track("a")], index: 0 }]);
     }
 
     #[test]

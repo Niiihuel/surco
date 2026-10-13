@@ -196,6 +196,13 @@ impl YouTube {
             .collect())
     }
 
+    /// A track by its id alone, as a shared link names it.
+    pub async fn song(&self, video_id: &str) -> Result<Track> {
+        // The radio of a track opens with the track itself.
+        let track = self.radio(video_id).await?.into_iter().find(|track| track.id == video_id);
+        Ok(track.ok_or("the catalog does not know this track")?)
+    }
+
     /// Playable audio for a video id. The URLs expire; resolve again rather than keep them.
     pub async fn stream(&self, video_id: &str) -> Result<Stream> {
         stream::resolve(&self.http, video_id).await
