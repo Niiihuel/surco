@@ -6,7 +6,7 @@ use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
-    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, RadiusRole, ResizeHandle, RowSizing, Scheme,
+    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, RowSizing, Scheme,
     ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec,
 };
@@ -271,18 +271,33 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         .render()
 }
 
-/// Where taking a later version in stands, in words, and what the user can do about it.
-fn update_step(state: &State, release: &Release, palette: ComponentPalette) -> (String, Element) {
-    let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render();
-    match &state.updating {
+/// The card of a later version: what stands, how far taking it in has got, and what the
+/// user can do about it. While it comes down, a bar under the words fills with it.
+fn update_card(state: &State, release: &Release, palette: ComponentPalette) -> Element {
+    let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render().centered_y();
+    let version = &release.version;
+    let (title, about, action) = match &state.updating {
         Updating::Idle => {
-            let about = format!("Está disponible la versión {} de Surco. Tenés la {}.", release.version, env!("CARGO_PKG_VERSION"));
-            (about, button("update-get", if release.program.is_some() { "Actualizar" } else { "Descargar" }))
+            let about = format!("Surco {version} · tenés la {}", env!("CARGO_PKG_VERSION"));
+            ("Actualización disponible".to_owned(), about, Some(button("update-get", if release.program.is_some() { "Actualizar" } else { "Descargar" })))
         }
-        Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), Spinner::new("update-fetching", palette.muted).render()),
-        Updating::Ready => (format!("La versión {} ya está instalada. Reiniciá para usarla.", release.version), button("update-restart", "Reiniciar ahora")),
-        Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), button("update-get", "Reintentar")),
+        // The last of it is checked and put in place: a moment with nothing left to count.
+        Updating::Fetching(done) if *done >= 1.0 => (format!("Instalando Surco {version}"), "Un momento…".to_owned(), None),
+        Updating::Fetching(_) => (format!("Descargando Surco {version}"), "Podés seguir escuchando mientras tanto.".to_owned(), None),
+        Updating::Ready => (format!("Surco {version} está lista"), "Reiniciá para empezar a usarla.".to_owned(), Some(button("update-restart", "Reiniciar ahora"))),
+        Updating::Failed(why) => ("No se pudo actualizar".to_owned(), why.clone(), Some(button("update-get", "Reintentar"))),
+    };
+    let copy = Element::column(vec![Text::new(title, palette).size(15.0).render(), Text::new(about, palette).muted().render()]).gap(2.0).flex(1.0);
+    let mut head = vec![copy];
+    let mut parts = Vec::new();
+    if let Updating::Fetching(done) = &state.updating {
+        let percent = Element::text(format!("{:.0} %", done * 100.0)).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
+        head.push(percent.centered_y());
+        parts.push(Progress::new(*done, palette).height(6.0).render());
     }
+    head.extend(action);
+    parts.insert(0, Element::row(head).gap(12.0));
+    Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(palette.surface).radius(RadiusRole::Panel.px())
 }
 
 /// A version that may not keep running stands in front of everything until the later one
@@ -314,9 +329,7 @@ fn news_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(4.0)];
     if let Some(release) = &state.update {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
-        let (about, action) = update_step(state, release, raised);
-        let copy = Element::column(vec![Text::new("Actualización disponible", raised).size(15.0).render(), Text::new(about, raised).muted().render()]).gap(2.0).flex(1.0);
-        sections.push(Element::panel(Element::row(vec![copy, action.centered_y()]).gap(12.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Panel.px()));
+        sections.push(update_card(state, release, raised));
     }
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
         let about = [release.artist.as_deref().unwrap_or_default(), release.year.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
@@ -1943,6 +1956,33 @@ mod tests {
         assert!(!state.cinema, "and gives it back from the same button");
         press(&mut state, "next-queue");
         assert!(state.queue_open, "the link under what comes next opens the queue");
+    }
+
+    #[test]
+    fn the_card_of_a_later_version_shows_a_bar_while_it_comes_down_and_a_button_otherwise() {
+        let size = Size::new(1400.0, 900.0);
+        let mut state = State::default();
+        let release = Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: false };
+        state.apply(Event::Update(release));
+        state.update(&limn::UiAction::Clicked { id: "news".into() });
+        let shown = |state: &State| {
+            let mut tree = UiTree::new(view(state, size));
+            let frame = tree.layout(size);
+            let texts: Vec<String> = frame.commands.iter().filter_map(|command| match command {
+                limn::DrawCommand::Text { text, .. } => Some(text.clone()),
+                _ => None,
+            }).collect();
+            (texts, frame.regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>())
+        };
+        let (texts, ids) = shown(&state);
+        assert!(texts.iter().any(|text| text == "Actualización disponible") && ids.iter().any(|id| id == "update-get"));
+        state.apply(Event::UpdateProgress(0.42));
+        let (texts, ids) = shown(&state);
+        assert!(texts.iter().any(|text| text == "Descargando Surco 9.0.0") && texts.iter().any(|text| text == "42 %"), "{texts:?}");
+        assert!(!ids.iter().any(|id| id == "update-get" || id == "update-restart"), "nothing to press while it comes down");
+        state.apply(Event::UpdateInstalled);
+        let (texts, ids) = shown(&state);
+        assert!(texts.iter().any(|text| text == "Surco 9.0.0 está lista") && ids.iter().any(|id| id == "update-restart"));
     }
 
     #[test]
