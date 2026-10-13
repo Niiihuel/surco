@@ -7,6 +7,9 @@
 //! in order), and `--screenshot <file.png>` saves
 //! the window after `--after <ms>` and exits.
 
+// A release build on Windows opens its window alone, without a console behind it.
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
+
 mod backend;
 mod clip;
 mod library;
@@ -282,6 +285,12 @@ impl eframe::App for Host {
     }
 }
 
+/// dnmusic's own mark, for the window and the task bar where the system takes it from the window.
+fn icon() -> egui::IconData {
+    let mark = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|mark| mark.to_rgba8());
+    mark.map_or_else(|_| egui::IconData::default(), |mark| egui::IconData { width: mark.width(), height: mark.height(), rgba: mark.into_raw() })
+}
+
 fn main() -> eframe::Result {
     let mut script = Script { after: Duration::from_millis(900), ..Script::default() };
     let mut arguments = std::env::args().skip(1);
@@ -317,6 +326,7 @@ fn main() -> eframe::Result {
         renderer: eframe::Renderer::Wgpu,
         viewport: egui::ViewportBuilder::default()
             .with_title("dnmusic")
+            .with_icon(icon())
             .with_inner_size([1180.0, 780.0])
             .with_min_inner_size([720.0, 480.0]),
         ..Default::default()

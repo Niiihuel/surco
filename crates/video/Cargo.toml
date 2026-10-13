@@ -3,6 +3,8 @@ name = "dnm-video"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "A song's short video: YouTube's fragmented H.264 read apart and decoded to frames."
 
 [dependencies]

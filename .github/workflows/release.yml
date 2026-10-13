@@ -1,0 +1,121 @@
+name: Release
+run-name: Release · ${{ inputs.version || github.ref_name }}
+
+# A tag `v1.2.3` builds the three systems and publishes them together: the app looks for
+# its later versions in these releases.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to build, as in Cargo.toml (e.g. 0.2.0). Nothing is published.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.version || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+  LIMN_REF: feat/slider-and-media-icons
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-24.04, target: linux-x86_64, binary: dnmusic }
+          - { name: Windows, os: windows-2022, target: windows-x86_64, binary: dnmusic.exe }
+          - { name: macOS, os: macos-14, target: macos-arm64, binary: dnmusic }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: surco
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Niiihuel/limn
+          ref: ${{ env.LIMN_REF }}
+          path: lienzo
+
+      # The app compares the tag with the version it was built as: they must be the same.
+      - name: Version
+        id: version
+        shell: bash
+        working-directory: surco
+        env:
+          ASKED: ${{ inputs.version }}
+        run: |
+          version="${ASKED:-${GITHUB_REF_NAME#v}}"
+          built=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          if [ "$version" != "$built" ]; then
+            echo "✗ $version was asked for, but Cargo.toml says $built."
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev pkg-config
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        working-directory: surco
+        run: cargo build --release --locked -p dnmusic
+
+      - name: Package
+        id: package
+        shell: bash
+        working-directory: surco
+        run: |
+          name="surco-${{ steps.version.outputs.version }}-${{ matrix.target }}"
+          mkdir "$name"
+          cp "target/release/${{ matrix.binary }}" LICENSE README.md "$name/"
+          cp -r LICENSES "$name/"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            7z a "$name.zip" "$name" > /dev/null
+            echo "file=$name.zip" >> "$GITHUB_OUTPUT"
+          else
+            tar -czf "$name.tar.gz" "$name"
+            echo "file=$name.tar.gz" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ matrix.target }}
+          path: surco/${{ steps.package.outputs.file }}
+          if-no-files-found: error
+
+  # All three or none: a release with a system missing would tell that system's users of a
+  # version they cannot fetch.
+  publish:
+    name: Publish
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: packages
+          merge-multiple: true
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" packages/* --repo "$GITHUB_REPOSITORY" --title "Surco ${GITHUB_REF_NAME#v}" --generate-notes

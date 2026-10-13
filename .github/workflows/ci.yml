@@ -1,0 +1,62 @@
+name: CI
+run-name: CI · ${{ github.event.pull_request.title || github.event.head_commit.message || github.ref_name }}
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # The branch of limn the app is built against.
+  LIMN_REF: feat/slider-and-media-icons
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Linux, os: ubuntu-24.04 }
+          - { name: Windows, os: windows-2022 }
+          - { name: macOS, os: macos-14 }
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: surco
+
+      # limn is used by path and sits beside the app as `lienzo`.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Niiihuel/limn
+          ref: ${{ env.LIMN_REF }}
+          path: lienzo
+
+      - name: System libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libxkbcommon-dev libwayland-dev pkg-config
+
+      - name: Rust
+        run: rustup toolchain install stable --profile minimal && rustup default stable
+
+      - name: Build
+        working-directory: surco
+        run: cargo build --workspace --locked
+
+      # The tests touch no window and no sound card; once is enough.
+      - name: Test
+        if: runner.os == 'Linux'
+        working-directory: surco
+        run: cargo test --workspace --locked

@@ -3,6 +3,8 @@ name = "dnm-core"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Player state for dnmusic: tracks and the playback queue. No UI, no I/O."
 
 [dependencies]

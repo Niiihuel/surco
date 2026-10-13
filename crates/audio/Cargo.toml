@@ -3,6 +3,8 @@ name = "dnm-audio"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
 description = "Audio engine for dnmusic: decode, two-deck output with gapless and crossfade, equaliser. No UI, no networking."
 
 [dependencies]
