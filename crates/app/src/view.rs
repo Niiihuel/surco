@@ -83,6 +83,7 @@ const LYRIC_BLUR: f32 = 2.2;
 const LYRIC_WASH: f32 = 520.0;
 /// How far down a page the colour of its cover reaches, from behind its header.
 const HEADER_WASH: f32 = 360.0;
+pub(crate) const MOBILE_HEADER_HEIGHT: f32 = 56.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {

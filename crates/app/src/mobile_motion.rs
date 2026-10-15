@@ -8,7 +8,7 @@ use limn::{DismissDrag, Frame, HitKind, Point, Role, ScalarTransition, Size, UiA
 
 use crate::{backend::Command, state::{Page, State}};
 
-const HEADER: f32 = 76.0;
+const HEADER: f32 = crate::view::MOBILE_HEADER_HEIGHT;
 const OPEN: Duration = Duration::from_millis(320);
 const RETURN: Duration = Duration::from_millis(220);
 const CLOSE: Duration = Duration::from_millis(240);
@@ -222,7 +222,7 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
         _ => None,
     };
-    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
+    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER);
     std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact
 }
 
@@ -241,7 +241,7 @@ fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32,
         || frame.access.iter().any(|node| node.id == hit.id && node.role == Role::Slider)) {
         return false;
     }
-    point.y < offset + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
+    point.y < offset + state.mobile_ui.content_insets.top + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
         region.id == "mobile-playing" && region.kind == HitKind::Scroll && region.rect.contains(point)))
 }
 
