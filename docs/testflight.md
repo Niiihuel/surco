@@ -42,8 +42,10 @@ también pasó en las tres plataformas. El
 [CI iOS de main 38746377853](https://github.com/Niiihuel/surco/actions/runs/38746377853)
 compiló bien, pero su intento 1 falló en `simctl install` por timeout de 120 segundos,
 antes de arrancar la app, tras un boot de unos 88 segundos con DataMigration;
-device-unsigned sí pasó. El único reintento del job fallido también terminó
-con fallo y su causa está en revisión, sin cambios de código ni de timeout. El fallo y ambos intentos se conservan en la
+device-unsigned sí pasó. El único reintento del job fallido también agotó el
+tiempo de instalación antes de arrancar la app, sin cambios de código ni de
+timeout. Se prepara un ajuste separado del toolchain de CI unsigned, todavía
+sin resultado de validación. El fallo y ambos intentos se conservan en la
 [validación de motion](ios-polish/MOTION-VALIDATION.md), junto con la procedencia
 separada de capturas y clips. Las pruebas físicas de 0.3.0 siguen pendientes.
 
