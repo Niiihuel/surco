@@ -2,10 +2,11 @@
 
 `SurcoNativeUI` is a separate shared XCTest scheme. It tests the Release app through public XCUIAutomation, without app launch scripts, injected selectors, or production test hooks. The regular `Surco` archive scheme remains app-only.
 
-The six tests cover:
+The nine tests cover:
 
-- The playlist card's real `UIPasteControl` prepares an import form from the runner's clipboard without fetching a playlist.
-- The form's `UIPasteControl` pastes into its `UITextField`; Unicode typing survives keyboard presentation, model updates and rotation. Return dismisses the keyboard, and Cancel closes the form.
+- The playlist card's real `UIPasteControl` prepares an import form from a copied `NSURL`, copied UTF-16 text, and a usable text representation whose accompanying URL representation cannot be decoded. It never fetches a playlist automatically.
+- The form uses a full-width `UITextField` with UIKit's own editing menu, without a second Paste button. Real copied text pastes through that menu, and pasting over a native text selection replaces it once.
+- Native menu paste and Unicode typing survive keyboard presentation, model updates and rotation. Return dismisses the keyboard, and Cancel closes the form.
 - A playlist draft closes by dragging its header. Reopening it proves the draft was canceled.
 - Connections opens from Settings without playback and exposes the native route picker and volume slider.
 - Holding a Home card directly opens UIKit's context menu. Like and Unlike act on the held synthetic track without playback or network requests.

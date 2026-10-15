@@ -103,10 +103,19 @@
     attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
     [self addAttachment:attachment];
 }
+- (void)pasteThroughEditingMenu:(XCUIElement *)field {
+    [field pressForDuration:1.1];
+    // UIKit owns the edit menu. Match its localized action, not an app button.
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"The native editor must offer Paste: %@", self.app.debugDescription);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+}
 
 - (void)testPlaylistCardUsesNativePasteWithoutStartingAnImport {
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-card";
-    UIPasteboard.generalPasteboard.string = link;
+    UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
     [self launch];
     [self openLibrary];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
@@ -123,16 +132,80 @@
     [self waitFor:field predicate:@"exists == NO"];
 }
 
+- (void)testPlaylistCardAcceptsCopiedUTF16TextWithoutImporting {
+    NSString *text = @"Lista para el viaje — niñez 東京";
+    UIPasteboard.generalPasteboard.items = @[@{@"public.utf16-external-plain-text": [text dataUsingEncoding:NSUTF16StringEncoding]}];
+    [self launch];
+    [self openLibrary];
+    XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    XCTAssertTrue([self element:@"import-go"].exists, @"Copied text is an editable draft, not an automatic import");
+    XCTAssertEqual(self.app.alerts.count, 0u);
+    [self attachScreenshot:@"native-playlist-card-utf16-text"];
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
+- (void)testPlaylistCardFallsBackToTextWhenTheCopiedURLRepresentationFails {
+    NSString *text = @"https://open.spotify.com/playlist/surco-ui-url-fallback";
+    const unsigned char malformedURL[] = {0xFF, 0xFE, 0xFF};
+    UIPasteboard.generalPasteboard.items = @[@{
+        @"public.url": [NSData dataWithBytes:malformedURL length:sizeof(malformedURL)],
+        @"public.utf8-plain-text": [text dataUsingEncoding:NSUTF8StringEncoding],
+    }];
+    [self launch];
+    [self openLibrary];
+    XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    XCTAssertTrue([self element:@"import-go"].exists);
+    XCTAssertEqual(self.app.alerts.count, 0u);
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
+- (void)testImportUsesTheNativeEditingMenuToPasteAndReplaceSelectedText {
+    NSString *text = @"niñez";
+    UIPasteboard.generalPasteboard.string = text;
+    [self launch];
+    [self openImport];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertFalse([self element:@"sheet-paste:import-link"].exists, @"The editor uses UIKit's menu without a redundant Paste button");
+    [self pasteThroughEditingMenu:field];
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    // Double-tapping this one-word value selects it through UITextField itself.
+    NSString *replacement = @"https://open.spotify.com/playlist/surco-ui-selection";
+    UIPasteboard.generalPasteboard.string = replacement;
+    [field doubleTap];
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    [paste tap];
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", replacement]];
+    XCTAssertTrue([self element:@"import-go"].exists, @"Native paste replaces the selection once and leaves import explicit");
+    [field typeText:@"\n"];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    [self attachScreenshot:@"native-import-edit-menu-selection-replacement"];
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
 - (void)testNativeImportPasteAndTypingSurviveKeyboardAndReflow {
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-field";
     UIPasteboard.generalPasteboard.string = link;
     [self launch];
     [self openImport];
-    XCUIElement *paste = [self element:@"sheet-paste:import-link"];
-    XCTAssertTrue([paste waitForExistenceWithTimeout:10]);
-    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
-    [paste tap];
     XCUIElement *field = self.app.textFields[@"import-link"];
+    [self pasteThroughEditingMenu:field];
     [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
     [field tap];
     NSString *marker = @"?prueba=niñez";

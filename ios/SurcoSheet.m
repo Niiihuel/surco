@@ -212,35 +212,11 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         [field.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
         [field addTarget:self action:@selector(fieldChanged:) forControlEvents:UIControlEventEditingChanged];
         row.control = field;
-        NSMutableArray<UIView *> *views = [NSMutableArray arrayWithObject:field];
-        if (SheetBool(model[@"paste"])) {
-            UIControl *paste;
-            if (@available(iOS 16.0, *)) {
-                // The recipient is a real editor, preserving selection/edit menus.
-                // https://developer.apple.com/documentation/uikit/uipastecontrol/target
-                UIPasteControlConfiguration *configuration = [UIPasteControlConfiguration new];
-                configuration.displayMode = UIPasteControlDisplayModeIconAndLabel;
-                configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-                configuration.baseBackgroundColor = UIColor.whiteColor;
-                configuration.baseForegroundColor = UIColor.blackColor;
-                UIPasteControl *control = [[UIPasteControl alloc] initWithConfiguration:configuration];
-                control.target = field;
-                paste = control;
-            } else {
-                UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-                [button setTitle:@"Pegar" forState:UIControlStateNormal];
-                [button addTarget:field action:@selector(paste:) forControlEvents:UIControlEventTouchUpInside];
-                paste = button;
-            }
-            [paste.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
-            [paste.widthAnchor constraintGreaterThanOrEqualToConstant:96].active = YES;
-            paste.accessibilityIdentifier = [@"sheet-paste:" stringByAppendingString:SheetString(model[@"id"])];
-            [paste setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
-            [views addObject:paste];
-        }
-        UIStackView *stack = SheetStack(views, UILayoutConstraintAxisHorizontal, 8);
-        stack.alignment = UIStackViewAlignmentCenter;
-        row.view = stack;
+        // UITextField already owns the native selection, Paste edit menu and
+        // keyboard shortcuts. Keep its full width and never read the pasteboard
+        // to enable another control beside it.
+        // https://developer.apple.com/documentation/uikit/uieditmenuinteraction
+        row.view = field;
     } else if ([kind isEqualToString:@"slider"]) {
         UISlider *slider = [UISlider new];
         slider.continuous = YES;
@@ -352,7 +328,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     NSMutableArray *structure = [NSMutableArray array];
     for (id value in rows) {
         NSDictionary *row = [value isKindOfClass:NSDictionary.class] ? value : @{};
-        [structure addObject:@[SheetString(row[@"kind"]), SheetString(row[@"id"]), @(SheetBool(row[@"paste"]))]];
+        [structure addObject:@[SheetString(row[@"kind"]), SheetString(row[@"id"])]];
     }
     return structure;
 }

@@ -4,6 +4,17 @@
 
 static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 255.0 alpha:1]; }
 static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
+static BOOL SurcoDeliverPaste(NSString *text, void (^receive)(NSString *)) {
+    if (!text.length || text.length > 65536) return NO;
+    dispatch_async(dispatch_get_main_queue(), ^{ if (receive) receive(text); });
+    return YES;
+}
+static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSString *)) {
+    if (!provider) return;
+    [provider loadObjectOfClass:NSString.class completionHandler:^(id<NSItemProviderReading> item, NSError *error) {
+        if (!error && [item isKindOfClass:NSString.class]) SurcoDeliverPaste((NSString *)item, receive);
+    }];
+}
 
 // A real UIPasteControl recipient. No pasteboard reads occur while checking availability.
 // https://developer.apple.com/documentation/uikit/uipastecontrol
@@ -14,25 +25,29 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 @implementation SurcoPasteTarget
 - (instancetype)init {
     if ((self = [super init])) {
-        self.pasteConfiguration = [[UIPasteConfiguration alloc] initWithAcceptableTypeIdentifiers:@[@"public.url", @"public.utf8-plain-text", @"public.text"]];
+        // Accept every text/URL representation supported by the classes we load,
+        // including strings copied as UTF-16 by another native app.
+        // https://developer.apple.com/documentation/uikit/uipasteconfiguration
+        UIPasteConfiguration *configuration = [[UIPasteConfiguration alloc] initWithTypeIdentifiersForAcceptingClass:NSURL.class];
+        [configuration addTypeIdentifiersForAcceptingClass:NSString.class];
+        self.pasteConfiguration = configuration;
     }
     return self;
 }
 - (void)pasteItemProviders:(NSArray<NSItemProvider *> *)providers {
-    NSItemProvider *chosen = nil;
-    Class type = NSString.class;
+    NSItemProvider *urlProvider = nil;
+    NSItemProvider *textProvider = nil;
     for (NSItemProvider *provider in providers) {
-        if ([provider canLoadObjectOfClass:NSURL.class]) { chosen = provider; type = NSURL.class; break; }
-        if (!chosen && [provider canLoadObjectOfClass:NSString.class]) chosen = provider;
+        if (!urlProvider && [provider canLoadObjectOfClass:NSURL.class]) urlProvider = provider;
+        if (!textProvider && [provider canLoadObjectOfClass:NSString.class]) textProvider = provider;
     }
-    if (!chosen) return;
     void (^receive)(NSString *) = self.receive;
-    [chosen loadObjectOfClass:type completionHandler:^(id<NSItemProviderReading> item, NSError *error) {
-        NSString *text = [item isKindOfClass:NSURL.class] ? [(NSURL *)item absoluteString] :
-                         [item isKindOfClass:NSString.class] ? (NSString *)item : nil;
-        if (!error && text.length && text.length <= 65536) {
-            dispatch_async(dispatch_get_main_queue(), ^{ if (receive) receive(text); });
-        }
+    if (!urlProvider) { SurcoLoadPasteString(textProvider, receive); return; }
+    [urlProvider loadObjectOfClass:NSURL.class completionHandler:^(id<NSItemProviderReading> item, NSError *error) {
+        if (!error && [item isKindOfClass:NSURL.class] && SurcoDeliverPaste([(NSURL *)item absoluteString], receive)) return;
+        // A promised URL representation can fail while a usable text version
+        // remains available. Load just one fallback, so a tap emits at most once.
+        SurcoLoadPasteString(textProvider, receive);
     }];
 }
 @end
@@ -186,7 +201,8 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 }
 - (void)legacyPaste {
     // iOS 15 has no UIPasteControl. This path still requires an explicit tap.
-    NSString *text = UIPasteboard.generalPasteboard.string;
+    UIPasteboard *pasteboard = UIPasteboard.generalPasteboard;
+    NSString *text = pasteboard.string ?: pasteboard.URL.absoluteString;
     if (text.length && _pasteTarget.receive) _pasteTarget.receive(text);
 }
 - (UIMenu *)menu:(NSDictionary *)model {
