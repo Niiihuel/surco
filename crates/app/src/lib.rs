@@ -278,20 +278,20 @@ impl eframe::App for Host {
                 self.glide = None;
             }
         }
-        // A field that has just appeared takes the keyboard.
-        if let Some(field) = self.state.focus.take() {
-            self.tree.focus(&field);
-        }
         // The line being sung is kept in the middle of its list.
         if let Some(line) = self.state.line_to_reveal() {
             self.tree.center(&line);
             self.stirred = Instant::now();
         }
         let input_frame = self.tree.layout(window);
+        // A newly appeared field enters focus_order during layout, before it can take the keyboard.
+        if let Some(field) = self.state.focus.take() {
+            self.tree.focus(&field);
+        }
         let input = limn_egui::events(&ctx, area.min);
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
-            self.touch.translate(&raw, input, area.min, &input_frame, |id| id.starts_with("upcoming:"))
+            self.touch.translate(&raw, input, area.min, &input_frame, |_| false)
         } else { input };
         for event in input {
             self.stirred = Instant::now();

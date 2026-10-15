@@ -1873,10 +1873,9 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
                 .subtitle(if state.player.picks.contains(&track.id) { format!("{} · Recomendada", track.artist) } else { track.artist.clone() })
                 .title_fade(true)
                 .radius(RadiusRole::Card)
-                .render()
-                // Taken by the pointer and let go over another row, it moves there.
-                .draggable()
-                .drop_target();
+                .render();
+            // A finger pans the queue; desktop pointers can reorder its rows.
+            let row = if state.mobile { row } else { row.draggable().drop_target() };
             let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), "Quitar de la cola").icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
             let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], SCHEME.menu()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.
