@@ -367,7 +367,7 @@ impl IosSession {
         }
     }
 
-    fn effect(&mut self, shared: &Result<Arc<Shared>, String>, player: &mut Player, effect: Effect) -> Option<Effect> {
+    fn effect(&mut self, shared: &Result<Arc<Shared>, String>, player: &mut Player, effect: Effect, explicit: bool) -> Option<Effect> {
         let effect = match effect {
             Effect::Pause | Effect::Restore(_, _, false) => {
                 self.release(shared, true);
@@ -380,7 +380,7 @@ impl IosSession {
             other => other,
         };
         if matches!(effect, Effect::Play(_) | Effect::Fade(_, _) | Effect::Restore(_, _, true) | Effect::Resume | Effect::Handover(_, _)) {
-            let activated = if self.lifecycle.interrupted() {
+            let activated = if !self.lifecycle.can_activate(explicit) {
                 Err("La reproducción está interrumpida por otra sesión de audio.".to_owned())
             } else if self.active { Ok(()) } else { crate::ios_media::activate() };
             if let Err(message) = activated {
@@ -391,6 +391,7 @@ impl IosSession {
                 return None;
             }
             self.active = true;
+            self.lifecycle.activated();
             if let Ok(shared) = shared { shared.audio.prepare_output(); }
             self.released = false;
         }
@@ -434,11 +435,16 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                 #[cfg(target_os = "ios")]
                 let mut session = IosSession::default();
                 loop {
+                    #[cfg(target_os = "ios")]
+                    let mut explicit_playback = false;
                     let effects = tokio::select! {
                         command = inbox.recv() => match command {
                             Some(command) => {
                                 #[cfg(target_os = "ios")]
-                                if transport_decision(&command) { session.lifecycle.user_decision(); }
+                                if transport_decision(&command) {
+                                    session.lifecycle.user_decision();
+                                    explicit_playback = true;
+                                }
                                 handle(&shared, &reply, &mut player, command)
                             },
                             None => return,
@@ -447,7 +453,10 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                             Input::Engine(event) => player.engine(event),
                             Input::Media(MediaEvent::Key(key)) => {
                                 #[cfg(target_os = "ios")]
-                                session.lifecycle.user_decision();
+                                {
+                                    session.lifecycle.user_decision();
+                                    explicit_playback = true;
+                                }
                                 key.command(&player.view()).map(|command| player.command(command)).unwrap_or_default()
                             },
                             #[cfg(target_os = "ios")]
@@ -472,7 +481,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                     };
                     for effect in effects {
                         #[cfg(target_os = "ios")]
-                        let effect = match session.effect(&shared, &mut player, effect) {
+                        let effect = match session.effect(&shared, &mut player, effect, explicit_playback) {
                             Some(effect) => effect,
                             None => continue,
                         };

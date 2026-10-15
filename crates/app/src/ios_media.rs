@@ -28,11 +28,23 @@ pub struct Lifecycle {
 }
 
 impl Lifecycle {
+    #[cfg(test)]
     pub fn interrupted(&self) -> bool {
         self.interrupted
     }
 
     pub fn user_decision(&mut self) {
+        self.resume_track = None;
+    }
+
+    /// A began notification need not be followed by ended. An explicit Play
+    /// can ask AVAudioSession again; background engine work cannot.
+    pub fn can_activate(&self, explicit: bool) -> bool {
+        !self.interrupted || explicit
+    }
+
+    pub fn activated(&mut self) {
+        self.interrupted = false;
         self.resume_track = None;
     }
 
@@ -294,6 +306,21 @@ pub use native::{activate, artwork, configure, deactivate, Controls};
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_play_can_recover_an_interruption_without_an_ended_notification() {
+        let mut state = Lifecycle::default();
+        state.event(SessionEvent::Interrupted, Some("a"), true);
+        state.user_decision();
+        assert!(!state.can_activate(false), "an engine completion cannot restart interrupted audio");
+        assert!(state.can_activate(true), "a deliberate Play may ask the system to reactivate");
+        assert!(state.interrupted(), "a failed activation must retain the interruption");
+        state.activated();
+        assert!(!state.interrupted());
+        assert!(state.can_activate(false));
+        assert_eq!(state.event(SessionEvent::InterruptionEnded(true), Some("a"), false), SessionAction::None,
+            "a late ended notification cannot restart audio a second time");
+    }
 
     #[test]
     fn an_interruption_resumes_only_the_unmodified_playing_track() {

@@ -252,7 +252,6 @@ struct Deck {
 }
 
 impl Deck {
-    #[cfg(any(target_os = "ios", test))]
     fn disconnected() -> Self {
         let (sink, _) = Player::new();
         sink.pause();
@@ -1112,7 +1111,9 @@ impl Engine {
             }
             Command::ReleaseOutput(reply) => {
                 self.fade = None;
-                for deck in &mut self.decks { deck.clear(); }
+                // Stop alone leaves Rodio's source counter pending if its mixer
+                // disappears. Fresh sinks make paused seeks return immediately.
+                self.decks = [Deck::disconnected(), Deck::disconnected()];
                 self.stream = None;
                 self.generation += 1;
                 self.reopen_after = None;
@@ -1131,9 +1132,7 @@ impl Engine {
                     self.reopen_after = Some(Instant::now() + STREAM_RETRY_WINDOW);
                 }
                 let lost = self.decks[self.active].track_id.clone();
-                for deck in &mut self.decks {
-                    deck.clear();
-                }
+                self.decks = [Deck::disconnected(), Deck::disconnected()];
                 (self.emit)(Event::StreamFailed { message });
                 match lost {
                     Some(track_id) if self.playing => {
@@ -1270,11 +1269,16 @@ mod tests {
             muted: false, rate: 1.0, playing: true, fade: None,
         };
         engine.decks[0].track_id = Some("a".into());
+        // A disconnected mixer never iterates the queued source to its end.
+        // Rodio's stop alone leaves that Player's sound_count pending.
+        engine.decks[0].sink.append(rodio::source::SineWave::new(440.0));
+        assert!(!engine.decks[0].sink.empty());
         output.release();
         assert!(!engine.finish(), "a cancelled decoder is not the song ending");
         let (reply, done) = mpsc::channel();
         engine.handle(Command::ReleaseOutput(reply));
         done.recv().unwrap();
+        assert!(engine.decks.iter().all(|deck| deck.sink.empty()), "release must discard sinks whose mixer can no longer answer seek");
         assert!(engine.reopen_after.is_none());
         assert!(engine.lost_track.is_none());
         assert!(!engine.playing);
