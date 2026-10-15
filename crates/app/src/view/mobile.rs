@@ -126,6 +126,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
+    // UIKit owns these surfaces when its bridge is ready. Keep the limn
+    // implementation available on other platforms or if the bridge is unavailable.
+    if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = playlist_dialog(state, tree, window.width, palette);
@@ -207,6 +210,7 @@ mod tests {
     use crate::backend::Command;
     use crate::player::PlayerView;
     use limn::{UiAction, UiTree};
+    use surco_core::ArtistRef;
 
     fn playing_state() -> State {
         let track = Track { id: "song".into(), title: "Una canción con un título largo para el teléfono".into(), artist: "Un artista".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 180_000 };
@@ -277,6 +281,26 @@ mod tests {
     }
 
     #[test]
+    fn library_import_card_reserves_a_native_paste_control_without_replacing_import() {
+        let mut state = playing_state();
+        state.page = Page::Library;
+        state.mobile_ui.native_surfaces = true;
+        for width in [320.0, 390.0, 430.0] {
+            let size = Size::new(width, 844.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            let paste = frame.access.iter().find(|node| node.id == "ios-paste:import-card").unwrap();
+            let import = frame.access.iter().find(|node| node.id == "import-open").unwrap();
+            assert_eq!(paste.role, limn::Role::Group);
+            assert!(paste.rect.width >= 112.0 && paste.rect.height >= TAP);
+            assert!(paste.rect.x >= import.rect.x + import.rect.width);
+            assert!(paste.rect.x + paste.rect.width <= width);
+            assert!(paste.rect.y + paste.rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
+        }
+    }
+
+    #[test]
     fn editing_search_reserves_the_keyboard_without_changing_playback() {
         let mut state = playing_state();
         state.mobile_search = true;
@@ -318,17 +342,52 @@ mod tests {
     }
 
     #[test]
-    fn home_track_tiles_offer_the_same_hold_and_overflow_actions_as_rows() {
+    fn home_track_tiles_keep_the_cover_clear_and_hold_the_correct_song() {
         let mut state = playing_state();
         let track = state.current().unwrap().clone();
         state.because.push((track.clone(), vec![track.clone()]));
         let tile = tile(&state, "rec:0:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
-        let frame = UiTree::new(tile).layout(Size::new(TILE_WIDTH, 240.0));
-        let more = frame.access.iter().find(|node| node.id == "more:rec:0:0").unwrap();
-        assert!(more.rect.width >= 44.0 && more.rect.height >= 44.0);
-        assert!(frame.context_menu_at(limn::Point::new(30.0, 60.0)).is_some());
-        state.update(&UiAction::Clicked { id: "more:rec:0:0".into() });
+        let mut tree = UiTree::new(tile);
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(Size::new(TILE_WIDTH, 240.0));
+        assert!(!frame.access.iter().any(|node| node.id.starts_with("more:")),
+            "the artwork has no permanent overflow button");
+        let point = limn::Point::new(30.0, 60.0);
+        assert_eq!(frame.context_menu_at(point), Some("tile-context:rec:0:0:song"));
+        let actions = tree.handle_event(limn::UiEvent::ContextMenu { position: point });
+        assert_eq!(actions, vec![UiAction::Clicked { id: "more:rec:0:0".into() }]);
+        state.update(&actions[0]);
         assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
+    }
+
+    #[test]
+    fn home_album_and_artist_cards_offer_hold_actions_in_quick_access_and_shelves() {
+        let mut state = playing_state();
+        state.page = Page::Search;
+        state.collection.recent = vec![
+            Entry::Album(AlbumRef { id: "album".into(), title: "Un álbum".into(), artist: Some("Una banda".into()), year: String::new(), artwork_url: None }),
+            Entry::Artist(ArtistRef { id: "artist".into(), name: "Una artista".into(), subscribers: None, artwork_url: None }),
+        ];
+        state.collection.kept = state.collection.recent.clone();
+        for index in 0..2 {
+            let row = format!("recent:{index}");
+            let size = Size::new(390.0, 844.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            let rect = frame.access.iter().find(|node| node.id == row).unwrap().rect;
+            let actions = tree.handle_event(limn::UiEvent::ContextMenu {
+                position: limn::Point::new(rect.x + 20.0, rect.y + 20.0),
+            });
+            assert_eq!(actions, vec![UiAction::Clicked { id: format!("entry-more:{row}") }]);
+            let entry = &state.collection.kept[index];
+            let row = format!("home-kept:{index}");
+            let mut tree = UiTree::new(tile(&state, row.clone(), entry.title(), None, entry.artwork(), false, SCHEME.palette()));
+            tree.set_reduced_motion(true);
+            tree.layout(Size::new(TILE_WIDTH, 240.0));
+            assert_eq!(tree.handle_event(limn::UiEvent::ContextMenu { position: limn::Point::new(20.0, 60.0) }),
+                vec![UiAction::Clicked { id: format!("entry-more:{row}") }]);
+        }
     }
 
     #[test]
