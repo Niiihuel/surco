@@ -131,7 +131,7 @@ def smoke_simulator(app, sdk_version, env, artifacts):
         if env.get("SURCO_IOS_NATIVE_UI_TESTS") == "1":
             # Reuse this ready device and Rust archive. The caller's finally block
             # retains diagnostics and owns cleanup even if a real interaction fails.
-            run([sys.executable, str(ROOT / "scripts/run-ios-ui-tests.py"), "--udid", udid],
+            run([sys.executable, str(ROOT / "scripts/run-ios-ui-tests.py"), "--udid", udid, "--seed-fixture"],
                 env, logs / "native-ui-runner.log", timeout=1800)
         smoked = True
     finally:

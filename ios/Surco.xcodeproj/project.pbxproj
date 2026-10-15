@@ -6,6 +6,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		20000000000000000000000F /* SymbolNames.json in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* SymbolNames.json */; };
+		20000000000000000000000D /* EntryGeometry.json in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* EntryGeometry.json */; };
 		200000000000000000000001 /* SurcoNativeUITests.m in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* SurcoNativeUITests.m */; };
 		100000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000002 /* main.m */; };
 		100000000000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* Assets.xcassets */; };
@@ -31,6 +33,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		200000000000000000000010 /* SymbolNames.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = SymbolNames.json; path = "SurcoNativeUITests/SymbolNames.json"; sourceTree = "<group>"; };
+		20000000000000000000000E /* EntryGeometry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = EntryGeometry.json; path = "SurcoNativeUITests/EntryGeometry.json"; sourceTree = "<group>"; };
 		200000000000000000000002 /* SurcoNativeUITests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = SurcoNativeUITests.m; path = "SurcoNativeUITests/SurcoNativeUITests.m"; sourceTree = "<group>"; };
 		200000000000000000000003 /* SurcoNativeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SurcoNativeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
@@ -64,6 +68,8 @@
 		100000000000000000000006 = {
 			isa = PBXGroup;
 			children = (
+				200000000000000000000010 /* SymbolNames.json */,
+				20000000000000000000000E /* EntryGeometry.json */,
 				200000000000000000000002 /* SurcoNativeUITests.m */,
 				100000000000000000000002 /* main.m */,
 				100000000000000000000017 /* SurcoMedia.m */,
@@ -142,7 +148,7 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		200000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		200000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (20000000000000000000000D /* EntryGeometry.json in Resources */, 20000000000000000000000F /* SymbolNames.json in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 		10000000000000000000000B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;

@@ -10,6 +10,8 @@ mod sheets;
 pub(super) mod details;
 #[cfg(test)]
 mod dialog_tests;
+#[cfg(test)]
+mod native_ui_geometry_tests;
 
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;

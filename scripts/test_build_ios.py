@@ -225,6 +225,7 @@ class IOSBuildTests(unittest.TestCase):
                 self.assertEqual(len(interactions), 1, "native interactions are a required gate, without retries")
                 command = interactions[0]
                 self.assertEqual(command[command.index("--udid") + 1], "owned-simulator")
+                self.assertIn("--seed-fixture", command)
                 self.assertLess(calls.index(command), calls.index(["xcrun", "simctl", "delete", "owned-simulator"]))
                 self.assertEqual(sum("create" in command for command in calls), 1, "reuse the startup-smoke simulator")
                 self.assertEqual(sum("boot" in command for command in calls), 1)

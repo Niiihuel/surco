@@ -6,6 +6,8 @@ this script never boots, erases, shuts down or deletes a borrowed device.
 """
 
 import argparse
+from contextlib import contextmanager
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -15,17 +17,54 @@ import uuid
 
 build = runpy.run_path(str(Path(__file__).with_name("build-ios.py")))
 ROOT = build["ROOT"]
+FIXTURE = ROOT / "ios/SurcoNativeUITests/SyntheticCollection.ron"
+GEOMETRY = ROOT / "ios/SurcoNativeUITests/EntryGeometry.json"
+SYMBOLS = ROOT / "ios/SurcoNativeUITests/SymbolNames.json"
+BUNDLE_ID = "io.github.niiihuel.surco"
 
 
 def validate_summary(summary):
     """A successful build or an empty test plan is not an interaction pass."""
-    if summary.get("result") != "Passed" or summary.get("failedTests", 0) or summary.get("skippedTests", 0):
+    if summary.get("result") != "Passed" or summary.get("failedTests") != 0 or summary.get("skippedTests") != 0:
         raise RuntimeError("Native UI tests failed or skipped; inspect native-ui.xcresult")
-    if summary.get("totalTestCount", 0) < 4 or summary.get("passedTests") != summary.get("totalTestCount"):
-        raise RuntimeError("Expected all four native UI interactions to execute and pass")
+    if summary.get("totalTestCount", 0) < 6 or summary.get("passedTests") != summary.get("totalTestCount"):
+        raise RuntimeError("Expected all six native iOS tests to execute and pass")
 
 
-def run_tests(udid, config, derived, artifacts, env):
+@contextmanager
+def temporary_fixture(udid, artifacts, env, enabled):
+    """Seed only Surco's state, preserving a borrowed simulator's original bytes."""
+    if not enabled:
+        yield
+        return
+    build["run"](["xcrun", "simctl", "terminate", udid, BUNDLE_ID], env,
+        artifacts / "fixture-terminate-before.log", check=False, timeout=30)
+    container = Path(build["run"](["xcrun", "simctl", "get_app_container", udid, BUNDLE_ID, "data"],
+        env, artifacts / "fixture-container.log", quiet=True, timeout=60).strip())
+    if not container.is_absolute() or not container.is_dir():
+        raise RuntimeError("simctl did not return an existing absolute Surco application container")
+    storage = container / "Library/Application Support/surco/app.ron"
+    if storage.is_symlink():
+        raise RuntimeError("Refusing to replace a symlink at Surco's fixture path")
+    original = storage.read_bytes() if storage.exists() else None
+    storage.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        storage.write_bytes(FIXTURE.read_bytes())
+        yield
+    finally:
+        # Stop the app before restoring so its normal persistence cannot overwrite
+        # the original after this context exits. No other file is touched.
+        try:
+            build["run"](["xcrun", "simctl", "terminate", udid, BUNDLE_ID], env,
+                artifacts / "fixture-terminate-after.log", check=False, timeout=30)
+        finally:
+            if original is None:
+                storage.unlink(missing_ok=True)
+            else:
+                storage.write_bytes(original)
+
+
+def run_tests(udid, config, derived, artifacts, env, *, seed_fixture=False):
     uuid.UUID(udid)
     if not config.is_file():
         raise RuntimeError(f"Build the simulator Rust archive first; missing {config}")
@@ -41,12 +80,39 @@ def run_tests(udid, config, derived, artifacts, env):
         "-parallel-testing-enabled", "NO", "-maximum-concurrent-test-simulator-destinations", "1",
         "-resultBundlePath", str(result), "-only-testing:SurcoNativeUITests", "test",
     ]
+    source = env.get("GITHUB_SHA") or build["run"](["git", "rev-parse", "HEAD"], env,
+        artifacts / "source-sha.log", quiet=True, timeout=30).strip()
     (artifacts / "execution.json").write_text(json.dumps({"command": command, "simulator": udid,
-        "source": env.get("GITHUB_SHA"), "owns_simulator": False}, indent=2) + "\n")
-    build["run"](command, env, artifacts / "xcodebuild-native-ui.log", timeout=1500)
-    raw = build["run"](["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)],
-        env, artifacts / "summary.json", timeout=60)
-    validate_summary(json.loads(raw))
+        "source": source, "owns_simulator": False, "seed_fixture": seed_fixture,
+        "fixture_sha256": hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
+        "geometry_sha256": hashlib.sha256(GEOMETRY.read_bytes()).hexdigest(),
+        "symbols_sha256": hashlib.sha256(SYMBOLS.read_bytes()).hexdigest()}, indent=2) + "\n")
+    with temporary_fixture(udid, artifacts, env, seed_fixture):
+        failure = None
+        summary = None
+        try:
+            build["run"](command, env, artifacts / "xcodebuild-native-ui.log", timeout=1500)
+        except Exception as error:
+            failure = error
+        # Retain screenshots and the normal summary even when XCTest fails.
+        # Try both exports; preserve the original failure if diagnostics also fail.
+        if result.exists():
+            evidence_commands = [
+                (["xcrun", "xcresulttool", "get", "test-results", "summary", "--path", str(result)], "summary.json"),
+                (["xcrun", "xcresulttool", "export", "attachments", "--path", str(result),
+                    "--output-path", str(artifacts / "attachments")], "attachments-export.log"),
+            ]
+            for evidence, name in evidence_commands:
+                try:
+                    raw = build["run"](evidence, env, artifacts / name, timeout=120)
+                    if name == "summary.json":
+                        summary = json.loads(raw)
+                except Exception as error:
+                    if failure is None:
+                        failure = error
+        if failure is not None:
+            raise failure
+        validate_summary(summary or {})
 
 
 def main():
@@ -55,8 +121,9 @@ def main():
     parser.add_argument("--xcconfig", type=Path, default=ROOT / "target/ios/simulator/Rust.xcconfig")
     parser.add_argument("--derived-data", type=Path, default=ROOT / "target/ios/simulator/DerivedData")
     parser.add_argument("--artifacts", type=Path, default=ROOT / "target/ios/simulator/artifacts/native-ui")
+    parser.add_argument("--seed-fixture", action="store_true", help="Temporarily replace Surco app.ron with synthetic test data, then restore its original bytes")
     args = parser.parse_args()
-    run_tests(args.udid, args.xcconfig.resolve(), args.derived_data.resolve(), args.artifacts.resolve(), os.environ.copy())
+    run_tests(args.udid, args.xcconfig.resolve(), args.derived_data.resolve(), args.artifacts.resolve(), os.environ.copy(), seed_fixture=args.seed_fixture)
 
 
 if __name__ == "__main__":
