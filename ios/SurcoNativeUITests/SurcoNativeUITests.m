@@ -200,10 +200,25 @@
     XCUIElement *volume = self.app.sliders[@"volume"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     XCTAssertTrue([self element:@"sheet-route-picker"].exists);
-    XCTAssertTrue(volume.frame.size.height >= 44);
-    [volume adjustToNormalizedSliderPosition:0];
-    XCTAssertTrue(volume.value != nil);
+    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
+    // XCUI exposes Accessibility geometry, not the Auto Layout touch bounds.
+    // UISlider keeps its required 44pt height; verify its native interaction and state.
+    // https://developer.apple.com/documentation/xcuiautomation/xcuielementattributes
+    NSLog(@"SURCO_NATIVE_SLIDER_AX_FRAME=%@", NSStringFromCGRect(volume.frame));
+    NSString *before = [volume.value copy];
+    XCTAssertNotNil(before);
+    [volume adjustToNormalizedSliderPosition:0.5];
+    NSString *adjusted = [volume.value copy];
+    XCTAssertNotNil(adjusted);
+    XCTAssertNotEqualObjects(adjusted, before, @"The native slider changes the volume");
     [self attachScreenshot:@"native-connections-route-and-volume"];
+    [[self element:@"sheet-close"] tap];
+    [self waitFor:volume predicate:@"exists == NO"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
+    XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
+    XCTAssertEqualObjects(volume.value, adjusted, @"Reopening restores the volume received by Rust");
+    [volume adjustToNormalizedSliderPosition:0];
+    XCTAssertEqualObjects(volume.value, before, @"Restore the fixture's silent volume");
     [[self element:@"sheet-close"] tap];
     [self waitFor:volume predicate:@"exists == NO"];
 }
