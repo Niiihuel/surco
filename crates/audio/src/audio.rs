@@ -25,6 +25,7 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::{Duration, Instant};
 
 use rodio::cpal::StreamError;
@@ -60,6 +61,29 @@ const STREAM_LOST: &str = "the audio output stream failed";
 
 /// A decoded stream ready to be handed to a deck. rodio resamples it to the device's rate.
 type BoxedSource = Box<dyn Source + Send>;
+
+/// Odd epochs accept loads. Releasing an output invalidates readers already waiting on bytes.
+#[derive(Clone)]
+struct OutputEpoch(Arc<AtomicU64>);
+
+impl OutputEpoch {
+    fn new(allowed: bool) -> Self { Self(Arc::new(AtomicU64::new(u64::from(allowed)))) }
+
+    fn current(&self) -> Option<u64> {
+        let epoch = self.0.load(Ordering::SeqCst);
+        (epoch & 1 != 0).then_some(epoch)
+    }
+
+    fn accepts(&self, epoch: u64) -> bool { self.current() == Some(epoch) }
+
+    fn prepare(&self) {
+        let _ = self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| Some(epoch | 1));
+    }
+
+    fn release(&self) {
+        let _ = self.0.fetch_update(Ordering::SeqCst, Ordering::SeqCst, |epoch| Some(if epoch & 1 != 0 { epoch.wrapping_add(1) } else { epoch }));
+    }
+}
 
 /// What the engine reports, on its own thread, to the callback given to `NativeAudio::start`.
 #[derive(Clone, Debug, PartialEq)]
@@ -108,11 +132,12 @@ pub struct Load {
 struct BufferReader {
     buffer: MediaBuffer,
     position: usize,
+    output: Option<(OutputEpoch, u64)>,
 }
 
 impl BufferReader {
     fn new(buffer: MediaBuffer) -> Self {
-        Self { buffer, position: 0 }
+        Self { buffer, position: 0, output: None }
     }
 }
 
@@ -124,6 +149,9 @@ impl Read for BufferReader {
 
         let deadline = Instant::now() + READ_TIMEOUT;
         loop {
+            if self.output.as_ref().is_some_and(|(output, epoch)| !output.accepts(*epoch)) {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "audio output was released"));
+            }
             if let Some(read) = self.buffer.read_at(self.position, out) {
                 self.position += read;
                 return Ok(read);
@@ -224,6 +252,13 @@ struct Deck {
 }
 
 impl Deck {
+    #[cfg(any(target_os = "ios", test))]
+    fn disconnected() -> Self {
+        let (sink, _) = Player::new();
+        sink.pause();
+        Self { sink, track_id: None, duration_sec: None, buffer: None }
+    }
+
     fn clear(&mut self) {
         self.sink.stop();
         self.track_id = None;
@@ -258,6 +293,7 @@ struct Fade {
 
 enum Command {
     Load {
+        output_epoch: u64,
         track_id: String,
         source: BoxedSource,
         duration_sec: Option<f64>,
@@ -292,12 +328,14 @@ enum Command {
     /// The output stream of this generation died. Sent by the stream's own error callback.
     StreamFailed(u64, String),
     DropActive,
+    ReleaseOutput(Sender<()>),
     Shutdown,
 }
 
 /// The handle to the engine. `Send + Sync`; dropping it stops the thread and closes the output.
 pub struct NativeAudio {
     sender: Sender<Command>,
+    output: OutputEpoch,
 }
 
 impl NativeAudio {
@@ -307,6 +345,8 @@ impl NativeAudio {
      *
      * A failure here is what a machine with no working audio device reports. `on_event` runs
      * on the audio thread, so it must hand the event off rather than do work.
+     * On iOS opening is deferred: activate the system session and call `prepare_output` before
+     * the first load, so launching the UI alone does not interrupt another app's audio.
      */
     pub fn start(
         device: Option<String>,
@@ -315,15 +355,17 @@ impl NativeAudio {
         let (tx, rx) = mpsc::channel();
         let (ready_tx, ready_rx) = mpsc::channel();
         let commands = tx.clone();
+        let output = OutputEpoch::new(!cfg!(target_os = "ios"));
+        let epoch = output.clone();
         std::thread::Builder::new()
             .name("surco-audio".into())
-            .spawn(move || run(Box::new(on_event), rx, commands, ready_tx, device))
+            .spawn(move || run(Box::new(on_event), rx, commands, ready_tx, device, epoch))
             .map_err(|error| format!("audio thread failed to start: {error}"))?;
 
         ready_rx
             .recv()
             .map_err(|_| "audio thread stopped before it was ready".to_string())??;
-        Ok(Self { sender: tx })
+        Ok(Self { sender: tx, output })
     }
 
     fn send(&self, command: Command) -> Result<(), String> {
@@ -351,7 +393,9 @@ impl NativeAudio {
      * track that is still playing. Call it from a worker.
      */
     pub fn load(&self, load: Load) -> Result<Option<f64>, String> {
+        let output_epoch = self.output.current().ok_or("audio output is not active")?;
         let mut reader = BufferReader::new(load.buffer.clone());
+        reader.output = Some((self.output.clone(), output_epoch));
         let mime_type = match opus_source::sniff_container_mime(&mut reader) {
             Ok(Some(sniffed)) => sniffed,
             // Unreadable here means unreadable for the decoder too; let that report it.
@@ -388,6 +432,7 @@ impl NativeAudio {
         let known = |value: &f64| *value > 0.0;
         let duration_sec = decoded_duration.filter(known).or(load.duration_sec.filter(known));
         self.request(|reply| Command::Load {
+            output_epoch,
             track_id: load.track_id,
             source,
             duration_sec,
@@ -470,12 +515,23 @@ impl NativeAudio {
     pub fn set_output_device(&self, id: Option<String>) -> Result<(), String> {
         self.request(|reply| Command::SetOutputDevice { id, reply })?
     }
+
+    /// Closes the device and clears both decks. The caller retains the track and reloads it.
+    /// After `prepare_output`, the next load can reopen immediately without the failure backoff.
+    pub fn release_output(&self) -> Result<(), String> {
+        self.output.release();
+        self.request(Command::ReleaseOutput)
+    }
+
+    /// Allows a new load after the platform has activated its playback session.
+    pub fn prepare_output(&self) { self.output.prepare(); }
 }
 
 impl Drop for NativeAudio {
     // The thread holds a sender of its own for the stream's error callback, so the channel
     // never disconnects by itself.
     fn drop(&mut self) {
+        self.output.release();
         let _ = self.sender.send(Command::Shutdown);
     }
 }
@@ -770,9 +826,14 @@ fn run(
     commands: Sender<Command>,
     ready: Sender<Result<(), String>>,
     initial_device: Option<String>,
+    output: OutputEpoch,
 ) {
+    // An iOS session becomes active only after a play request, before the first load.
+    #[cfg(target_os = "ios")]
+    let (stream, decks) = (None, [Deck::disconnected(), Deck::disconnected()]);
+    #[cfg(not(target_os = "ios"))]
     let (stream, decks) = match open_output(initial_device.as_deref(), commands.clone(), 0) {
-        Ok(output) => output,
+        Ok((stream, decks)) => (Some(stream), decks),
         Err(error) => {
             let _ = ready.send(Err(error));
             return;
@@ -781,7 +842,7 @@ fn run(
 
     let mut engine = Engine {
         emit,
-        stream: Some(stream),
+        stream,
         device_id: initial_device,
         commands,
         generation: 0,
@@ -795,6 +856,7 @@ fn run(
         rate: 1.0,
         playing: false,
         fade: None,
+        output,
     };
 
     if ready.send(Ok(())).is_err() {
@@ -836,6 +898,7 @@ fn run(
 }
 
 struct Engine {
+    output: OutputEpoch,
     emit: Box<dyn FnMut(Event) + Send>,
     /// Dropping this closes the output device, so it outlives every deck connected to it.
     /// `None` once it has died, until the next load reopens it.
@@ -876,7 +939,11 @@ impl Engine {
     /// Returns true when the thread should stop.
     fn handle(&mut self, command: Command) -> bool {
         match command {
-            Command::Load { track_id, source, duration_sec, start_sec, standby, buffer, reply } => {
+            Command::Load { output_epoch, track_id, source, duration_sec, start_sec, standby, buffer, reply } => {
+                if !self.output.accepts(output_epoch) {
+                    let _ = reply.send(Err("audio load was cancelled when its output was released".to_owned()));
+                    return false;
+                }
                 if self.stream.is_none() {
                     let reopened = if self.reopen_after.is_some_and(|at| Instant::now() < at) {
                         Err("Audio output keeps failing. Try another output device.".to_string())
@@ -1043,8 +1110,18 @@ impl Engine {
             Command::SetOutputDevice { id, reply } => {
                 let _ = reply.send(self.reopen(id));
             }
+            Command::ReleaseOutput(reply) => {
+                self.fade = None;
+                for deck in &mut self.decks { deck.clear(); }
+                self.stream = None;
+                self.generation += 1;
+                self.reopen_after = None;
+                self.lost_track = None;
+                self.playing = false;
+                let _ = reply.send(());
+            }
             Command::StreamFailed(generation, message) => {
-                if generation != self.generation || self.stream.is_none() {
+                if generation != self.generation || self.stream.is_none() || self.output.current().is_none() {
                     return false;
                 }
                 // Dropping it is what ends cpal's loop on the dead device.
@@ -1137,6 +1214,7 @@ impl Engine {
 
     /// Reports the end of the active track, and says whether it did.
     fn finish(&mut self) -> bool {
+        if self.output.current().is_none() { return false; }
         let index = self.active;
         let Some(track_id) = self.decks[index].track_id.clone() else { return false };
 
@@ -1177,6 +1255,61 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn released_outputs_do_not_advance_the_queue_or_accept_late_loads() {
+        let output = OutputEpoch::new(true);
+        let token = output.current().unwrap();
+        let (commands, _) = mpsc::channel();
+        let (events, received) = mpsc::channel();
+        let mut engine = Engine {
+            output: output.clone(), emit: Box::new(move |event| { let _ = events.send(event); }),
+            stream: None, device_id: None, commands, generation: 1, opened_at: Instant::now(),
+            reopen_after: Some(Instant::now() + STREAM_RETRY_WINDOW), lost_track: Some("a".into()),
+            decks: [Deck::disconnected(), Deck::disconnected()], active: 0, volume: 1.0,
+            muted: false, rate: 1.0, playing: true, fade: None,
+        };
+        engine.decks[0].track_id = Some("a".into());
+        output.release();
+        assert!(!engine.finish(), "a cancelled decoder is not the song ending");
+        let (reply, done) = mpsc::channel();
+        engine.handle(Command::ReleaseOutput(reply));
+        done.recv().unwrap();
+        assert!(engine.reopen_after.is_none());
+        assert!(engine.lost_track.is_none());
+        assert!(!engine.playing);
+        output.prepare();
+        let (reply, result) = mpsc::channel();
+        engine.handle(Command::Load {
+            output_epoch: token, track_id: "late".into(), source: Box::new(rodio::source::Empty::new()),
+            duration_sec: None, start_sec: None, standby: false, buffer: MediaBuffer::new(None), reply,
+        });
+        assert!(result.recv().unwrap().is_err());
+        assert!(engine.stream.is_none(), "a stale load must not touch the sound card");
+        assert!(received.try_recv().is_err());
+    }
+
+    #[test]
+    fn releasing_output_cancels_a_waiting_decoder_without_discarding_downloaded_bytes() {
+        let buffer = MediaBuffer::new(Some(4));
+        let epoch = OutputEpoch::new(true);
+        let token = epoch.current().unwrap();
+        let mut reader = BufferReader::new(buffer.clone());
+        reader.output = Some((epoch.clone(), token));
+        let waiting = std::thread::spawn(move || reader.read(&mut [0u8; 4]));
+        epoch.release();
+        assert_eq!(waiting.join().unwrap().unwrap_err().kind(), io::ErrorKind::UnexpectedEof);
+        assert!(!buffer.is_failed(), "pausing must preserve the download for resume");
+        buffer.append(&[1, 2, 3, 4]);
+        buffer.complete();
+        epoch.prepare();
+        assert!(!epoch.accepts(token), "a late load cannot join the new output");
+        let mut reader = BufferReader::new(buffer);
+        reader.output = Some((epoch.clone(), epoch.current().unwrap()));
+        let mut bytes = [0u8; 4];
+        assert_eq!(reader.read(&mut bytes).unwrap(), 4);
+        assert_eq!(bytes, [1, 2, 3, 4]);
+    }
 
     #[test]
     fn stream_failure_is_reported_once_and_underruns_never() {

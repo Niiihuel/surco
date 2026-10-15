@@ -26,7 +26,9 @@ use tokio::task::JoinHandle;
 
 use crate::library::Library;
 use crate::update;
-use crate::media_keys::{Key, MediaKeys};
+use crate::media_keys::{MediaEvent, MediaKeys};
+#[cfg(target_os = "ios")]
+use crate::media_keys::Key;
 use crate::player::{Effect, Player, PlayerView};
 
 /// A page of the catalog.
@@ -209,7 +211,7 @@ const DOWNLOAD_ATTEMPTS: u32 = 4;
 /// What reaches the player from the worker's own side.
 enum Input {
     Engine(surco_audio::Event),
-    Key(Key),
+    Media(MediaEvent),
     Radio { seed: String, tracks: Vec<Track> },
 }
 
@@ -252,11 +254,42 @@ struct Shared {
     inputs: UnboundedSender<Input>,
     library: Mutex<Library>,
     saving: Mutex<HashSet<String>>,
+    #[cfg(target_os = "ios")]
+    cached_loads: Mutex<Vec<CachedLoad>>,
+}
+
+#[cfg(target_os = "ios")]
+#[derive(Clone)]
+struct CachedLoad {
+    track_id: String,
+    buffer: MediaBuffer,
+    mime_type: String,
+    duration_sec: Option<f64>,
+    gain: f32,
 }
 
 impl Shared {
     fn is_current(&self, generation: u64) -> bool {
         self.generation.load(Ordering::SeqCst) == generation
+    }
+
+    #[cfg(target_os = "ios")]
+    fn remember(&self, load: &Load) {
+        let mut cached = self.cached_loads.lock().unwrap();
+        cached.retain(|saved| saved.track_id != load.track_id);
+        cached.push(CachedLoad {
+            track_id: load.track_id.clone(), buffer: load.buffer.clone(), mime_type: load.mime_type.clone(),
+            duration_sec: load.duration_sec, gain: load.gain,
+        });
+        if cached.len() > 2 { cached.remove(0); }
+    }
+
+    #[cfg(target_os = "ios")]
+    fn restored_load(&self, track_id: &str, at: f64) -> Option<Load> {
+        self.cached_loads.lock().unwrap().iter().find(|load| load.track_id == track_id && !load.buffer.is_failed()).map(|load| Load {
+            track_id: load.track_id.clone(), buffer: load.buffer.clone(), mime_type: load.mime_type.clone(),
+            duration_sec: load.duration_sec, start_sec: Some(at), standby: false, gain: load.gain,
+        })
     }
 
     /// Tells the window what the library holds now.
@@ -267,6 +300,101 @@ impl Shared {
         };
         let saving = self.saving.lock().unwrap().clone();
         (self.reply)(Event::Library { saved, saving, bytes });
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn transport_decision(command: &Command) -> bool {
+    matches!(command, Command::PlayList { .. } | Command::PlayPause | Command::Next | Command::Previous
+        | Command::Jump(_) | Command::Seek(_) | Command::Swap(_) | Command::PlayNext(_) | Command::Enqueue(_)
+        | Command::Output(_))
+}
+
+#[cfg(target_os = "ios")]
+struct IosSession {
+    lifecycle: crate::ios_media::Lifecycle,
+    active: bool,
+    released: bool,
+}
+
+#[cfg(target_os = "ios")]
+impl Default for IosSession {
+    fn default() -> Self {
+        Self { lifecycle: crate::ios_media::Lifecycle::default(), active: false, released: true }
+    }
+}
+
+#[cfg(target_os = "ios")]
+impl IosSession {
+    fn release(&mut self, shared: &Result<Arc<Shared>, String>, deactivate: bool) {
+        if let Ok(shared) = shared {
+            if !self.released {
+                // A load already decoding must not start playing after a pause or interruption.
+                shared.generation.fetch_add(1, Ordering::SeqCst);
+                shared.handovers.fetch_add(1, Ordering::SeqCst);
+                if let Err(error) = shared.audio.release_output() { (shared.reply)(Event::OutputFailed(error)); }
+            }
+            if deactivate && self.active {
+                if let Err(error) = crate::ios_media::deactivate() { (shared.reply)(Event::OutputFailed(error)); }
+            }
+        }
+        if deactivate { self.active = false; }
+        self.released = true;
+    }
+
+    fn event(&mut self, shared: &Result<Arc<Shared>, String>, player: &mut Player, event: crate::ios_media::SessionEvent) -> Vec<Effect> {
+        use crate::ios_media::{SessionAction, SessionEvent};
+        let view = player.view();
+        let action = self.lifecycle.event(event, view.current.as_ref().map(|track| track.id.as_str()), view.playing);
+        match action {
+            SessionAction::None => Vec::new(),
+            SessionAction::Pause | SessionAction::Reset => {
+                let interrupted = event == SessionEvent::Interrupted;
+                self.release(shared, !interrupted);
+                if interrupted { self.active = false; }
+                if action == SessionAction::Reset {
+                    if let Err(error) = crate::ios_media::configure() {
+                        if let Ok(shared) = shared { (shared.reply)(Event::OutputFailed(error)); }
+                    }
+                }
+                Key::Pause.command(&view).map(|command| player.command(command)).unwrap_or_default()
+            }
+            SessionAction::Resume => Key::Play.command(&view).map(|command| player.command(command)).unwrap_or_default(),
+            SessionAction::Rebuild => {
+                self.release(shared, false);
+                if view.playing { player.reload() } else { Vec::new() }
+            }
+        }
+    }
+
+    fn effect(&mut self, shared: &Result<Arc<Shared>, String>, player: &mut Player, effect: Effect) -> Option<Effect> {
+        let effect = match effect {
+            Effect::Pause | Effect::Restore(_, _, false) => {
+                self.release(shared, true);
+                return None;
+            }
+            Effect::Resume if self.released => {
+                let view = player.view();
+                Effect::Restore(view.current?, view.position, true)
+            }
+            other => other,
+        };
+        if matches!(effect, Effect::Play(_) | Effect::Fade(_, _) | Effect::Restore(_, _, true) | Effect::Resume | Effect::Handover(_, _)) {
+            let activated = if self.lifecycle.interrupted() {
+                Err("La reproducción está interrumpida por otra sesión de audio.".to_owned())
+            } else if self.active { Ok(()) } else { crate::ios_media::activate() };
+            if let Err(message) = activated {
+                self.release(shared, true);
+                if let Some(track) = player.view().current {
+                    player.engine(surco_audio::Event::Failed { track_id: track.id, message });
+                } else if let Ok(shared) = shared { (shared.reply)(Event::OutputFailed(message)); }
+                return None;
+            }
+            self.active = true;
+            if let Ok(shared) = shared { shared.audio.prepare_output(); }
+            self.released = false;
+        }
+        Some(effect)
     }
 }
 
@@ -302,16 +430,40 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                 }
                 let mut player = Player::default();
                 let pressed = inputs.clone();
-                let mut keys = MediaKeys::start(move |key| drop(pressed.send(Input::Key(key))));
+                let mut keys = MediaKeys::start(move |event| drop(pressed.send(Input::Media(event))));
+                #[cfg(target_os = "ios")]
+                let mut session = IosSession::default();
                 loop {
                     let effects = tokio::select! {
                         command = inbox.recv() => match command {
-                            Some(command) => handle(&shared, &reply, &mut player, command),
+                            Some(command) => {
+                                #[cfg(target_os = "ios")]
+                                if transport_decision(&command) { session.lifecycle.user_decision(); }
+                                handle(&shared, &reply, &mut player, command)
+                            },
                             None => return,
                         },
                         Some(input) = inbox_own.recv() => match input {
                             Input::Engine(event) => player.engine(event),
-                            Input::Key(key) => key.command(&player.view()).map(|command| player.command(command)).unwrap_or_default(),
+                            Input::Media(MediaEvent::Key(key)) => {
+                                #[cfg(target_os = "ios")]
+                                session.lifecycle.user_decision();
+                                key.command(&player.view()).map(|command| player.command(command)).unwrap_or_default()
+                            },
+                            #[cfg(target_os = "ios")]
+                            Input::Media(MediaEvent::Session(event)) => session.event(&shared, &mut player, event),
+                            #[cfg(target_os = "ios")]
+                            Input::Media(MediaEvent::Artwork { track_id, url }) => {
+                                if let Ok(shared) = &shared {
+                                    let shared = shared.clone();
+                                    tokio::spawn(async move {
+                                        if let Some(bytes) = cover_bytes(&shared, &url).await.filter(|bytes| bytes.len() <= 16 * 1024 * 1024) {
+                                            crate::ios_media::artwork(&track_id, &url, &bytes);
+                                        }
+                                    });
+                                }
+                                Vec::new()
+                            },
                             Input::Radio { seed, tracks } => {
                                 player.radio(&seed, tracks);
                                 Vec::new()
@@ -319,6 +471,11 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         },
                     };
                     for effect in effects {
+                        #[cfg(target_os = "ios")]
+                        let effect = match session.effect(&shared, &mut player, effect) {
+                            Some(effect) => effect,
+                            None => continue,
+                        };
                         match (&shared, effect) {
                             (Ok(shared), effect) => run(shared, effect),
                             // Nothing can play: the track fails with the reason the backend did not start.
@@ -330,6 +487,8 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         }
                     }
                     let view = player.view();
+                    #[cfg(target_os = "ios")]
+                    if !view.playing { session.release(&shared, true); }
                     keys.show(&view);
                     let changed = views.send_if_modified(|shown| {
                         let changed = *shown != view;
@@ -363,6 +522,8 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         inputs,
         library: Mutex::new(Library::open(library)),
         saving: Mutex::default(),
+        #[cfg(target_os = "ios")]
+        cached_loads: Mutex::default(),
     })
 }
 
@@ -408,6 +569,15 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Quality(bps), Ok(shared)) => shared.quality.store(bps, Ordering::SeqCst),
         (Command::Quality(_), Err(_)) => {}
         (Command::Output(id), Ok(shared)) => {
+            #[cfg(target_os = "ios")]
+            {
+                // iOS chooses the route through AVAudioSession; never open inactive I/O here.
+                let _ = id;
+                if let Err(error) = shared.audio.release_output() { reply(Event::OutputFailed(error)); }
+                return player.reload();
+            }
+            #[cfg(not(target_os = "ios"))]
+            {
             // The engine reopens its stream and both decks go with the old one. A device
             // that is gone gives way to the system's.
             if let Err(error) = shared.audio.set_output_device(id.clone()) {
@@ -421,6 +591,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 }
             }
             return player.reload();
+            }
         }
         (Command::Outputs, Ok(shared)) => {
             let shared = shared.clone();
@@ -602,11 +773,15 @@ fn begin(shared: &Arc<Shared>, track: Track, fade: Duration, resume: Option<(f64
     if fade.is_zero() {
         drop(shared.audio.pause());
     }
+    #[cfg(target_os = "ios")]
+    let reuse = resume.is_some_and(|(at, _)| shared.restored_load(&track.id, at).is_some());
+    #[cfg(not(target_os = "ios"))]
+    let reuse = false;
     {
         let mut downloads = shared.downloads.lock().unwrap();
         // The track that fades out still reads its download: cancelling it would end it there.
-        if let Some(replaced) = downloads.active.take().filter(|_| fade.is_zero()) {
-            replaced.cancel();
+        if fade.is_zero() && !reuse {
+            if let Some(replaced) = downloads.active.take() { replaced.cancel(); }
         }
         if downloads.standby.as_ref().is_some_and(|download| download.track_id == track.id) {
             downloads.active = downloads.standby.take();
@@ -630,6 +805,19 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T, String> + 
 }
 
 async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Duration, resume: Option<(f64, bool)>) -> Result<(), String> {
+    #[cfg(target_os = "ios")]
+    if let Some((at, playing)) = resume {
+        if let Some(load) = shared.restored_load(&track.id, at) {
+            let _decks = shared.decks.lock().await;
+            if !shared.is_current(generation) { return Ok(()); }
+            let engine = shared.clone();
+            return blocking(move || {
+                engine.audio.load(load)?;
+                if !engine.is_current(generation) { return engine.audio.drop_active(); }
+                if playing { engine.audio.play() } else { Ok(()) }
+            }).await;
+        }
+    }
     {
         let _decks = shared.decks.lock().await;
         if !shared.is_current(generation) {
@@ -655,7 +843,10 @@ async fn play(shared: &Arc<Shared>, track: &Track, generation: u64, fade: Durati
     }
     let engine = shared.clone();
     blocking(move || {
+        #[cfg(target_os = "ios")]
+        engine.remember(&load);
         engine.audio.load(load)?;
+        if !engine.is_current(generation) { return engine.audio.drop_active(); }
         // What was paused comes back paused.
         if resume.is_some_and(|(_, playing)| !playing) {
             return Ok(());
@@ -756,7 +947,11 @@ async fn handover(shared: &Arc<Shared>, track: Track, at: f64) {
             replaced.cancel();
         }
         let engine = shared.clone();
-        blocking(move || engine.audio.load(load)).await.ok()
+        blocking(move || {
+            #[cfg(target_os = "ios")]
+            engine.remember(&load);
+            engine.audio.load(load)
+        }).await.ok()
     };
     if ready.await.is_some() {
         tokio::time::sleep(Duration::from_secs_f64(HANDOVER_AHEAD).saturating_sub(asked.elapsed())).await;
@@ -786,7 +981,11 @@ async fn preload(shared: &Arc<Shared>, track: &Track) {
         replaced.cancel();
     }
     let engine = shared.clone();
-    let _ = blocking(move || engine.audio.load(load)).await;
+    let _ = blocking(move || {
+        #[cfg(target_os = "ios")]
+        engine.remember(&load);
+        engine.audio.load(load)
+    }).await;
 }
 
 /// The rendition a clip is cut from, by its height, and how long the clip is.
