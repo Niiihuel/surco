@@ -2,6 +2,11 @@
 
 ## 0.5.0
 
+### Added
+
+- A native iPhone search field with the system editing menu, clear and Cancel
+  controls, stable keyboard focus and improved recent searches and result filters.
+
 ### Changed
 
 - Continuous cover-colored iPhone backgrounds through the status bar, player and
@@ -18,6 +23,8 @@
   URL and Unicode text representations from other apps.
 - The home-indicator inset masks scrolling content and blocks touches to hidden
   rows without covering the real transport and navigation controls.
+- Search retains its results and scroll position while updating, and preserves
+  native editing through rotation without reopening a dismissed keyboard.
 
 ## 0.4.0
 

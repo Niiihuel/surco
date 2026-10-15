@@ -90,7 +90,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let mut top_height = insets.top + header_height;
     if searching {
         top.push(search::field(state, palette));
-        top_height += if editing { 68.0 } else { 72.0 } + if cfg!(any(target_os = "ios", test)) { 52.0 } else { 0.0 };
+        top_height += search::field_height(state);
     }
     // The notice participates in flow, so longer messages never cover an action.
     let mut notices = Vec::new();
@@ -201,7 +201,7 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
     let tab = |id: &str, glyph: Icon, label: &str, selected: bool| {
         let ink = if selected { palette.text } else { palette.muted };
         let copy = Element::column(vec![
-            Element::icon(glyph).large_icon(22.0).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
+            Element::icon(glyph).large_icon(26.0).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
             Text::new(label, palette).font_size(11.0).render().foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:label")),
         ]).gap(4.0).centered();
         Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected))
@@ -387,7 +387,7 @@ mod tests {
             let mut tree = UiTree::new(super::view(&state, size));
             let frame = tree.layout(size);
             assert!(!frame.access.iter().any(|node| matches!(node.id.as_str(), "home" | "mobile-library" | "play-pause")));
-            for id in ["search", "mobile-search-cancel", "ios-paste:search"] {
+            for id in ["search", "mobile-search-cancel"] {
                 let rect = frame.access.iter().find(|node| node.id == id).unwrap().rect;
                 assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= size.width + 0.1
                     && rect.y + rect.height <= size.height + 0.1 && rect.height >= TAP, "{id}: {rect:?}");
