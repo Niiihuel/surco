@@ -177,6 +177,8 @@ pub enum Event {
     /// A cover, and the color it lends to a card of its track when it could be read.
     Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
     Outputs(Vec<AudioOutputDevice>),
+    OutputsFailed(String),
+    OutputFailed(String),
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
     /// A track's own video, or none when it has no such video.
@@ -408,9 +410,15 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Output(id), Ok(shared)) => {
             // The engine reopens its stream and both decks go with the old one. A device
             // that is gone gives way to the system's.
-            if shared.audio.set_output_device(id.clone()).is_err() && id.is_some() {
-                let _ = shared.audio.set_output_device(None);
-                reply(Event::OutputLost);
+            if let Err(error) = shared.audio.set_output_device(id.clone()) {
+                if id.is_some() {
+                    match shared.audio.set_output_device(None) {
+                        Ok(()) => reply(Event::OutputLost),
+                        Err(fallback) => reply(Event::OutputFailed(format!("No se pudo usar la salida elegida ({error}) ni la predeterminada ({fallback}). Revisá la conexión del dispositivo y volvé a elegir una salida."))),
+                    }
+                } else {
+                    reply(Event::OutputFailed(format!("No se pudo usar la salida predeterminada: {error}. Revisá la configuración de sonido del sistema y volvé a elegir una salida.")));
+                }
             }
             return player.reload();
         }
@@ -418,12 +426,14 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 // Listing may ask the sound server, which takes a moment.
-                if let Ok(devices) = blocking(surco_audio::list_output_devices).await {
-                    (shared.reply)(Event::Outputs(devices));
-                }
+                (shared.reply)(match blocking(surco_audio::list_output_devices).await {
+                    Ok(devices) => Event::Outputs(devices),
+                    Err(message) => Event::OutputsFailed(message),
+                });
             });
         }
-        (Command::Output(_) | Command::Outputs, Err(_)) => {}
+        (Command::Outputs, Err(message)) => reply(Event::OutputsFailed(message.clone())),
+        (Command::Output(_), Err(message)) => reply(Event::OutputFailed(format!("El motor de audio no está disponible: {message}"))),
         (Command::Lyrics(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -1001,6 +1011,20 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 #[cfg(test)]
 mod tests {
     use super::tint_of;
+
+    #[test]
+    fn an_unavailable_audio_engine_answers_device_requests_with_an_error() {
+        use super::{handle, Command, Event, Player};
+        let events = std::cell::RefCell::new(Vec::new());
+        let reply = |event| events.borrow_mut().push(event);
+        let mut player = Player::default();
+        let engine = Err("No audio device".to_owned());
+        handle(&engine, &reply, &mut player, Command::Outputs);
+        handle(&engine, &reply, &mut player, Command::Output(None));
+        let events = events.into_inner();
+        assert!(matches!(&events[0], Event::OutputsFailed(message) if message == "No audio device"));
+        assert!(matches!(&events[1], Event::OutputFailed(message) if message.contains("No audio device")));
+    }
 
     /// A square cover whose first `red_columns` columns are red and the rest black.
     fn cover(side: u32, red_columns: u32) -> Vec<u8> {

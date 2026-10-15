@@ -6,7 +6,7 @@ use limn::{
     ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
-    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, PreferencesGroup, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
+    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, SearchField, Select, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec,
 };
@@ -79,8 +79,6 @@ const LYRIC_BLUR: f32 = 2.2;
 const LYRIC_WASH: f32 = 520.0;
 /// How far down a page the colour of its cover reaches, from behind its header.
 const HEADER_WASH: f32 = 360.0;
-/// The three qualities side by side in a settings row, and the choice of output under them.
-const QUALITY_WIDTH: f32 = 216.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
@@ -1268,33 +1266,49 @@ fn megabytes(bytes: u64) -> String {
 }
 
 /// A settings row's measures: its name over what it does, a control at the end.
-const SETTINGS_ROW: ActionRowSizing = ActionRowSizing { gap: 16.0, copy_gap: 4.0, icon_column: 20.0, min_height: 34.0, min_height_with_subtitle: 34.0 };
+const SETTINGS_ROW: ActionRowSizing = ActionRowSizing { gap: 24.0, copy_gap: 8.0, icon_column: 20.0, min_height: 56.0, min_height_with_subtitle: 64.0 };
 
 /// What the user can set: one page of groups, each row its name and what it does beside
 /// its control. A narrow page stacks the control under the copy.
 fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let column = PageColumn::new("settings", width, palette).gutter(12.0, 20.0, 600.0).gap(12.0).reserve_rail(true);
+    let column = PageColumn::new("settings", width, palette).max_width(900.0).gutter(24.0, 32.0, 720.0).gap(32.0).reserve_rail(true);
     // A switch or a short button fits beside its row's copy in less room than a field would.
-    let compact = column.content_width() < 480.0;
-    let (card, control) = (SCHEME.card(), SCHEME.on_raised());
-    let row = |title: &str, about: &str| ActionRow::new(title, card).subtitle(about).wrap_title(true).align_top(true).sizing(SETTINGS_ROW);
-    let switch = |title: &str, about: &str, id: &str, on: bool| row(title, about).trailing(Switch::new(id, on, control).render()).stacked(compact).render();
-    let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Compact).enabled(enabled).render();
-    let group = |title: &str, rows: Vec<Element>| PreferencesGroup::new(title, rows, card).render();
+    let compact = column.content_width() < 600.0;
+    let picker_width = (column.content_width() - 20.0).min(288.0);
+    let (card, control) = (SCHEME.palette(), SCHEME.on_raised());
+    let row = |title: &str, about: &str| ActionRow::new(title, card).subtitle(about).wrap_title(true).sizing(SETTINGS_ROW);
+    let switch = |title: &str, about: &str, id: &str, on: bool| row(title, about)
+        .trailing(Switch::new(id, on, control).size(ControlSize::Spacious).accessibility_label(title).render())
+        .stacked(compact).render();
+    let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Spacious).enabled(enabled).render();
+    let group = |title: &str, rows: Vec<Element>| Element::column(vec![
+        Text::new(title, card).role(TextRole::Heading).render(),
+        Element::column(rows).gap(8.0),
+    ]).gap(16.0);
+    let choices = |group: &str, tabs: Vec<Tab>| Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Spacious).fill_width(picker_width).render();
 
     let equalizer = if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
-    let devices = std::iter::once(device("", SYSTEM_OUTPUT)).chain(state.outputs.iter().map(|output| device(&output.id, &output.name)));
-    let playing_through = state.outputs.iter().find(|output| state.output.as_deref() == Some(output.id.as_str())).map_or(SYSTEM_OUTPUT, |output| output.name.as_str());
+    let system_output = state.outputs.iter().find(|output| output.is_default)
+        .map_or_else(|| SYSTEM_OUTPUT.to_owned(), |output| format!("Sistema: {}", output.name));
+    let devices = std::iter::once(device("", &system_output)).chain(state.outputs.iter().map(|output| {
+        let name = if output.is_default { format!("{} · predeterminado", output.name) } else { output.name.clone() };
+        device(&output.id, &name)
+    }));
+    let playing_through = match &state.output {
+        Some(id) => state.outputs.iter().find(|output| output.id == *id).map_or("Salida guardada no disponible", |output| output.name.as_str()),
+        None => system_output.as_str(),
+    };
     let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", control)
         .menu_palette(SCHEME.menu())
-        .width(QUALITY_WIDTH)
+        .accessibility_label("Dispositivo de salida")
+        .size(ControlSize::Spacious)
+        .width(picker_width)
         .render();
     let chosen = state.settings.quality;
-    let quality = segments(
+    let quality = choices(
         "setting-quality",
-        QUALITY_WIDTH,
         Quality::ALL.into_iter().map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect(),
     );
     let ceiling = match chosen {
@@ -1308,27 +1322,66 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         Text::new(if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") }, card).role(TextRole::Caption).muted().render().size(Some(28.0), None).centered_y(),
     ])
     .gap(8.0);
+    let output_status = if state.outputs_loading {
+        "Buscando salidas de audio…".to_owned()
+    } else if let Some(error) = &state.outputs_error {
+        format!("No pudimos consultar las salidas. {error}")
+    } else if state.outputs.is_empty() {
+        "No se encontraron salidas adicionales. Podés seguir usando la predeterminada del sistema.".to_owned()
+    } else {
+        format!("{} {} en este equipo.", state.outputs.len(), if state.outputs.len() == 1 { "salida disponible" } else { "salidas disponibles" })
+    };
+    let mut connections = vec![
+        row("Dispositivo de salida", "Elegí por dónde escuchar: parlantes, auriculares o una salida Bluetooth conectada al sistema.")
+            .trailing(output).stacked(compact).render(),
+        row("Salidas disponibles", &output_status)
+            .trailing(action("setting:outputs-refresh", if state.outputs_loading { "Buscando…" } else { "Actualizar" }, !state.outputs_loading))
+            .stacked(compact).render(),
+        row("Conectar por Bluetooth", "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.").render(),
+    ];
+    if let Some(notice) = &state.output_notice {
+        connections.push(Alert::new("Salida de audio", notice, card).id("setting:output-notice").compact(compact).render());
+    }
+    let library_sort = choices("setting-library-sort", vec![
+        Tab::new("library-sort:added", "Recientes", 0.0).active(state.settings.library_sort == Sort::Added),
+        Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(state.settings.library_sort == Sort::Alphabetical),
+        Tab::new("library-sort:creator", "Creador", 0.0).active(state.settings.library_sort == Sort::Creator),
+    ]);
+    let library_view = choices("setting-library-view", vec![
+        Tab::new("library-view:compact", "Compacta", 0.0).active(state.settings.library_view == LibraryView::Compact),
+        Tab::new("library-view:list", "Lista", 0.0).active(state.settings.library_view == LibraryView::List),
+        Tab::new("library-view:grid", "Cuadrícula", 0.0).active(state.settings.library_view == LibraryView::Grid),
+    ]);
     let body = vec![
-        PageHeader::new("Configuración", card).description("Lo que elegís acá vale para este equipo.").stacked(compact).render(),
+        PageHeader::new("Configuración", card).description("Tu música, a tu manera. Los cambios se guardan en este equipo.").stacked(compact).render(),
         group(
             "Reproducción",
             vec![
                 switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
                 row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
+            ],
+        ),
+        group("Conexiones y dispositivos", connections),
+        group(
+            "Calidad de audio",
+            vec![
+                row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
                 switch("Normalizar el volumen", "Baja las canciones más fuertes para que todas suenen al mismo nivel.", "setting:normalize", state.settings.normalize),
                 switch("Audio mono", "Los dos parlantes reproducen lo mismo.", "setting:mono", state.settings.mono),
-                row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
-                row("Dispositivo de salida", "Por dónde suena la música.").trailing(output).stacked(compact).render(),
             ],
         ),
         group("Visualización", vec![
+            switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
+            switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
             switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
             switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
         ]),
         group(
             "Biblioteca",
             vec![
+                row("Orden de la biblioteca", "Elegí qué aparece primero entre tus álbumes, artistas y playlists.").trailing(library_sort).stacked(compact).render(),
+                row("Vista de la biblioteca", "Cambiá cuánto detalle ves en el panel izquierdo.").trailing(library_view).stacked(compact).render(),
                 row("Importar música de otras apps", "Trae playlists de Spotify, Apple Music y YouTube Music con su enlace.").trailing(action("import-open", "Importar", true)).stacked(compact).render(),
             ],
         ),
@@ -1344,7 +1397,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Privacidad y datos",
             vec![
-                row("Borrar historial de reproducciones", "Borra de este equipo lo que escuchaste recientemente.")
+                row("Borrar abiertos recientemente", "Quita de Inicio los álbumes y artistas que abriste en este equipo.")
                     .trailing(action("recent-clear", "Borrar", !state.collection.recent.is_empty()))
                     .stacked(compact)
                     .render(),
@@ -2280,8 +2333,64 @@ mod tests {
         click(&mut state, "confirm-cancel");
 
         click(&mut state, "settings");
-        has(&state, &["setting:autoplay", "setting:motion"]);
+        state.apply(Event::Outputs(Vec::new()));
+        has(&state, &["setting:autoplay", "setting:output", "setting:outputs-refresh"]);
         assert!(ids(&state, Size::new(720.0, 1000.0)).iter().any(|id| id == "setting:autoplay"), "and in a narrow window");
+    }
+
+    #[test]
+    fn settings_keep_the_output_picker_and_library_choices_inside_a_narrow_page() {
+        let state = State::default();
+        for width in [360.0, 900.0] {
+            let size = Size::new(width, 4000.0);
+            let mut tree = UiTree::new(settings_page(&state, width, SCHEME.palette()));
+            let frame = tree.layout(size);
+            for id in ["setting:output", "setting:outputs-refresh", "library-sort:alphabetical", "library-view:grid", "setting:library-panel", "setting:player-panel", "setting:motion"] {
+                let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id} at {width}"));
+                assert!(node.rect.x >= 0.0 && node.rect.x + node.rect.width <= width, "{id}: {:?}", node.rect);
+                assert!(node.actionable, "{id} can be used");
+            }
+            let autoplay = frame.access.iter().find(|node| node.id == "setting:autoplay").unwrap();
+            assert_eq!(autoplay.name, "Reproducción automática");
+            assert!(autoplay.rect.height >= 24.0, "the switch is comfortable to target");
+        }
+    }
+
+    #[test]
+    fn connections_explain_loading_empty_and_error_states_without_hiding_the_system_output() {
+        let size = Size::new(900.0, 4000.0);
+        let shown = |state: &State| {
+            let mut tree = UiTree::new(settings_page(state, size.width, SCHEME.palette()));
+            tree.layout(size)
+        };
+        let has_text = |frame: &limn::Frame, text: &str| frame.text_layouts().iter().any(|layout| layout.source.contains(text));
+        let mut state = State::default();
+        let frame = shown(&state);
+        assert!(has_text(&frame, "No se encontraron salidas"));
+        assert!(has_text(&frame, "Bluetooth"));
+        assert!(frame.access.iter().any(|node| node.id == "setting:output" && node.actionable));
+
+        state.outputs_loading = true;
+        let frame = shown(&state);
+        assert!(has_text(&frame, "Buscando salidas"));
+        assert!(frame.access.iter().any(|node| node.id == "setting:outputs-refresh" && node.disabled));
+
+        state.outputs_loading = false;
+        state.outputs_error = Some("El servidor de audio no responde.".into());
+        state.output_notice = Some("Volvimos a la salida predeterminada.".into());
+        let frame = shown(&state);
+        assert!(has_text(&frame, "El servidor de audio no responde."));
+        assert!(has_text(&frame, "Volvimos a la salida predeterminada."));
+        assert!(frame.access.iter().any(|node| node.id == "setting:outputs-refresh" && node.actionable));
+
+        state.outputs = vec![surco_audio::AudioOutputDevice { id: "speakers".into(), name: "Parlantes del escritorio".into(), is_default: true }];
+        let frame = shown(&state);
+        let selected = frame.access.iter().find(|node| node.id == "setting:output").unwrap();
+        assert_eq!(selected.value_text.as_deref(), Some("Sistema: Parlantes del escritorio"));
+        state.output = Some("disconnected".into());
+        let frame = shown(&state);
+        let selected = frame.access.iter().find(|node| node.id == "setting:output").unwrap();
+        assert_eq!(selected.value_text.as_deref(), Some("Salida guardada no disponible"));
     }
 
     #[test]
