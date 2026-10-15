@@ -99,6 +99,34 @@ fn inside(inner: Rect, outer: Rect) -> bool {
 }
 
 #[test]
+fn the_home_indicator_area_masks_content_and_does_not_activate_hidden_rows() {
+    let (size, insets) = screens()[0];
+    for page in [Page::Library, Page::Playing] {
+        let mut state = phone();
+        state.page = page;
+        state.mobile_ui.content_insets = insets;
+        let (mut tree, _) = layout(&state, size);
+        tree.handle_event(UiEvent::ScrollDirect {
+            position: Point::new(200.0, 500.0), delta_y: -180.0,
+        });
+        let frame = tree.layout(size);
+        let point = Point::new(200.0, size.height - insets.bottom + 5.0);
+        let hit = frame.press_region(point).expect("the footer protects the system inset");
+        assert_eq!(hit.kind, HitKind::Surface);
+        assert_eq!(hit.id, "mobile-footer-bar");
+        assert!(tree.handle_event(UiEvent::PointerDown(point)).is_empty());
+        assert!(tree.handle_event(UiEvent::PointerUp(point)).is_empty());
+        let footer = surface(&frame, "mobile-footer-bar");
+        assert_eq!(footer.y + footer.height, size.height);
+        assert!(frame.commands.iter().any(|command| matches!(command,
+            DrawCommand::FillRect { rect, color, .. }
+                if inside(Rect::new(footer.x, size.height - insets.bottom, footer.width, insets.bottom), *rect)
+                    && color.a == 255 && *color == if state.page == Page::Playing { page_surface(&state).1 } else { SCHEME.canvas }
+        )), "an opaque footer paints through the home indicator");
+    }
+}
+
+#[test]
 fn safe_edges_keep_header_tabs_and_mini_controls_touchable_in_both_orientations() {
     for (size, insets) in screens() {
         for page in [Page::Search, Page::Library, Page::Settings, Page::Playing] {

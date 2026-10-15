@@ -124,8 +124,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let footer_edge = if matches!(state.page, Page::Playing | Page::Lyrics) { surface.1 } else { SCHEME.canvas };
     let content = chrome::under_bars(content, top_height, bottom_height, header_edge, footer_edge);
     let top = Element::column(top).vertical_gradient(vec![surface.0, header_edge]).block_pointer("mobile-header-bar");
-    let footer = Element::column(bottom);
-    let footer = if state.page != Page::Playing && !keyboard { footer.background(footer_edge) } else { footer };
+    let footer = Element::column(bottom).background(footer_edge).block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     notices.push(content.flex(1.0));
