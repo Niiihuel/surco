@@ -41,7 +41,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     };
     let mut header = Vec::new();
     if state.can_go_back() || state.page == Page::Playing {
-        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
+        let back = if state.page == Page::Playing { Icon::ChevronDown }
+            else if cfg!(target_os = "ios") { Icon::ChevronLeft } else { Icon::ArrowLeft };
+        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, back, "Volver", palette));
     }
     let compact_player = state.page == Page::Playing && !state.queue_open && state.mobile_ui.compact_header;
     let copy = if compact_player {
