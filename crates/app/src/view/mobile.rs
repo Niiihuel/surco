@@ -6,6 +6,7 @@ mod search;
 mod home;
 mod player;
 mod chrome;
+pub(super) mod controls;
 mod sheets;
 pub(super) mod details;
 #[cfg(test)]
@@ -22,8 +23,7 @@ const MINI_HEIGHT: f32 = 64.0;
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
 
 pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
-    IconButton::new(id, glyph, palette).variant(ButtonVariant::Ghost)
-        .accessibility_label(label).size(ControlSize::Spacious).render().size(Some(TAP), Some(TAP))
+    controls::action(id, glyph, label, 22.0, palette)
 }
 
 pub(super) fn view(state: &State, window: Size) -> Element {
@@ -62,9 +62,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         if let Some(track) = state.current() {
             header.push(icon("mobile-player-header-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart }, if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"));
         }
-        header.push(icon("mobile-player-header-play", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette).dispatch_as("play-pause"));
+        header.push(controls::playback("mobile-player-header-play", state.player.playing, 44.0, 22.0, palette).dispatch_as("play-pause"));
     } else if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
-        header.push(icon("mobile-detail-header-play", Icon::PlayFill, "Reproducir", palette).dispatch_as("page-play"));
+        header.push(controls::playback("mobile-detail-header-play", false, 44.0, 22.0, palette).dispatch_as("page-play"));
     }
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
@@ -230,7 +230,7 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
         icon("mobile-mini-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart },
             if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"),
-        icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
+        controls::playback("play-pause", state.player.playing, 32.0, 18.0, palette),
     ]).gap(0.0).padding(4.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();
     let card = Element::panel(Element::column(vec![controls, progress])).background(surface).radius(8.0).clip_children();

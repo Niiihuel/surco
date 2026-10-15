@@ -1762,14 +1762,17 @@ fn shuffle_step(state: &State) -> (Icon, &'static str) {
 fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> Element {
     let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
     let play = if state.mobile {
-        IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).round().accessibility_label("Reproducir")
-            .render().size(Some(56.0), Some(56.0))
+        mobile::controls::playback("page-play", false, 56.0, 28.0, palette)
     } else {
         IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip("Reproducir").render().center_content()
     };
     let (icon, hint) = shuffle_step(state);
-    let shuffle = IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render();
-    let shuffle = if state.mobile { shuffle.size(Some(44.0), Some(44.0)) } else { shuffle };
+    let shuffle = if state.mobile {
+        let action = mobile::controls::action("page-shuffle", icon, hint, 22.0, palette);
+        if state.player.shuffle { action.background(palette.selected) } else { action }
+    } else {
+        IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
+    };
     let mut actions = vec![play, shuffle.centered_y()];
     actions.extend(own.into_iter().map(Element::centered_y));
     if state.mobile {
