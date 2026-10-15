@@ -120,7 +120,9 @@ Local validation passed 189 Rust tests (3 existing network tests ignored),
 9 packaging/signing-script tests and workspace/all-target Clippy with warnings
 denied. Rendered phone and desktop screens were inspected, including the final
 native simulator screenshot. See [TestFlight delivery](testflight.md) for the
-signed build; automated checks do not establish physical audio behavior.
+signed build. On 2026-10-15 the user confirmed that background and locked-screen
+playback work correctly on their iPhone with 0.2.0 (3.1). The other hardware
+checks below remain pending; automated checks do not establish them.
 
 The **iOS** GitHub Actions workflow uses macOS, Xcode and the pinned limn revision.
 It builds the same Rust static library and links a minimal Xcode application for:

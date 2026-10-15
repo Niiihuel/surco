@@ -21,7 +21,7 @@ Build ios-media and limn IME fixes first, in parallel. Then land reusable gestur
 - [Clipboard/link PR #4](https://github.com/Niiihuel/surco/pull/4) adds explicit system copy/paste and public UIKit URL opening. Reviewed head `787764e5d4aed7b899fdadf8d4629e30d57a7ab7` passed [native CI](https://github.com/Niiihuel/surco/actions/runs/38717476331), [desktop CI](https://github.com/Niiihuel/surco/actions/runs/38717476437), 189 local workspace tests (3 existing network tests ignored), Clippy with warnings denied and rendered Paste-control QA. It merged as `e5c0e8df3a2a2ee356f104d261b4f97aca77c54b`.
 - Signed **0.2.0 (3.1)** from that merge is processed and **En pruebas** for the existing **Surco interno** group. Source tag `ios-v0.2.0-build3.1`, exact workflow/IPA validation and update instructions are in [TestFlight delivery](../testflight.md). Merged feature branches/worktrees are cleaned.
 
-Physical background/locked playback, Bluetooth/AirPlay switching, interruption/call recovery, headset commands and Dynamic Island presentation still require the user's iPhone checks. The signed beta and tester assignment are recorded separately in [TestFlight delivery](../testflight.md). The device checklist is in [ios.md](../ios.md#build-and-validation).
+On 2026-10-15 the user confirmed that background and locked-screen playback work correctly on their iPhone with TestFlight 0.2.0 (3.1). Bluetooth/AirPlay switching, interruption/call recovery, headset commands and Dynamic Island presentation still require physical checks. The signed beta and tester assignment are recorded separately in [TestFlight delivery](../testflight.md). The device checklist is in [ios.md](../ios.md#build-and-validation).
 
 ## Shared engineering contract
 

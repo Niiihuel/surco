@@ -16,14 +16,15 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         ]).gap(6.0).flex(1.0).centered_y(),
         icon("like", if liked { Icon::HeartFill } else { Icon::Heart },
             if liked { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).centered_y(),
-    ]).gap(12.0);
+    ]).gap(12.0).anchor("mobile-player-title");
     let mut controls = vec![details];
     if let Some(error) = &state.player.error {
         controls.push(Alert::new("No se pudo reproducir", error, palette).id("mobile-player-error").render());
     }
     controls.extend([timeline(state, palette), transport(state, palette), tools(palette)]);
     let main = Element::column(vec![
-        cover(state, &track.artwork_url, side, palette).radius(8.0).centered_x(),
+        cover(state, &track.artwork_url, side, palette).radius(8.0).centered_x()
+            .animate_enter(format!("mobile-player-cover:{}", track.id)),
         Element::column(controls).gap(12.0),
     ]).gap(32.0);
     let mut body = vec![main, lyric_preview(state, palette)];
