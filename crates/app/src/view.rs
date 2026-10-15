@@ -903,7 +903,8 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let filters = if state.mobile {
         let pill = |id: &str, label: &str, selected| Button::new(id, label, palette)
             .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
-            .render().size(None, Some(44.0));
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() })
+            .round().render();
         Element::horizontal_scroll_2d("mobile-library-filters", Element::row(vec![
             pill("filter:all", "Todo", state.filter == Filter::All),
             pill("filter:lists", "Playlists", state.filter == Filter::Lists),
@@ -919,14 +920,14 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         Filter::Albums => "Buscar en Álbumes",
     };
     let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
-    let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).centered_y() }
+    let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).radius(22.0).centered_y() }
         else { header_button("library-search", glyph, TooltipSpec::new(hint), palette).render().centered_y() };
     let mut tools = if open > 0.0 {
         // It grows out of where the magnifier was to all the row has left beside the order,
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
         let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
-        let field = if state.mobile { field.size(None, Some(44.0)) } else { field };
+        let field = if state.mobile { field.size(None, Some(44.0)).radius(22.0) } else { field };
         vec![field.centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
     } else {
         vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
@@ -945,7 +946,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         choice("library-view:grid", "Cuadrícula", view == LibraryView::Grid),
     ];
     let picker = Button::new("library-sort", sort.label(), palette).icon(Icon::Sort).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
-    let picker = if state.mobile { picker.size(None, Some(44.0)) } else { picker };
+    let picker = if state.mobile { picker.size(None, Some(44.0)).radius(22.0) } else { picker };
     // All of its choices at once: past eight a menu becomes a list that scrolls, with a rail's room beside it.
     let all = choices.len();
     tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", SCHEME.menu()).sizing(menu_sizing(state)).width(LIBRARY_MENU_WIDTH).max_visible_items(all).placement(PopoverPlacement::BottomEnd).render().centered_y());
@@ -1798,16 +1799,18 @@ fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPal
 fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let open = state.page_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
     let toggle = |icon: Icon, hint: &str| {
-        if state.mobile { mobile::icon("page-search", icon, hint, palette).centered_y() }
+        if state.mobile { mobile::icon("page-search", icon, hint, palette).radius(22.0).centered_y() }
         else { header_button("page-search", icon, TooltipSpec::new(hint), palette).render().centered_y() }
     };
     let mut parts = vec![Element::spacer().flex(1.0)];
     if open > 0.0 {
+        let width = PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open;
         let field = SearchField::new("page-query", &state.page_search, "Buscar en esta página", SCHEME.on_raised())
             .size(ControlSize::Compact)
-            .width(PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open)
-            .render()
-            .centered_y()
+            .width(width)
+            .render();
+        let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field };
+        let field = field.centered_y()
             // In a narrow pane it makes do with what the row has left.
             .shrink_to_fit();
         parts.extend([field, toggle(Icon::Close, "Cerrar la búsqueda")]);
@@ -1818,7 +1821,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());
     let order = |key: &str, label: &str| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("page-sort:{key}"), label).selected(sorted == key));
     let orders = vec![order("own", "Orden de la lista"), order("title", "Título"), order("album", "Álbum"), order("duration", "Duración")];
-    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, "Ordenar", palette) }
+    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, "Ordenar", palette).radius(22.0) }
         else { header_button("page-sort", Icon::Sort, TooltipSpec::new("Ordenar"), palette).active(state.sort_open).render() };
     parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", SCHEME.menu()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
     parts
