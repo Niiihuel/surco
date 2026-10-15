@@ -1,12 +1,16 @@
-"""Checks that cross-platform selection and linker ordering survive CI configuration."""
+"""Checks iOS launch resources, platform selection and linker ordering."""
 
 from pathlib import Path
+import json
+import plistlib
+import re
 import runpy
 import shlex
 import subprocess
 import tempfile
 import time
 import unittest
+import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
 
@@ -14,6 +18,61 @@ script = runpy.run_path(str(Path(__file__).with_name("build-ios.py")))
 
 
 class IOSBuildTests(unittest.TestCase):
+    def test_launch_background_resolves_to_opaque_app_canvas_in_every_appearance(self):
+        root = script["ROOT"]
+        with (root / "ios/Info.plist").open("rb") as source:
+            info = plistlib.load(source)
+        self.assertNotIn("UILaunchScreen", info, "one system-owned launch screen")
+        self.assertEqual(info.get("UIUserInterfaceStyle"), "Dark", "native surfaces match Surco's fixed dark appearance")
+        storyboard = ET.parse(root / "ios" / f'{info["UILaunchStoryboardName"]}.storyboard').getroot()
+        self.assertEqual(storyboard.get("launchScreen"), "YES")
+        self.assertRegex(storyboard.get("toolsVersion", ""), r"^\d+(?:\.\d+)*$",
+                         "ibtool needs the document toolsVersion while unarchiving")
+        plugin = storyboard.find("dependencies/plugIn[@identifier='com.apple.InterfaceBuilder.IBCocoaTouchPlugin']")
+        self.assertRegex(plugin.get("version", ""), r"^\d+(?:\.\d+)*$",
+                         "keep the Interface Builder plugin version with the document metadata")
+        view = storyboard.find(".//viewController/view")
+        name = view.find("color[@key='backgroundColor']").get("name")
+        self.assertIsNotNone(name, "avoid systemBackground changing to white in light mode")
+        asset = json.loads((root / "ios/Assets.xcassets" / f"{name}.colorset/Contents.json").read_text())
+        source = (root / "crates/app/src/view.rs").read_text()
+        canvas = re.search(r"canvas:\s*Color::rgb\((\d+),\s*(\d+),\s*(\d+)\)", source)
+        self.assertIsNotNone(canvas)
+        expected = tuple(int(value) / 255 for value in canvas.groups())
+        self.assertTrue(asset["colors"])
+        for variant in asset["colors"]:
+            self.assertEqual(variant["idiom"], "universal")
+            color = variant["color"]
+            self.assertEqual(color["color-space"], "srgb")
+            rgba = color["components"]
+            self.assertEqual(float(rgba["alpha"]), 1.0)
+            for component, value in zip(("red", "green", "blue"), expected):
+                self.assertAlmostEqual(float(rgba[component]), value, places=6)
+
+    def test_launch_mark_uses_original_asset_and_fixed_centered_constraints(self):
+        root = script["ROOT"]
+        storyboard = ET.parse(root / "ios/LaunchScreen.storyboard").getroot()
+        view = storyboard.find(".//viewController/view")
+        mark = view.find(".//imageView")
+        self.assertEqual(mark.get("contentMode"), "scaleAspectFit")
+        for axis in ("width", "height"):
+            constraint = mark.find(f"constraints/constraint[@firstAttribute='{axis}']")
+            self.assertEqual(float(constraint.get("constant")), 96.0)
+        for axis in ("centerX", "centerY"):
+            constraint = view.find(f"constraints/constraint[@firstAttribute='{axis}']")
+            self.assertEqual((constraint.get("firstItem"), constraint.get("secondItem"), constraint.get("secondAttribute")),
+                             (mark.get("id"), view.get("id"), axis))
+            self.assertEqual(float(constraint.get("constant", "0")), 0.0)
+        asset = root / "ios/Assets.xcassets" / f'{mark.get("image")}.imageset'
+        images = json.loads((asset / "Contents.json").read_text())["images"]
+        self.assertTrue(images)
+        original = (root / "ios/Assets.xcassets/AppIcon.appiconset/AppIcon.png").read_bytes()
+        for image in images:
+            self.assertEqual((asset / image["filename"]).read_bytes(), original, "reuse the original Surco mark without raster edits")
+        project = (root / "ios/Surco.xcodeproj/project.pbxproj").read_text()
+        resources = project.split("/* Begin PBXResourcesBuildPhase section */", 1)[1].split("/* End PBXResourcesBuildPhase section */", 1)[0]
+        self.assertIn("LaunchScreen.storyboard in Resources", resources, "compile the launch storyboard into the app bundle")
+
     def test_crash_reports_preserve_only_current_surco_reports_before_simulator_deletion(self):
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)

@@ -166,6 +166,12 @@ const EQUALIZER_KEY: &str = "equalizer";
 const OUTPUT_KEY: &str = "output";
 
 impl eframe::App for Host {
+    #[cfg(target_os = "ios")]
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        // Match the opaque launch canvas, including outside UIKit's safe area.
+        egui::Color32::from_rgb(18, 18, 18).to_normalized_gamma_f32()
+    }
+
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         storage.set_string(VOLUME_KEY, self.state.volume.to_string());
         if let Ok(collection) = serde_json::to_string(&self.state.collection) {
