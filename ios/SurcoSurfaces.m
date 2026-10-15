@@ -56,6 +56,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     SurcoPasteTarget *_pasteTarget;
     NSString *_pasteDestination;
     NSUInteger _pasteGeneration;
+    NSUInteger _menuGeneration;
     NSMutableArray<NSDictionary *> *_events;
     void (^_wake)(void);
 }
@@ -87,6 +88,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     _valid = NO;
     _wake = nil;
     _pasteGeneration++;
+    _menuGeneration++;
     _pasteTarget.receive = nil;
     [_paste removeFromSuperview];
     _paste = nil;
@@ -110,6 +112,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 - (void)updatePayload:(NSDictionary *)payload view:(UIView *)view scale:(CGFloat)scale {
     if (!_valid) return;
     if (_view != view) {
+        _menuGeneration++;
         [_interaction dismissMenu];
         [_interaction.view removeInteraction:_interaction];
         [_paste removeFromSuperview];
@@ -209,6 +212,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
         if (CGRectContainsPoint([self rect:menu[@"rect"]], location)) { target = menu; break; }
     }
     if (!target || ![target[@"items"] count]) return nil;
+    _menuGeneration++;
     _activeMenu = [target copy];
     _menuVisible = YES;
     [self updatePaste:nil];
@@ -233,10 +237,11 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willEndForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id<UIContextMenuInteractionAnimating>)animator {
     NSString *identifier = [(NSString *)configuration.identifier copy];
     NSDictionary *closingMenu = _activeMenu;
+    NSUInteger generation = _menuGeneration;
     __weak SurcoSurfaces *weakSelf = self;
     void (^finished)(void) = ^{
         SurcoSurfaces *owner = weakSelf;
-        if (!owner || !owner->_valid || owner->_interaction != interaction || owner->_activeMenu != closingMenu) return;
+        if (!owner || !owner->_valid || owner->_interaction != interaction || owner->_menuGeneration != generation || owner->_activeMenu != closingMenu) return;
         // Selection is queued first; closing only after UIKit's animation keeps its snapshot alive.
         [owner emit:@{@"kind": @"menu_close", @"id": identifier}];
         owner->_menuVisible = NO;
