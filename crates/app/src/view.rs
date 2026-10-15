@@ -2105,7 +2105,22 @@ fn lyrics(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
-        Some((_, Lyrics::Missing)) => return note("Sin letra sincronizada", "Todavía nadie la cargó para esta canción."),
+        Some((_, Lyrics::Missing)) => return centered(Element::column(vec![
+            Empty::new("Letra no disponible", "El servicio todavía no tiene la letra de esta canción.", palette).icon(Icon::Custom(LYRICS)).render(),
+            Button::new("retry-lyrics", "Volver a buscar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render(),
+        ]).gap(20.0).padding(20.0)),
+        Some((_, Lyrics::Failed { message, .. })) => return centered(Element::column(vec![
+            Empty::new("No se pudo cargar la letra", message, palette).icon(Icon::Custom(LYRICS)).render(),
+            Button::new("retry-lyrics", "Reintentar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render(),
+        ]).gap(20.0).padding(20.0)),
+        Some((_, Lyrics::Plain(_))) => {
+            let words = std::iter::once(Text::new("Letra sin sincronización", palette).muted().render())
+                .chain(state.plain_lyrics().iter().map(|line| {
+                    if line.is_empty() { Element::spacer().size(None, Some(20.0)) }
+                    else { Text::new(line, palette).font_size(LYRIC_SIZE).render() }
+                })).collect();
+            return ScrollArea::new("lyrics-list", Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0);
+        }
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
     // With room, the lines stand larger and further in from the edge.
