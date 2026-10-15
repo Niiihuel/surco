@@ -117,6 +117,34 @@ fn native_surfaces_present(state: &State) -> bool {
     { let _ = state; false }
 }
 
+#[cfg(any(not(target_os = "windows"), test))]
+fn mobile_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
+    // egui's root Ui covers the safe content rect. The phone background must
+    // also paint behind the status bar and home indicator.
+    let full = ui.ctx().viewport_rect();
+    let canvas = if preview {
+        // A tiling compositor can ignore the preview window's requested size.
+        egui::Rect::from_center_size(full.center(), egui::vec2(full.width().min(390.0), full.height().min(844.0)))
+    } else { full };
+    ui.set_clip_rect(canvas);
+    canvas
+}
+
+fn mobile_content_insets(canvas: egui::Rect, content: egui::Rect, keyboard: f32) -> state::mobile::ContentInsets {
+    // Validate the platform boundary once; consumers can use these as padding.
+    let bounded = |value: f32, limit: f32| {
+        if value.is_finite() { value.clamp(0.0, limit) } else { 0.0 }
+    };
+    let width = if canvas.width().is_finite() { canvas.width().max(0.0) } else { 0.0 };
+    let height = if canvas.height().is_finite() { canvas.height().max(0.0) } else { 0.0 };
+    let top = bounded(content.top() - canvas.top(), height);
+    let left = bounded(content.left() - canvas.left(), width);
+    let right = bounded(canvas.right() - content.right(), width - left);
+    let safe_bottom = bounded(canvas.bottom() - content.bottom(), height - top);
+    let bottom = safe_bottom.max(bounded(keyboard, height - top));
+    state::mobile::ContentInsets { top, right, bottom, left }
+}
+
 impl Host {
     fn send(&self, commands: Vec<Command>) {
         for command in commands {
@@ -276,20 +304,14 @@ impl eframe::App for Host {
         }
         #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
-            // Keep phone controls inside the platform's notch and home-indicator insets.
-            let safe = ui.max_rect().intersect(ctx.content_rect());
-            if self.script.mobile {
-                // A tiling desktop compositor can ignore the preview window's requested size.
-                // Keep the phone canvas at phone dimensions inside that larger surface.
-                egui::Rect::from_center_size(safe.center(), egui::vec2(safe.width().min(390.0), safe.height().min(844.0)))
-            } else { safe }
+            mobile_canvas(ui, self.script.mobile)
         } else {
             ui.max_rect()
         };
         #[cfg(target_os = "windows")]
         let area = window::show(ui, self.state.cinema);
         #[cfg(target_os = "ios")]
-        let area = {
+        let keyboard_inset = {
             let now = Instant::now();
             let native_sheet = self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state);
             let covered = if native_sheet { 0.0 } else { self.native_ui.as_ref().map_or(0.0, |native| native.keyboard_occlusion(ctx.viewport_rect(), area)) };
@@ -300,8 +322,18 @@ impl eframe::App for Host {
                 self.keyboard_inset.retarget_with_motion(covered, now, Duration::from_millis(220), still);
             }
             if self.keyboard_inset.is_active(now) { ctx.request_repaint(); }
-            egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, (area.max.y - self.keyboard_inset.value(now)).max(area.min.y + 44.0)))
+            self.keyboard_inset.value(now)
         };
+        #[cfg(not(target_os = "ios"))]
+        let keyboard_inset = 0.0;
+        let safe_content = ctx.content_rect();
+        #[cfg(target_os = "ios")]
+        let safe_content = self.native_ui.as_ref()
+            .and_then(|native| native.safe_content_rect(area))
+            .unwrap_or(safe_content);
+        self.state.mobile_ui.content_insets = if self.state.mobile {
+            mobile_content_insets(area, safe_content, keyboard_inset)
+        } else { Default::default() };
         let window = Size::new(area.width(), area.height());
 
         // Ctrl+B folds the library, as it folds a sidebar anywhere.
@@ -803,6 +835,68 @@ mod lyrics_viewport_tests {
         let frame = tree.layout(size);
         assert!(frame.regions.iter().any(|region| region.id == "lyric:15"),
             "following the active line still reveals its real row");
+    }
+}
+
+#[cfg(test)]
+mod mobile_geometry_tests {
+    use super::*;
+    use egui::{Color32, MarginF32, RawInput, Rect, SafeAreaInsets, pos2, vec2};
+    use state::mobile::ContentInsets;
+
+    #[test]
+    fn phone_canvas_and_painter_cover_the_real_safe_edges() {
+        let ctx = egui::Context::default();
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(402.0, 874.0));
+        let output = ctx.run_ui(RawInput {
+            screen_rect: Some(full),
+            safe_area_insets: Some(SafeAreaInsets(MarginF32 { top: 62.0, bottom: 34.0, left: 0.0, right: 0.0 })),
+            events: vec![egui::Event::PointerMoved(pos2(20.0, 100.0))],
+            ..Default::default()
+        }, |ui| {
+            assert_eq!(ui.max_rect(), Rect::from_min_max(pos2(0.0, 62.0), pos2(402.0, 840.0)));
+            let canvas = mobile_canvas(ui, false);
+            assert_eq!(canvas, full);
+            assert_eq!(ui.clip_rect(), full);
+            assert_eq!(mobile_content_insets(canvas, ctx.content_rect(), 0.0),
+                ContentInsets { top: 62.0, bottom: 34.0, left: 0.0, right: 0.0 });
+            assert!(limn_egui::events(&ctx, canvas.min).iter().any(|event|
+                matches!(event, limn::UiEvent::PointerMove(point) if point.x == 20.0 && point.y == 100.0)),
+                "input uses full-canvas coordinates without subtracting the safe top again");
+            ui.painter().rect_filled(canvas, 0.0, Color32::BLUE);
+        });
+        assert!(output.shapes.iter().any(|shape|
+            shape.clip_rect == full && matches!(&shape.shape,
+                egui::Shape::Rect(rect) if rect.rect == full && rect.fill == Color32::BLUE)),
+            "the background must reach the status bar and home indicator with a full clip");
+    }
+
+    #[test]
+    fn safe_edges_follow_rotation_and_merge_keyboard_without_adding_it_twice() {
+        let full = Rect::from_min_size(pos2(10.0, 20.0), vec2(402.0, 874.0));
+        let safe = Rect::from_min_max(pos2(10.0, 82.0), pos2(412.0, 860.0));
+        let insets = mobile_content_insets(full, safe, 374.0);
+        assert_eq!(insets, ContentInsets { top: 62.0, bottom: 374.0, left: 0.0, right: 0.0 });
+        assert_eq!(full.bottom() - insets.bottom, 520.0, "controls end at the keyboard top");
+        assert_eq!(mobile_content_insets(full, safe, 0.0).bottom, 34.0,
+            "a native sheet owns its keyboard; the canvas keeps only its physical safe edge");
+
+        let landscape = Rect::from_min_size(pos2(0.0, 0.0), vec2(874.0, 402.0));
+        let safe = Rect::from_min_max(pos2(62.0, 0.0), pos2(812.0, 381.0));
+        assert_eq!(mobile_content_insets(landscape, safe, 0.0),
+            ContentInsets { top: 0.0, bottom: 21.0, left: 62.0, right: 62.0 });
+        assert_eq!(mobile_content_insets(landscape, safe, 180.0).bottom, 180.0);
+    }
+
+    #[test]
+    fn malformed_platform_insets_cannot_make_content_dimensions_negative_or_nonfinite() {
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(402.0, 874.0));
+        let insets = mobile_content_insets(full,
+            Rect::from_min_max(pos2(600.0, 900.0), pos2(-20.0, -40.0)), f32::INFINITY);
+        assert_eq!(insets, ContentInsets { top: 874.0, bottom: 0.0, left: 402.0, right: 0.0 });
+        assert_eq!(mobile_content_insets(full,
+            Rect::from_min_max(pos2(f32::NAN, f32::NAN), pos2(f32::NAN, f32::NAN)), f32::NAN),
+            ContentInsets::default());
     }
 }
 
