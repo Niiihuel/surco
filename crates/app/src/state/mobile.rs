@@ -49,8 +49,20 @@ fn library_target(key: &str) -> Option<Target> {
         .or_else(|| key.strip_prefix("artist:").map(|id| Target::Artist(id.into())))
 }
 
+/// Protected edges inside the full phone canvas, in logical points.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(crate) struct ContentInsets {
+    pub top: f32,
+    pub right: f32,
+    pub bottom: f32,
+    pub left: f32,
+}
+
 #[derive(Default)]
 pub(crate) struct MobileUi {
+    /// Host-owned safe edges; bottom includes docked keyboard occlusion once.
+    /// Backgrounds still cover the full window, while controls use these insets.
+    pub content_insets: ContentInsets,
     /// Host-owned translation of the full player surface in logical points.
     pub player_offset: f32,
     /// An explicit dismissal requests animation before the Host navigates back.
