@@ -75,7 +75,7 @@ fn transport(state: &State, palette: ComponentPalette) -> Element {
 
 fn tools(palette: ComponentPalette) -> Element {
     Element::row(vec![
-        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
         Element::spacer().flex(1.0),
         icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), "Compartir canción", palette),
         icon("queue", Icon::Playlist, "Ver cola", palette),
@@ -254,6 +254,18 @@ mod tests {
                 assert_eq!(shown.regions.iter().filter(|region| region.id == id).count(), 1, "unique retained control {id}");
             }
         }
+    }
+
+    #[test]
+    fn audio_route_button_uses_the_connection_glyph() {
+        let shown = frame(&state());
+        let button = shown.regions.iter().find(|region| region.id == "mobile-connections").unwrap();
+        let expected = Icon::Custom(include_str!("../../../assets/icons/airplay-audio.svg"));
+        let glyphs: Vec<_> = shown.commands.iter().filter_map(|command| match command {
+            DrawCommand::Icon { rect, icon, .. } if button.rect.contains(limn::Point::new(rect.x + rect.width / 2.0, rect.y + rect.height / 2.0)) => Some(*icon),
+            _ => None,
+        }).collect();
+        assert_eq!(glyphs, [expected]);
     }
 
     #[test]

@@ -63,14 +63,14 @@ fn track_header(state: &State, track: &Track, palette: ComponentPalette) -> Elem
 fn connections(state: &State, base: Element, palette: ComponentPalette) -> Element {
     let name = state.mobile_ui.route.as_ref().map_or("Salida del sistema", |(name, _)| name.as_str());
     let route = Element::panel(Element::row(vec![
-        Element::icon(Icon::Audio).foreground(palette.text).size(Some(32.0), Some(32.0)).centered_y(),
+        Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).size(Some(32.0), Some(32.0)).centered_y(),
         Element::column(vec![Text::new("ESCUCHANDO EN", palette).role(TextRole::Caption).muted().render(),
             Text::new(name, palette).font_size(22.0).truncate().render()]).gap(8.0).flex(1.0),
         Element::icon(Icon::Check).foreground(palette.text).centered_y(),
     ]).gap(16.0).padding(20.0)).background(SCHEME.raised).radius(12.0);
     // UIKit owns the visible route button and its tap. This slot only reserves
     // geometry; no simulated click or private picker presentation is used.
-    let picker = Element::panel(if cfg!(target_os = "ios") { Element::spacer() } else { Element::icon(Icon::Audio).foreground(palette.text).centered() })
+    let picker = Element::panel(if cfg!(target_os = "ios") { Element::spacer() } else { Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).centered() })
         .size(Some(TAP), Some(TAP))
         .accessible(limn::Access::new(limn::Role::Group).id("ios-route-picker").name("Selector de destinos de audio"));
     let choose = Element::row(vec![Element::column(vec![

@@ -63,6 +63,8 @@ pub const CLIP_SURFACE: &str = "now-clip";
 pub const CLIP_BACKDROP: &str = "now-clip-glow";
 /// The mark of the lyrics: words in a bubble.
 const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
+// A route chooser is distinct from a waveform; UIKit supplies airplay.audio on iOS.
+const AUDIO_ROUTE: &str = include_str!("../assets/icons/airplay-audio.svg");
 /// A shelf with more tiles than this gets arrows to move along it.
 const SHELF_FITS: usize = 4;
 /// What dims a cover under what is drawn over it.

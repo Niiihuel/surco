@@ -190,7 +190,7 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         .accessible(limn::Access::new(limn::Role::Button).name(format!("Abrir reproductor: {}", track.title))).flex(1.0);
     let controls = Element::row(vec![
         open,
-        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
         icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
     ]).gap(8.0).padding(8.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();

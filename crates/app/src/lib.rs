@@ -20,6 +20,8 @@ mod mobile_motion;
 mod native_surfaces;
 #[cfg(any(target_os = "ios", test))]
 mod ios_ui;
+#[cfg(any(target_os = "ios", test))]
+mod ios_symbols;
 mod paths;
 mod player;
 mod state;
@@ -633,6 +635,8 @@ pub fn run() -> eframe::Result {
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
+            #[cfg(target_os = "ios")]
+            ios_symbols::install();
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
             limn_egui::set_image_cache_entries(256);
             // Beside the settings; without a place of its own the library lasts the session.
