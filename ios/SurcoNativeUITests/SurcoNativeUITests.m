@@ -318,6 +318,79 @@
     XCTAssertFalse([self element:@"sheet-close"].exists);
 }
 
+- (void)testNativeSearchEditingMenuClearAndReturnKeepTheEditor {
+    NSString *original = @"niñez";
+    UIPasteboard.generalPasteboard.string = original;
+    [self launch];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    XCUIElement *field = [self element:@"search"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    XCTAssertTrue([self element:@"surco.native.search"].exists);
+    XCTAssertFalse([self element:@"ios-paste:search"].exists, @"Search uses the native editor's editing menu");
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    [self pasteThroughEditingMenu:field];
+    [self waitFor:field predicate:@"value == 'niñez'"];
+    NSString *marker = @"-surco";
+    [field typeText:marker];
+    NSString *edited = [field.value copy];
+    NSArray<NSString *> *parts = [edited componentsSeparatedByString:marker];
+    XCTAssertEqual(parts.count, 2u, @"The native editor inserts the Unicode edit exactly once");
+    XCTAssertEqualObjects([parts componentsJoinedByString:@""], original);
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
+    [self waitForLandscape:YES];
+    [self waitFor:field predicate:@"hittable == YES"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Rotation must not resign Search");
+    XCTAssertEqualObjects(field.value, edited);
+    [field typeText:@"-horizontal"];
+    NSString *landscapeEdited = [edited stringByReplacingOccurrencesOfString:marker withString:[marker stringByAppendingString:@"-horizontal"]];
+    XCTAssertEqualObjects(field.value, landscapeEdited, @"The retained editor keeps its native caret");
+    [self attachScreenshot:@"native-search-keyboard-landscape"];
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
+    [self waitForLandscape:NO];
+    [self waitFor:field predicate:@"hittable == YES"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists);
+    [field typeText:@"-vertical"];
+    NSString *finalText = [landscapeEdited stringByReplacingOccurrencesOfString:@"-horizontal" withString:@"-horizontal-vertical"];
+    XCTAssertEqualObjects(field.value, finalText, @"Rotation back must keep composition and selection ownership");
+    [field typeText:@"\n"];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    XCTAssertEqualObjects(field.value, finalText, @"Return preserves the submitted query without reopening the keyboard");
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    NSPredicate *clearLabel = [NSPredicate predicateWithFormat:@"label == 'Clear text' OR label == 'Borrar texto' OR label == 'Clear' OR label == 'Borrar'"];
+    XCUIElement *clear = [field.buttons matchingPredicate:clearLabel].firstMatch;
+    XCTAssertTrue([clear waitForExistenceWithTimeout:12], @"UIKit must own Search's clear control: %@", self.app.debugDescription);
+    [clear tap];
+    [self waitFor:field predicate:@"value == '' OR value == 'Canciones, artistas o álbumes'"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Clear keeps the active editor and keyboard");
+    [self attachScreenshot:@"native-search-editor-cleared"];
+}
+
+- (void)testNativeSearchCancelAndTabNavigationKeepTheQuery {
+    [self launch];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    XCUIElement *field = [self element:@"search"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [field tap];
+    [field typeText:@"consulta retenida"];
+    [self waitFor:field predicate:@"value == 'consulta retenida'"];
+    NSPredicate *cancelLabel = [NSPredicate predicateWithFormat:@"label == 'Cancel' OR label == 'Cancelar'"];
+    XCUIElement *cancel = [self.app.buttons matchingPredicate:cancelLabel].firstMatch;
+    XCTAssertTrue([cancel waitForExistenceWithTimeout:12]);
+    [self waitFor:cancel predicate:@"hittable == YES"];
+    [cancel tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    XCTAssertEqualObjects(field.value, @"consulta retenida", @"Cancel leaves the user's query intact");
+    [self canvasTap:@"mobile-library" page:@"home"];
+    [self waitFor:field predicate:@"hittable == NO"];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    [self waitFor:field predicate:@"exists == YES AND hittable == YES"];
+    XCTAssertEqualObjects(field.value, @"consulta retenida");
+    XCTAssertFalse(self.app.keyboards.firstMatch.exists, @"Returning to Search does not request keyboard focus");
+    [self attachScreenshot:@"native-search-query-after-cancel-and-navigation"];
+}
+
 - (void)testSystemSymbolsUsedBySurcoExistInUIKit {
     NSURL *fixture = [[NSBundle bundleForClass:self.class] URLForResource:@"SymbolNames" withExtension:@"json"];
     XCTAssertNotNil(fixture);

@@ -52,7 +52,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 }
 @end
 
-@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate> {
+@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
     NSArray<NSDictionary *> *_menus;
@@ -72,11 +72,19 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     NSString *_pasteDestination;
     NSUInteger _pasteGeneration;
     NSUInteger _menuGeneration;
+    UISearchBar *_searchBar;
+    NSDictionary *_desiredSearch;
+    NSString *_searchSession;
+    NSString *_searchSentText;
+    NSUInteger _searchRevision;
+    BOOL _searchWantsEditing;
+    BOOL _updatingSearch;
     NSMutableArray<NSDictionary *> *_events;
     void (^_wake)(void);
 }
 - (void)emit:(NSDictionary *)event;
 - (void)reconcileSheet;
+- (void)updateSearch:(NSDictionary *)model;
 @end
 
 @implementation SurcoSurfaces
@@ -107,6 +115,11 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _pasteTarget.receive = nil;
     [_paste removeFromSuperview];
     _paste = nil;
+    _searchBar.delegate = nil;
+    [_searchBar.searchTextField resignFirstResponder];
+    [_searchBar removeFromSuperview];
+    _searchBar = nil;
+    _searchSession = nil;
     [_interaction dismissMenu];
     [_interaction.view removeInteraction:_interaction];
     _interaction = nil;
@@ -127,6 +140,10 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 - (void)updatePayload:(NSDictionary *)payload view:(UIView *)view scale:(CGFloat)scale {
     if (!_valid) return;
     if (_view != view) {
+        _updatingSearch = YES;
+        [self updateSearch:nil];
+        [_searchBar removeFromSuperview];
+        _updatingSearch = NO;
         _menuGeneration++;
         [_interaction dismissMenu];
         [_interaction.view removeInteraction:_interaction];
@@ -149,12 +166,144 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _desiredSheet = [payload[@"sheet"] isKindOfClass:NSDictionary.class] ? payload[@"sheet"] : nil;
     if (!_desiredSheet || ![_desiredSheet[@"id"] isEqual:_dismissedSheet]) _dismissedSheet = nil;
     _desiredPaste = [payload[@"paste"] isKindOfClass:NSDictionary.class] ? payload[@"paste"] : nil;
+    _desiredSearch = [payload[@"search"] isKindOfClass:NSDictionary.class] ? payload[@"search"] : nil;
+    [self updateSearch:_desiredSearch];
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
 }
 - (void)refresh {
+    [self updateSearch:_desiredSearch];
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
+}
+- (BOOL)searchIsLive {
+    return _valid && !_updatingSearch && _searchSession.length && !_searchBar.hidden && _view.window;
+}
+- (void)sendSearchText {
+    // UITextInput's marked range belongs to the IME. Never search or overwrite
+    // a half-composed word; UIKit commits it before Return/end editing.
+    // https://developer.apple.com/documentation/uikit/uitextinput/markedtextrange
+    if (![self searchIsLive] || _searchBar.searchTextField.markedTextRange) return;
+    NSString *text = _searchBar.text ?: @"";
+    if ([_searchSentText isEqualToString:text]) return;
+    _searchRevision++;
+    _searchSentText = [text copy];
+    [self emit:@{@"kind":@"search_edit", @"session":_searchSession,
+        @"revision":@(_searchRevision), @"text":text}];
+}
+- (void)updateSearch:(NSDictionary *)model {
+    CGRect rect = model ? [self rect:model[@"rect"]] : CGRectNull;
+    BOOL visible = model && _view.window && !_desiredSheet && !_menuVisible;
+    if (!visible) {
+        [_searchBar.searchTextField resignFirstResponder];
+        _searchBar.hidden = YES;
+        _searchBar.userInteractionEnabled = NO;
+        // A context menu temporarily covers Search. Preserve its revision so a
+        // queued pre-menu model cannot reopen the keyboard at menu completion.
+        if (!model || !_menuVisible) _searchSession = nil;
+        _searchWantsEditing = NO;
+        return;
+    }
+    // refresh can run between UIView rotation and the newly measured Rust Frame.
+    // An old landscape slot is not a navigation/focus intention. Keep the live
+    // editor and selection until updatePayload supplies its new geometry.
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect) || !CGRectContainsRect(_view.bounds, rect)) return;
+    if (!_searchBar) {
+        // UISearchBar owns its text field, clear control, Cancel and edit menu.
+        // https://developer.apple.com/documentation/uikit/uisearchbar
+        _searchBar = [UISearchBar new];
+        _searchBar.delegate = self;
+        _searchBar.searchBarStyle = UISearchBarStyleMinimal;
+        _searchBar.backgroundColor = UIColor.clearColor;
+        _searchBar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _searchBar.returnKeyType = UIReturnKeySearch;
+        _searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
+        _searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
+        _searchBar.placeholder = @"Canciones, artistas o álbumes";
+        _searchBar.accessibilityIdentifier = @"surco.native.search";
+        _searchBar.searchTextField.accessibilityIdentifier = @"search";
+        _searchBar.searchTextField.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
+        _searchBar.searchTextField.adjustsFontForContentSizeCategory = YES;
+    }
+    NSString *session = SurcoString(model[@"session"]);
+    NSUInteger revision = [model[@"revision"] unsignedIntegerValue];
+    NSString *text = SurcoString(model[@"text"]);
+    if (![_searchSession isEqual:session]) {
+        // A new tab session or explicit recent/browse selection supersedes the
+        // old editor's callbacks, while keeping the UIKit view itself alive.
+        _updatingSearch = YES;
+        [_searchBar.searchTextField resignFirstResponder];
+        _searchSession = [session copy];
+        _searchRevision = revision;
+        _searchBar.text = text;
+        _searchSentText = [text copy];
+        _searchWantsEditing = NO;
+        _updatingSearch = NO;
+    }
+    if (_searchBar.superview != _view) [_view addSubview:_searchBar];
+    _searchBar.frame = rect;
+    _searchBar.hidden = NO;
+    _searchBar.userInteractionEnabled = YES;
+    [_view bringSubviewToFront:_searchBar];
+    // A queued render may predate a keystroke OR a focus gesture. Both share
+    // one revision stream, so neither stale text nor stale focus can bounce it.
+    if (revision < _searchRevision) return;
+    BOOL editing = [model[@"editing"] boolValue];
+    if (!_searchBar.searchTextField.markedTextRange && ![_searchBar.text isEqualToString:text]) {
+        _updatingSearch = YES;
+        _searchBar.text = text;
+        _searchSentText = [text copy];
+        _updatingSearch = NO;
+    }
+    UIColor *ink = editing ? UIColor.whiteColor : UIColor.blackColor;
+    _searchBar.tintColor = UIColor.whiteColor;
+    _searchBar.searchTextField.backgroundColor = editing ? [UIColor colorWithWhite:0.2 alpha:1] : UIColor.whiteColor;
+    _searchBar.searchTextField.textColor = ink;
+    _searchBar.searchTextField.tintColor = ink;
+    _searchBar.searchTextField.leftView.tintColor = ink;
+    _searchBar.searchTextField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:_searchBar.placeholder
+        attributes:@{NSForegroundColorAttributeName: editing ? UIColor.lightGrayColor : UIColor.darkGrayColor}];
+    if (_searchBar.showsCancelButton != editing) [_searchBar setShowsCancelButton:editing
+        animated:!_reduceMotion && !UIAccessibilityIsReduceMotionEnabled()];
+    if (_searchWantsEditing != editing) {
+        _searchWantsEditing = editing;
+        if (editing && !_searchBar.searchTextField.isFirstResponder) [_searchBar.searchTextField becomeFirstResponder];
+        else if (!editing && _searchBar.searchTextField.isFirstResponder) [_searchBar.searchTextField resignFirstResponder];
+    }
+}
+- (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
+    if (![self searchIsLive]) return;
+    _searchWantsEditing = YES;
+    _searchRevision++;
+    [self emit:@{@"kind":@"search_focus", @"session":_searchSession, @"revision":@(_searchRevision), @"editing":@YES}];
+}
+- (void)searchBar:(UISearchBar *)searchBar textDidChange:(NSString *)searchText {
+    if (![self searchIsLive]) return;
+    if (searchBar.searchTextField.markedTextRange) {
+        _searchRevision++; // Protect the active composition from an older render.
+        return;
+    }
+    [self sendSearchText];
+}
+- (void)searchBarTextDidEndEditing:(UISearchBar *)searchBar {
+    if (![self searchIsLive]) return;
+    [self sendSearchText];
+    _searchWantsEditing = NO;
+    _searchRevision++;
+    [self emit:@{@"kind":@"search_focus", @"session":_searchSession, @"revision":@(_searchRevision), @"editing":@NO}];
+}
+- (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
+    if (![self searchIsLive]) return;
+    [searchBar.searchTextField unmarkText];
+    [self sendSearchText];
+    [self emit:@{@"kind":@"search_submit", @"session":_searchSession}];
+    [searchBar.searchTextField resignFirstResponder];
+}
+- (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
+    if (![self searchIsLive]) return;
+    NSString *session = _searchSession;
+    [searchBar.searchTextField resignFirstResponder];
+    [self emit:@{@"kind":@"search_cancel", @"session":session}];
 }
 - (void)updatePaste:(NSDictionary *)slot {
     CGRect rect = slot ? [self rect:slot[@"rect"]] : CGRectNull;
@@ -231,6 +380,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _menuGeneration++;
     _activeMenu = [target copy];
     _menuVisible = YES;
+    [self updateSearch:_desiredSearch];
     [self updatePaste:nil];
     [self emit:@{@"kind": @"menu_open", @"id": target[@"id"]}];
     __weak SurcoSurfaces *weakSelf = self;
@@ -268,6 +418,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         [owner emit:@{@"kind": @"menu_close", @"id": identifier}];
         owner->_menuVisible = NO;
         owner->_activeMenu = nil;
+        [owner updateSearch:owner->_desiredSearch];
         [owner updatePaste:owner->_desiredPaste];
         [owner reconcileSheet];
     };

@@ -72,6 +72,8 @@ pub(crate) struct MobileUi {
     /// The shared chrome condenses only after the current title scrolls above it.
     pub compact_header: bool,
     pub search_editing: bool,
+    /// Explicit recent/browse/clear actions supersede any live native composition.
+    pub search_intent: u64,
     pub search_filter: SearchFilter,
     pub pending: Option<(String, Instant)>,
     /// The host consumes this once after changing the view.
@@ -162,8 +164,8 @@ impl State {
         self.submitted = None;
         self.searching = false;
         self.search_error = None;
-        self.found = Found::default();
         let query = value.trim();
+        if query.is_empty() { self.found = Found::default(); }
         // Importing or opening a pasted link must be an explicit action.
         let link = query.contains("://") || transfer::source(query).is_some();
         self.mobile_ui.pending = (query.chars().count() >= 2 && !link)
@@ -294,12 +296,14 @@ impl State {
                 }
                 if let Some(index) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()) {
                     if let Some(query) = self.collection.searches.get(index).cloned() {
+                        self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.query = query;
                         return Some(self.mobile_submit());
                     }
                     return Some(Vec::new());
                 }
                 if let Some(query) = id.strip_prefix("browse:") {
+                    self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                     self.mobile_search = true;
                     self.page = Page::Search;
                     self.history.clear();
@@ -320,12 +324,12 @@ impl State {
                         let editing = id == "mobile-discover";
                         self.mobile_ui.search_editing = editing;
                         self.mobile_ui.blur = !editing;
-                        self.focus = editing.then(|| "search".into());
+                        self.focus = (editing && !self.mobile_ui.native_surfaces).then(|| "search".into());
                     }
                     "mobile-search-edit" => {
                         self.mobile_ui.search_editing = true;
                         self.mobile_ui.blur = false;
-                        self.focus = Some("search".into());
+                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
                     }
                     "mobile-search-cancel" => {
                         self.mobile_ui.search_editing = false;
@@ -334,8 +338,9 @@ impl State {
                         self.focus = None;
                     }
                     "mobile-search-clear" => {
+                        self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.mobile_query("", Instant::now());
-                        self.focus = Some("search".into());
+                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
                         self.mobile_ui.blur = false;
                     }
                     "search-submit" => return Some(self.mobile_submit()),
@@ -410,6 +415,29 @@ mod tests {
         assert!(!state.mobile_ui.blur);
         click(&mut state, "mobile-search");
         assert!(!state.mobile_ui.search_editing && state.mobile_ui.blur && state.focus.is_none());
+    }
+
+    #[test]
+    fn editing_a_new_query_retains_selectable_results_until_the_new_answer_arrives() {
+        let mut state = phone();
+        state.mobile_search = true;
+        let track = Track { id: "held".into(), title: "Resultado actual".into(), artist: "Artista".into(),
+            artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 };
+        state.found.tracks = vec![track.clone()];
+        state.submitted = Some("anterior".into());
+        let now = Instant::now();
+        state.mobile_query("nueva", now);
+        assert_eq!(state.found.tracks, vec![track.clone()]);
+        assert!(state.submitted.is_none(), "a reply for the former query is already stale during debounce");
+        state.apply(Event::SearchResults { query: "anterior".into(), found: Found::default() });
+        assert_eq!(state.found.tracks, vec![track.clone()]);
+        assert_eq!(state.mobile_tick(now + Duration::from_millis(300)), vec![Command::Search("nueva".into())]);
+        assert_eq!(state.found.tracks, vec![track.clone()]);
+        state.apply(Event::SearchFailed { query: "nueva".into(), message: "Sin conexión".into() });
+        assert_eq!(state.found.tracks, vec![track]);
+        assert!(state.search_error.is_some());
+        state.mobile_query("", now);
+        assert!(state.found.tracks.is_empty() && state.mobile_ui.pending.is_none());
     }
 
     #[test]
