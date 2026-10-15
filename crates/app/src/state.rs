@@ -1,6 +1,8 @@
 //! Everything the window shows, and the two ways it changes: an action from the user
 //! (`update`) or an answer from the backend (`apply`). Both return the commands to send.
 
+pub(crate) mod mobile;
+
 use std::collections::{HashMap, HashSet};
 
 use surco_audio::equalizer::EqualizerValues;
@@ -87,6 +89,9 @@ impl Entry {
 pub struct Collection {
     pub kept: Vec<Entry>,
     pub recent: Vec<Entry>,
+    /// Explicit searches, newest first. Typing alone is not history.
+    #[serde(default)]
+    pub searches: Vec<String>,
     #[serde(default)]
     pub playlists: Vec<Playlist>,
     /// The tracks last played, newest first.
@@ -437,6 +442,7 @@ pub struct State {
     pub mobile: bool,
     /// The search tab is open even before a query has been submitted.
     pub mobile_search: bool,
+    pub mobile_ui: mobile::MobileUi,
     pub query: String,
     /// The query whose results are shown or awaited. Answers for any other are stale.
     pub submitted: Option<String>,
@@ -682,6 +688,7 @@ impl Default for State {
         Self {
             mobile: cfg!(target_os = "ios"),
             mobile_search: false,
+            mobile_ui: mobile::MobileUi::default(),
             query: String::new(),
             submitted: None,
             searching: false,
@@ -789,6 +796,7 @@ impl State {
         }
         if self.mobile {
             self.mobile_search = true;
+            self.mobile_ui.pending = None;
         }
         // A link to a track is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
@@ -955,19 +963,25 @@ impl State {
 
     /// The track a row shows, from the row's id.
     pub fn track_at(&self, row: &str) -> Option<&Track> {
+        if row == "current" {
+            return self.current();
+        }
         let (list, index) = row.split_once(':')?;
         let index = index.parse::<usize>().ok()?;
         match list {
             "track" => self.found.tracks.get(index),
             "page-track" => self.page_tracks().get(index),
             "upcoming" => self.player.upcoming.get(index),
+            "heard" => self.collection.heard.get(index),
+            "mix" => self.mix.get(index),
             _ => None,
         }
     }
 
     /// One of the actions of a row's menu.
     fn act(&mut self, action: &str, row: &str) -> Vec<Command> {
-        let Some(track) = self.track_at(row).cloned() else { return Vec::new() };
+        let Some(track) = self.mobile_ui.context.as_ref().filter(|context| context.row == row)
+            .map(|context| &context.track).or_else(|| self.track_at(row)).cloned() else { return Vec::new() };
         match action {
             "queue" => vec![Command::Enqueue(track)],
             "next" => vec![Command::PlayNext(track)],
@@ -985,7 +999,17 @@ impl State {
                 Vec::new()
             }
             "unsave" => vec![Command::Unsave(track.id)],
-            "unqueue" => row.strip_prefix("upcoming:").and_then(|index| index.parse().ok()).map(Command::Unqueue).into_iter().collect(),
+            "unqueue" => {
+                if self.mobile_ui.context.as_ref().and_then(|context| context.upcoming.as_ref()).is_some_and(|held| held != &self.player.upcoming) {
+                    self.mobile_ui.notice = Some("La cola cambió. Volvé a elegir la canción que querés quitar.".into());
+                    return Vec::new();
+                }
+                // Queue entries may contain the same song more than once. Keep
+                // the selected occurrence, and reject a changed snapshot above.
+                let index = row.strip_prefix("upcoming:").and_then(|index| index.parse().ok());
+                index.map(|index| self.mobile_ui.context.as_ref().and_then(|context| context.upcoming.clone())
+                    .map_or(Command::Unqueue(index), |snapshot| Command::UnqueueIfUnchanged { index, snapshot })).into_iter().collect()
+            }
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
             // A track goes into a list that exists, or into one made for it.
@@ -994,6 +1018,12 @@ impl State {
                 Vec::new()
             }
             "remove" => {
+                if let Some(id) = self.mobile_ui.context.as_ref().and_then(|context| context.playlist) {
+                    if let Some(playlist) = self.collection.playlists.iter_mut().find(|playlist| playlist.id == id) {
+                        playlist.tracks.retain(|held| held.id != track.id);
+                    }
+                    return Vec::new();
+                }
                 if let (Page::Playlist(id), Some(index)) = (&self.page, row.strip_prefix("page-track:").and_then(|index| index.parse::<usize>().ok())) {
                     if let Some(playlist) = self.collection.playlists.iter_mut().find(|playlist| playlist.id == *id) {
                         playlist.tracks.remove(index);
@@ -1058,6 +1088,11 @@ impl State {
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
+        if self.mobile {
+            if let Some(commands) = self.mobile_action(action) {
+                return commands;
+            }
+        }
         match action {
             UiAction::InputChanged { id, value } if id == "search" => {
                 self.query = value.clone();

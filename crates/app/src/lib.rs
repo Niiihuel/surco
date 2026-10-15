@@ -188,7 +188,12 @@ impl eframe::App for Host {
         #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
             // Keep phone controls inside the platform's notch and home-indicator insets.
-            ui.max_rect().intersect(ctx.content_rect())
+            let safe = ui.max_rect().intersect(ctx.content_rect());
+            if self.script.mobile {
+                // A tiling desktop compositor can ignore the preview window's requested size.
+                // Keep the phone canvas at phone dimensions inside that larger surface.
+                egui::Rect::from_center_size(safe.center(), egui::vec2(safe.width().min(390.0), safe.height().min(844.0)))
+            } else { safe }
         } else {
             ui.max_rect()
         };
@@ -216,6 +221,11 @@ impl eframe::App for Host {
             self.send(commands);
         }
         self.run_script();
+        let commands = self.state.mobile_tick(Instant::now());
+        self.send(commands);
+        if let Some((_, due)) = &self.state.mobile_ui.pending {
+            ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
+        }
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
         let sounding = self.state.player.playing && !self.state.settings.reduce_motion;
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
@@ -296,10 +306,12 @@ impl eframe::App for Host {
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
         }
-        let input = limn_egui::events(&ctx, area.min);
+        let input = if self.state.mobile { limn_egui::events_with_touch(&ctx, area.min, &input_frame) }
+            else { limn_egui::events(&ctx, area.min) };
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
-            self.touch.translate(&raw, input, area.min, &input_frame, |_| false)
+            self.touch.translate(&raw, input, area.min, &input_frame,
+                |id| matches!(id, "mobile-context-close:drag" | "mobile-connections-close:drag"))
         } else { input };
         for event in input {
             self.stirred = Instant::now();
@@ -328,6 +340,7 @@ impl eframe::App for Host {
         }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
+        if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         if self.state.mobile {
             mobile_input::update_ime(&ctx, &self.tree, &frame, area.min);
         }
@@ -421,6 +434,7 @@ pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: graphics_configuration(),
+        persist_window: !mobile,
         persistence_path: paths::persistence_path(&data),
         viewport: egui::ViewportBuilder::default()
             .with_title("Surco")

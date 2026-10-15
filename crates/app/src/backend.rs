@@ -73,6 +73,8 @@ pub enum Command {
     Enqueue(Track),
     /// Take the n-th of the upcoming tracks out of what follows.
     Unqueue(usize),
+    /// A mobile sheet may outlive a queue update; validate at the backend boundary too.
+    UnqueueIfUnchanged { index: usize, snapshot: Vec<Track> },
     /// Drop the tracks queued by hand.
     ClearQueue,
     /// Move the n-th of the upcoming tracks to where the m-th is.

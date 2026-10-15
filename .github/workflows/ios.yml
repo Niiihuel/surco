@@ -16,8 +16,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # v0.1.43, matching Cargo.lock and the desktop workflows.
-  LIMN_REF: b595149d9635df63fd898fa0f7f289b13d818634
+  # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
+  LIMN_REF: a3ce02a630a5e8310efecbdad6a7d1b7767cf63c
   # macos-15 includes Xcode 16.4 and its iOS 18.5 simulator runtime.
   DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'

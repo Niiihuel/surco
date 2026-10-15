@@ -1,7 +1,7 @@
 # iOS polish
 
-- [ ] Merge baseline PR #1 after final checks; clean merged branches.
-- [ ] limn stable IME/focus regression and reviewed PR.
+- [x] Merge baseline PR #1 after final checks; clean merged branches.
+- [x] limn stable IME/focus regression and reviewed PR #46.
 - [ ] Native playback session, interruption/route recovery, lock-screen commands and Now Playing.
 - [ ] Long press, action sheet and motion primitives with cancellation tests.
 - [ ] Mobile Home/Search/Library/details/player/queue/lyrics/settings visual finish.

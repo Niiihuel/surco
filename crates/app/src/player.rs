@@ -193,6 +193,10 @@ impl Player {
                 self.queue.remove_upcoming(upcoming);
                 Vec::new()
             }
+            Command::UnqueueIfUnchanged { index, snapshot } => {
+                if self.view().upcoming == snapshot { self.queue.remove_upcoming(index); }
+                Vec::new()
+            }
             Command::MoveQueue(from, to) => {
                 self.queue.move_upcoming(from, to);
                 Vec::new()
@@ -387,6 +391,19 @@ mod tests {
         let view = player.view();
         assert_eq!(view.current, Some(track("b")));
         assert!(view.playing && view.error.is_none());
+    }
+
+    #[test]
+    fn an_open_sheet_removes_the_selected_duplicate_only_from_its_original_queue() {
+        let mut player = playing(&["current", "a", "b", "a"], 0);
+        let snapshot = player.view().upcoming;
+        player.command(Command::UnqueueIfUnchanged { index: 2, snapshot });
+        assert_eq!(player.view().upcoming, vec![track("a"), track("b")]);
+        let snapshot = player.view().upcoming;
+        player.command(Command::Next);
+        let changed = player.view().upcoming;
+        player.command(Command::UnqueueIfUnchanged { index: 0, snapshot });
+        assert_eq!(player.view().upcoming, changed, "late UI commands cannot remove another queue entry");
     }
 
     #[test]
