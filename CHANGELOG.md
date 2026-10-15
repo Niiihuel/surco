@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0
+
+### Changed
+
+- Continuous cover-colored iPhone backgrounds through the status bar, player and
+  lyrics, with shorter header/tab fades and controls inside the system safe area.
+- Lower compact navigation and a tinted floating mini player with independent
+  route, like and playback actions.
+- Larger system symbols and white circular Play/Pause controls across the mobile
+  player, compact headers, mini player and detail pages.
+
+### Fixed
+
+- Import uses the native text field editing menu for Paste; its card also accepts
+  URL and Unicode text representations from other apps.
+- The home-indicator inset masks scrolling content and blocks touches to hidden
+  rows without covering the real transport and navigation controls.
+
 ## 0.4.0
 
 ### Added
