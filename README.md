@@ -58,6 +58,15 @@ Wayland or X11 with libxkbcommon. `--search <text>`, `--play <n>` and
 `--screenshot <file.png> --after <ms>` drive the window from the command line, for
 checking a build without touching it.
 
+## iOS
+
+The iOS target keeps the engine and interface in Rust with limn. `cargo run -p surco -- --mobile`
+previews the phone layout on a desktop. The **iOS** GitHub Actions workflow builds an
+iPhone simulator app and an unsigned device app; the simulator run saves a screenshot.
+Installing on an iPhone uses the manual **TestFlight** workflow once Apple signing is
+configured. See [the TestFlight setup and installation guide](docs/testflight.md) and
+[the iOS validation notes](docs/ios.md) for the remaining hardware checks.
+
 ## Releases
 
 A tag `v1.2.3` that matches the version in `Cargo.toml` builds Linux, Windows and macOS

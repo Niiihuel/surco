@@ -36,6 +36,10 @@ pub enum Page {
     Liked,
     /// One of the user's lists, by its id.
     Playlist(u64),
+    /// The saved collection as a full page on a phone.
+    Library,
+    /// The phone's full player, backed by the same playback state.
+    Playing,
     Settings,
     /// The lines of what plays, in the middle of the window.
     Lyrics,
@@ -429,6 +433,10 @@ impl Side {
 pub const ARTIST_SONGS_SHOWN: usize = 10;
 
 pub struct State {
+    /// Use the phone layout; desktop previews can opt in without a second player.
+    pub mobile: bool,
+    /// The search tab is open even before a query has been submitted.
+    pub mobile_search: bool,
     pub query: String,
     /// The query whose results are shown or awaited. Answers for any other are stale.
     pub submitted: Option<String>,
@@ -569,6 +577,9 @@ pub struct State {
     /// The line the list was last scrolled to.
     lyric_shown: Option<usize>,
     pub outputs: Vec<AudioOutputDevice>,
+    pub outputs_loading: bool,
+    pub outputs_error: Option<String>,
+    pub output_notice: Option<String>,
     pub output: Option<String>,
     pub output_open: bool,
 }
@@ -669,6 +680,8 @@ pub fn equalizer_from(text: &str) -> Option<EqualizerValues> {
 impl Default for State {
     fn default() -> Self {
         Self {
+            mobile: cfg!(target_os = "ios"),
+            mobile_search: false,
             query: String::new(),
             submitted: None,
             searching: false,
@@ -747,6 +760,9 @@ impl Default for State {
             lyrics: None,
             lyric_shown: None,
             outputs: Vec::new(),
+            outputs_loading: false,
+            outputs_error: None,
+            output_notice: None,
             output: None,
             output_open: false,
         }
@@ -770,6 +786,9 @@ impl State {
         let query = self.query.trim().to_owned();
         if query.is_empty() {
             return Vec::new();
+        }
+        if self.mobile {
+            self.mobile_search = true;
         }
         // A link to a track is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
@@ -1342,18 +1361,19 @@ impl State {
                 commands
             }
             // Each panel is shut from its own header and opened from the bar above.
-            "toggle-panel" | "toggle-panel-open" => {
+            "toggle-panel" | "toggle-panel-open" | "setting:player-panel" => {
                 self.open_side(Side::Right, !self.panel_open);
                 self.queue_open = false;
                 let mut commands = self.ask_clip();
                 commands.extend(self.ask_about());
                 commands
             }
-            "toggle-library" | "toggle-library-open" => {
+            "toggle-library" | "toggle-library-open" | "setting:library-panel" => {
                 self.open_side(Side::Left, !self.library_open);
                 Vec::new()
             }
             "home" => {
+                self.mobile_search = false;
                 self.page = Page::Search;
                 self.history.clear();
                 self.query.clear();
@@ -1362,6 +1382,28 @@ impl State {
                 self.search_error = None;
                 self.found = Found::default();
                 self.ask_picks()
+            }
+            "mobile-search" => {
+                self.mobile_search = true;
+                if self.page != Page::Search {
+                    self.go(Page::Search);
+                }
+                self.focus = Some("search".into());
+                Vec::new()
+            }
+            "search-submit" => self.search(),
+            "mobile-library" => {
+                self.mobile_search = false;
+                if self.page != Page::Library {
+                    self.go(Page::Library);
+                }
+                Vec::new()
+            }
+            "mobile-playing" => {
+                if self.current().is_some() && self.page != Page::Playing {
+                    self.go(Page::Playing);
+                }
+                Vec::new()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -1390,11 +1432,25 @@ impl State {
                     self.go(Page::Settings);
                 }
                 // The page names the chosen device, so it needs their list.
+                self.outputs_loading = true;
+                self.outputs_error = None;
+                vec![Command::Outputs]
+            }
+            "setting:outputs-refresh" => {
+                if self.outputs_loading {
+                    return Vec::new();
+                }
+                self.outputs_loading = true;
+                self.outputs_error = None;
                 vec![Command::Outputs]
             }
             "setting:output" => {
                 self.output_open = !self.output_open;
-                if self.output_open { vec![Command::Outputs] } else { Vec::new() }
+                if self.output_open {
+                    self.outputs_loading = true;
+                    self.outputs_error = None;
+                    vec![Command::Outputs]
+                } else { Vec::new() }
             }
             "setting:output-dismiss" => {
                 self.output_open = false;
@@ -1403,7 +1459,8 @@ impl State {
             _ if id.starts_with("setting:output:") => {
                 self.output_open = false;
                 let chosen = Some(id["setting:output:".len()..].to_owned()).filter(|device| !device.is_empty());
-                if chosen == self.output {
+                let retry = self.output_notice.take().is_some();
+                if chosen == self.output && !retry {
                     return Vec::new();
                 }
                 self.output = chosen;
@@ -1756,10 +1813,22 @@ impl State {
             }
             Event::Outputs(devices) => {
                 self.outputs = devices;
+                self.outputs_loading = false;
+                self.outputs_error = None;
+                Vec::new()
+            }
+            Event::OutputsFailed(message) => {
+                self.outputs_loading = false;
+                self.outputs_error = Some(message);
                 Vec::new()
             }
             Event::OutputLost => {
                 self.output = None;
+                self.output_notice = Some("La salida elegida ya no está disponible. Volvimos a la predeterminada del sistema.".into());
+                Vec::new()
+            }
+            Event::OutputFailed(message) => {
+                self.output_notice = Some(message);
                 Vec::new()
             }
             Event::SaveFailed { title, message } => {
@@ -1845,7 +1914,7 @@ impl State {
 
     /// Whether the right panel shows what plays, the one place a clip is seen.
     fn shows_playing(&self) -> bool {
-        self.panel_open && !self.queue_open
+        !self.mobile && self.panel_open && !self.queue_open
     }
 
     /// The song that plays, also while its video's own sound has its place.
@@ -2427,6 +2496,36 @@ mod tests {
         state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
         assert_eq!(click(&mut state, "track:0"), vec![Command::PlayPause]);
         assert_eq!(click(&mut state, "track:1"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
+    }
+
+    #[test]
+    fn refreshing_outputs_reports_loading_failure_and_recovery_without_losing_the_selection() {
+        let mut state = State { output: Some("headphones".into()), ..State::default() };
+        assert_eq!(click(&mut state, "setting:outputs-refresh"), vec![Command::Outputs]);
+        assert!(state.outputs_loading);
+        assert!(click(&mut state, "setting:outputs-refresh").is_empty(), "one refresh at a time");
+        state.apply(Event::OutputsFailed("Audio service unavailable".into()));
+        assert!(!state.outputs_loading);
+        assert_eq!(state.outputs_error.as_deref(), Some("Audio service unavailable"));
+        assert_eq!(state.output.as_deref(), Some("headphones"));
+        assert_eq!(click(&mut state, "setting:outputs-refresh"), vec![Command::Outputs]);
+        assert!(state.outputs_loading && state.outputs_error.is_none());
+        state.apply(Event::Outputs(vec![AudioOutputDevice { id: "headphones".into(), name: "Mis auriculares".into(), is_default: true }]));
+        assert!(!state.outputs_loading && state.outputs_error.is_none());
+        assert_eq!(state.outputs[0].name, "Mis auriculares");
+        assert_eq!(state.output.as_deref(), Some("headphones"));
+    }
+
+    #[test]
+    fn losing_an_output_explains_the_fallback_and_a_new_choice_clears_the_notice() {
+        let mut state = State { output: Some("headphones".into()), ..State::default() };
+        state.apply(Event::OutputLost);
+        assert!(state.output.is_none() && state.output_notice.is_some());
+        assert_eq!(click(&mut state, "setting:output:speakers"), vec![Command::Output(Some("speakers".into()))]);
+        assert!(state.output_notice.is_none());
+        state.apply(Event::OutputFailed("No audio output".into()));
+        assert_eq!(state.output_notice.as_deref(), Some("No audio output"));
+        assert_eq!(click(&mut state, "setting:output:speakers"), vec![Command::Output(Some("speakers".into()))], "a failed output can be retried");
     }
 
     #[test]
