@@ -15,6 +15,8 @@ mod dialog_tests;
 mod native_ui_geometry_tests;
 #[cfg(test)]
 mod edge_chrome_tests;
+#[cfg(test)]
+mod notice_tests;
 
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 52.0;
