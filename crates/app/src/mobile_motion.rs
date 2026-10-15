@@ -88,7 +88,7 @@ impl Motion {
         state.mobile_ui.player_offset = self.player.value(now);
         let search = state.mobile && state.page == Page::Search && state.mobile_search;
         if search {
-            self.search.retarget_with_motion(if state.mobile_ui.search_editing { 0.0 } else { HEADER }, now, RETURN, reduced);
+            self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { HEADER }, now, RETURN, reduced);
             state.mobile_ui.search_header = Some(self.search.value(now));
         } else {
             self.search.snap_to(HEADER, now);
@@ -645,6 +645,30 @@ mod tests {
         assert_eq!(state.mobile_ui.search_header, Some(middle));
         motion.advance(&mut state, size, now + Duration::from_millis(2300));
         assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+    }
+
+    #[test]
+    fn submitted_search_keeps_the_heading_compact_until_the_unfocused_query_is_empty() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        motion.set_reduced_motion(true);
+        let mut state = State::default();
+        state.mobile = true;
+        state.mobile_search = true;
+        state.query = "Consulta conservada".into();
+        state.mobile_ui.blur = true;
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, size, now);
+        assert_eq!(state.mobile_ui.search_header, Some(0.0));
+        assert!(!state.mobile_ui.search_editing && state.focus.is_none(), "visual compactness cannot request keyboard focus");
+        state.update(&UiAction::Clicked { id: "mobile-search-cancel".into() });
+        motion.advance(&mut state, size, now + Duration::from_millis(1));
+        assert_eq!(state.mobile_ui.search_header, Some(0.0));
+        assert_eq!(state.query, "Consulta conservada");
+        state.query.clear();
+        motion.advance(&mut state, size, now + Duration::from_millis(2));
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+        assert!(!state.mobile_ui.search_editing && state.focus.is_none());
     }
 
     #[test]

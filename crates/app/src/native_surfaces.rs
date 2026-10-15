@@ -58,7 +58,7 @@ pub(crate) struct PasteSlot { pub target: String, pub rect: [f32; 4] }
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct SearchSlot {
     pub session: String, pub rect: [f32; 4], pub text: String,
-    pub editing: bool, pub revision: u64,
+    pub editing: bool, pub compact: bool, pub revision: u64,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -127,7 +127,8 @@ impl Controller {
             }
             let binding = self.search.as_ref().unwrap();
             payload.search = Some(SearchSlot { session: binding.session.clone(), rect,
-                text: state.query.clone(), editing: state.mobile_ui.search_editing, revision: binding.revision });
+                text: state.query.clone(), editing: state.mobile_ui.search_editing,
+                compact: state.mobile_search_compact(), revision: binding.revision });
         } else { self.search = None; }
         for (index, region) in frame.regions.iter().enumerate() {
             if region.kind != limn::HitKind::Button { continue; }
@@ -641,6 +642,7 @@ mod tests {
         assert!(payload.paste.is_none());
         let search = payload.search.unwrap();
         assert_eq!(search.rect[1], slot.rect.y + 59.0);
+        assert!(!search.compact && !search.editing, "empty Search starts with its idle heading and no keyboard intention");
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
         assert!(controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2,
             text: "https://youtu.be/a-song".into() }).is_empty());
@@ -652,9 +654,12 @@ mod tests {
         let refreshed = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
         assert_eq!(refreshed.session, search.session);
         assert_eq!(refreshed.revision, 2);
+        assert!(refreshed.compact && refreshed.editing);
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 3, editing: false });
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
         assert!(!state.mobile_ui.search_editing, "an old focus callback must not reopen the keyboard");
+        let unfocused = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
+        assert!(unfocused.compact && !unfocused.editing, "a query keeps the compact visual state after keyboard dismissal");
         controller.apply(&mut state, Event::SearchSubmit { session: search.session });
         assert!(matches!(&state.page, state::Page::Loading(crate::backend::Target::Song(id)) if id == "a-song"),
             "the explicit Return gesture opens the pasted link");

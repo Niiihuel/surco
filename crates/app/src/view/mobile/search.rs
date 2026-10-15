@@ -5,24 +5,26 @@ use super::*;
 use crate::state::mobile::SearchFilter;
 
 pub(super) fn field_height(state: &State) -> f32 {
-    if state.mobile_ui.search_editing { 56.0 } else { 68.0 }
+    if state.mobile_search_compact() { 56.0 } else { 68.0 }
 }
 
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
-    let padding = if editing { 6.0 } else { 12.0 };
+    let compact = state.mobile_search_compact();
+    let padding = if compact { 6.0 } else { 12.0 };
     if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_surfaces {
         return Element::panel(Element::spacer().size(None, Some(TAP))
             .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name("Buscar música")))
-            .padding(padding).background(if editing { Color::rgb(33, 33, 33) } else { SCHEME.canvas })
+            .padding(padding).background(if compact { Color::rgb(33, 33, 33) } else { SCHEME.canvas })
             .size(None, Some(field_height(state)));
     }
     let field = if editing {
         SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)).flex(1.0)
+            .size(ControlSize::Spacious).render().radius(TAP / 2.0).size(None, Some(TAP)).flex(1.0)
     } else {
         Button::new("mobile-search-edit", if state.query.is_empty() { "¿Qué querés escuchar?" } else { &state.query }, palette)
-            .icon(Icon::Search).variant(ButtonVariant::Default).size(ControlSize::Spacious).render().size(None, Some(TAP)).flex(1.0)
+            .icon(Icon::Search).variant(ButtonVariant::Default)
+            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().flex(1.0)
     };
     let mut row = vec![field];
     if editing {
@@ -42,7 +44,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     let chosen = state.mobile_ui.search_filter;
     let tab = |key: &str, label: &str, value| Button::new(format!("search-filter:{key}"), label, palette)
         .variant(if chosen == value { ButtonVariant::Default } else { ButtonVariant::Secondary })
-        .size(ControlSize::Spacious).render().size(None, Some(TAP));
+        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     let filters = Element::horizontal_scroll_2d("mobile-search-filters", Element::row(vec![
         tab("all", "Todo", SearchFilter::All), tab("tracks", "Canciones", SearchFilter::Tracks),
         tab("artists", "Artistas", SearchFilter::Artists), tab("albums", "Álbumes", SearchFilter::Albums),
@@ -170,6 +172,24 @@ mod tests {
             assert!(!fallback.access.iter().any(|node| node.id == "ios-search"));
             assert!(fallback.access.iter().any(|node| node.id == if editing { "search" } else { "mobile-search-edit" }));
         }
+    }
+
+    #[test]
+    fn search_and_filter_capsules_keep_their_full_touch_geometry() {
+        let mut state = phone();
+        let size = Size::new(390.0, 500.0);
+        let assert_capsule = |frame: &Frame, id: &str| {
+            let target = frame.regions.iter().find(|region| region.id == id).unwrap().rect;
+            assert!(target.width >= TAP && target.height >= TAP);
+            assert!(frame.commands.iter().any(|command| matches!(command,
+                DrawCommand::FillRect { rect, radius, .. } if *rect == target && *radius >= rect.height / 2.0)),
+                "{id} rounds its actual painted touch height, not the smaller default control height");
+        };
+        assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "mobile-search-edit");
+        state.mobile_ui.search_editing = true;
+        assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "search");
+        state.submitted = Some("consulta".into());
+        assert_capsule(&UiTree::new(results(&state)).layout(size), "search-filter:all");
     }
 
     #[test]

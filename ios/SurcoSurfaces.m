@@ -52,6 +52,16 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 }
 @end
 
+@interface SurcoSearchBar : UISearchBar
+@end
+@implementation SurcoSearchBar
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    self.searchTextField.layer.cornerRadius = CGRectGetHeight(self.searchTextField.bounds) / 2.0;
+    self.searchTextField.clipsToBounds = YES;
+}
+@end
+
 @interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
@@ -211,7 +221,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     if (!_searchBar) {
         // UISearchBar owns its text field, clear control, Cancel and edit menu.
         // https://developer.apple.com/documentation/uikit/uisearchbar
-        _searchBar = [UISearchBar new];
+        _searchBar = [SurcoSearchBar new];
         _searchBar.delegate = self;
         _searchBar.searchBarStyle = UISearchBarStyleMinimal;
         _searchBar.backgroundColor = UIColor.clearColor;
@@ -249,20 +259,21 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     // one revision stream, so neither stale text nor stale focus can bounce it.
     if (revision < _searchRevision) return;
     BOOL editing = [model[@"editing"] boolValue];
+    BOOL compact = [model[@"compact"] boolValue];
     if (!_searchBar.searchTextField.markedTextRange && ![_searchBar.text isEqualToString:text]) {
         _updatingSearch = YES;
         _searchBar.text = text;
         _searchSentText = [text copy];
         _updatingSearch = NO;
     }
-    UIColor *ink = editing ? UIColor.whiteColor : UIColor.blackColor;
+    UIColor *ink = compact ? UIColor.whiteColor : UIColor.blackColor;
     _searchBar.tintColor = UIColor.whiteColor;
-    _searchBar.searchTextField.backgroundColor = editing ? [UIColor colorWithWhite:0.2 alpha:1] : UIColor.whiteColor;
+    _searchBar.searchTextField.backgroundColor = compact ? [UIColor colorWithWhite:0.2 alpha:1] : UIColor.whiteColor;
     _searchBar.searchTextField.textColor = ink;
     _searchBar.searchTextField.tintColor = ink;
     _searchBar.searchTextField.leftView.tintColor = ink;
     _searchBar.searchTextField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:_searchBar.placeholder
-        attributes:@{NSForegroundColorAttributeName: editing ? UIColor.lightGrayColor : UIColor.darkGrayColor}];
+        attributes:@{NSForegroundColorAttributeName: compact ? UIColor.lightGrayColor : UIColor.darkGrayColor}];
     if (_searchBar.showsCancelButton != editing) [_searchBar setShowsCancelButton:editing
         animated:!_reduceMotion && !UIAccessibilityIsReduceMotionEnabled()];
     if (_searchWantsEditing != editing) {

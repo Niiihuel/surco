@@ -91,6 +91,12 @@ pub(crate) struct MobileUi {
 }
 
 impl State {
+    /// Results keep the compact search chrome after Return/Cancel; this is
+    /// presentation only and must never request keyboard focus.
+    pub(crate) fn mobile_search_compact(&self) -> bool {
+        self.mobile_ui.search_editing || !self.query.trim().is_empty()
+    }
+
     pub(crate) fn mobile_library_context(&self, key: &str) -> Option<LibraryContext> {
         let (title, artwork_url) = if let Some(id) = key.strip_prefix("playlist:") {
             let playlist = self.collection.playlist(id.parse().ok()?)?;
@@ -418,6 +424,25 @@ mod tests {
         assert!(!state.mobile_ui.blur);
         click(&mut state, "mobile-search");
         assert!(!state.mobile_ui.search_editing && state.mobile_ui.blur && state.focus.is_none());
+    }
+
+    #[test]
+    fn submitted_and_canceled_queries_keep_compact_chrome_without_keyboard_intent() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_search = true;
+        state.mobile_query("Consulta", Instant::now());
+        click(&mut state, "search-submit");
+        assert!(state.mobile_search_compact());
+        assert!(!state.mobile_ui.search_editing && state.mobile_ui.blur && state.focus.is_none());
+        click(&mut state, "mobile-search-cancel");
+        assert_eq!(state.query, "Consulta");
+        assert!(state.mobile_search_compact());
+        assert!(!state.mobile_ui.search_editing && state.focus.is_none());
+        state.mobile_query("  ", Instant::now());
+        assert!(state.mobile_search_compact(), "the active editor stays compact even when cleared");
+        click(&mut state, "mobile-search-cancel");
+        assert!(!state.mobile_search_compact(), "an empty unfocused search returns to its idle heading");
     }
 
     #[test]
