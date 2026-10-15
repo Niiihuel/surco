@@ -214,6 +214,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
             }
             [paste.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
             [paste.widthAnchor constraintGreaterThanOrEqualToConstant:96].active = YES;
+            paste.accessibilityIdentifier = [@"sheet-paste:" stringByAppendingString:SheetString(model[@"id"])];
             [paste setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
             [views addObject:paste];
         }
@@ -283,7 +284,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     if ([kind isEqualToString:@"route"]) row.secondary.text = SheetString(model[@"subtitle"]);
     row.title.hidden = !row.title.text.length;
     row.secondary.hidden = !row.secondary.text.length;
-    row.control.accessibilityIdentifier = identifier;
+    row.control.accessibilityIdentifier = identifier.length ? identifier : [kind isEqualToString:@"route"] ? @"sheet-route-picker" : @"";
     if ([kind isEqualToString:@"action"]) {
         [self updateButton:(UIButton *)row.control action:model footer:NO primary:NO];
     } else if ([kind isEqualToString:@"field"]) {
