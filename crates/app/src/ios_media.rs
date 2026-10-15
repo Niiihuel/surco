@@ -384,19 +384,21 @@ mod tests {
     #[test]
     fn now_playing_uses_extrapolation_but_publishes_seek_pause_and_new_metadata() {
         let mut diff = MetadataDiff::default();
-        let mut view = crate::player::PlayerView::default();
-        view.current = Some(surco_core::Track {
-            id: "a".into(),
-            title: "Song".into(),
-            artist: "Artist".into(),
-            artist_id: None,
-            album: Some("Album".into()),
-            album_id: None,
-            artwork_url: Some("https://cover/a".into()),
-            duration_ms: 200_000,
-        });
-        view.playing = true;
-        view.duration = 200.0;
+        let mut view = crate::player::PlayerView {
+            current: Some(surco_core::Track {
+                id: "a".into(),
+                title: "Song".into(),
+                artist: "Artist".into(),
+                artist_id: None,
+                album: Some("Album".into()),
+                album_id: None,
+                artwork_url: Some("https://cover/a".into()),
+                duration_ms: 200_000,
+            }),
+            playing: true,
+            duration: 200.0,
+            ..Default::default()
+        };
         assert!(diff.changed(&view, 0.0).is_some());
         view.position = 1.0;
         assert!(diff.changed(&view, 1.0).is_none());

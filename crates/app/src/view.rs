@@ -255,40 +255,9 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let kind = |id: &str, label: &str, selected| {
-            Button::new(id, label, palette)
-                .variant(if selected {
-                    ButtonVariant::Default
-                } else {
-                    ButtonVariant::Secondary
-                })
-                .render()
-                .size(None, Some(44.0))
-                .flex(1.0)
-        };
-        let kinds = Element::row(vec![
-            kind("playlist-kind:normal", "Normal", !draft.collaborative),
-            kind(
-                "playlist-kind:collaborative",
-                "Colaborativa",
-                draft.collaborative,
-            ),
-        ])
-        .gap(8.0);
-        let about = if draft.collaborative {
-            "Otras personas van a poder agregar canciones con un enlace. Por ahora queda marcada en este equipo: invitar llega con las cuentas."
-        } else {
-            "Solo vos agregás y quitás canciones."
-        };
         let mut fields = FormField::new("Título", name, palette)
             .sizing(DIALOG_FIELD)
             .rows();
-        fields.extend(
-            FormField::new("Tipo", kinds, palette)
-                .hint(about)
-                .sizing(DIALOG_FIELD)
-                .rows(),
-        );
         if let Some(track) = &draft.first {
             fields.push(
                 Text::new(format!("Empieza con «{}».", track.title), palette)
@@ -365,7 +334,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let about = if state.import_unknown {
             "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
         } else {
-            "De Spotify (hasta 100 canciones), Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
+            "De Spotify, Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
         };
         let mut fields = FormField::new("Enlace de la lista", field, palette)
             .hint(about)

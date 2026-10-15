@@ -87,7 +87,7 @@ impl State {
     }
 
     pub(crate) fn mobile_tick(&mut self, now: Instant) -> Vec<Command> {
-        if !self.mobile || !self.mobile_ui.pending.as_ref().is_some_and(|(_, due)| *due <= now) {
+        if !self.mobile || self.mobile_ui.pending.as_ref().is_none_or(|(_, due)| *due > now) {
             return Vec::new();
         }
         let (query, _) = self.mobile_ui.pending.take().unwrap();

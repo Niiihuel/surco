@@ -36,23 +36,20 @@ fn reveal(tree: &mut UiTree, id: &str, size: Size) {
 
 #[test]
 fn playlist_fields_scroll_while_creation_actions_stay_above_the_keyboard() {
-    let size = Size::new(320.0, 360.0);
+    let size = Size::new(320.0, 240.0);
     let mut state = State::default();
     state.mobile = true;
     state.page = Page::Library;
     state.creating = Some(Draft {
         name: "Un nombre largo para nuestra playlist de viaje".into(),
-        collaborative: true,
-        first: None,
+        collaborative: false,
+        first: Some(Track { id: "first".into(), title: "Una canción de nombre largo para nuestra playlist de viaje ".repeat(8), artist: "Un artista".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 180_000 }),
     });
+    let full = Size::new(390.0, 844.0);
+    assert!(!tree(&state, full).layout(full).access.iter().any(|node| node.id.starts_with("playlist-kind:")),
+        "phone creation does not offer collaboration before sharing accounts exist");
     let mut tree = tree(&state, size);
-    for id in [
-        "playlist-name",
-        "playlist-kind:normal",
-        "playlist-kind:collaborative",
-    ] {
-        reveal(&mut tree, id, size);
-    }
+    reveal(&mut tree, "playlist-name", size);
     tree.scroll_to_end("modal_body:playlist-cancel");
     let frame = tree.layout(size);
     for id in [
