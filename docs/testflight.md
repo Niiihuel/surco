@@ -7,15 +7,73 @@ La membresía Apple Developer paga ya permite preparar esta distribución.
 La compilación, firma y subida se realizan en GitHub Actions; los pasos de
 certificado de abajo también funcionan desde Linux, sin Xcode local.
 
-## Beta entregada · 15 de octubre de 2026
+## Beta entregada · 0.3.0 (4.1) · 15 de octubre de 2026
+
+La [ejecución 38746396955](https://github.com/Niiihuel/surco/actions/runs/38746396955)
+terminó correctamente desde `main` en `7e76a02a7ffd3552246ce6d3b13399c4b12b1373`,
+después del merge de [PR #11](https://github.com/Niiihuel/surco/pull/11). La
+validación y subida de la ejecución número **4**, intento **1**, están completas.
+El IPA descargado confirma **0.3.0 (4.1)**, Bundle ID correcto, SDK iOS 26.5,
+mínimo iOS 15, audio en segundo plano, LaunchScreen compilado, firma/perfil
+incorporados y entitlements de distribución. Su SHA-256 es
+`42b5a8d85c7d6c415d75630709173477099a380aa65e48e11b80818f63546375`.
+El tag anotado [`ios-v0.3.0-build4.1`](https://github.com/Niiihuel/surco/tree/ios-v0.3.0-build4.1)
+ya está publicado sobre ese mismo commit.
+
+Apple mostró **Procesando** a las 11:03 ART y completó el procesamiento. A las
+**14:08 UTC (11:08 ART)** quedó verificada **0.3.0 (4.1)** como **En pruebas**
+para el grupo existente **Surco interno**, con tres testers y una vigencia de
+90 días. Se guardaron las notas de prueba en español y las respuestas de cifrado
+estándar adicional al SO/distribución fuera de Francia. El build UUID es
+`5f142d11-cc15-4b39-a55e-cbbf81cb91a3` y su ficha está en
+[App Store Connect](https://appstoreconnect.apple.com/teams/1c3fae91-928d-4369-94f8-4a7ada6471b9/apps/6823059312/testflight/ios/5f142d11-cc15-4b39-a55e-cbbf81cb91a3).
+
+Para actualizar: abrí **TestFlight → Surco → Actualizar** y comprobá que indique
+**0.3.0 (4.1)**. La asignación se hizo al grupo interno existente; no se agregaron
+testers ni se enviaron invitaciones nuevas. La instalación y la prueba física
+de esta versión todavía no están confirmadas por el usuario.
+
+El árbol del commit de entrega `7e76a02` coincide con `ef6dbbb`, que pasó
+[CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38744477519) y
+[CI iOS](https://github.com/Niiihuel/surco/actions/runs/38744477042), con captura
+final aprobada y smoke de arranque de ocho segundos sin crash. El posterior
+[CI de escritorio de main](https://github.com/Niiihuel/surco/actions/runs/38746377744)
+también pasó en las tres plataformas. El
+[CI iOS de main 38746377853](https://github.com/Niiihuel/surco/actions/runs/38746377853)
+compiló bien, pero su intento 1 falló en `simctl install` por timeout de 120 segundos,
+antes de arrancar la app, tras un boot de unos 88 segundos con DataMigration;
+device-unsigned sí pasó. El único reintento del job fallido también agotó el
+tiempo de instalación antes de arrancar la app, sin cambios de código ni de
+timeout. El [PR #13](https://github.com/Niiihuel/surco/pull/13) alinea el
+toolchain de CI unsigned con el usado para firmar esta beta. Su primer head
+`65561cf` falló en readiness antes de instalar. En `940a4b1`,
+[escritorio](https://github.com/Niiihuel/surco/actions/runs/38752153515) y el
+[job device-unsigned](https://github.com/Niiihuel/surco/actions/runs/38752153497)
+pasaron. El simulador completó readiness, instalación, lanzamiento y el primer
+control de proceso tras ocho segundos; produjo un PNG válido, pero `simctl`
+screenshot venció su timeout. No se ejecutaron el control final ni la escritura
+de `smoke.json`: ese intento falló y su causa exacta no quedó establecida. El nuevo head
+`5420763` amplía solo el presupuesto de screenshot a 180 segundos, conservando
+retorno exitoso, ambos controles de proceso y `smoke.json`; 14 tests Python pasan.
+En el [CI iOS final](https://github.com/Niiihuel/surco/actions/runs/38755079773)
+pasaron simulador y device-unsigned; el
+[CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38755079488)
+pasó en las tres plataformas. El resultado se verificó a las 15:05:28 UTC:
+retorno correcto de captura, ambos controles de proceso y smoke completo. El
+PR #13 fue integrado como `50b692d11236c14aaea0755b7e23f0aa51610235` a las
+15:08:59 UTC. La PNG nativa de 1206×2622, ambos controles de proceso, el smoke
+de ocho segundos y la lista vacía de crash reports fueron revisados y aceptados. Esto no reemplaza la prueba física del iPhone. El fallo y ambos intentos se conservan en la
+[validación de motion](ios-polish/MOTION-VALIDATION.md), junto con la procedencia
+separada de capturas y clips. Las pruebas físicas de 0.3.0 siguen pendientes.
+
+## Beta entregada · 0.2.0 (3.1) · 15 de octubre de 2026
 
 **Surco 0.2.0 (3.1)** terminó de procesarse y figura **En pruebas** en
 **Surco interno**, el grupo existente de tres testers. La información de cifrado
 está guardada para distribución fuera de Francia y las notas de prueba incluyen
 audio, dispositivos, teclado, gestos y Copy/Paste entre apps.
 
-Para actualizar la instalación actual: abrí **TestFlight → Surco → Actualizar**
-y comprobá que indique **0.2.0 (3.1)**. La compilación está en
+La compilación histórica **0.2.0 (3.1)** está en
 [App Store Connect](https://appstoreconnect.apple.com/teams/1c3fae91-928d-4369-94f8-4a7ada6471b9/apps/6823059312/testflight/ios/c483fa6b-e4d2-40c5-b697-7e2cd8be7e3f).
 
 La [ejecución firmada 38719103389](https://github.com/Niiihuel/surco/actions/runs/38719103389)
@@ -30,8 +88,12 @@ runner se limpiaron al terminar.
 
 Esta entrega conserva el motor y la UI Rust/limn, con las integraciones nativas
 de media, teclado, rutas y portapapeles. Las pruebas automatizadas y visuales
-están completas; el [checklist del iPhone real](ios.md#build-and-validation)
-queda pendiente de observación del usuario.
+están completas. El 15 de octubre de 2026 el usuario confirmó que **0.2.0 (3.1)**
+reproduce correctamente en segundo plano y con el iPhone bloqueado. Quedan
+pendientes las demás comprobaciones del [iPhone real](ios.md#build-and-validation):
+Bluetooth/AirPlay, llamadas/interrupciones, comandos de auriculares, Dynamic
+Island, teclado/gestos y Copy/Paste entre apps. Esa confirmación física corresponde
+a esta beta; no acredita todavía el comportamiento de 0.3.0.
 
 ## Herramientas de distribución
 
@@ -214,6 +276,9 @@ metadatos de archivos dentro del contenedor y temporizadores/intervalos propios.
 El manifest no reemplaza la declaración de datos de App Privacy.
 ([Razones Apple](https://developer.apple.com/documentation/bundleresources/app-privacy-configuration/nsprivacyaccessedapitypes/nsprivacyaccessedapitype))
 
-La validación final en hardware debe comprobar audio, Bluetooth, llamadas,
-bloqueo de pantalla y reproducción en segundo plano. El CI de simulador aporta
-evidencia de arranque e interfaz; esas funciones necesitan el iPhone real.
+En cada beta nueva, revalidá audio, Bluetooth/AirPlay, llamadas/interrupciones,
+bloqueo de pantalla y reproducción en segundo plano, además de los gestos y
+accesibilidad modificados. El usuario ya confirmó segundo plano/bloqueo en
+**0.2.0 (3.1)**; la comprobación física de **0.3.0** sigue pendiente. El CI de
+simulador aporta evidencia de arranque e interfaz; las funciones de hardware
+necesitan el iPhone real.
