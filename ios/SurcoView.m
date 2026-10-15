@@ -110,7 +110,8 @@ typedef struct {
 }
 
 - (void)updateView:(UIView *)view geometry:(SurcoUiGeometry *)geometry {
-    if (_view != view) {
+    BOOL viewChanged = _view != view;
+    if (viewChanged) {
         [_picker removeFromSuperview];
         _picker.hidden = YES;
         _picker.userInteractionEnabled = NO;
@@ -119,6 +120,8 @@ typedef struct {
     *geometry = (SurcoUiGeometry){0};
     geometry->route_revision = _routeRevision;
     if (!view) return;
+    // A replaced view is attached by updatePayload later in this frame.
+    if (!viewChanged) [_surfaces refresh];
     CGRect bounds = view.bounds;
     geometry->width = bounds.size.width;
     geometry->height = bounds.size.height;

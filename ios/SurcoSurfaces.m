@@ -37,7 +37,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 }
 @end
 
-@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UIAdaptivePresentationControllerDelegate> {
+@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
     NSArray<NSDictionary *> *_menus;
@@ -50,6 +50,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     BOOL _transitioning;
     BOOL _menuVisible;
     BOOL _valid;
+    BOOL _reduceMotion;
     CGFloat _scale;
     UIControl *_paste;
     SurcoPasteTarget *_pasteTarget;
@@ -89,6 +90,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     _pasteTarget.receive = nil;
     [_paste removeFromSuperview];
     _paste = nil;
+    [_interaction dismissMenu];
     [_interaction.view removeInteraction:_interaction];
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
@@ -108,6 +110,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 - (void)updatePayload:(NSDictionary *)payload view:(UIView *)view scale:(CGFloat)scale {
     if (!_valid) return;
     if (_view != view) {
+        [_interaction dismissMenu];
         [_interaction.view removeInteraction:_interaction];
         [_paste removeFromSuperview];
         UIViewController *oldSheet = _sheet;
@@ -123,6 +126,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
         [view addInteraction:_interaction];
     }
     _scale = scale;
+    _reduceMotion = [payload[@"reduce_motion"] boolValue];
     _menus = payload[@"menus"] ?: @[];
     _desiredSheet = [payload[@"sheet"] isKindOfClass:NSDictionary.class] ? payload[@"sheet"] : nil;
     if (!_desiredSheet || ![_desiredSheet[@"id"] isEqual:_dismissedSheet]) _dismissedSheet = nil;
@@ -130,6 +134,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
 }
+- (void)refresh { [self reconcileSheet]; }
 - (void)updatePaste:(NSDictionary *)slot {
     CGRect rect = slot ? [self rect:slot[@"rect"]] : CGRectNull;
     BOOL visible = slot && _view.window && !_desiredSheet && !_menuVisible &&
@@ -223,11 +228,12 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 - (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForHighlightingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self preview]; }
 - (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForDismissingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self preview]; }
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willEndForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id<UIContextMenuInteractionAnimating>)animator {
-    NSString *identifier = [configuration.identifier copy];
+    NSString *identifier = [(NSString *)configuration.identifier copy];
+    NSDictionary *closingMenu = _activeMenu;
     __weak SurcoSurfaces *weakSelf = self;
     void (^finished)(void) = ^{
         SurcoSurfaces *owner = weakSelf;
-        if (!owner) return;
+        if (!owner || !owner->_valid || owner->_interaction != interaction || owner->_activeMenu != closingMenu) return;
         // Selection is queued first; closing only after UIKit's animation keeps its snapshot alive.
         [owner emit:@{@"kind": @"menu_close", @"id": identifier}];
         owner->_menuVisible = NO;
@@ -253,9 +259,10 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     __weak SurcoSurfaces *weakSelf = self;
     if (_sheet) {
         _transitioning = YES;
-        [_sheet dismissViewControllerAnimated:!UIAccessibilityIsReduceMotionEnabled() completion:^{
+        UIViewController *closingSheet = _sheet;
+        [closingSheet dismissViewControllerAnimated:!(_reduceMotion || UIAccessibilityIsReduceMotionEnabled()) completion:^{
             SurcoSurfaces *owner = weakSelf;
-            if (!owner) return;
+            if (!owner || !owner->_valid || owner->_sheet != closingSheet) return;
             owner->_sheet = nil;
             owner->_sheetId = nil;
             owner->_transitioning = NO;
@@ -297,9 +304,10 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     _sheet.view.tintColor = UIColor.whiteColor;
     _sheetId = desired;
     _transitioning = YES;
-    [presenter presentViewController:_sheet animated:!UIAccessibilityIsReduceMotionEnabled() completion:^{
+    UIViewController *openingSheet = _sheet;
+    [presenter presentViewController:openingSheet animated:!(_reduceMotion || UIAccessibilityIsReduceMotionEnabled()) completion:^{
         SurcoSurfaces *owner = weakSelf;
-        if (!owner) return;
+        if (!owner || !owner->_valid || owner->_sheet != openingSheet) return;
         owner->_transitioning = NO;
         [owner reconcileSheet];
     }];
