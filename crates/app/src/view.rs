@@ -899,7 +899,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             pill("filter:lists", "Playlists", state.filter == Filter::Lists),
             pill("filter:artists", "Artistas", state.filter == Filter::Artists),
             pill("filter:albums", "Álbumes", state.filter == Filter::Albums),
-        ]).gap(8.0)).drag_to_pan()
+        ]).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR)
     } else { filters };
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
@@ -1136,6 +1136,7 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
     // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
     let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
     let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted);
+    let strip = if state.mobile { strip.scrollbar_visibility(mobile::SCROLL_INDICATOR) } else { strip };
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 

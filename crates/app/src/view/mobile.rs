@@ -15,6 +15,7 @@ const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;
 const HEADER_HEIGHT: f32 = 76.0;
 const MINI_HEIGHT: f32 = 78.0;
+pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
 
 pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
     IconButton::new(id, glyph, palette).variant(ButtonVariant::Ghost)
@@ -108,10 +109,20 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
     let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
     let content = chrome::under_bars(content, top_height, bottom_height);
-    let bars = Element::column(vec![Element::column(top).block_pointer("mobile-header-bar"), Element::spacer().flex(1.0), Element::column(bottom)]);
-    notices.push(Element::stack(vec![content, bars]).flex(1.0));
-    let content = Element::column(notices);
+    let mut top = Element::column(top).background(SCHEME.canvas).block_pointer("mobile-header-bar");
+    if state.page == Page::Playing {
+        if let Some(tint) = state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)) {
+            // Match the full player's wash over an opaque base, so scrolled text
+            // cannot show through the compact transport.
+            let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
+            top = top.vertical_gradient(vec![Color { a: 150, ..*tint }, Color { a: lower, ..*tint }]);
+        }
+    }
+    let bars = Element::column(vec![top, Element::spacer().flex(1.0), Element::column(bottom)]);
+    let content = Element::stack(vec![content, bars]);
     let content = if state.page == Page::Playing { state.current().map_or(content.clone(), |track| washed(state, &track.artwork_url, content)) } else { content };
+    notices.push(content.flex(1.0));
+    let content = Element::column(notices);
     let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
@@ -318,6 +329,20 @@ mod tests {
         assert!(frame.context_menu_at(limn::Point::new(30.0, 60.0)).is_some());
         state.update(&UiAction::Clicked { id: "more:rec:0:0".into() });
         assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
+    }
+
+    #[test]
+    fn phone_home_shelves_start_without_a_permanent_scroll_indicator() {
+        let mut state = playing_state();
+        state.collection.heard = (0..6).map(|index| Track { id: format!("song-{index}"), ..state.current().unwrap().clone() }).collect();
+        let size = Size::new(390.0, 844.0);
+        let mut tree = UiTree::new(super::view(&state, size));
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(size);
+        assert!(frame.regions.iter().any(|region| region.id == "home-heard" && region.kind == limn::HitKind::Scroll));
+        assert!(!frame.commands.iter().any(|command| matches!(command,
+            limn::DrawCommand::FillRect { rect, radius, .. } if rect.height == 3.0 && *radius == 1.5)),
+            "the horizontal indicator stays hidden until interaction");
     }
 
     #[test]

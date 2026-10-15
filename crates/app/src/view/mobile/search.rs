@@ -45,7 +45,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     let filters = Element::horizontal_scroll_2d("mobile-search-filters", Element::row(vec![
         tab("all", "Todo", SearchFilter::All), tab("tracks", "Canciones", SearchFilter::Tracks),
         tab("artists", "Artistas", SearchFilter::Artists), tab("albums", "Álbumes", SearchFilter::Albums),
-    ]).gap(8.0)).drag_to_pan();
+    ]).gap(8.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR);
     let found = &state.found;
     let mut rows = Vec::new();
     if matches!(chosen, SearchFilter::All | SearchFilter::Tracks) && !found.tracks.is_empty() {
