@@ -20,6 +20,12 @@ static double SheetNumber(id value, double fallback) {
     double number = [value isKindOfClass:NSNumber.class] ? [value doubleValue] : fallback;
     return isfinite(number) ? number : fallback;
 }
+static NSString *SheetSliderValue(UISlider *slider) {
+    BOOL volume = [slider.accessibilityIdentifier isEqualToString:@"volume"];
+    NSString *value = [NSNumberFormatter localizedStringFromNumber:@(slider.value)
+        numberStyle:volume ? NSNumberFormatterPercentStyle : NSNumberFormatterDecimalStyle];
+    return [slider.accessibilityIdentifier hasPrefix:@"equalizer:"] ? [value stringByAppendingString:@" dB"] : value;
+}
 static UIColor *SheetSurface(void) { return [UIColor colorWithWhite:28.0 / 255.0 alpha:1]; }
 static UIColor *SheetMuted(void) { return [UIColor colorWithWhite:0.72 alpha:1]; }
 static UILabel *SheetLabel(UIFontTextStyle style, BOOL muted) {
@@ -306,7 +312,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
             slider.maximumValue = (float)MAX(slider.minimumValue, SheetNumber(model[@"max"], 1));
             slider.value = (float)SheetNumber(model[@"value"], slider.minimumValue);
         }
-        row.secondary.text = [NSNumberFormatter localizedStringFromNumber:@(slider.value) numberStyle:NSNumberFormatterDecimalStyle];
+        row.secondary.text = SheetSliderValue(slider);
         row.secondary.hidden = NO;
         slider.accessibilityLabel = row.title.text;
         slider.accessibilityValue = row.secondary.text;
@@ -408,7 +414,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 - (void)sliderChanged:(UISlider *)slider {
     for (SurcoSheetRow *row in _rows) {
         if (row.control != slider) continue;
-        row.secondary.text = [NSNumberFormatter localizedStringFromNumber:@(slider.value) numberStyle:NSNumberFormatterDecimalStyle];
+        row.secondary.text = SheetSliderValue(slider);
         slider.accessibilityValue = row.secondary.text;
         break;
     }
