@@ -225,7 +225,7 @@ pub enum Lyrics {
     Loading,
     Lines(Vec<Line>),
     /// Available words without timing; they never seek or follow the playback clock.
-    Plain(Vec<String>),
+    Plain { lines: Vec<String>, source: String },
     /// The request completed but the provider has no usable lyrics.
     Missing,
     /// A provider/network failure can be requested again after its rate-limit cooldown.
@@ -1873,21 +1873,21 @@ impl State {
             }
             Event::Lyrics { track_id, lines } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
-                    if *asked == track_id && (lines.is_some() || !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain(_))) {
+                    if *asked == track_id && (lines.is_some() || !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. })) {
                         *lyrics = lines.map_or(Lyrics::Missing, Lyrics::Lines);
                     }
                 }
                 Vec::new()
             }
-            Event::LyricsPlain { track_id, lines } => {
+            Event::LyricsPlain { track_id, lines, source } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
-                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_)) { *lyrics = Lyrics::Plain(lines); }
+                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_)) { *lyrics = Lyrics::Plain { lines, source }; }
                 }
                 Vec::new()
             }
             Event::LyricsFailed { track_id, message, retry_after } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
-                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain(_)) {
+                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. }) {
                         let now = Instant::now();
                         let retry_at = now.checked_add(retry_after).unwrap_or(now + Duration::from_secs(86_400));
                         *lyrics = Lyrics::Failed { message, retry_at };
@@ -2135,7 +2135,7 @@ impl State {
     /// The un-timed words for the current track only.
     pub fn plain_lyrics(&self) -> &[String] {
         match (&self.lyrics, &self.player.current) {
-            (Some((asked, Lyrics::Plain(lines))), Some(track)) if *asked == track.id => lines,
+            (Some((asked, Lyrics::Plain { lines, .. })), Some(track)) if *asked == track.id => lines,
             _ => &[],
         }
     }
@@ -3034,9 +3034,9 @@ mod tests {
             *retry_at = Instant::now() - Duration::from_secs(1);
         }
         assert_eq!(click(&mut state, "retry-lyrics"), vec![Command::Lyrics(track("a"))]);
-        state.apply(Event::LyricsPlain { track_id: "old".into(), lines: vec!["stale".into()] });
+        state.apply(Event::LyricsPlain { track_id: "old".into(), lines: vec!["stale".into()], source: "Test".into() });
         assert!(state.plain_lyrics().is_empty());
-        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["First line".into(), "Second line".into()] });
+        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["First line".into(), "Second line".into()], source: "Test".into() });
         assert_eq!(state.plain_lyrics(), ["First line", "Second line"]);
         assert!(state.lines().is_empty() && state.active_line().is_none() && state.line_to_reveal().is_none());
         assert!(click(&mut state, "lyric:0").is_empty(), "plain words have no seek time");
@@ -3053,7 +3053,7 @@ mod tests {
         state.apply(Event::LyricsFailed { track_id: "a".into(), message: "late timeout".into(), retry_after: Duration::ZERO });
         state.apply(Event::Lyrics { track_id: "a".into(), lines: None });
         assert_eq!(state.lines(), lines);
-        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["untimed".into()] });
+        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["untimed".into()], source: "Test".into() });
         assert_eq!(state.lines(), lines, "a late plain result cannot downgrade synchronized words");
     }
 

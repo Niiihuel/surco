@@ -188,7 +188,7 @@ pub enum Event {
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
     /// Available text without synchronization; these lines have no seek position.
-    LyricsPlain { track_id: String, lines: Vec<String> },
+    LyricsPlain { track_id: String, lines: Vec<String>, source: String },
     /// A transient provider/network failure is not evidence that the song has no lyrics.
     LyricsFailed { track_id: String, message: String, retry_after: Duration },
     /// A track's own video, or none when it has no such video.
@@ -629,7 +629,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             tokio::spawn(async move {
                 let event = match shared.lyrics.fetch(&shared.youtube, &track).await {
                     Ok(Some(lyrics::Found::Synced(lines))) => Event::Lyrics { track_id: track.id, lines: Some(lines) },
-                    Ok(Some(lyrics::Found::Plain(lines))) => Event::LyricsPlain { track_id: track.id, lines },
+                    Ok(Some(lyrics::Found::Plain { lines, source })) => Event::LyricsPlain { track_id: track.id, lines, source },
                     Ok(None) => Event::Lyrics { track_id: track.id, lines: None },
                     Err(failure) => {
                         // Deliberately no track names, request URLs, headers or provider body.

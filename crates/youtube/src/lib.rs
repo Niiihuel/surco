@@ -42,6 +42,17 @@ impl YouTube {
         &self.http
     }
 
+    /// Plain words attached to this exact video's lyrics tab, with provider attribution.
+    pub async fn lyrics(&self, id: &str) -> Result<(String, String)> {
+        if !lyrics_video_id(id) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "Lyrics require a YouTube video id").into());
+        }
+        let music = self.music().await?;
+        let lyrics_id = music.get_lyrics_id(VideoID::from_raw(id)).await?;
+        let found = music.get_lyrics(lyrics_id).await?;
+        Ok((found.lyrics, found.source))
+    }
+
     /// A stretch of what an address serves, from one byte to another, both included.
     pub async fn bytes(&self, url: &str, from: u64, to: u64) -> Result<Vec<u8>> {
         let response = self.http.get(url).header("Range", format!("bytes={from}-{to}")).send().await?.error_for_status()?;
@@ -324,6 +335,10 @@ fn album_playlist_name<'a>(id: &str, tracks: &'a [Track]) -> Option<&'a str> {
     tracks.first()?.album.as_deref()
 }
 
+fn lyrics_video_id(id: &str) -> bool {
+    id.len() == 11 && id.bytes().all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+}
+
 fn found_song(song: SearchResultSong) -> Track {
     Track {
         id: song.video_id.get_raw().to_owned(),
@@ -372,7 +387,28 @@ fn duration_ms(text: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_playlist_name, duration_ms, official, playlist_browse_id};
+    use super::{album_playlist_name, duration_ms, official, playlist_browse_id, lyrics_video_id, YouTube};
+
+    #[test]
+    fn lyrics_accept_only_video_ids_and_never_urls_other_catalog_ids_or_local_keys() {
+        for valid in ["eVRbaYq5Aw4", "dQw4w9WgXcQ", "abC_1234-xy"] {
+            assert!(lyrics_video_id(valid));
+        }
+        for invalid in ["", "song", "spotify:track:abc", "0VjIjW4GlUZAMYd2vXMi3b", "https://youtu.be/eVRbaYq5Aw4", "abcdefghijk/", "ábcdefghij"] {
+            assert!(!lyrics_video_id(invalid), "not a video id: {invalid}");
+        }
+    }
+
+    #[tokio::test]
+    async fn invalid_lyric_ids_are_rejected_before_initializing_any_network_client() {
+        let youtube = YouTube::new().unwrap();
+        for id in ["", "song", "spotify:track:abc"] {
+            let error = youtube.lyrics(id).await.unwrap_err();
+            assert_eq!(error.downcast_ref::<std::io::Error>().unwrap().kind(), std::io::ErrorKind::InvalidInput);
+        }
+        assert!(youtube.music.get().is_none(), "no anonymous config download for other catalogs/local keys");
+    }
+
     use surco_core::Track;
 
     #[test]

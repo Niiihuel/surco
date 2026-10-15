@@ -2113,8 +2113,8 @@ fn lyrics(state: &State, width: f32, palette: ComponentPalette) -> Element {
             Empty::new("No se pudo cargar la letra", message, palette).icon(Icon::Custom(LYRICS)).render(),
             Button::new("retry-lyrics", "Reintentar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render(),
         ]).gap(20.0).padding(20.0)),
-        Some((_, Lyrics::Plain(_))) => {
-            let words = std::iter::once(Text::new("Letra sin sincronización", palette).muted().render())
+        Some((_, Lyrics::Plain { source, .. })) => {
+            let words = std::iter::once(Text::new(format!("Letra sin sincronización · {source}"), palette).muted().render())
                 .chain(state.plain_lyrics().iter().map(|line| {
                     if line.is_empty() { Element::spacer().size(None, Some(20.0)) }
                     else { Text::new(line, palette).font_size(LYRIC_SIZE).render() }

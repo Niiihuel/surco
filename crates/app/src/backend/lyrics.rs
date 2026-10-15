@@ -2,16 +2,18 @@
 
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::collections::VecDeque;
+use std::future::Future;
 use surco_core::{Track, lyrics::{Line, parse_lrc}};
 use surco_youtube::YouTube;
 
 const ENDPOINT: &str = "https://lrclib.net/api/search";
-const TIMEOUT: Duration = Duration::from_secs(20);
+const TIMEOUT: Duration = Duration::from_secs(12);
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Found {
     Synced(Vec<Line>),
-    Plain(Vec<String>),
+    Plain { lines: Vec<String>, source: String },
 }
 
 #[derive(Debug, PartialEq)]
@@ -23,7 +25,8 @@ pub struct Failure {
 impl Failure {
     fn limited(wait: Duration) -> Self {
         let seconds = wait.as_secs().saturating_add(u64::from(wait.subsec_nanos() > 0)).max(1);
-        Self { message: format!("El servicio de letras alcanzó su límite. Esperá {seconds} segundos y volvé a intentar."), retry_after: wait }
+        let unit = if seconds == 1 { "segundo" } else { "segundos" };
+        Self { message: format!("El servicio de letras alcanzó su límite. Esperá {seconds} {unit} y volvé a intentar."), retry_after: wait }
     }
 }
 
@@ -31,11 +34,43 @@ impl Failure {
 #[derive(Default)]
 pub struct Provider {
     blocked_until: Mutex<Option<Instant>>,
+    successful: Mutex<VecDeque<(Track, Found)>>,
 }
 
 impl Provider {
     pub async fn fetch(&self, youtube: &YouTube, track: &Track) -> Result<Option<Found>, Failure> {
-        self.fetch_from(youtube, track, ENDPOINT, TIMEOUT).await
+        self.cached(track, async {
+            let primary = self.fetch_from(youtube, track, ENDPOINT, TIMEOUT).await;
+            resolve(primary, async {
+                let found = tokio::time::timeout(Duration::from_secs(8), youtube.lyrics(&track.id)).await;
+                match found {
+                    Ok(Ok((words, source))) => {
+                        let lines = plain_lines(&words);
+                        Ok((!lines.is_empty()).then_some(Found::Plain { lines, source }))
+                    }
+                    _ => Err(Failure { message: "No pudimos cargar la letra desde YouTube Music. Volvé a intentar.".into(), retry_after: Duration::ZERO }),
+                }
+            }).await
+        }).await
+    }
+
+    async fn cached(&self, track: &Track, fetch: impl Future<Output = Result<Option<Found>, Failure>>) -> Result<Option<Found>, Failure> {
+        if let Some((_, found)) = self.successful.lock().unwrap().iter().find(|(asked, _)| asked == track) {
+            return Ok(Some(found.clone()));
+        }
+        let result = fetch.await;
+        if let Ok(Some(found)) = &result {
+            let mut saved = self.successful.lock().unwrap();
+            if !matches!(found, Found::Synced(_)) {
+                if let Some((_, available)) = saved.iter().find(|(asked, available)| asked == track && matches!(available, Found::Synced(_))) {
+                    return Ok(Some(available.clone()));
+                }
+            }
+            saved.retain(|(asked, _)| asked != track);
+            saved.push_back((track.clone(), found.clone()));
+            while saved.len() > 32 { saved.pop_front(); }
+        }
+        result
     }
 
     async fn fetch_from(&self, youtube: &YouTube, track: &Track, endpoint: &str, timeout: Duration) -> Result<Option<Found>, Failure> {
@@ -54,6 +89,18 @@ impl Provider {
         }
         result
     }
+}
+
+async fn resolve(primary: Result<Option<Found>, Failure>, fallback: impl Future<Output = Result<Option<Found>, Failure>>) -> Result<Option<Found>, Failure> {
+    if matches!(primary, Ok(Some(_))) { return primary; }
+    match fallback.await {
+        Ok(Some(found)) => Ok(Some(found)),
+        _ => primary,
+    }
+}
+
+fn plain_lines(text: &str) -> Vec<String> {
+    text.trim().lines().map(|line| line.trim().to_owned()).collect()
 }
 
 async fn fetch_at(youtube: &YouTube, track: &Track, endpoint: &str, timeout: Duration) -> Result<Option<Found>, Failure> {
@@ -89,9 +136,9 @@ async fn fetch_at(youtube: &YouTube, track: &Track, endpoint: &str, timeout: Dur
     }
     // Plain text is useful too, but it never receives fabricated seek positions.
     let plain = ranked.iter().filter_map(|entry| entry["plainLyrics"].as_str())
-        .map(|text| text.trim().lines().map(|line| line.trim().to_owned()).collect::<Vec<_>>())
+        .map(plain_lines)
         .find(|lines| lines.iter().any(|line| !line.is_empty()));
-    Ok(plain.map(Found::Plain))
+    Ok(plain.map(|lines| Found::Plain { lines, source: "LRCLIB".into() }))
 }
 
 #[cfg(test)]
@@ -174,7 +221,7 @@ mod tests {
         let body = r#"[{"duration":215,"syncedLyrics":null,"plainLyrics":"First line\n\nSecond line"}]"#;
         let (endpoint, request, worker) = server("200 OK", "", body, Duration::ZERO);
         let found = fetch_at(&YouTube::new().unwrap(), &track(), &endpoint, Duration::from_secs(2)).await.unwrap();
-        assert_eq!(found, Some(Found::Plain(vec!["First line".into(), "".into(), "Second line".into()])));
+        assert_eq!(found, Some(Found::Plain { lines: vec!["First line".into(), "".into(), "Second line".into()], source: "LRCLIB".into() }));
         request.recv().unwrap(); worker.join().unwrap();
     }
 
@@ -191,6 +238,59 @@ mod tests {
         let failure = provider.fetch_from(&youtube, &next, &endpoint, Duration::from_secs(2)).await.unwrap_err();
         assert!(failure.retry_after > Duration::from_secs(6), "the client preserves the remaining cooldown");
         assert!(failure.message.contains("límite"));
+    }
+
+    #[tokio::test]
+    async fn an_available_video_lyric_recovers_a_limited_primary_provider() {
+        let recovered = resolve(Err(Failure::limited(Duration::from_secs(7))), async {
+            Ok(Some(Found::Plain { lines: vec!["Actual fallback words".into()], source: "Source: Test".into() }))
+        }).await.unwrap();
+        assert!(matches!(recovered, Some(Found::Plain { source, .. }) if source == "Source: Test"));
+    }
+
+    #[tokio::test]
+    async fn synchronized_words_do_not_request_a_secondary_provider_and_both_failures_keep_the_primary_wait() {
+        let lines = vec![Line { at_ms: 1000, text: "Timed words".into() }];
+        let found = resolve(Ok(Some(Found::Synced(lines.clone()))), async { panic!("must not poll fallback for available lyrics") }).await.unwrap();
+        assert_eq!(found, Some(Found::Synced(lines)));
+        let failed = resolve(Err(Failure::limited(Duration::from_secs(7))), async {
+            Err(Failure { message: "secondary unavailable".into(), retry_after: Duration::ZERO })
+        }).await.unwrap_err();
+        assert_eq!(failed.retry_after, Duration::from_secs(7));
+    }
+
+    #[tokio::test]
+    async fn successful_lyrics_are_reused_across_tracks_without_another_request() {
+        let provider = Provider::default();
+        let first = track();
+        let second = Track { id: "second".into(), ..track() };
+        let fetched = std::cell::Cell::new(0);
+        for song in [&first, &second, &first] {
+            let result = provider.cached(song, async {
+                fetched.set(fetched.get() + 1);
+                Ok(Some(Found::Plain { lines: vec!["Words".into()], source: "Test".into() }))
+            }).await.unwrap();
+            assert!(result.is_some());
+        }
+        assert_eq!(fetched.get(), 2, "returning to a song must reuse successful lyrics");
+    }
+
+    #[tokio::test]
+    async fn a_late_plain_fallback_cannot_downgrade_a_cached_synchronized_result() {
+        let provider = Provider::default();
+        let track = track();
+        let (done, signal) = tokio::sync::oneshot::channel();
+        let late = provider.cached(&track, async {
+            signal.await.unwrap();
+            Ok(Some(Found::Plain { lines: vec!["Untimed".into()], source: "Test".into() }))
+        });
+        let synced = provider.cached(&track, async {
+            done.send(()).unwrap();
+            Ok(Some(Found::Synced(vec![Line { at_ms: 1000, text: "Timed".into() }])))
+        });
+        let _ = tokio::join!(late, synced);
+        let found = provider.cached(&track, async { panic!("already cached") }).await.unwrap();
+        assert!(matches!(found, Some(Found::Synced(_))));
     }
 
     #[tokio::test]

@@ -98,13 +98,14 @@ fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
     } else if !state.plain_lyrics().is_empty() {
         parts.extend(state.plain_lyrics().iter().filter(|line| !line.is_empty()).take(4)
             .map(|line| Text::new(line, card).font_size(22.0).line_height(30.0).render()));
-        parts.push(Text::new("Letra sin sincronización", card).font_size(14.0).muted().render());
+        let source = match &state.lyrics { Some((_, Lyrics::Plain { source, .. })) => source.as_str(), _ => "" };
+        parts.push(Text::new(format!("Letra sin sincronización · {source}"), card).font_size(14.0).muted().render());
     } else {
         let current = state.current().map(|track| track.id.as_str());
         let known = state.lyrics.as_ref().filter(|(id, _)| Some(id.as_str()) == current);
         let message = match known {
             Some((_, Lyrics::Loading)) => "Buscando la letra…",
-            Some((_, Lyrics::Missing | Lyrics::Lines(_) | Lyrics::Plain(_))) => "No hay letra disponible.",
+            Some((_, Lyrics::Missing | Lyrics::Lines(_) | Lyrics::Plain { .. })) => "No hay letra disponible.",
             Some((_, Lyrics::Failed { message, .. })) => message,
             None => "Abrí la letra para buscarla.",
         };
@@ -226,7 +227,7 @@ mod tests {
         let failed = frame(&state);
         assert!(has_text(&failed, "Sin conexión al servicio"));
         assert!(failed.access.iter().any(|node| node.id == "retry-lyrics" && !node.disabled));
-        state.lyrics = Some(("song".into(), Lyrics::Plain(vec!["Texto disponible".into(), "Otro verso".into()])));
+        state.lyrics = Some(("song".into(), Lyrics::Plain { lines: vec!["Texto disponible".into(), "Otro verso".into()], source: "Test".into() }));
         let plain = frame(&state);
         assert!(has_text(&plain, "Texto disponible") && has_text(&plain, "Letra sin sincronización"));
         assert!(!plain.regions.iter().any(|region| region.id.starts_with("lyric:")));
