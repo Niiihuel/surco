@@ -105,9 +105,10 @@ def smoke_simulator(app, sdk_version, env, artifacts):
         run(["xcrun", "simctl", "bootstatus", udid, "-b"], env, logs / "simulator-ready.log", timeout=180)
         run(["xcrun", "simctl", "install", udid, str(app)], env, logs / "simulator-install.log", timeout=120)
         launch_env = {**env, "SIMCTL_CHILD_RUST_BACKTRACE": "1"}
+        # Cold CI simulators can take over two minutes to finish LaunchServices registration.
         launched = run(["xcrun", "simctl", "launch", "--terminate-running-process",
                         f"--stdout={logs / 'app.stdout.log'}", f"--stderr={logs / 'app.stderr.log'}",
-                        udid, bundle_id], launch_env, logs / "simulator-launch.log", timeout=120)
+                        udid, bundle_id], launch_env, logs / "simulator-launch.log", timeout=300)
         match = re.search(re.escape(bundle_id) + r":\s*(\d+)", launched)
         if not match:
             raise RuntimeError("simctl did not return an application process ID")
