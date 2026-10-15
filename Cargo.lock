@@ -4696,6 +4696,7 @@ dependencies = [
  "image",
  "limn",
  "limn-egui",
+ "log",
  "percent-encoding",
  "serde",
  "serde_json",

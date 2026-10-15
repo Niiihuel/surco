@@ -183,7 +183,12 @@ impl eframe::App for Host {
         self.tree.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(not(target_os = "windows"))]
-        let area = ui.max_rect();
+        let area = if self.state.mobile {
+            // Keep phone controls inside the platform's notch and home-indicator insets.
+            ui.max_rect().intersect(ctx.content_rect())
+        } else {
+            ui.max_rect()
+        };
         #[cfg(target_os = "windows")]
         let area = window::show(ui, self.state.cinema);
         let window = Size::new(area.width(), area.height());
@@ -449,11 +454,34 @@ pub fn run() -> eframe::Result {
 #[cfg(target_os = "ios")]
 #[no_mangle]
 pub extern "C" fn surco_start() -> i32 {
+    ios_logging();
     match run() {
         Ok(()) => 0,
         Err(error) => {
             eprintln!("Surco could not start: {error}");
             1
         }
+    }
+}
+
+#[cfg(target_os = "ios")]
+fn ios_logging() {
+    struct StderrLogger;
+    impl log::Log for StderrLogger {
+        fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+            metadata.level() <= log::Level::Warn
+        }
+
+        fn log(&self, record: &log::Record<'_>) {
+            if self.enabled(record.metadata()) {
+                eprintln!("[{} {}] {}", record.level(), record.target(), record.args());
+            }
+        }
+
+        fn flush(&self) {}
+    }
+    static LOGGER: StderrLogger = StderrLogger;
+    if log::set_logger(&LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Warn);
     }
 }

@@ -41,3 +41,7 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 # MIT. The desktop's media keys and "now playing" widget; over zbus, so nothing to link.
 [target.'cfg(target_os = "linux")'.dependencies]
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }
+
+[target.'cfg(target_os = "ios")'.dependencies]
+# eframe's iOS event loop logs startup errors before exiting instead of returning them.
+log = "0.4"
