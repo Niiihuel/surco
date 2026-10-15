@@ -841,7 +841,7 @@ mod lyrics_viewport_tests {
 #[cfg(test)]
 mod mobile_geometry_tests {
     use super::*;
-    use egui::{Color32, MarginF32, RawInput, Rect, SafeAreaInsets, pos2, vec2};
+    use egui::{Color32, RawInput, Rect, SafeAreaInsets, epaint::MarginF32, pos2, vec2};
     use state::mobile::ContentInsets;
 
     #[test]

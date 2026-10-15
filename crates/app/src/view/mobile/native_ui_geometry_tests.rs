@@ -1,7 +1,7 @@
 //! Verify test-only XCUI entry coordinates against the real retained UI frame.
 
 use super::*;
-use eframe::egui::{MarginF32, RawInput, Rect, SafeAreaInsets, pos2, vec2};
+use eframe::egui::{RawInput, Rect, SafeAreaInsets, epaint::MarginF32, pos2, vec2};
 use limn::UiTree;
 use serde_json::{Value, json};
 
