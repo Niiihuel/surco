@@ -5,6 +5,7 @@ use super::*;
 mod search;
 mod home;
 mod player;
+mod lyrics;
 mod chrome;
 pub(super) mod controls;
 mod sheets;
@@ -79,7 +80,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if editing { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
-    let header = horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0)
+    let header = if state.page == Page::Lyrics { lyrics::header(state, palette) }
+        else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
     let header = if compact_player {
         Element::stack(vec![header, Element::column(vec![Element::spacer().flex(1.0),
@@ -108,20 +110,27 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let content = with_notice(content, state, palette);
     let mut bottom = Vec::new();
     let mut bottom_height = insets.bottom;
-    if state.page != Page::Playing && !keyboard {
+    if state.page == Page::Lyrics {
+        bottom.push(lyrics::footer(state, palette));
+        bottom_height += lyrics::FOOTER_HEIGHT;
+    } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             bottom.push(mini_player(state, track, palette));
             bottom_height += MINI_HEIGHT;
         }
     }
-    if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
+    if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
     bottom.push(Element::spacer().size(None, Some(insets.bottom)));
     let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
     let header_edge = mix(surface.0, surface.1, (top_height / window.height.max(1.0)).clamp(0.0, 1.0));
-    let footer_edge = if matches!(state.page, Page::Playing | Page::Lyrics) { surface.1 } else { SCHEME.canvas };
+    let song_surface = matches!(state.page, Page::Playing | Page::Lyrics);
+    let footer_edge = if song_surface {
+        mix(surface.0, surface.1, ((window.height - bottom_height) / window.height.max(1.0)).clamp(0.0, 1.0))
+    } else { SCHEME.canvas };
     let content = chrome::under_bars(content, top_height, bottom_height, header_edge, footer_edge);
     let top = Element::column(top).vertical_gradient(vec![surface.0, header_edge]).block_pointer("mobile-header-bar");
     let footer = Element::column(bottom).background(footer_edge).block_pointer("mobile-footer-bar");
+    let footer = if song_surface { footer.vertical_gradient(vec![footer_edge, surface.1]) } else { footer };
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);

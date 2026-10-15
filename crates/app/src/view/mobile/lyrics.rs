@@ -43,6 +43,9 @@ mod tests {
     fn state() -> State {
         let mut state = State::default();
         state.mobile = true;
+        state.mobile_ui.content_insets = crate::state::mobile::ContentInsets {
+            top: 59.0, bottom: 34.0, ..Default::default()
+        };
         state.page = Page::Playing;
         state.show(PlayerView { current: Some(Track {
             id: "song".into(), title: "La canción actual".into(), artist: "Una artista".into(), artist_id: None,
@@ -53,13 +56,7 @@ mod tests {
     }
 
     fn tree(state: &State, width: f32) -> UiTree {
-        let mut tree = UiTree::new(Element::column(vec![
-            Element::spacer().size(None, Some(59.0)),
-            header(state, SCHEME.palette()),
-            Element::spacer().flex(1.0),
-            footer(state, SCHEME.palette()),
-            Element::spacer().size(None, Some(34.0)),
-        ]));
+        let mut tree = UiTree::new(super::super::view(state, Size::new(width, 844.0)));
         tree.set_reduced_motion(true);
         tree.layout(Size::new(width, 844.0));
         tree
@@ -148,7 +145,10 @@ mod tests {
             assert!(shown.frame().commands.iter().any(|command| matches!(command,
                 DrawCommand::Text { text, .. } if text == expected)));
         }
-        let empty = tree(&State::default(), 390.0);
+        let mut empty_state = State::default();
+        empty_state.mobile = true;
+        empty_state.page = Page::Lyrics;
+        let empty = tree(&empty_state, 390.0);
         assert!(empty.frame().access.iter().all(|node| node.id == "mobile-lyrics-close"));
     }
 }

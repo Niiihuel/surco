@@ -118,11 +118,14 @@ fn the_home_indicator_area_masks_content_and_does_not_activate_hidden_rows() {
         assert!(tree.handle_event(UiEvent::PointerUp(point)).is_empty());
         let footer = surface(&frame, "mobile-footer-bar");
         assert_eq!(footer.y + footer.height, size.height);
-        assert!(frame.commands.iter().any(|command| matches!(command,
-            DrawCommand::FillRect { rect, color, .. }
-                if inside(Rect::new(footer.x, size.height - insets.bottom, footer.width, insets.bottom), *rect)
-                    && color.a == 255 && *color == if state.page == Page::Playing { page_surface(&state).1 } else { SCHEME.canvas }
-        )), "an opaque footer paints through the home indicator");
+        let inset = Rect::new(footer.x, size.height - insets.bottom, footer.width, insets.bottom);
+        assert!(frame.commands.iter().any(|command| match command {
+            DrawCommand::FillVerticalGradient { rect, top, bottom } if state.page == Page::Playing =>
+                inside(inset, *rect) && top.a == 255 && *bottom == page_surface(&state).1,
+            DrawCommand::FillRect { rect, color, .. } if state.page != Page::Playing =>
+                inside(inset, *rect) && *color == SCHEME.canvas,
+            _ => false,
+        }), "an opaque footer paints through the home indicator");
     }
 }
 
@@ -373,26 +376,30 @@ fn scrolled_song_pages_join_the_header_tone_with_short_fades_outside_the_bars() 
             fade.height, 20.0,
             "the header transition stays short instead of darkening a large content band"
         );
-        let footer_top = if page == Page::Playing {
-            size.height - state.mobile_ui.content_insets.bottom
-        } else {
-            surface(&frame, "mobile-mini-bar").y
-        };
-        let fade = frame
+        let footer = surface(&frame, "mobile-footer-bar");
+        let footer_ink = frame.commands.iter().find_map(|command| match command {
+            DrawCommand::FillVerticalGradient { rect, top, bottom } if *rect == footer => {
+                assert_eq!(*bottom, page_surface(&state).1);
+                Some(*top)
+            }
+            _ => None,
+        }).expect("the song color continues through the fixed footer");
+        let (fade, ink) = frame
             .commands
             .iter()
             .find_map(|command| match command {
                 DrawCommand::FillVerticalGradient { rect, top, bottom }
-                    if (rect.y + rect.height - footer_top).abs() < 0.1
+                    if (rect.y + rect.height - footer.y).abs() < 0.1
                         && top.a == 0
                         && bottom.a == 255 =>
                 {
-                    Some(*rect)
+                    Some((*rect, *bottom))
                 }
                 _ => None,
             })
             .expect("the bottom fade finishes beside, rather than behind, the footer");
         assert_eq!(fade.height, 24.0);
+        assert_eq!(ink, footer_ink, "the footer joins the song wash without a flat band");
     }
 }
 

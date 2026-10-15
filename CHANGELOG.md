@@ -6,6 +6,8 @@
 
 - A native iPhone search field with the system editing menu, clear and Cancel
   controls, stable keyboard focus and improved recent searches and result filters.
+- Full-screen lyrics with the song's title, artist, seek, playback, sharing and
+  audio-route controls, without the library tabs or mini player.
 
 ### Changed
 
