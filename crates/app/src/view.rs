@@ -1057,6 +1057,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         let picture = if matches!(entry, Entry::Artist(_)) { picture.radius(LIBRARY_TILE / 2.0) } else { picture };
         tiles.push(quick(format!("recent:{index}"), entry.title(), picture));
     }
+    if state.mobile { tiles.truncate(8); }
     let mut tiles = tiles.into_iter().peekable();
     let mut grid = Vec::new();
     while tiles.peek().is_some() {

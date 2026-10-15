@@ -8,6 +8,7 @@
   lyrics, with shorter header/tab fades and controls inside the system safe area.
 - Lower compact navigation and a tinted floating mini player with independent
   route, like and playback actions.
+- Home keeps quick access to eight recent items so listening shelves appear sooner.
 - Larger system symbols and white circular Play/Pause controls across the mobile
   player, compact headers, mini player and detail pages.
 
