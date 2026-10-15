@@ -101,6 +101,91 @@ class IOSBuildTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     script["run"](["simctl"], {}, log)
 
+    def test_boot_failure_retains_system_diagnostics_and_deletes_only_owned_simulator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / "Surco.app"
+            app.mkdir()
+            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "io.github.niiihuel.surco"}))
+            artifacts = root / "artifacts"
+            (artifacts / "logs").mkdir(parents=True)
+            calls = []
+            inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+                {"isAvailable": True, "name": "iPhone 17", "deviceTypeIdentifier": "phone"}]}}
+
+            def fake_run(command, env, log, **options):
+                calls.append((command, log.name))
+                if "devices" in command:
+                    return json.dumps(inventory)
+                if "create" in command:
+                    return "owned-simulator\n"
+                if "bootstatus" in command:
+                    raise RuntimeError("readiness failed")
+                log.write_text("CoreLocationMigrator waiting")
+                return ""
+
+            globals_ = script["smoke_simulator"].__globals__
+            with patch.dict(globals_, {"run": fake_run, "collect_crash_reports": lambda *args: []}), patch.object(time, "sleep"):
+                with self.assertRaisesRegex(RuntimeError, "readiness failed"):
+                    script["smoke_simulator"](app, "26.5", {}, artifacts)
+            commands = [command for command, _ in calls]
+            self.assertNotIn("launch", [part for command in commands for part in command])
+            self.assertIn(["xcrun", "simctl", "delete", "owned-simulator"], commands)
+            diagnostics = artifacts / "logs/simulator-startup-system.log"
+            self.assertTrue(diagnostics.exists(), "a boot failure needs OS diagnostics before the owned device is deleted")
+            self.assertIn("CoreLocationMigrator", diagnostics.read_text())
+            diagnostic_index = next(index for index, (_, name) in enumerate(calls) if name == diagnostics.name)
+            delete_index = commands.index(["xcrun", "simctl", "delete", "owned-simulator"])
+            self.assertLess(diagnostic_index, delete_index)
+            self.assertTrue(all(command[3] == "owned-simulator" for command in commands
+                                if command[:3] in (["xcrun", "simctl", "terminate"], ["xcrun", "simctl", "shutdown"],
+                                                   ["xcrun", "simctl", "delete"])))
+
+    def test_screenshot_must_complete_before_second_survival_check_and_smoke_record(self):
+        for screenshot_times_out in (False, True):
+            with self.subTest(screenshot_times_out=screenshot_times_out), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "Surco.app"
+                app.mkdir()
+                bundle_id = "io.github.niiihuel.surco"
+                (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
+                artifacts = root / "artifacts"
+                (artifacts / "logs").mkdir(parents=True)
+                calls = []
+                inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+                    {"isAvailable": True, "name": "iPhone 17", "deviceTypeIdentifier": "phone"}]}}
+
+                def fake_run(command, env, log, **options):
+                    calls.append(command)
+                    if "devices" in command:
+                        return json.dumps(inventory)
+                    if "create" in command:
+                        return "owned-simulator\n"
+                    if "launch" in command:
+                        return f"{bundle_id}: 12345\n"
+                    if "screenshot" in command:
+                        # A file can exist even when simctl has not completed successfully.
+                        Path(command[-1]).write_bytes(b"captured image")
+                        if screenshot_times_out:
+                            raise RuntimeError("screenshot timed out")
+                    log.write_text("completed")
+                    return ""
+
+                globals_ = script["smoke_simulator"].__globals__
+                with patch.dict(globals_, {"run": fake_run, "collect_crash_reports": lambda *args: []}), \
+                        patch.object(time, "sleep"), patch.object(script["os"], "kill") as survival_check:
+                    if screenshot_times_out:
+                        with self.assertRaisesRegex(RuntimeError, "screenshot timed out"):
+                            script["smoke_simulator"](app, "26.5", {}, artifacts)
+                    else:
+                        script["smoke_simulator"](app, "26.5", {}, artifacts)
+                    self.assertEqual([call.args for call in survival_check.call_args_list],
+                                     [(12345, 0)] * (1 if screenshot_times_out else 2))
+                self.assertTrue((artifacts / "simulator.png").exists())
+                self.assertEqual((artifacts / "smoke.json").exists(), not screenshot_times_out)
+                self.assertEqual((artifacts / "logs/simulator-startup-system.log").exists(), screenshot_times_out)
+                self.assertIn(["xcrun", "simctl", "delete", "owned-simulator"], calls)
+
     def test_linker_flags_keep_framework_order_duplicates_and_archive_spaces(self):
         archive = Path("/a checkout/target/libsurco_app.a")
         config = script["linker_configuration"](archive, "-framework UIKit -lc++ -framework Metal -lc++")
