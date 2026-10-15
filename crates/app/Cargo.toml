@@ -22,7 +22,7 @@ fastrand = "2"
 surco-audio = { path = "../audio" }
 surco-youtube = { path = "../youtube" }
 surco-video = { path = "../video" }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"
 # Already in the tree: the code Spotify's web player proves itself with, for a long playlist.
