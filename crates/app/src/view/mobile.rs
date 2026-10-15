@@ -249,6 +249,23 @@ mod tests {
     }
 
     #[test]
+    fn library_import_card_actions_have_phone_sized_touch_targets() {
+        let mut state = playing_state();
+        state.page = Page::Library;
+        for width in [320.0, 390.0, 430.0] {
+            let size = Size::new(width, 844.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            for id in ["import-open", "import-dismiss"] {
+                let rect = frame.access.iter().find(|node| node.id == id).unwrap().rect;
+                assert!(rect.width >= TAP && rect.height >= TAP, "{id}: {rect:?}");
+                assert!(rect.x >= 0.0 && rect.x + rect.width <= width && rect.y + rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
+            }
+        }
+    }
+
+    #[test]
     fn editing_search_reserves_the_keyboard_without_changing_playback() {
         let mut state = playing_state();
         state.mobile_search = true;

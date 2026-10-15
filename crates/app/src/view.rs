@@ -447,9 +447,11 @@ fn import_picture() -> Option<limn::RasterImage> {
 }
 
 /// The library's offer to bring music in from another app, until it is used or put away.
-fn import_card(width: f32, palette: ComponentPalette) -> Element {
+fn import_card(width: f32, palette: ComponentPalette, phone: bool) -> Element {
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let away = Element::row(vec![Element::spacer().flex(1.0), on_picture("import-dismiss", Icon::Close, "No mostrar más", palette)]);
+    let close = if phone { mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(CANVAS).radius(22.0) }
+        else { on_picture("import-dismiss", Icon::Close, "No mostrar más", palette) };
+    let away = Element::row(vec![Element::spacer().flex(1.0), close]);
     // As wide as the card's own room, at the proportions it was drawn at.
     let across = width - 24.0;
     let top = match import_picture() {
@@ -459,9 +461,12 @@ fn import_card(width: f32, palette: ComponentPalette) -> Element {
         }
         None => away,
     };
-    let title = Text::new("Traé tu música de otras apps", raised).render();
-    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
-    let go = Button::new("import-open", "Importar", raised).size(ControlSize::Compact).render();
+    let title = Text::new("Traé tu música de otras apps", raised);
+    let title = if phone { title.font_size(16.0) } else { title }.render();
+    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted();
+    let about = if phone { about.font_size(14.0) } else { about }.render();
+    let go = Button::new("import-open", "Importar", raised).size(if phone { ControlSize::Spacious } else { ControlSize::Compact }).render();
+    let go = if phone { go.size(None, Some(44.0)) } else { go };
     Element::panel(Element::column(vec![top, title, about, Element::row(vec![go])]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
 }
 
@@ -999,7 +1004,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
     if !state.settings.import_dismissed && wanted.is_empty() {
-        let card = import_card(width - 16.0, palette);
+        let card = import_card(width - 16.0, palette, state.mobile);
         if state.mobile {
             if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
                 let rows = std::mem::replace(child.as_mut(), Element::spacer());
