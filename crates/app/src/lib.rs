@@ -10,6 +10,8 @@
 mod backend;
 mod clip;
 mod import;
+#[cfg(any(target_os = "ios", test))]
+mod ios_media;
 mod library;
 mod media_keys;
 mod mobile_input;

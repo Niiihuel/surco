@@ -1,4 +1,4 @@
-//! The desktop's media keys and its "now playing" widget.
+//! System media keys and Now Playing, independent of the app window's repaint loop.
 // shortcut: MPRIS on Linux only; Windows needs the window's handle and macOS its main thread, wire each when there is a build of it to test.
 
 use crate::backend::Command;
@@ -16,6 +16,14 @@ pub enum Key {
     Seek(f64),
     /// Seconds from where it is, back when negative.
     SeekBy(f64),
+}
+
+pub enum MediaEvent {
+    Key(Key),
+    #[cfg(target_os = "ios")]
+    Session(crate::ios_media::SessionEvent),
+    #[cfg(target_os = "ios")]
+    Artwork { track_id: String, url: String },
 }
 
 impl Key {
@@ -36,13 +44,15 @@ impl Key {
 pub struct MediaKeys {
     #[cfg(target_os = "linux")]
     controls: Option<souvlaki::MediaControls>,
+    #[cfg(target_os = "ios")]
+    ios: crate::ios_media::Controls,
     /// What the desktop was last told: the track, whether it plays, and the second it is at.
     shown: (Option<String>, bool, u64),
 }
 
 impl MediaKeys {
     /// A desktop without a session bus has no media keys, and the player goes on without them.
-    pub fn start(press: impl Fn(Key) + Send + 'static) -> Self {
+    pub fn start(press: impl Fn(MediaEvent) + Send + 'static) -> Self {
         #[cfg(target_os = "linux")]
         let controls = {
             use souvlaki::{MediaControlEvent, MediaControls, PlatformConfig, SeekDirection};
@@ -64,22 +74,28 @@ impl MediaKeys {
                         MediaControlEvent::Seek(direction) => Key::SeekBy(signed(direction, 5.0)),
                         _ => return,
                     };
-                    press(key);
+                    press(MediaEvent::Key(key));
                 });
                 attached.ok().map(|()| controls)
             })
         };
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(target_os = "ios")]
+        let ios = crate::ios_media::Controls::start(press);
+        #[cfg(not(any(target_os = "linux", target_os = "ios")))]
         drop(press);
         Self {
             #[cfg(target_os = "linux")]
             controls,
+            #[cfg(target_os = "ios")]
+            ios,
             shown: (None, false, 0),
         }
     }
 
     /// Tells the desktop what plays. Called on every change of the player; it speaks up once a second at most.
     pub fn show(&mut self, view: &PlayerView) {
+        #[cfg(target_os = "ios")]
+        self.ios.show(view);
         let shown = (view.current.as_ref().map(|track| track.id.clone()), view.playing, view.position.max(0.0) as u64);
         if shown == self.shown {
             return;

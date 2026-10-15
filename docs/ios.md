@@ -39,6 +39,35 @@ in Control Center. An in-app native route picker is not part of this first slice
 The desktop output picker remains unchanged. Desktop executable self-updates
 are disabled on iOS, where application bundles must be signed.
 
+## System playback
+
+`ios/SurcoMedia.m` bridges the existing Rust backend to AVAudioSession and Media
+Player. It configures `Playback`, `Default`, and `LongFormAudio`, and activates
+the session on a play request. Opening Surco alone does not open its audio device.
+Bluetooth A2DP follows the system route without microphone permission or hands-free
+mode. The Rust decoder, queue, crossfade and equalizer remain the playback engine.
+
+Pausing releases the iOS output device. Cancelling readers lets a decoder leave a
+network wait promptly without invalidating the downloaded buffer. Resume and route
+recovery reload from the last reported position, reusing that buffer when available.
+Interruptions pause playback; automatic resume requires Apple's `shouldResume`, the
+same track, and no later transport decision. Disconnecting headphones pauses;
+resetting media services rebuilds configuration and waits for a new play request.
+
+Now Playing metadata and remote play/pause/next/previous/seek commands run through
+the backend's existing `MediaKeys` boundary, including while the window sleeps.
+Artwork loads asynchronously and is checked against the current track and URL.
+iOS extrapolates progress between meaningful metadata updates. Now Playing supplies
+the system's Lock Screen, Control Center and supported Dynamic Island presentation;
+no ActivityKit extension or duplicate Swift interface is needed. Native observers
+and remote-command targets are removed when the integration shuts down.
+
+Sources: [Apple's playback configuration](https://developer.apple.com/documentation/avfoundation/configuring-your-app-for-media-playback),
+[interruption handling](https://developer.apple.com/documentation/avfaudio/handling-audio-interruptions),
+[route changes](https://developer.apple.com/documentation/avfaudio/responding-to-audio-route-changes),
+[Now Playing](https://developer.apple.com/documentation/mediaplayer/mpnowplayinginfocenter),
+and [system services in Dynamic Island](https://developer.apple.com/news/?id=qpqf1gru).
+
 Settings, collections and player preferences use `Library/Application Support/surco/app.ron`
 inside the current iOS app container. Offline audio and its index live in the
 adjacent `offline` directory, which is excluded from backups and survives normal
@@ -77,7 +106,20 @@ The unsigned application cannot be installed directly on an iPhone. The manual
 **TestFlight** workflow signs with an Apple Distribution identity and an App Store
 Connect profile. Follow [the account setup and installation guide](testflight.md)
 to register Surco, configure GitHub Secrets and install from TestFlight.
-Simulator startup does not establish Bluetooth audio,
-background playback, lock-screen controls, interruption handling or performance
-on a physical iPhone. Those remain device-validation work; the background-audio
-bundle declaration alone is not proof that they work.
+Simulator startup does not establish physical audio behavior. After installing a
+signed build on an iPhone, validate:
+
+- Open Surco while another app plays; its audio should continue until Surco plays.
+- Play streamed and downloaded tracks, background the app, lock the screen, and
+  let playback cross a track boundary. Confirm title, cover and elapsed time.
+- Use Lock Screen/Control Center and headset play/pause, previous/next and seek.
+  On a supported iPhone, inspect the system's expanded Dynamic Island controls.
+- Receive/decline a call while playing, and repeat while already paused. A manual
+  pause or different track during an interruption must cancel automatic resume.
+- Connect Bluetooth headphones/speakers and change outputs in Control Center.
+  Disconnect headphones: playback should pause and stay paused on the speaker.
+- Use iOS Settings > Developer > Reset Media Services: playback must stay paused
+  until requested and then recover. No microphone access prompt should appear.
+
+The iOS/TestFlight macOS workflow verifies native Objective-C compilation and
+linking; Rust state tests and simulator screenshots do not replace these checks.
