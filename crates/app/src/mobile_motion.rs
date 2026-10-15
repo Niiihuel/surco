@@ -22,6 +22,13 @@ pub struct Motion {
     drag: DismissDrag,
     primary: Option<Touch>,
     underlay: Option<(Size, Frame)>,
+    header_page: Option<String>,
+    headers: VecDeque<HeaderGeometry>,
+}
+
+struct HeaderGeometry {
+    page: String,
+    content_top: f32,
 }
 
 struct Touch {
@@ -49,7 +56,7 @@ impl Motion {
     pub fn new(now: Instant) -> Self {
         Self { player: ScalarTransition::new(0.0, now), search: ScalarTransition::new(HEADER, now),
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
-            primary: None, underlay: None }
+            primary: None, underlay: None, header_page: None, headers: VecDeque::new() }
     }
 
     pub fn set_reduced_motion(&mut self, reduced: bool) { self.reduced = reduced; }
@@ -94,13 +101,36 @@ impl Motion {
             self.search.snap_to(HEADER, now);
             state.mobile_ui.search_header = None;
         }
-        let anchor = match state.page {
-            Page::Playing if !state.queue_open => Some("mobile-player-title"),
-            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
+        let header = match &state.page {
+            Page::Playing if !state.queue_open => state.current().map(|track|
+                (format!("playing:{}", track.id), "mobile-playing", "mobile-player-title")),
+            Page::Album(album) => Some((format!("album:{}", album.id), "mobile-album", "mobile-detail-title")),
+            Page::Artist(artist) => Some((format!("artist:{}", artist.id), "mobile-artist", "mobile-detail-title")),
+            Page::Playlist(id) => Some((format!("playlist:{id}"), "mobile-playlist", "mobile-detail-title")),
             _ => None,
         };
-        state.mobile_ui.compact_header = state.mobile && anchor
-            .and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
+        state.mobile_ui.compact_header = false;
+        if let Some((page, scroll, anchor)) = header.filter(|_| state.mobile) {
+            let changed = self.header_page.as_ref().is_some_and(|previous| previous != &page);
+            let offset = tree.scroll_offset(scroll);
+            // Advance can still see the preceding page's layout during navigation.
+            // A culled title keeps its measured content position, not a painted flag.
+            if !changed {
+                if let Some(top) = tree.anchor_offset(anchor) {
+                    if let Some(header) = self.headers.iter_mut().find(|header| header.page == page) {
+                        header.content_top = top + offset;
+                    } else {
+                        if self.headers.len() == 16 { self.headers.pop_front(); }
+                        self.headers.push_back(HeaderGeometry { page: page.clone(), content_top: top + offset });
+                    }
+                }
+                state.mobile_ui.compact_header = self.headers.iter().find(|header| header.page == page)
+                    .is_some_and(|header| header.content_top - offset < HEADER);
+            }
+            self.header_page = Some(page);
+        } else {
+            self.header_page = None;
+        }
         Vec::new()
     }
 
@@ -246,7 +276,8 @@ mod tests {
     use super::*;
     use crate::player::PlayerView;
     use limn::{Component, Element, HitRegion, Rect, Slider, ComponentPalette};
-    use surco_core::Track;
+    use crate::state::Playlist;
+    use surco_core::{Album, AlbumRef, Artist, Track};
 
     fn phone() -> State {
         let track = Track { id: "song".into(), title: "Canción".into(), artist: "Artista".into(), artist_id: None,
@@ -290,6 +321,177 @@ mod tests {
         motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now);
         motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now + Duration::from_millis(320));
         (motion, state, tree)
+    }
+
+    fn detail_pages(state: &mut State) -> Vec<(Page, &'static str, &'static str)> {
+        let tracks: Vec<_> = (0..30).map(|index| Track {
+            id: format!("song-{index}"), title: format!("Canción {index}"), ..state.current().unwrap().clone()
+        }).collect();
+        state.collection.playlists.push(Playlist { id: 7, name: "Rutas de madrugada".into(), collaborative: false, tracks: tracks.clone() });
+        vec![
+            (Page::Playlist(7), "mobile-playlist", "Rutas de madrugada"),
+            (Page::Album(Album { id: "album".into(), title: "Un álbum".into(), artist: "Artista".into(), artist_id: None,
+                year: "2026".into(), artwork_url: None, tracks: tracks.clone() }), "mobile-album", "Un álbum"),
+            (Page::Artist(Artist { id: "artist".into(), name: "Una artista".into(), subscribers: None, artwork_url: None,
+                songs: tracks, albums: vec![AlbumRef { id: "release".into(), title: "Álbum real".into(), artist: None, year: String::new(), artwork_url: None }],
+                singles: vec![AlbumRef { id: "single".into(), title: "Sencillo real".into(), artist: None, year: String::new(), artwork_url: None }] }), "mobile-artist", "Una artista"),
+        ]
+    }
+
+    fn paint_header(motion: &mut Motion, state: &mut State, tree: &mut UiTree, size: Size, now: Instant) -> Frame {
+        motion.advance(state, tree, size, now);
+        tree.set_root(crate::view::view(state, size));
+        tree.layout(size)
+    }
+
+    #[test]
+    fn detail_headers_keep_the_title_after_culling_and_expand_when_scrolled_back_to_top() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        for (page, scroll, title) in detail_pages(&mut state) {
+            state.page = page;
+            let mut motion = Motion::new(now);
+            let mut tree = UiTree::new(crate::view::view(&state, size));
+            tree.set_reduced_motion(true);
+            tree.layout(size);
+            assert!(tree.anchor_offset("mobile-detail-title").unwrap() > HEADER);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+
+            tree.reveal_at_start("mobile-detail-title", 0.0);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "title takes over the header while passing it");
+
+            tree.scroll_to_end(scroll);
+            let end = tree.layout(size);
+            let last = if matches!(state.page, Page::Artist(_)) { "page-single:0" } else { "page-track:29" };
+            assert!(end.access.iter().any(|node| node.id == last), "the end of {scroll} is visible");
+            assert!(tree.anchor_offset("mobile-detail-title").is_none(), "the real offscreen title is culled");
+            let end = paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "{scroll} stays compact after its title is culled");
+            assert!(end.commands.iter().any(|command| matches!(command,
+                limn::DrawCommand::Text { text, font_size, .. } if text == title && *font_size == 18.0)), "the compact title is painted");
+
+            tree.scroll_to_start(scroll);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header, "scrolling back restores the expanded header");
+
+            tree.scroll_to_end(scroll);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "jumping straight to the end also keeps the title");
+        }
+    }
+
+    #[test]
+    fn compact_geometry_is_not_inherited_by_another_detail_or_an_unrelated_page() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[0].0.clone();
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-playlist");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+
+        for page in [pages[1].0.clone(), Page::Library] {
+            state.page = page;
+            // The host advances motion once against the previous page's frame.
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+        }
+        state.page = pages[0].0.clone();
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(tree.scroll_offset("mobile-playlist") > 0.0, "navigation restores the named viewport");
+        assert!(tree.anchor_offset("mobile-detail-title").is_none());
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "restoring a deep viewport also restores its compact title");
+    }
+
+    #[test]
+    fn navigation_never_measures_the_previous_pages_visible_title_for_the_new_route() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[0].0.clone();
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.reveal_at_start("mobile-detail-title", 0.0);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(tree.anchor_offset("mobile-detail-title").unwrap() < HEADER);
+        assert!(state.mobile_ui.compact_header);
+
+        state.page = pages[1].0.clone();
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header, "the outgoing playlist title is not an album measurement");
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        tree.scroll_to_end("mobile-album");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+        let narrow = Size::new(320.0, 600.0);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        assert!(state.mobile_ui.compact_header, "a deep viewport remains compact after resizing");
+        tree.scroll_to_start("mobile-album");
+        tree.layout(narrow);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        assert!(!state.mobile_ui.compact_header, "the new layout replaces its measured position at the top");
+    }
+
+    #[test]
+    fn player_transport_remains_compact_over_long_lyrics_and_queue_navigation() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        state.settings.reduce_motion = true;
+        state.lyrics = Some(("song".into(), crate::state::Lyrics::Plain {
+            lines: vec!["Una letra larga que ocupa varias líneas de la pantalla ".repeat(24); 4], source: "Fixture".into(),
+        }));
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-playing");
+        tree.layout(size);
+        assert!(tree.anchor_offset("mobile-player-title").is_none());
+        let end = paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+        assert!(end.access.iter().any(|node| node.id == "mobile-player-header-play"));
+        state.queue_open = true;
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        state.queue_open = false;
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "queue navigation retains the deep player's geometry");
+        tree.scroll_to_start("mobile-playing");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        let track = Track { id: "next-song".into(), title: "Otra canción".into(), ..state.current().unwrap().clone() };
+        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header, "another track starts with its own title geometry");
     }
 
     #[test]
