@@ -60,3 +60,8 @@ jobs:
         if: runner.os == 'Linux'
         working-directory: surco
         run: cargo test --workspace --locked
+
+      - name: Check iOS packaging and signing scripts
+        if: runner.os == 'Linux'
+        working-directory: surco
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'

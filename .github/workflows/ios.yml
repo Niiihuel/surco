@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*ios*', '.github/workflows/ios.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*.py', '.github/workflows/ios.yml', '.github/workflows/testflight.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*ios*', '.github/workflows/ios.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*.py', '.github/workflows/ios.yml', '.github/workflows/testflight.yml']
 
 permissions:
   contents: read
@@ -66,10 +66,11 @@ jobs:
             ~/.cargo/git
             surco/target
           key: ios-${{ runner.arch }}-${{ matrix.platform }}-xcode16.4-${{ hashFiles('surco/Cargo.lock') }}
+          restore-keys: ios-${{ runner.arch }}-${{ matrix.platform }}-xcode16.4-
 
       - name: Check packaging script
         working-directory: surco
-        run: python3 scripts/test_build_ios.py
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
       - name: Build and verify
         working-directory: surco

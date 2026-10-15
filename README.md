@@ -63,8 +63,9 @@ checking a build without touching it.
 The iOS target keeps the engine and interface in Rust with limn. `cargo run -p surco -- --mobile`
 previews the phone layout on a desktop. The **iOS** GitHub Actions workflow builds an
 iPhone simulator app and an unsigned device app; the simulator run saves a screenshot.
-Installing on an iPhone requires Apple signing and provisioning. See [the iOS build and
-validation notes](docs/ios.md) for commands, artifacts and the remaining hardware checks.
+Installing on an iPhone uses the manual **TestFlight** workflow once Apple signing is
+configured. See [the TestFlight setup and installation guide](docs/testflight.md) and
+[the iOS validation notes](docs/ios.md) for the remaining hardware checks.
 
 ## Releases
 

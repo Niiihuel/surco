@@ -63,9 +63,11 @@ Actions publishes `ios-simulator` and `ios-device-unsigned`. Each includes an
 application tarball preserving executable permissions, build metadata and logs.
 The simulator artifact also includes `simulator.png` and its startup result.
 
-The unsigned application cannot be installed directly on an iPhone. Signing and
-provisioning with an Apple development identity are required for physical-device
-installation or TestFlight. Simulator startup does not establish Bluetooth audio,
+The unsigned application cannot be installed directly on an iPhone. The manual
+**TestFlight** workflow signs with an Apple Distribution identity and an App Store
+Connect profile. Follow [the account setup and installation guide](testflight.md)
+to register Surco, configure GitHub Secrets and install from TestFlight.
+Simulator startup does not establish Bluetooth audio,
 background playback, lock-screen controls, interruption handling or performance
 on a physical iPhone. Those remain device-validation work; the background-audio
 bundle declaration alone is not proof that they work.
