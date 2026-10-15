@@ -159,7 +159,7 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
         tab("home", Icon::Home, "Inicio", state.page == Page::Search && !state.mobile_search),
         tab("mobile-search", Icon::Search, "Buscar", state.page == Page::Search && state.mobile_search),
         tab("mobile-library", Icon::Playlist, "Biblioteca", matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_))),
-    ]).block_pointer("mobile-nav-bar")
+    ]).background(SCHEME.canvas).block_pointer("mobile-nav-bar")
 }
 
 fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Element {
