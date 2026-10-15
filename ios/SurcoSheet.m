@@ -280,6 +280,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     NSString *kind = SheetString(model[@"kind"]);
     NSString *identifier = SheetString(model[@"id"]);
     row.title.text = SheetString(model[@"title"]);
+    row.title.textColor = [kind isEqualToString:@"text"] && SheetBool(model[@"secondary"]) ? SheetMuted() : UIColor.whiteColor;
     row.secondary.text = SheetString(model[@"secondary"]);
     if ([kind isEqualToString:@"route"]) row.secondary.text = SheetString(model[@"subtitle"]);
     row.title.hidden = !row.title.text.length;
