@@ -4,6 +4,7 @@ use super::*;
 
 mod search;
 mod home;
+mod player;
 mod sheets;
 pub(super) mod details;
 #[cfg(test)]
@@ -136,49 +137,7 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
 }
 
 pub(super) fn playing(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let Some(track) = state.current() else {
-        return centered(Empty::new("Todavía no hay música", "Elegí una canción para empezar a escuchar.", palette).icon(Icon::MusicNote).render());
-    };
-    let side = (width - 48.0).clamp(160.0, 380.0);
-    let time = Element::row(vec![
-        Text::new(clock(f64::from(state.progress()) * state.player.duration), palette).role(TextRole::Caption).muted().render(),
-        Element::spacer().flex(1.0),
-        Text::new(clock(state.player.duration), palette).role(TextRole::Caption).muted().render(),
-    ]);
-    let seek = Slider::new("seek", state.progress(), palette).enabled(state.player.duration > 0.0).render().size(None, Some(TAP));
-    let play_palette = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
-    let play = IconButton::new("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, play_palette)
-        .variant(ButtonVariant::Subtle).round().accessibility_label(if state.player.playing { "Pausar" } else { "Reproducir" })
-        .render().size(Some(64.0), Some(64.0)).centered_y();
-    let controls = Element::row(vec![
-        icon("shuffle", shuffle_step(state).0, shuffle_step(state).1, palette).centered_y(),
-        icon("previous", Icon::SkipBack, "Canción anterior", palette).centered_y(),
-        play,
-        icon("next", Icon::SkipForward, "Siguiente canción", palette).centered_y(),
-        icon("repeat", if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, "Repetir", palette).centered_y(),
-    ]).gap(8.0).centered_x();
-    let liked = state.is_liked(&track.id);
-    let details = Element::row(vec![
-        Element::column(vec![Text::new(&track.title, palette).font_size(24.0).truncate().render(), Text::new(&track.artist, palette).role(TextRole::Body).muted().truncate().render()]).gap(8.0).flex(1.0),
-        icon("like", if liked { Icon::HeartFill } else { Icon::Heart }, if liked { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).centered_y(),
-    ]).gap(16.0);
-    let tools = Element::row(vec![
-        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
-        Element::spacer().flex(1.0),
-        icon("more:current", Icon::More, "Opciones de la canción", palette),
-        icon("queue", Icon::Playlist, "Ver cola", palette),
-    ]);
-    let lyric_card = Element::panel(Element::column(vec![
-        Element::row(vec![Text::new("Letra", palette).role(TextRole::Heading).render().flex(1.0), Element::icon(Icon::ArrowRight).foreground(palette.text).centered_y()]),
-        Text::new("Seguí cada palabra mientras escuchás.", palette).muted().render(),
-    ]).gap(12.0).padding(20.0)).background(SCHEME.raised).radius(12.0);
-    let mut body = vec![cover(state, &track.artwork_url, side, palette).radius(8.0).centered_x(), details, Element::column(vec![seek, time]), controls, tools,
-        Element::clickable("lyrics", lyric_card).accessible(limn::Access::new(limn::Role::Button).name("Ver letra")),
-    ];
-    if let Some(error) = &state.player.error {
-        body.push(Alert::new("No se pudo reproducir", error, palette).id("mobile-player-error").render());
-    }
-    ScrollArea::new("mobile-playing", Element::column(body).gap(24.0).padding(24.0)).render().flex(1.0)
+    player::content(state, width, palette)
 }
 
 #[cfg(test)]
