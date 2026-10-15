@@ -130,6 +130,8 @@
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
     [self waitForLandscape:YES];
     XCTAssertEqualObjects(field.value, edited, @"Reflow keeps the live editor and its text");
+    [self waitFor:field predicate:@"hittable == YES"];
+    [self attachScreenshot:@"native-import-keyboard-landscape"];
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
     [self waitForLandscape:NO];
     [field typeText:@"-surco"];
