@@ -88,11 +88,27 @@ struct Script {
     requested: bool,
 }
 
+/// Follow against the current page's measured viewport and overlaid bars.
 fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
     let reset = std::mem::take(&mut state.lyrics_scroll_reset);
     if reset { tree.scroll_to_start("lyrics-list"); }
+    // Keep the notice readable until dismissal or a deliberate manual scroll.
+    // Do not consume the new active line: closing the notice should reveal it.
+    if state.mobile && state.mobile_ui.notice.is_some() { return reset; }
     if let Some(line) = state.line_to_reveal() {
-        tree.center(&line);
+        if state.mobile {
+            let frame = tree.frame();
+            let top = frame.regions.iter().find(|region| region.id == "mobile-header-bar")
+                .map_or(0.0, |region| region.rect.y + region.rect.height);
+            let scroll_top = frame.regions.iter().find(|region| region.id == "lyrics-list")
+                .map_or(0.0, |region| region.rect.y);
+            // Centering the full viewport puts wrapped lines behind the fixed
+            // lyrics transport in landscape. Reveal below the real header fade
+            // instead, within the unobscured body above the transport.
+            tree.reveal_at_start(&line, (top - scroll_top).max(0.0) + 20.0);
+        } else {
+            tree.center(&line);
+        }
         true
     } else {
         reset
@@ -458,11 +474,12 @@ impl eframe::App for Host {
                 self.glide = None;
             }
         }
-        // The line being sung is kept in the middle of its list.
+        // Measure this page before using its bars to follow the active lyric.
+        let mut input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
+            input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         }
-        let input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
@@ -820,6 +837,89 @@ mod lyrics_viewport_tests {
             .collect()) });
     }
 
+    fn long_lyrics(state: &mut State) {
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..21)
+            .map(|index| Line { at_ms: index * 1_000,
+                text: "La canción continúa en dos renglones mientras atravesamos la ciudad.".into() })
+            .collect()) });
+    }
+
+    fn assert_active_clear_of_chrome(frame: &limn::Frame, id: &str) {
+        let header = frame.regions.iter().find(|region| region.id == "mobile-header-bar").unwrap().rect;
+        let footer = frame.regions.iter().find(|region| region.id == "mobile-footer-bar").unwrap().rect;
+        let row = frame.regions.iter().find(|region| region.id == id).unwrap().rect;
+        assert!(row.height > 50.0, "fixture really wraps: {row:?}");
+        assert!(row.y >= header.y + header.height + 20.0 - 0.1, "line clears header and fade: {row:?}");
+        assert!(row.y + row.height <= footer.y - 24.0 + 0.1, "whole line clears transport and fade: {row:?}; {footer:?}");
+        for y in [row.y + 1.0, row.y + row.height - 1.0] {
+            let point = limn::Point::new(row.x + row.width / 2.0, y);
+            assert_eq!(frame.press_region(point).unwrap().id, id, "the lyric remains hittable, including its last line");
+        }
+    }
+
+    #[test]
+    fn mobile_follow_keeps_wrapped_active_lyrics_inside_the_real_portrait_and_landscape_body() {
+        use state::mobile::ContentInsets;
+        for (size, insets) in [
+            (Size::new(402.0, 874.0), ContentInsets { top: 62.0, bottom: 34.0, ..ContentInsets::default() }),
+            (Size::new(874.0, 402.0), ContentInsets { left: 62.0, right: 34.0, bottom: 21.0, top: 0.0 }),
+        ] {
+            let mut state = State::default();
+            state.mobile = true;
+            state.page = state::Page::Lyrics;
+            state.mobile_ui.content_insets = insets;
+            state.show(song("a", 10.0));
+            long_lyrics(&mut state);
+            let mut tree = UiTree::new(Element::spacer());
+            tree.set_reduced_motion(true);
+            tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+            layout_view(&mut state, &mut tree, size);
+            assert!(update_lyrics_viewport(&mut state, &mut tree));
+            // Host runs its input layout and then the final paint layout.
+            layout_view(&mut state, &mut tree, size);
+            let frame = layout_view(&mut state, &mut tree, size);
+            assert_eq!(state.active_line(), Some(10));
+            assert_active_clear_of_chrome(&frame, "lyric:10");
+        }
+    }
+
+    #[test]
+    fn mobile_notice_pauses_follow_without_consuming_the_line_to_reveal_after_close() {
+        let size = Size::new(402.0, 874.0);
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = state::Page::Lyrics;
+        state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0,
+            ..state::mobile::ContentInsets::default() };
+        state.show(song("a", 10.0));
+        long_lyrics(&mut state);
+        let mut tree = UiTree::new(Element::spacer());
+        tree.set_reduced_motion(true);
+        tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+        layout_view(&mut state, &mut tree, size);
+        update_lyrics_viewport(&mut state, &mut tree);
+        layout_view(&mut state, &mut tree, size);
+        layout_view(&mut state, &mut tree, size);
+        state.mobile_ui.notice = Some("No pudimos completar esta acción.".into());
+        let mut seen = None;
+        layout_with_notice(&mut state, &mut tree, size, &mut seen);
+        let notice_offset = tree.scroll_offset("lyrics-list");
+        state.show(song("a", 11.0));
+        assert!(!update_lyrics_viewport(&mut state, &mut tree));
+        let visible = layout_with_notice(&mut state, &mut tree, size, &mut seen);
+        assert_eq!(tree.scroll_offset("lyrics-list"), notice_offset);
+        let close = visible.access.iter().find(|node| node.id == "mobile-notice-close").unwrap().rect;
+        let point = limn::Point::new(close.x + close.width / 2.0, close.y + close.height / 2.0);
+        assert_eq!(visible.press_region(point).unwrap().id, "mobile-notice-close");
+        tree.handle_event(limn::UiEvent::PointerDown(point));
+        for action in tree.handle_event(limn::UiEvent::PointerUp(point)) { state.update(&action); }
+        assert!(state.mobile_ui.notice.is_none());
+        assert!(update_lyrics_viewport(&mut state, &mut tree), "the active line was not consumed while reading the notice");
+        layout_view(&mut state, &mut tree, size);
+        let frame = layout_view(&mut state, &mut tree, size);
+        assert_active_clear_of_chrome(&frame, "lyric:11");
+    }
+
     #[test]
     fn changing_tracks_resets_scrolled_lyrics_before_the_first_line_including_returning_tracks() {
         let size = Size::new(390.0, 500.0);
@@ -857,7 +957,7 @@ mod lyrics_viewport_tests {
         tree.set_root(view::view(&state, size));
         assert!(update_lyrics_viewport(&mut state, &mut tree));
         tree.layout(size);
-        // Center requests set the scroll target after measuring the row; the
+        // Reveal requests set the scroll target after measuring the row; the
         // following paint uses that target, just like Host's input/paint passes.
         let frame = tree.layout(size);
         assert!(frame.regions.iter().any(|region| region.id == "lyric:15"),
