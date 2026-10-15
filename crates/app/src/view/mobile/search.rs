@@ -49,13 +49,6 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     ]).gap(8.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR);
     let found = &state.found;
     let mut rows = Vec::new();
-    if let Some(error) = &state.search_error {
-        rows.push(Element::column(vec![Text::new("No pudimos actualizar la búsqueda", palette).render(),
-            Text::new(error, palette).muted().render(),
-            Button::new("search-submit", "Volver a intentar", palette).variant(ButtonVariant::Secondary)
-                .size(ControlSize::Spacious).render(),
-        ]).gap(8.0).padding(8.0));
-    }
     if matches!(chosen, SearchFilter::All | SearchFilter::Tracks) && !found.tracks.is_empty() {
         rows.push(heading("Canciones", palette).padding(8.0));
         rows.extend(found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette)));
@@ -69,18 +62,31 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, album.artist.as_deref().unwrap_or("Álbum"), &album.artwork_url, false, palette)));
     }
     if rows.is_empty() {
-        rows.push(if pending { Element::spacer().size(None, Some(TAP)) }
+        rows.push(if pending || state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
             else { Empty::new("Sin resultados", "Probá con otro nombre o cambiá el filtro.", palette).icon(Icon::Search).render().padding(20.0) });
     }
     // This retained scroll and its parent stay mounted throughout debounce,
     // loading and failures; the previous result rows remain usable meanwhile.
     let list = ScrollArea::new("mobile-search-results", Element::column(rows).gap(4.0)).render().flex(1.0);
-    let status = if pending { Text::new("Buscando…", palette).font_size(12.0).muted().render() }
-        else if state.submitted.is_none() && has_results {
-            Text::new(if state.query.contains("://") { "Tocá Buscar para abrir el enlace." } else { "Resultados anteriores" }, palette)
-                .font_size(12.0).muted().render()
-        } else { Element::spacer() };
-    Element::column(vec![filters, status.size(None, Some(20.0)), list]).gap(8.0).padding(8.0).flex(1.0)
+    // Keep recovery outside the retained scroll: a failure while browsing deep
+    // results must offer Retry without asking the user to find the list's top.
+    let status = if let Some(error) = &state.search_error {
+        Element::row(vec![Element::column(vec![
+            Text::new("No pudimos actualizar", palette).font_size(13.0).render(),
+            Text::new(error, palette).font_size(12.0).muted().render(),
+        ]).gap(4.0).flex(1.0),
+            Button::new("search-submit", "Reintentar", palette).variant(ButtonVariant::Secondary)
+                .size(ControlSize::Spacious).render().size(None, Some(TAP)),
+        ]).gap(8.0).padding(8.0)
+    } else {
+        let copy = if pending { Text::new("Buscando…", palette).font_size(12.0).muted().render() }
+            else if state.submitted.is_none() && has_results {
+                Text::new(if state.query.contains("://") { "Tocá Buscar para abrir el enlace." } else { "Resultados anteriores" }, palette)
+                    .font_size(12.0).muted().render()
+            } else { Element::spacer() };
+        copy.size(None, Some(20.0))
+    };
+    Element::column(vec![filters, status, list]).gap(8.0).padding(8.0).flex(1.0)
 }
 
 fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
@@ -127,7 +133,7 @@ pub(super) fn browse(width: f32, palette: ComponentPalette) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use limn::{DrawCommand, Frame, HitKind, Point, UiEvent, UiTree};
+    use limn::{DrawCommand, Frame, HitKind, Point, UiAction, UiEvent, UiTree};
     use std::time::Instant;
 
     fn phone() -> State {
@@ -201,17 +207,31 @@ mod tests {
         state.search_error = Some("Sin conexión".into());
         tree.set_root(results(&state));
         let frame = tree.layout(size);
+        assert_eq!(tree.scroll_offset("mobile-search-results"), offset, "failure retains the reader's list position");
         assert!(frame.regions.iter().any(|region| region.id == "track:3" && region.kind == HitKind::Button));
-        assert!(frame.regions.iter().any(|region| region.id == "search-submit" && region.kind == HitKind::Button));
+        let retry = frame.regions.iter().find(|region| region.id == "search-submit" && region.kind == HitKind::Button)
+            .expect("recovery remains visible even when the results are scrolled").rect;
+        assert!(retry.width >= TAP && retry.height >= TAP);
+        assert!(retry.y >= 0.0 && retry.y + retry.height <= size.height);
+        let point = Point::new(retry.x + retry.width / 2.0, retry.y + retry.height / 2.0);
+        assert_eq!(frame.press_region(point).unwrap().id, "search-submit");
+        tree.handle_event(UiEvent::PointerDown(point));
+        assert!(tree.handle_event(UiEvent::PointerUp(point)).iter().any(|action|
+            matches!(action, UiAction::Clicked { id } if id == "search-submit")), "the visible Retry control receives the tap");
     }
 
     #[test]
-    fn first_pending_query_does_not_claim_that_the_catalog_has_no_results() {
+    fn pending_or_failed_first_query_does_not_claim_that_the_catalog_has_no_results() {
         let mut state = phone();
         state.mobile_query("nueva", Instant::now());
         let frame = UiTree::new(results(&state)).layout(Size::new(390.0, 500.0));
         assert!(text(&frame, "Buscando…"));
         assert!(!text(&frame, "Sin resultados"));
         assert!(frame.regions.iter().any(|region| region.id == "mobile-search-results" && region.kind == HitKind::Scroll));
+        state.mobile_ui.pending = None;
+        state.search_error = Some("Sin conexión".into());
+        let failed = UiTree::new(results(&state)).layout(Size::new(390.0, 500.0));
+        assert!(!text(&failed, "Sin resultados"), "an unavailable answer is not an empty catalog");
+        assert!(failed.regions.iter().any(|region| region.id == "search-submit" && region.kind == HitKind::Button));
     }
 }
