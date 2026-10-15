@@ -36,7 +36,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         .render().flex(1.0)
 }
 
-fn timeline(state: &State, palette: ComponentPalette) -> Element {
+pub(super) fn timeline(state: &State, palette: ComponentPalette) -> Element {
     let duration = state.player.duration.max(0.0);
     let progress = state.progress();
     let elapsed = if duration > 0.0 { f64::from(progress) * duration } else { state.player.position.max(0.0) };
