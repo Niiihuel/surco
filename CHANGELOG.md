@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.4.0
+
+### Added
+
+- Native iOS context menus on touch and hold, system playlist paste controls, and
+  UIKit sheets with interactive dismissal, scrolling, keyboard handling and animation.
+- SF Symbols from the iPhone system for navigation, transport and actions.
+- Retryable lyrics errors and exact-video YouTube Music lyrics when the primary
+  provider has no result or is unavailable; untimed text keeps its attribution.
+
+### Fixed
+
+- Successive horizontal shelf pans retain their position after touch handoff.
+- Scroll-edge fades are visible outside the opaque header and bottom bars,
+  including the tinted player header.
+- Home cards offer their actions through touch and hold without overflow overlays.
+- Transient lyrics failures no longer become permanent missing results; request
+  deadlines, rate-limit cooldowns and a bounded successful-result cache apply.
+
 ## 0.3.0
 
 ### Added
