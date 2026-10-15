@@ -13,6 +13,7 @@ mod import;
 mod library;
 mod media_keys;
 mod mobile_input;
+mod paths;
 mod player;
 mod state;
 mod update;
@@ -351,6 +352,29 @@ fn icon() -> egui::IconData {
     mark.map_or_else(|_| egui::IconData::default(), |mark| egui::IconData { width: mark.width(), height: mark.height(), rgba: mark.into_raw() })
 }
 
+fn ios_graphics_limits(supported: &eframe::wgpu::Limits) -> eframe::wgpu::Limits {
+    // Metal Simulator exposes 15 shader varyings; WebGPU defaults require 16.
+    // Our renderer fits within the downlevel limits: https://github.com/gfx-rs/wgpu/issues/9386
+    eframe::wgpu::Limits {
+        max_texture_dimension_2d: supported.max_texture_dimension_2d.min(8192),
+        ..eframe::wgpu::Limits::downlevel_defaults()
+    }
+}
+
+fn graphics_configuration() -> eframe::WgpuConfiguration {
+    let mut configuration = eframe::WgpuConfiguration::default();
+    if cfg!(target_os = "ios") {
+        if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut configuration.wgpu_setup {
+            setup.device_descriptor = std::sync::Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
+                label: Some("Surco iOS graphics"),
+                required_limits: ios_graphics_limits(&adapter.limits()),
+                ..Default::default()
+            });
+        }
+    }
+    configuration
+}
+
 pub fn run() -> eframe::Result {
     // Where this program is, while the system still says: a later version takes its place.
     update::running();
@@ -391,8 +415,11 @@ pub fn run() -> eframe::Result {
         }
     }
     let mobile = cfg!(target_os = "ios") || script.mobile;
+    let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
+        wgpu_options: graphics_configuration(),
+        persistence_path: paths::persistence_path(&data),
         viewport: egui::ViewportBuilder::default()
             .with_title("Surco")
             .with_decorations(!cfg!(target_os = "windows"))
@@ -410,7 +437,7 @@ pub fn run() -> eframe::Result {
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
             limn_egui::set_image_cache_entries(256);
             // Beside the settings; without a place of its own the library lasts the session.
-            let data = eframe::storage_dir(APP_ID).unwrap_or_else(std::env::temp_dir).join("offline");
+            let data = data.join("offline");
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
             let mut state = State::default();
             state.mobile = mobile;
@@ -483,5 +510,25 @@ fn ios_logging() {
     static LOGGER: StderrLogger = StderrLogger;
     if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
+#[cfg(test)]
+mod graphics_tests {
+    use super::ios_graphics_limits;
+    use eframe::wgpu::Limits;
+
+    #[test]
+    fn ios_graphics_supports_simulator_limits_and_available_texture_sizes() {
+        // Metal Simulator exposes Apple2-like capabilities: 15 shader varyings, below WebGPU's 16.
+        let supported = Limits { max_inter_stage_shader_variables: 15, ..Limits::default() };
+        assert!(!Limits::default().check_limits(&supported));
+        assert!(ios_graphics_limits(&supported).check_limits(&supported));
+        for (available, requested) in [(4096, 4096), (8192, 8192), (16384, 8192)] {
+            let supported = Limits { max_texture_dimension_2d: available, ..supported.clone() };
+            let limits = ios_graphics_limits(&supported);
+            assert_eq!(limits.max_texture_dimension_2d, requested);
+            assert!(limits.check_limits(&supported));
+        }
     }
 }
