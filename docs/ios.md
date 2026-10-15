@@ -3,7 +3,8 @@
 Surco's iOS target uses the same Rust application, playback engine and limn
 components as the desktop app. `crates/app/src/lib.rs` is the shared entry point;
 the desktop executable calls `run()`, and `ios/main.m` forwards the main thread
-to the exported `surco_start()` function. The Objective-C file only boots winit.
+to the exported `surco_start()` function. The Objective-C file boots winit and
+resolves the app's private storage directory through Foundation.
 There are no duplicate Swift, React Native or web-view screens.
 
 ## Why this route
@@ -37,6 +38,15 @@ device for every Bluetooth headphone. Pair in iOS Settings and choose the route
 in Control Center. An in-app native route picker is not part of this first slice.
 The desktop output picker remains unchanged. Desktop executable self-updates
 are disabled on iOS, where application bundles must be signed.
+
+Settings, collections and player preferences use `Library/Application Support/surco/app.ron`
+inside the current iOS app container. Offline audio and its index live in the
+adjacent `offline` directory, which is excluded from backups and survives normal
+app restarts. Foundation resolves the container each launch; no device-specific
+container path is persisted. This follows Apple's guidance for
+[application-support files and downloaded media](https://developer.apple.com/documentation/foundation/using-the-file-system-effectively).
+The iOS path is supplied explicitly because eframe 0.36.2 does not provide a
+default storage directory for iOS. Desktop paths stay unchanged.
 
 ## Build and validation
 
