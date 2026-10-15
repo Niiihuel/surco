@@ -328,45 +328,32 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let field = TextField::new(
             "import-link",
             link,
-            "https://open.spotify.com/playlist/…",
+            "Enlace de playlist o álbum público",
             palette,
         )
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let about = if state.import_unknown {
-            "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
-        } else {
-            "De Spotify, Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
-        };
-        let mut fields = FormField::new("Enlace de la lista", field, palette)
-            .hint(about)
-            .sizing(DIALOG_FIELD)
-            .rows();
+        let form = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD);
+        let mut fields = if state.import_unknown { form.hint("No reconocimos ese enlace.").rows() } else { form.rows() };
         if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
                 .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
         }
-        fields.push(
-            Text::new(
-                "Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».",
-                palette,
-            )
-            .muted()
-            .render(),
-        );
         let cancel = Button::new("import-cancel", "Cancelar", palette)
             .variant(ButtonVariant::Outline)
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
         let go = Button::new("import-go", "Importar", palette)
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "Importar de otras apps",
-            "Queda como una playlist tuya, con las canciones que el catálogo tenga.",
+            "Importar música",
+            "Spotify · Apple Music · YouTube Music",
             "import-cancel",
             palette,
         )

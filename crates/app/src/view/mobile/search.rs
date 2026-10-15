@@ -23,7 +23,7 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
             .size(ControlSize::Spacious).render().radius(TAP / 2.0).size(None, Some(TAP)).flex(1.0)
     } else {
         Button::new("mobile-search-edit", if state.query.is_empty() { "¿Qué querés escuchar?" } else { &state.query }, palette)
-            .icon(Icon::Search).variant(ButtonVariant::Default)
+            .icon(Icon::Search).variant(if compact { ButtonVariant::Secondary } else { ButtonVariant::Default })
             .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().flex(1.0)
     };
     let mut row = vec![field];

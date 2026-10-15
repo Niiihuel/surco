@@ -18,6 +18,8 @@
 - Home keeps quick access to eight recent items so listening shelves appear sooner.
 - Larger system symbols and white circular Play/Pause controls across the mobile
   player, compact headers, mini player and detail pages.
+- Rounded search fields and filter capsules using limn's existing round controls.
+- A shorter import form with the link, supported services and explicit actions.
 
 ### Fixed
 

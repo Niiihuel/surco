@@ -174,6 +174,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     configuration.baseForegroundColor = primary ? UIColor.blackColor : destructive ? UIColor.systemRedColor : UIColor.whiteColor;
     configuration.contentInsets = NSDirectionalEdgeInsetsMake(12, 12, 12, 12);
     configuration.titleAlignment = footer ? UIButtonConfigurationTitleAlignmentCenter : UIButtonConfigurationTitleAlignmentLeading;
+    if (footer) configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     configuration.titleLineBreakMode = NSLineBreakByWordWrapping;
     configuration.attributedTitle = [[NSAttributedString alloc] initWithString:SheetString(action[@"title"])
         attributes:@{NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleBody]}];

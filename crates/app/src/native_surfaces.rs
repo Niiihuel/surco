@@ -372,11 +372,10 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         return Some((format!("missed:{id}"), sheet));
     }
     if let Some(link) = &state.importing {
-        let mut sheet = shell("Importar de otras apps", "Queda como una playlist tuya, con las canciones que el catálogo tenga.", "import-cancel");
-        sheet.rows = vec![text("Enlace de la lista", false), Row::Field { id: "import-link".into(), value: link.clone(),
-            placeholder: "https://open.spotify.com/playlist/…".into(), keyboard: "url".into(), paste: true },
-            text(if state.import_unknown { "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music." } else { "De Spotify, Apple Music o YouTube Music: una playlist o un álbum, que sean públicos." }, true),
-            text("Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».", true)];
+        let mut sheet = shell("Importar música", "Spotify · Apple Music · YouTube Music", "import-cancel");
+        sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
+            placeholder: "Enlace de playlist o álbum público".into(), keyboard: "url".into(), paste: true }];
+        if state.import_unknown { sheet.rows.push(text("No reconocimos ese enlace.", true)); }
         sheet.actions = vec![Action::new("import-cancel", "Cancelar", "xmark"), Action::new("import-go", "Importar", "square.and.arrow.down")];
         return Some(("import".into(), sheet));
     }
@@ -604,8 +603,9 @@ mod tests {
         state.importing = Some("https://example.com/ñ".into());
         let payload = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
         let json = serde_json::to_value(payload).unwrap();
-        assert_eq!(json["sheet"]["rows"][1]["kind"], "field");
-        assert_eq!(json["sheet"]["rows"][1]["paste"], true);
+        assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
+        assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
+        assert_eq!(json["sheet"]["rows"][0]["paste"], true);
         assert!(json["menus"].as_array().unwrap().is_empty());
         let action = serde_json::to_value(Row::Action(Action::new("test", "Title", "heart"))).unwrap();
         assert_eq!(action["kind"], "action");

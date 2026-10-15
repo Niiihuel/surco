@@ -79,7 +79,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if editing { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
+    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
     let header = if state.page == Page::Lyrics { lyrics::header(state, palette) }
         else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
