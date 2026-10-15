@@ -23,6 +23,11 @@ Read through the Figma connector on 2026-10-15, with rendered design contexts.
 - Search uses a stable native UISearchBar with its own clear, Cancel and editing
   menu. Preserve the editor, caret and marked text through results and rotation;
   retain existing results and their scroll position during debounce/loading.
+- Lyrics uses a dedicated song header and 156-point playback footer, with seek,
+  a white 64-point Play/Pause circle, route and sharing controls. Its background
+  gradient continues through that footer and the home-indicator safe area.
+- Notices live inside the protected content scroll and are revealed once when
+  new or changed, leaving subsequent manual scrolling intact.
 
 The second iOS kit `1BzqhExmVONm3WMDZBMqPj` supplies more precise 390-point
 references: Search idle `604:9087`, focused recents `604:9150`, results `604:9171`,

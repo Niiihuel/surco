@@ -1,6 +1,14 @@
 # Native iOS surfaces
 
-The player, pages, playback engine and app state remain in Rust/limn. UIKit owns the iOS context-menu interaction, paste control and modal sheet presentation. The reusable horizontal cancellation and scroll-edge geometry fixes belong to limn.
+The player, pages, playback engine and app state remain in Rust/limn. UIKit owns the iOS search editor, context-menu interaction, paste control and modal sheet presentation. The reusable horizontal cancellation and scroll-edge geometry fixes belong to limn.
+
+Search reserves one `ios-search` slot for a stable `UISearchBar`. Native text and
+focus events share a monotonic revision inside an opaque session; Rust validates
+both that session and the current navigation/editing intent. Results arriving do
+not recreate the editor or reset its caret. Marked IME text stays with UIKit;
+rotation waits for corrected geometry without interpreting an old rectangle as a
+request to resign focus. Cancel retains the query, and Return explicitly submits
+text or a pasted link. The native editor supplies Paste and Clear itself.
 
 `SurcoSurfaces` attaches a `UIContextMenuInteraction` to the existing canvas, rather than adding transparent views over cards. It snapshots the selected menu before presenting. Rust captures the corresponding track/collection target and only accepts actions offered for that opening. A native menu ends after its selection has been queued, preserving that target across list updates.
 
