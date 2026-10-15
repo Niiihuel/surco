@@ -121,8 +121,10 @@ def smoke_simulator(app, sdk_version, env, artifacts):
             os.kill(pid, 0)
         except ProcessLookupError as error:
             raise RuntimeError("Surco exited during simulator startup; inspect the app logs") from error
+        # A cold CI display can write the PNG before simctl finishes its capture.
+        # Require command success as well as the post-capture process check below.
         run(["xcrun", "simctl", "io", udid, "screenshot", str(artifacts / "simulator.png")],
-            env, logs / "simulator-screenshot.log", timeout=60)
+            env, logs / "simulator-screenshot.log", timeout=180)
         os.kill(pid, 0)
         (artifacts / "smoke.json").write_text(json.dumps({"bundle_id": bundle_id, "pid": pid,
                                                          "launch_survived_seconds": 8}, indent=2) + "\n")
