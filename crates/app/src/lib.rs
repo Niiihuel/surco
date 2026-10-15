@@ -885,39 +885,41 @@ mod lyrics_viewport_tests {
 
     #[test]
     fn mobile_notice_pauses_follow_without_consuming_the_line_to_reveal_after_close() {
-        let size = Size::new(402.0, 874.0);
-        let mut state = State::default();
-        state.mobile = true;
-        state.page = state::Page::Lyrics;
-        state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0,
-            ..state::mobile::ContentInsets::default() };
-        state.show(song("a", 10.0));
-        long_lyrics(&mut state);
-        let mut tree = UiTree::new(Element::spacer());
-        tree.set_reduced_motion(true);
-        tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
-        layout_view(&mut state, &mut tree, size);
-        update_lyrics_viewport(&mut state, &mut tree);
-        layout_view(&mut state, &mut tree, size);
-        layout_view(&mut state, &mut tree, size);
-        state.mobile_ui.notice = Some("No pudimos completar esta acción.".into());
-        let mut seen = None;
-        layout_with_notice(&mut state, &mut tree, size, &mut seen);
-        let notice_offset = tree.scroll_offset("lyrics-list");
-        state.show(song("a", 11.0));
-        assert!(!update_lyrics_viewport(&mut state, &mut tree));
-        let visible = layout_with_notice(&mut state, &mut tree, size, &mut seen);
-        assert_eq!(tree.scroll_offset("lyrics-list"), notice_offset);
-        let close = visible.access.iter().find(|node| node.id == "mobile-notice-close").unwrap().rect;
-        let point = limn::Point::new(close.x + close.width / 2.0, close.y + close.height / 2.0);
-        assert_eq!(visible.press_region(point).unwrap().id, "mobile-notice-close");
-        tree.handle_event(limn::UiEvent::PointerDown(point));
-        for action in tree.handle_event(limn::UiEvent::PointerUp(point)) { state.update(&action); }
-        assert!(state.mobile_ui.notice.is_none());
-        assert!(update_lyrics_viewport(&mut state, &mut tree), "the active line was not consumed while reading the notice");
-        layout_view(&mut state, &mut tree, size);
-        let frame = layout_view(&mut state, &mut tree, size);
-        assert_active_clear_of_chrome(&frame, "lyric:11");
+        for next_position in [10.0, 11.0] {
+            let size = Size::new(402.0, 874.0);
+            let mut state = State::default();
+            state.mobile = true;
+            state.page = state::Page::Lyrics;
+            state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0,
+                ..state::mobile::ContentInsets::default() };
+            state.show(song("a", 10.0));
+            long_lyrics(&mut state);
+            let mut tree = UiTree::new(Element::spacer());
+            tree.set_reduced_motion(true);
+            tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+            layout_view(&mut state, &mut tree, size);
+            update_lyrics_viewport(&mut state, &mut tree);
+            layout_view(&mut state, &mut tree, size);
+            layout_view(&mut state, &mut tree, size);
+            state.mobile_ui.notice = Some("No pudimos completar esta acción.".into());
+            let mut seen = None;
+            layout_with_notice(&mut state, &mut tree, size, &mut seen);
+            let notice_offset = tree.scroll_offset("lyrics-list");
+            state.show(song("a", next_position));
+            assert!(!update_lyrics_viewport(&mut state, &mut tree));
+            let visible = layout_with_notice(&mut state, &mut tree, size, &mut seen);
+            assert_eq!(tree.scroll_offset("lyrics-list"), notice_offset);
+            let close = visible.access.iter().find(|node| node.id == "mobile-notice-close").unwrap().rect;
+            let point = limn::Point::new(close.x + close.width / 2.0, close.y + close.height / 2.0);
+            assert_eq!(visible.press_region(point).unwrap().id, "mobile-notice-close");
+            tree.handle_event(limn::UiEvent::PointerDown(point));
+            for action in tree.handle_event(limn::UiEvent::PointerUp(point)) { state.update(&action); }
+            assert!(state.mobile_ui.notice.is_none());
+            assert!(update_lyrics_viewport(&mut state, &mut tree), "closing resumes the current verse even when its position did not change");
+            layout_view(&mut state, &mut tree, size);
+            let frame = layout_view(&mut state, &mut tree, size);
+            assert_active_clear_of_chrome(&frame, &format!("lyric:{}", next_position as usize));
+        }
     }
 
     #[test]

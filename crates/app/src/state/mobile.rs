@@ -348,7 +348,10 @@ impl State {
                     "mobile-context-close" => self.mobile_ui.context = None,
                     "mobile-library-close" => self.mobile_ui.library = None,
                     "mobile-connections-close" => self.mobile_ui.connections = false,
-                    "mobile-notice-close" => self.mobile_ui.notice = None,
+                    "mobile-notice-close" => {
+                        self.mobile_ui.notice = None;
+                        if self.page == Page::Lyrics { self.lyric_shown = None; }
+                    }
                     "mobile-connections" | "setting:connections" => {
                         self.mobile_ui.library = None;
                         self.mobile_ui.context = None;
