@@ -1,4 +1,5 @@
 [
+  "airplay.audio",
   "archivebox",
   "archivebox.fill",
   "arrow.clockwise",
@@ -102,6 +103,7 @@
   "scope",
   "server.rack",
   "shuffle",
+  "shuffle.circle",
   "sidebar.left",
   "sidebar.right",
   "slider.horizontal.3",
