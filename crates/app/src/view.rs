@@ -996,9 +996,18 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     } else {
         ScrollArea::new("library", Element::column(shown).gap(2.0)).render().flex(1.0)
     };
+    let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
     if !state.settings.import_dismissed && wanted.is_empty() {
-        parts.push(import_card(width - 16.0, palette));
+        let card = import_card(width - 16.0, palette);
+        if state.mobile {
+            if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
+                let rows = std::mem::replace(child.as_mut(), Element::spacer());
+                **child = Element::column(vec![card, rows]).gap(16.0);
+            } else {
+                list = ScrollArea::new("library", Element::column(vec![card, list]).gap(16.0)).render().flex(1.0);
+            }
+        } else { parts.push(card); }
     }
     parts.push(list);
     Element::column(parts).gap(6.0).padding(8.0)

@@ -5,6 +5,7 @@ use super::*;
 mod search;
 mod home;
 mod player;
+mod chrome;
 mod sheets;
 pub(super) mod details;
 #[cfg(test)]
@@ -12,6 +13,8 @@ mod dialog_tests;
 
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;
+const HEADER_HEIGHT: f32 = 76.0;
+const MINI_HEIGHT: f32 = 78.0;
 
 pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
     IconButton::new(id, glyph, palette).variant(ButtonVariant::Ghost)
@@ -36,21 +39,30 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if state.can_go_back() || state.page == Page::Playing {
         header.push(icon(if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
     }
-    header.push(Text::new(title, palette).font_size(24.0).render().centered_y().flex(1.0));
+    header.push(Text::new(title, palette).font_size(if state.page == Page::Playing { 14.0 } else { 24.0 }).truncate().render().centered_y().flex(1.0));
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
+    } else if state.page == Page::Playing && state.current().is_some() {
+        header.push(icon("mobile-player-header-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"));
     }
-    if state.page != Page::Settings && state.page != Page::Playing {
+    if state.page != Page::Settings && state.page != Page::Playing && !matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
         header.push(icon("settings", Icon::Settings, "Configuración", palette));
     }
-    let header = Element::row(header).gap(8.0).padding(16.0);
-
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let mut parts = if editing { Vec::new() } else { vec![header] };
-    if searching { parts.push(search::field(state, palette)); }
+    let header_height = if searching { if editing { 0.0 } else { HEADER_HEIGHT } } else { HEADER_HEIGHT };
+    let header = Element::panel(Element::row(header).gap(8.0).padding(16.0).size(None, Some(HEADER_HEIGHT)))
+        .size(None, Some(header_height)).clip_children();
+    let mut top = vec![header];
+    let mut top_height = header_height;
+    if searching {
+        top.push(search::field(state, palette));
+        top_height += if editing { 68.0 } else { 72.0 } + if cfg!(any(target_os = "ios", test)) { 52.0 } else { 0.0 };
+    }
+    // The notice participates in flow, so longer messages never cover an action.
+    let mut notices = Vec::new();
     if let Some(notice) = &state.mobile_ui.notice {
-        parts.push(Element::panel(Element::row(vec![Text::new(notice, palette).render().flex(1.0),
+        notices.push(Element::panel(Element::row(vec![Text::new(notice, palette).render().flex(1.0),
             icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0)).background(SCHEME.raised));
     }
     let content = if state.page == Page::Playing && state.queue_open {
@@ -60,21 +72,25 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else if state.page == Page::Search {
         home::content(state, window.width, palette)
     } else {
-        pane(state, window.width, palette)
+        page(state, window.width, palette)
     };
-    parts.push(content.flex(1.0));
+    let mut bottom = Vec::new();
+    let mut bottom_height = 0.0;
     if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
-            parts.push(mini_player(state, track, palette));
+            bottom.push(mini_player(state, track, palette));
+            bottom_height += MINI_HEIGHT;
         }
     }
-    if state.page != Page::Playing && !keyboard { parts.push(navigation(state, palette)); }
-    let face = if state.page == Page::Search { if searching { "mobile:search" } else { "mobile:home" } }
-        else if state.page == Page::Playing { if state.queue_open { "mobile:queue" } else { "mobile:player" } }
-        else { "mobile:page" };
-    let content = Element::column(parts).animate_enter(face);
+    if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
+    let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
+    let content = chrome::under_bars(content, top_height, bottom_height);
+    let bars = Element::column(vec![Element::column(top).block_pointer("mobile-header-bar"), Element::spacer().flex(1.0), Element::column(bottom)]);
+    notices.push(Element::stack(vec![content, bars]).flex(1.0));
+    let content = Element::column(notices);
     let content = if state.page == Page::Playing { state.current().map_or(content.clone(), |track| washed(state, &track.artwork_url, content)) } else { content };
     let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
+    let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = playlist_dialog(state, tree, window.width, palette);
@@ -84,12 +100,22 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         .max_height(680.0).body(equalizer(state, palette)).render()
 }
 
+fn route_key(state: &State) -> String {
+    match &state.page {
+        Page::Search => if state.mobile_search { "mobile:search" } else { "mobile:home" }.into(),
+        Page::Album(album) => format!("mobile:album:{}", album.id),
+        Page::Artist(artist) => format!("mobile:artist:{}", artist.id),
+        Page::Playlist(id) => format!("mobile:playlist:{id}"),
+        page => format!("mobile:{page:?}"),
+    }
+}
+
 fn navigation(state: &State, palette: ComponentPalette) -> Element {
     let tab = |id: &str, glyph: Icon, label: &str, selected: bool| {
         let ink = if selected { palette.text } else { palette.muted };
         let copy = Element::column(vec![
-            Element::icon(glyph).foreground(ink).centered_x(),
-            Text::new(label, palette).role(TextRole::Caption).render().foreground(ink).centered_x(),
+            Element::icon(glyph).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
+            Text::new(label, palette).role(TextRole::Caption).render().foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:label")),
         ]).gap(4.0).centered();
         Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected))
             .size(None, Some(NAV_HEIGHT)).flex(1.0)
@@ -98,7 +124,7 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
         tab("home", Icon::Home, "Inicio", state.page == Page::Search && !state.mobile_search),
         tab("mobile-search", Icon::Search, "Buscar", state.page == Page::Search && state.mobile_search),
         tab("mobile-library", Icon::Playlist, "Biblioteca", matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_))),
-    ]).background(CANVAS)
+    ]).block_pointer("mobile-nav-bar")
 }
 
 fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Element {
@@ -117,7 +143,7 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
     ]).gap(8.0).padding(8.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();
-    Element::panel(Element::column(vec![controls, progress])).background(SCHEME.raised).radius(PANEL_RADIUS).padding(8.0)
+    Element::panel(Element::column(vec![controls, progress])).background(SCHEME.raised).radius(PANEL_RADIUS).padding(8.0).size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
 }
 
 /// Overflow stays visible on touch screens, independently of pointer hover.
@@ -275,4 +301,36 @@ mod tests {
         click(&mut state, "home");
         assert!(state.page == Page::Search && !state.mobile_search);
     }
+
+    #[test]
+    fn details_scroll_beneath_fixed_chrome_and_reach_the_last_song() {
+        for width in [320.0, 390.0, 430.0] {
+            let size = Size::new(width, 600.0);
+            let mut state = playing_state();
+            state.collection.playlists.push(Playlist { id: 7, name: "Mis viajes".into(), collaborative: false,
+                tracks: (0..20).map(|index| Track { id: format!("song-{index}"), ..state.current().unwrap().clone() }).collect() });
+            state.page = Page::Playlist(7);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let first = tree.layout(size);
+            let scroll = first.regions.iter().find(|region| region.id == "mobile-playlist" && region.kind == limn::HitKind::Scroll).unwrap().rect;
+            assert_eq!(scroll.y, 0.0, "the page continues behind the header");
+            assert_eq!(scroll.height, size.height);
+            let nav = first.access.iter().find(|node| node.id == "mobile-library").unwrap().rect;
+            tree.scroll_to_end("mobile-playlist");
+            let last = tree.layout(size);
+            let song = last.access.iter().find(|node| node.id == "page-track:19").unwrap().rect;
+            assert!(song.height >= TAP && song.y + song.height <= nav.y - MINI_HEIGHT + 0.1, "last song stays above transport: {song:?}");
+            let title = limn::Point::new(width / 2.0, 36.0);
+            assert_eq!(last.press_region(title).unwrap().id, "mobile-header-bar");
+            tree.handle_event(limn::UiEvent::PointerDown(title));
+            assert!(tree.handle_event(limn::UiEvent::PointerUp(title)).is_empty(), "a bar never plays the song below it");
+            let margin = limn::Point::new(4.0, nav.y - 4.0);
+            assert_eq!(last.press_region(margin).unwrap().id, "mobile-mini-bar");
+            tree.handle_event(limn::UiEvent::PointerDown(margin));
+            assert!(tree.handle_event(limn::UiEvent::PointerUp(margin)).is_empty());
+
+        }
+    }
+
 }

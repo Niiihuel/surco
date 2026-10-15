@@ -14,6 +14,7 @@ fn title(value: &str, palette: ComponentPalette) -> Element {
         .font_size(28.0)
         .line_height(34.0)
         .render()
+        .anchor("mobile-detail-title")
 }
 
 fn duration(tracks: &[Track]) -> String {
