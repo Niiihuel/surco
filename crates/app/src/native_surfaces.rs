@@ -260,11 +260,11 @@ fn context_actions(state: &State, context: &CardContext) -> Vec<Action> {
 }
 
 fn library_actions(state: &State, context: &LibraryContext) -> Vec<Action> {
-    let mut items = vec![Action::new("library-action:open", "Abrir", "arrow.up.right")];
+    let mut items = vec![Action::new("library-action:open", "Abrir", "chevron.right")];
     let kept = context.entry.as_ref().is_none_or(|entry| state.card_entry_kept(entry));
     if kept {
         let pinned = state.collection.pinned.contains(&context.key);
-        items.push(Action { selected: pinned, ..Action::new("library-action:pin", if pinned { "Desfijar" } else { "Fijar arriba" }, "pin") });
+        items.push(Action { selected: pinned, ..Action::new("library-action:pin", if pinned { "Desfijar" } else { "Fijar arriba" }, if pinned { "pin.slash" } else { "pin" }) });
     }
     if context.entry.is_some() {
         let artist = context.key.starts_with("artist:");
