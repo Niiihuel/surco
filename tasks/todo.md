@@ -10,5 +10,5 @@
 - [x] Complete final-head rendered visual QA and independent code review; [desktop CI](https://github.com/Niiihuel/surco/actions/runs/38711825798) and [iOS CI](https://github.com/Niiihuel/surco/actions/runs/38711825772) pass for `16bd78e`.
 - [x] Merge [Surco UI PR #3](https://github.com/Niiihuel/surco/pull/3) after final checks (`main` merge `77ecb0d`).
 - [x] Review, validate and merge [iOS clipboard/link PR #4](https://github.com/Niiihuel/surco/pull/4): system Copy/Paste, visible Paste controls and public URL opening; 189 local tests, Clippy and [desktop](https://github.com/Niiihuel/surco/actions/runs/38717476437)/[native](https://github.com/Niiihuel/surco/actions/runs/38717476331) CI pass at `787764e`; merge `e5c0e8d`.
-- [ ] Signed next TestFlight beta, existing tester group, and clean repositories.
+- [x] Deliver signed [TestFlight 0.2.0 (3.1)](../docs/testflight.md) from `e5c0e8d`, verify **En pruebas** for the existing three-member **Surco interno** group, preserve tag `ios-v0.2.0-build3.1` and clean merged feature branches/worktrees.
 - [ ] User checks on physical iPhone: background/locked audio, Bluetooth/AirPlay, calls/interruption recovery, headset commands, Dynamic Island, keyboard/gestures and cross-app Copy/Paste.

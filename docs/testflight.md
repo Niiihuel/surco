@@ -7,6 +7,32 @@ La membresía Apple Developer paga ya permite preparar esta distribución.
 La compilación, firma y subida se realizan en GitHub Actions; los pasos de
 certificado de abajo también funcionan desde Linux, sin Xcode local.
 
+## Beta entregada · 15 de octubre de 2026
+
+**Surco 0.2.0 (3.1)** terminó de procesarse y figura **En pruebas** en
+**Surco interno**, el grupo existente de tres testers. La información de cifrado
+está guardada para distribución fuera de Francia y las notas de prueba incluyen
+audio, dispositivos, teclado, gestos y Copy/Paste entre apps.
+
+Para actualizar la instalación actual: abrí **TestFlight → Surco → Actualizar**
+y comprobá que indique **0.2.0 (3.1)**. La compilación está en
+[App Store Connect](https://appstoreconnect.apple.com/teams/1c3fae91-928d-4369-94f8-4a7ada6471b9/apps/6823059312/testflight/ios/c483fa6b-e4d2-40c5-b697-7e2cd8be7e3f).
+
+La [ejecución firmada 38719103389](https://github.com/Niiihuel/surco/actions/runs/38719103389)
+validó y subió el IPA sin errores desde
+`e5c0e8df3a2a2ee356f104d261b4f97aca77c54b`, conservado en el tag
+[`ios-v0.2.0-build3.1`](https://github.com/Niiihuel/surco/tree/ios-v0.2.0-build3.1).
+Ese mismo commit pasó [CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38719090300)
+y [CI de simulador y compilación para iPhone](https://github.com/Niiihuel/surco/actions/runs/38719090310).
+El IPA descargado confirma versión/build, SDK 26.5, mínimo iOS 15, firma,
+perfil incorporado y modo de audio en segundo plano. Las claves temporales del
+runner se limpiaron al terminar.
+
+Esta entrega conserva el motor y la UI Rust/limn, con las integraciones nativas
+de media, teclado, rutas y portapapeles. Las pruebas automatizadas y visuales
+están completas; el [checklist del iPhone real](ios.md#build-and-validation)
+queda pendiente de observación del usuario.
+
 ## Herramientas de distribución
 
 Desde el **28 de abril de 2026**, Apple exige Xcode 26 o posterior y SDK iOS 26
@@ -177,7 +203,7 @@ la distribución a ese país, revisá la clasificación y documentación aplicab
 3. Asigná el build manualmente al grupo **Surco interno** para que lo reciban
    sus usuarios. La distribución automática de ese grupo está desactivada.
 4. Instalá la app TestFlight de Apple en tu iPhone, aceptá la invitación y tocá
-   **Instalar** en Surco.
+   **Instalar** en Surco; para la instalación existente, tocá **Actualizar**.
 
 Los builds duran 90 días. La prueba interna admite hasta 100 usuarios de App
 Store Connect; invitar testers externos añade Beta App Review y sus requisitos.
