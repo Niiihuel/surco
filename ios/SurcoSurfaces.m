@@ -218,7 +218,8 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     [self updatePaste:nil];
     [self emit:@{@"kind": @"menu_open", @"id": target[@"id"]}];
     __weak SurcoSurfaces *weakSelf = self;
-    return [UIContextMenuConfiguration configurationWithIdentifier:target[@"id"] previewProvider:nil
+    NSDictionary *identity = @{@"id": target[@"id"], @"generation": @(_menuGeneration)};
+    return [UIContextMenuConfiguration configurationWithIdentifier:identity previewProvider:nil
         actionProvider:^UIMenu *(NSArray<UIMenuElement *> *suggested) { return [weakSelf menu:target]; }];
 }
 - (UITargetedPreview *)preview {
@@ -232,12 +233,17 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     UIPreviewTarget *target = [[UIPreviewTarget alloc] initWithContainer:_view center:CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect))];
     return [[UITargetedPreview alloc] initWithView:snapshot parameters:parameters target:target];
 }
-- (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForHighlightingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self preview]; }
-- (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForDismissingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self preview]; }
+- (BOOL)isCurrentMenu:(UIContextMenuConfiguration *)configuration {
+    NSDictionary *identity = (NSDictionary *)configuration.identifier;
+    return _valid && [identity[@"generation"] unsignedIntegerValue] == _menuGeneration;
+}
+- (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForHighlightingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self isCurrentMenu:configuration] ? [self preview] : nil; }
+- (UITargetedPreview *)contextMenuInteraction:(UIContextMenuInteraction *)interaction previewForDismissingMenuWithConfiguration:(UIContextMenuConfiguration *)configuration { return [self isCurrentMenu:configuration] ? [self preview] : nil; }
 - (void)contextMenuInteraction:(UIContextMenuInteraction *)interaction willEndForConfiguration:(UIContextMenuConfiguration *)configuration animator:(id<UIContextMenuInteractionAnimating>)animator {
-    NSString *identifier = [(NSString *)configuration.identifier copy];
+    NSDictionary *identity = (NSDictionary *)configuration.identifier;
+    NSString *identifier = identity[@"id"];
     NSDictionary *closingMenu = _activeMenu;
-    NSUInteger generation = _menuGeneration;
+    NSUInteger generation = [identity[@"generation"] unsignedIntegerValue];
     __weak SurcoSurfaces *weakSelf = self;
     void (^finished)(void) = ^{
         SurcoSurfaces *owner = weakSelf;
