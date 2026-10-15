@@ -362,7 +362,7 @@ fn ios_graphics_limits(supported: &eframe::wgpu::Limits) -> eframe::wgpu::Limits
 }
 
 fn graphics_configuration() -> eframe::WgpuConfiguration {
-    let mut configuration = eframe::WgpuConfiguration::default();
+    let mut configuration = eframe::NativeOptions::default().wgpu_options;
     if cfg!(target_os = "ios") {
         if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut configuration.wgpu_setup {
             setup.device_descriptor = std::sync::Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
@@ -517,6 +517,11 @@ fn ios_logging() {
 mod graphics_tests {
     use super::ios_graphics_limits;
     use eframe::wgpu::Limits;
+
+    #[test]
+    fn native_graphics_keeps_default_surface_latency() {
+        assert_eq!(super::graphics_configuration().surface, eframe::NativeOptions::default().wgpu_options.surface);
+    }
 
     #[test]
     fn ios_graphics_supports_simulator_limits_and_available_texture_sizes() {
