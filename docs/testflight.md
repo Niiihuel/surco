@@ -121,12 +121,14 @@ como secretos. ([Guía de firma de GitHub](https://docs.github.com/en/actions/ho
 El botón manual de Actions aparece cuando el workflow está en la rama
 predeterminada. Para registrar el workflow antes de integrar la rama, se agregó
 temporalmente un trigger `push` limitado a `feature/settings-ios` y únicamente
-a cambios en `.github/workflows/testflight.yml`. Esa primera corrida siempre
-exporta el IPA sin subirlo: un evento `push` no incluye `inputs.upload`.
+a cambios en `.github/workflows/testflight.yml`. Con la autorización explícita
+para probar la app por TestFlight, esa primera corrida firma el IPA, lo valida
+con Apple y lo sube. El fallback de subida por `push` se limita a ese bootstrap.
 
 Una vez ejecutado al menos una vez, GitHub permite dispararlo por API o CLI
-contra una rama o tag. Después del registro, retiramos el trigger temporal y
-conservamos `workflow_dispatch`. Para generar otro IPA desde la rama revisada:
+contra una rama o tag. Después del registro, retiramos tanto el trigger temporal
+como su fallback de subida y conservamos `workflow_dispatch`. Para generar otro
+IPA sin subirlo desde la rama revisada:
 
 ```bash
 gh workflow run testflight.yml --repo Niiihuel/surco --ref feature/settings-ios -f upload=false

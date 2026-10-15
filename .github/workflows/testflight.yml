@@ -1,8 +1,8 @@
 name: TestFlight
 
 on:
-  # Temporary bootstrap: register this workflow before merging it into main.
-  # A push has no inputs.upload, so it only exports the IPA. Remove after registration.
+  # Temporary bootstrap for the user's authorized first TestFlight upload.
+  # Remove this trigger and the push upload fallback after registration.
   push:
     branches: ['feature/settings-ios']
     paths: ['.github/workflows/testflight.yml']
@@ -78,7 +78,7 @@ jobs:
           APP_STORE_CONNECT_KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
           APP_STORE_CONNECT_ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
           APP_STORE_CONNECT_PRIVATE_KEY_BASE64: ${{ secrets.APP_STORE_CONNECT_PRIVATE_KEY_BASE64 }}
-        run: python3 scripts/testflight.py ${{ inputs.upload && '--upload' || '' }}
+        run: python3 scripts/testflight.py ${{ (inputs.upload || github.event_name == 'push') && '--upload' || '' }}
 
       - name: Signed IPA and redacted logs
         if: always()
