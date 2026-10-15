@@ -1,7 +1,8 @@
 # Surco en tu iPhone con TestFlight
 
-Esta app se registra como **Surco nueva**, con Bundle ID
-`io.github.niiihuel.surco`. El registro anterior de dnmusic queda separado.
+La app nueva en App Store Connect es **Surco Music**, Apple ID **6823059312**,
+con Bundle ID `io.github.niiihuel.surco`. En el iPhone se muestra como **Surco**.
+El registro anterior de dnmusic queda separado.
 La membresía Apple Developer paga ya permite preparar esta distribución.
 La compilación, firma y subida se realizan en GitHub Actions; los pasos de
 certificado de abajo también funcionan desde Linux, sin Xcode local.
@@ -22,20 +23,29 @@ Se fija Xcode 26.x porque el host actual usa el ciclo de aplicación UIKit de
 winit. Enlazar con SDK 27 exige migrar a UIScene; esa migración precede a subir
 el SDK a 27. ([Apple UIKit](https://developer.apple.com/documentation/uikit/transitioning-to-the-uikit-scene-based-life-cycle))
 
-## 1. Registrar la app nueva
+## 1. Registro de la app nueva
 
-1. En [Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/identifiers/list),
-   registrá un App ID explícito para `io.github.niiihuel.surco`, descripción `Surco`.
-2. En [App Store Connect](https://appstoreconnect.apple.com/), abrí **Apps → + → New App**.
-   Elegí plataforma iOS, nombre Surco, idioma principal Español y ese Bundle ID.
-   Podés usar `surco-ios` como SKU interno único.
-3. Aceptá los acuerdos pendientes de tu cuenta si Apple los muestra.
+El registro [Surco Music](https://appstoreconnect.apple.com/apps/6823059312/testflight/ios)
+ya existe para iOS, con el App ID explícito `io.github.niiihuel.surco`. El SKU es
+un identificador interno de App Store Connect y no cambia el Bundle ID del build.
+Aceptá los acuerdos pendientes de tu cuenta si Apple los muestra.
+
+Estado inicial: se cargaron los siete secrets de GitHub y se validó el perfil
+App Store Connect. Se creó manualmente el grupo **Surco interno**, con
+distribución automática desactivada; al crearlo todavía tenía cero testers y
+cero builds. El primer build debe pasar el preflight y el procesamiento de Apple.
 
 El preflight consulta la API real de App Store Connect y falla antes de compilar
 si ese registro no existe o la clave no tiene acceso. No crea ni reutiliza una
 app automáticamente. ([Alta oficial](https://developer.apple.com/help/app-store-connect/create-an-app-record/add-a-new-app/))
 
-## 2. Crear el certificado desde Linux
+## 2. Certificado de distribución desde Linux
+
+La configuración actual usa un certificado **iOS Distribution** válido porque
+el cupo de **Apple Distribution** estaba completo. El script admite tanto la
+identidad `iPhone Distribution` de ese certificado como `Apple Distribution`.
+El perfil de Surco Music debe incluir exactamente el certificado del `.p12`.
+Los pasos siguientes sirven para emitir o renovar material de firma desde Linux.
 
 Guardá las claves fuera del repositorio. Estos comandos piden las contraseñas
 de forma interactiva; no las incluyas como argumentos ni las pegues en el chat.
@@ -48,8 +58,9 @@ openssl req -new -key distribution.key -out Surco.certSigningRequest
 ```
 
 Completá tu nombre y email al crear el CSR. En el portal Apple, **Certificates →
-+ → Apple Distribution**, cargá `Surco.certSigningRequest` y descargá el `.cer`
-como `distribution.cer`. Convertí y exportá el certificado junto con su clave:
++**, elegí el tipo de distribución disponible para iOS (`iOS Distribution` en
+esta configuración), cargá `Surco.certSigningRequest` y descargá el `.cer` como
+`distribution.cer`. Convertí y exportá el certificado junto con su clave:
 
 ```bash
 openssl x509 -inform DER -in distribution.cer -out distribution.pem
@@ -61,7 +72,7 @@ La última contraseña protege el `.p12`; usala en el secret
 debe incluir la clave privada creada junto con ese CSR.
 
 En **Profiles → + → Distribution → App Store Connect**, elegí el App ID de Surco
-y ese mismo certificado Apple Distribution. Descargá el perfil como
+y ese mismo certificado de distribución. Descargá el perfil como
 `Surco.mobileprovision`. Un perfil Development o Ad Hoc no sirve para esta
 entrega. ([Perfil oficial](https://developer.apple.com/help/account/provisioning-profiles/create-an-app-store-provisioning-profile/))
 
@@ -76,8 +87,9 @@ publicar una versión en el App Store. Copiá su Key ID y el Issuer ID, y descar
 La clave de API permite autenticar la consulta y la subida; el `.p12` firma la
 app. ([API keys y alcance](https://developer.apple.com/help/app-store-connect/get-started/app-store-connect-api/))
 
-En GitHub, **Niiihuel/surco → Settings → Secrets and variables → Actions →
-Repository secrets**, cargá estos siete nombres:
+El workflow usa estos siete secrets, ya presentes en la configuración inicial.
+Para reponerlos, abrí **Niiihuel/surco → Settings → Secrets and variables → Actions
+→ Repository secrets**:
 
 - `IOS_DISTRIBUTION_P12_BASE64`: contenido Base64 de `distribution.p12`.
 - `IOS_DISTRIBUTION_P12_PASSWORD`: contraseña que elegiste al exportar el `.p12`.
@@ -106,9 +118,24 @@ como secretos. ([Guía de firma de GitHub](https://docs.github.com/en/actions/ho
 
 ## 4. Generar y subir el build
 
-El archivo `.github/workflows/testflight.yml` debe estar integrado en la rama
-predeterminada para aparecer en el menú manual de Actions. Este documento no
-implica que esa integración o una subida ya se hayan realizado.
+El botón manual de Actions aparece cuando el workflow está en la rama
+predeterminada. Para registrar el workflow antes de integrar la rama, se agregó
+temporalmente un trigger `push` limitado a `feature/settings-ios` y únicamente
+a cambios en `.github/workflows/testflight.yml`. Esa primera corrida siempre
+exporta el IPA sin subirlo: un evento `push` no incluye `inputs.upload`.
+
+Una vez ejecutado al menos una vez, GitHub permite dispararlo por API o CLI
+contra una rama o tag. Después del registro, retiramos el trigger temporal y
+conservamos `workflow_dispatch`. Para generar otro IPA desde la rama revisada:
+
+```bash
+gh workflow run testflight.yml --repo Niiihuel/surco --ref feature/settings-ios -f upload=false
+```
+
+Para solicitar la subida, se usa `-f upload=true`. El registro del workflow no
+implica que se haya integrado a `main` ni que exista un build procesado en Apple.
+([Eventos GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch),
+[CLI oficial](https://cli.github.com/manual/gh_workflow_run))
 
 En **Actions → TestFlight → Run workflow**, usá la rama revisada:
 
@@ -137,12 +164,13 @@ local no confirma que Apple ya haya habilitado el build.
 
 ## 5. Instalar en el iPhone
 
-1. En **App Store Connect → Surco → TestFlight**, esperá que termine el procesamiento.
+1. En **App Store Connect → Surco Music → TestFlight**, esperá que termine el procesamiento.
 2. Completá export compliance y la información de pruebas que Apple solicite.
    Respondé según las integraciones reales de la app; el workflow no declara
    automáticamente exenciones ni las respuestas de App Privacy.
-3. Creá un **grupo interno**, agregá tu usuario App Store Connect con acceso a
-   Surco y asigná el build a ese grupo.
+3. En el grupo **Surco interno** ya creado, agregá tu usuario App Store Connect
+   con acceso a Surco Music y asigná el build manualmente. La distribución
+   automática de ese grupo está desactivada.
 4. Instalá la app TestFlight de Apple en tu iPhone, aceptá la invitación y tocá
    **Instalar** en Surco.
 

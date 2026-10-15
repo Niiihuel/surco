@@ -1,6 +1,11 @@
 name: TestFlight
 
 on:
+  # Temporary bootstrap: register this workflow before merging it into main.
+  # A push has no inputs.upload, so it only exports the IPA. Remove after registration.
+  push:
+    branches: ['feature/settings-ios']
+    paths: ['.github/workflows/testflight.yml']
   workflow_dispatch:
     inputs:
       upload:
