@@ -15,6 +15,7 @@ mod ios_media;
 mod library;
 mod media_keys;
 mod mobile_input;
+mod mobile_motion;
 #[cfg(any(target_os = "ios", test))]
 mod ios_ui;
 mod paths;
@@ -59,6 +60,7 @@ struct Host {
     stirred: Instant,
     script: Script,
     touch: mobile_input::TouchInput,
+    motion: mobile_motion::Motion,
     #[cfg(target_os = "ios")]
     native_ui: Option<ios_ui::NativeUi>,
     #[cfg(target_os = "ios")]
@@ -212,6 +214,7 @@ impl eframe::App for Host {
         #[cfg(target_os = "ios")]
         let still = still || ios_ui::reduce_motion_enabled();
         self.tree.set_reduced_motion(still);
+        self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
         if let Some(native) = &mut self.native_ui {
@@ -280,9 +283,11 @@ impl eframe::App for Host {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
-        let sounding = self.state.player.playing && !self.state.settings.reduce_motion;
+        let sounding = self.state.player.playing && !still;
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
+        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        self.send(commands);
         self.tree.set_root(view::view(&self.state, window));
         // Escape leaves the whole window to the app again, and the screen follows.
         if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -335,7 +340,7 @@ impl eframe::App for Host {
             let now = Instant::now();
             let from = self.glide.as_ref().filter(|(gliding, _)| *gliding == shelf).map_or_else(|| self.tree.horizontal_scroll_offset(&shelf), |(_, spring)| spring.target());
             let to = (from + way * view::SHELF_STEP).max(0.0);
-            let mut spring = limn::ScalarSpring::new(if self.state.settings.reduce_motion { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
+            let mut spring = limn::ScalarSpring::new(if still { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
                 .motion(limn::SpringMotion::settling_in(Duration::from_millis(u64::from(limn::tokens().motion.move_ms) * 2)));
             spring.retarget(to, now);
             self.glide = Some((shelf, spring));
@@ -362,8 +367,12 @@ impl eframe::App for Host {
             else { limn_egui::events(&ctx, area.min) };
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
-            self.touch.translate(&raw, input, area.min, &input_frame,
-                state::mobile::is_sheet_handle)
+            let input = self.touch.translate(&raw, input, area.min, &input_frame,
+                state::mobile::is_sheet_handle);
+            self.motion.filter(&raw, input, &self.state, mobile_motion::DragArea {
+                frame: &input_frame, origin: area.min, size: window,
+                scroll: self.tree.scroll_offset("mobile-playing"),
+            }, Instant::now())
         } else { input };
         for event in input {
             self.stirred = Instant::now();
@@ -411,6 +420,8 @@ impl eframe::App for Host {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
+        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        self.send(commands);
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
         #[cfg(target_os = "ios")]
@@ -434,6 +445,8 @@ impl eframe::App for Host {
                                 let commands = self.state.update(&action);
                                 self.send(commands);
                             }
+                            let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+                            self.send(commands);
                             self.tree.set_root(view::view(&self.state, window));
                             frame = self.tree.layout(window);
                         }
@@ -462,11 +475,15 @@ impl eframe::App for Host {
             native.route_picker(slot.unwrap_or(egui::Rect::ZERO), visible && slot.is_some());
         }
         limn_egui::set_cursor(&ctx, self.tree.cursor());
+        if let Some(underlay) = self.motion.underlay(&self.state, window) {
+            limn_egui::paint_at(ui, underlay, area.min);
+        }
         limn_egui::paint_at(ui, &frame, area.min);
+        self.motion.remember(&frame, &self.state, window);
 
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
-        } else if self.state.is_sliding(Instant::now()) {
+        } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) {
             ctx.request_repaint();
         } else if let Some(after) = self.tree.animation_repaint_after() {
             let settled = self.stirred.elapsed() > SETTLED_AFTER && self.glide.is_none();
@@ -612,6 +629,7 @@ pub fn run() -> eframe::Result {
                 stirred: Instant::now(),
                 script,
                 touch: mobile_input::TouchInput::default(),
+                motion: mobile_motion::Motion::new(Instant::now()),
                 #[cfg(target_os = "ios")]
                 native_ui,
                 #[cfg(target_os = "ios")]

@@ -1,0 +1,518 @@
+//! Mobile surface motion and ownership of a downward player pull.
+
+use std::collections::VecDeque;
+use std::time::{Duration, Instant};
+
+use eframe::egui::{self, Pos2};
+use limn::{DismissDrag, Frame, HitKind, Point, Role, ScalarTransition, Size, UiAction, UiEvent, UiTree};
+
+use crate::{backend::Command, state::{Page, State}};
+
+const HEADER: f32 = 76.0;
+const OPEN: Duration = Duration::from_millis(320);
+const RETURN: Duration = Duration::from_millis(220);
+const CLOSE: Duration = Duration::from_millis(240);
+
+pub struct Motion {
+    player: ScalarTransition,
+    search: ScalarTransition,
+    showing: bool,
+    closing: bool,
+    reduced: bool,
+    drag: DismissDrag,
+    primary: Option<Touch>,
+    underlay: Option<(Size, Frame)>,
+}
+
+struct Touch {
+    device: egui::TouchDeviceId,
+    id: egui::TouchId,
+    claimed: bool,
+    eligible: bool,
+    finished: bool,
+    base: f32,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum Pointer { Move, Down, Up, Gone }
+
+struct Plan { pointer: Pointer, consume: bool, cancel: bool }
+
+pub struct DragArea<'a> {
+    pub frame: &'a Frame,
+    pub origin: Pos2,
+    pub size: Size,
+    pub scroll: f32,
+}
+
+impl Motion {
+    pub fn new(now: Instant) -> Self {
+        Self { player: ScalarTransition::new(0.0, now), search: ScalarTransition::new(HEADER, now),
+            showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
+            primary: None, underlay: None }
+    }
+
+    pub fn set_reduced_motion(&mut self, reduced: bool) { self.reduced = reduced; }
+
+    pub fn advance(&mut self, state: &mut State, tree: &UiTree, size: Size, now: Instant) -> Vec<Command> {
+        let reduced = self.reduced || state.settings.reduce_motion;
+        let showing = state.mobile && state.page == Page::Playing;
+        if showing && !self.showing {
+            self.player.snap_to(if reduced || state.queue_open { 0.0 } else { size.height }, now);
+            self.player.retarget_with_motion(0.0, now, OPEN, reduced);
+        } else if !showing || state.queue_open {
+            self.drag.cancel();
+            self.primary = None;
+            self.closing = false;
+            self.player.snap_to(0.0, now);
+        }
+        self.showing = showing;
+        if std::mem::take(&mut state.mobile_ui.player_close) && showing && !state.queue_open {
+            self.drag.cancel();
+            self.primary = None;
+            self.closing = true;
+            self.player.retarget_with_motion(size.height, now, CLOSE, reduced);
+        }
+        if reduced && !self.drag.is_dragging() { self.player.snap_to(self.player.target(), now); }
+        if self.closing && self.player.target() != size.height {
+            self.player.retarget_with_motion(size.height, now, CLOSE, reduced);
+        }
+        if self.closing && !self.player.is_active(now) {
+            self.closing = false;
+            self.showing = false;
+            self.player.snap_to(0.0, now);
+            state.mobile_ui.player_offset = 0.0;
+            let id = if state.can_go_back() { "back" } else { "home" };
+            return state.update(&UiAction::Clicked { id: id.into() });
+        }
+        state.mobile_ui.player_offset = self.player.value(now);
+        let search = state.mobile && state.page == Page::Search && state.mobile_search;
+        if search {
+            self.search.retarget_with_motion(if state.mobile_ui.search_editing { 0.0 } else { HEADER }, now, RETURN, reduced);
+            state.mobile_ui.search_header = Some(self.search.value(now));
+        } else {
+            self.search.snap_to(HEADER, now);
+            state.mobile_ui.search_header = None;
+        }
+        let anchor = match state.page {
+            Page::Playing if !state.queue_open => Some("mobile-player-title"),
+            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
+            _ => None,
+        };
+        state.mobile_ui.compact_header = state.mobile && anchor
+            .and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
+        Vec::new()
+    }
+
+    /// TouchInput may replace a pointer event with Leave + Scroll2D, or nothing.
+    /// Match those units to the raw sequence so only the claimed touch is consumed.
+    pub fn filter(&mut self, raw: &[egui::Event], input: Vec<UiEvent>, state: &State, area: DragArea<'_>, now: Instant) -> Vec<UiEvent> {
+        let DragArea { frame, origin, size, scroll } = area;
+        let mut plans = VecDeque::new();
+        let mut cancel = false;
+        for event in raw {
+            match event {
+                egui::Event::Touch { device_id, id, phase, pos, .. } => {
+                    let point = Point::new(pos.x - origin.x, pos.y - origin.y);
+                    if *phase == egui::TouchPhase::Start && self.primary.is_none() {
+                        let base = self.player.value(now);
+                        let eligible = eligible(state, frame, point, size, scroll, base);
+                        self.drag.begin(point, now, eligible);
+                        if eligible {
+                            // Preserve the grabbed point while deciding whether this is a tap or a pull.
+                            self.player.snap_to(base, now);
+                            self.closing = false;
+                        }
+                        self.primary = Some(Touch { device: *device_id, id: *id, claimed: false, eligible, finished: false, base });
+                    } else if let Some(touch) = self.primary.as_mut()
+                        .filter(|touch| touch.device == *device_id && touch.id == *id && !touch.finished) {
+                        if matches!(phase, egui::TouchPhase::Move | egui::TouchPhase::End) {
+                            let owns = self.drag.update(point, now);
+                            if owns && !touch.claimed {
+                                touch.claimed = true;
+                                self.closing = false;
+                                cancel = true;
+                            }
+                            if touch.claimed {
+                                self.player.snap_to(touch.base + self.drag.offset(), now);
+                            }
+                        }
+                        if matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel) {
+                            let dismiss = *phase == egui::TouchPhase::End && self.drag.release(now);
+                            self.drag.cancel();
+                            if touch.claimed || touch.eligible {
+                                self.closing = dismiss;
+                                self.player.retarget_with_motion(if dismiss { size.height } else { 0.0 }, now,
+                                    if dismiss { CLOSE } else { RETURN }, self.reduced || state.settings.reduce_motion);
+                            }
+                            touch.finished = true;
+                        }
+                    }
+                }
+                egui::Event::WindowFocused(false) => {
+                    cancel |= self.primary.as_ref().is_some_and(|touch| touch.claimed);
+                    self.drag.cancel();
+                    self.primary = None;
+                    self.closing = false;
+                    self.player.retarget_with_motion(0.0, now, RETURN, self.reduced || state.settings.reduce_motion);
+                }
+                _ => {}
+            }
+            let pointer = match event {
+                egui::Event::PointerMoved(_) => Some(Pointer::Move),
+                egui::Event::PointerButton { button: egui::PointerButton::Primary, pressed, .. } =>
+                    Some(if *pressed { Pointer::Down } else { Pointer::Up }),
+                egui::Event::PointerGone => Some(Pointer::Gone),
+                _ => None,
+            };
+            if let Some(pointer) = pointer {
+                plans.push_back(Plan { pointer, consume: self.primary.as_ref().is_some_and(|touch| touch.claimed),
+                    cancel: std::mem::take(&mut cancel) });
+                if pointer == Pointer::Gone { self.primary = None; }
+            }
+        }
+        let mut output = Vec::with_capacity(input.len());
+        let mut input = input.into_iter().peekable();
+        while let Some(event) = input.next() {
+            let pan_pair = matches!(event, UiEvent::PointerLeave)
+                && matches!(input.peek(), Some(UiEvent::Scroll2D { direct: true, .. }));
+            let pointer = match event {
+                UiEvent::PointerMove(_) => Some(Pointer::Move),
+                UiEvent::PointerDown(_) | UiEvent::PointerDownModified { .. } | UiEvent::PointerDownEditor { .. } => Some(Pointer::Down),
+                UiEvent::PointerUp(_) => Some(Pointer::Up),
+                UiEvent::Scroll2D { direct: true, .. } => Some(Pointer::Move),
+                UiEvent::PointerLeave if pan_pair => Some(Pointer::Move),
+                UiEvent::PointerLeave => Some(Pointer::Gone),
+                _ => None,
+            };
+            if let Some(pointer) = pointer {
+                // A zero-delta pan has no translated unit. Skip only its stale plan.
+                while plans.front().is_some_and(|plan| plan.pointer != pointer
+                    && !(pointer == Pointer::Move && plan.pointer == Pointer::Up)) {
+                    if plans.pop_front().is_some_and(|plan| plan.cancel) { output.push(UiEvent::PointerLeave); }
+                }
+                if let Some(plan) = plans.pop_front() {
+                    if plan.cancel { output.push(UiEvent::PointerLeave); }
+                    if plan.consume {
+                        if pan_pair { input.next(); }
+                        continue;
+                    }
+                }
+            }
+            output.push(event);
+            if pan_pair { output.extend(input.next()); }
+        }
+        if cancel || plans.iter().any(|plan| plan.cancel) { output.push(UiEvent::PointerLeave); }
+        output
+    }
+
+    pub fn active(&self, now: Instant) -> bool { self.player.is_active(now) || self.search.is_active(now) }
+
+    pub fn remember(&mut self, frame: &Frame, state: &State, size: Size) {
+        if state.mobile && state.page != Page::Playing {
+            let mut visual = Frame::default();
+            visual.commands = frame.commands.clone();
+            self.underlay = Some((size, visual));
+        }
+    }
+
+    pub fn underlay(&self, state: &State, size: Size) -> Option<&Frame> {
+        self.underlay.as_ref().filter(|(saved, _)| state.mobile && state.page == Page::Playing
+            && state.mobile_ui.player_offset > 0.0 && *saved == size).map(|(_, frame)| frame)
+    }
+}
+
+fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
+    if !state.mobile || state.page != Page::Playing || state.queue_open
+        || !point.x.is_finite() || !point.y.is_finite() || point.x < 0.0 || point.x >= size.width
+        || point.y < offset || point.y >= size.height
+        || state.creating.is_some() || state.importing.is_some() || state.missed_open || state.confirm.is_some()
+        || state.sort_open || state.menu.is_some() || state.equalizer_open || state.sharing.is_some()
+        || state.output_open || state.mobile_ui.context.is_some() || state.mobile_ui.library.is_some()
+        || state.mobile_ui.connections {
+        return false;
+    }
+    if frame.press_region(point).is_some_and(|hit| matches!(hit.kind,
+        HitKind::TextInput | HitKind::TextArea | HitKind::CodeEditor | HitKind::CodeDiff | HitKind::Scrollbar)
+        || frame.access.iter().any(|node| node.id == hit.id && node.role == Role::Slider)) {
+        return false;
+    }
+    point.y < offset + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
+        region.id == "mobile-playing" && region.kind == HitKind::Scroll && region.rect.contains(point)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::player::PlayerView;
+    use limn::{Component, Element, HitRegion, Rect, Slider, ComponentPalette};
+    use surco_core::Track;
+
+    fn phone() -> State {
+        let track = Track { id: "song".into(), title: "Canción".into(), artist: "Artista".into(), artist_id: None,
+            album: None, album_id: None, artwork_url: None, duration_ms: 180_000 };
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = Page::Library;
+        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
+        state.update(&limn::UiAction::Clicked { id: "mobile-playing".into() });
+        state
+    }
+
+    fn surface() -> Frame {
+        let mut frame = Frame::default();
+        frame.regions.push(HitRegion { id: "mobile-playing".into(), rect: Rect::new(0.0, HEADER, 390.0, 700.0), kind: HitKind::Scroll });
+        frame
+    }
+
+    fn raw(phase: egui::TouchPhase, x: f32, y: f32) -> Vec<egui::Event> {
+        let pos = egui::pos2(x, y);
+        let mut events = vec![egui::Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(1), phase, pos, force: None }];
+        match phase {
+            egui::TouchPhase::Start => {
+                events.push(egui::Event::PointerMoved(pos));
+                events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() });
+            }
+            egui::TouchPhase::Move => events.push(egui::Event::PointerMoved(pos)),
+            egui::TouchPhase::End => {
+                events.push(egui::Event::PointerButton { pos, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() });
+                events.push(egui::Event::PointerGone);
+            }
+            egui::TouchPhase::Cancel => events.push(egui::Event::PointerGone),
+        }
+        events
+    }
+
+    fn settled(now: Instant) -> (Motion, State, UiTree) {
+        let mut motion = Motion::new(now);
+        let mut state = phone();
+        let tree = UiTree::new(Element::spacer());
+        motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now);
+        motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now + Duration::from_millis(320));
+        (motion, state, tree)
+    }
+
+    #[test]
+    fn opening_and_explicit_closing_retarget_without_pausing_and_return_to_the_previous_page() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        let mut state = phone();
+        let tree = UiTree::new(Element::spacer());
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, &tree, size, now);
+        assert_eq!(state.mobile_ui.player_offset, size.height);
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(80));
+        let middle = state.mobile_ui.player_offset;
+        assert!(middle > 0.0 && middle < size.height);
+        state.update(&limn::UiAction::Clicked { id: "mobile-player-dismiss".into() });
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(80));
+        assert_eq!(state.mobile_ui.player_offset, middle, "closing starts from the displayed position");
+        let commands = motion.advance(&mut state, &tree, size, now + Duration::from_millis(320));
+        assert_eq!(state.page, Page::Library);
+        assert!(state.player.playing && commands.iter().all(|command| !matches!(command, Command::PlayPause)));
+    }
+
+    #[test]
+    fn a_normal_tap_passes_unchanged_but_a_claim_cancels_press_and_consumes_pan_and_release() {
+        let now = Instant::now();
+        let (mut motion, mut state, tree) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let at = now + Duration::from_secs(1);
+        let down = vec![UiEvent::PointerMove(Point::new(20.0, 200.0)), UiEvent::PointerDown(Point::new(20.0, 200.0))];
+        assert_eq!(motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), down.clone(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at), down);
+        let up = vec![UiEvent::PointerUp(Point::new(20.0, 200.0)), UiEvent::PointerLeave];
+        assert_eq!(motion.filter(&raw(egui::TouchPhase::End, 20.0, 200.0), up.clone(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(20)), up);
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), down, &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_secs(1));
+        let pan = vec![UiEvent::PointerLeave, UiEvent::Scroll2D { position: Point::new(20.0, 200.0), delta_x: 0.0, delta_y: 60.0, direct: true, shift: false }];
+        let consumed = motion.filter(&raw(egui::TouchPhase::Move, 20.0, 260.0), pan, &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1500));
+        assert_eq!(consumed, vec![UiEvent::PointerLeave]);
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1500));
+        assert_eq!(state.mobile_ui.player_offset, 60.0);
+        let released = motion.filter(&raw(egui::TouchPhase::End, 20.0, 260.0), vec![UiEvent::PointerUp(Point::new(20.0, 260.0)), UiEvent::PointerLeave], &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1510));
+        assert!(!released.iter().any(|event| matches!(event, UiEvent::PointerUp(_) | UiEvent::Scroll2D { .. })));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1730));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        assert_eq!(state.page, Page::Playing, "a short slow pull returns instead of navigating");
+    }
+
+    #[test]
+    fn body_eligibility_is_frozen_at_begin_and_controls_modals_and_secondary_fingers_cannot_steal() {
+        let state = phone();
+        let size = Size::new(390.0, 844.0);
+        assert!(eligible(&state, &surface(), Point::new(20.0, 20.0), size, 100.0, 0.0));
+        assert!(eligible(&state, &surface(), Point::new(20.0, 200.0), size, 0.0, 0.0));
+        assert!(!eligible(&state, &surface(), Point::new(20.0, 200.0), size, 1.0, 0.0));
+        for kind in [HitKind::TextInput, HitKind::TextArea, HitKind::CodeEditor, HitKind::CodeDiff, HitKind::Scrollbar] {
+            let mut frame = surface();
+            frame.regions.push(HitRegion { id: "control".into(), rect: Rect::new(0.0, 0.0, 390.0, 844.0), kind });
+            assert!(!eligible(&state, &frame, Point::new(20.0, 200.0), size, 0.0, 0.0));
+        }
+        let mut header = surface();
+        header.regions.push(HitRegion { id: "header".into(), rect: Rect::new(0.0, 0.0, 390.0, HEADER), kind: HitKind::Surface });
+        assert!(eligible(&state, &header, Point::new(20.0, 20.0), size, 100.0, 0.0));
+        let mut modal = phone();
+        modal.mobile_ui.connections = true;
+        assert!(!eligible(&modal, &surface(), Point::new(20.0, 20.0), size, 0.0, 0.0));
+        let slider = Slider::new("seek", 0.5, ComponentPalette::neutral_dark()).render().size(None, Some(44.0));
+        let frame = UiTree::new(slider).layout(Size::new(390.0, 44.0));
+        assert!(!eligible(&state, &frame, Point::new(20.0, 20.0), size, 0.0, 0.0));
+    }
+
+    #[test]
+    fn reduced_motion_snaps_autonomous_motion_but_does_not_disable_direct_manipulation() {
+        let now = Instant::now();
+        let (mut motion, mut state, tree) = settled(now);
+        state.settings.reduce_motion = true;
+        let size = Size::new(390.0, 844.0);
+        let at = now + Duration::from_secs(1);
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at);
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, 240.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(100));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(100));
+        assert_eq!(state.mobile_ui.player_offset, 40.0);
+        motion.filter(&raw(egui::TouchPhase::Cancel, 20.0, 240.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(110));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(110));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        assert!(!motion.active(at + Duration::from_millis(110)));
+    }
+
+    #[test]
+    fn search_header_retargets_from_its_current_height_and_queue_navigation_does_not_reopen_player() {
+        let now = Instant::now();
+        let (mut motion, mut state, tree) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        state.queue_open = true;
+        motion.advance(&mut state, &tree, size, now + Duration::from_secs(1));
+        state.queue_open = false;
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(1100));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        state.page = Page::Search;
+        state.mobile_search = true;
+        motion.advance(&mut state, &tree, size, now + Duration::from_secs(2));
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+        state.mobile_ui.search_editing = true;
+        motion.advance(&mut state, &tree, size, now + Duration::from_secs(2));
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2080));
+        let middle = state.mobile_ui.search_header.unwrap();
+        assert!(middle > 0.0 && middle < HEADER);
+        state.mobile_ui.search_editing = false;
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2080));
+        assert_eq!(state.mobile_ui.search_header, Some(middle));
+        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2300));
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+    }
+
+    #[test]
+    fn starting_in_scrolled_body_stays_ineligible_and_a_second_finger_cannot_move_the_player() {
+        let now = Instant::now();
+        let (mut motion, mut state, tree) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let frame = surface();
+        let area = |scroll| DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll };
+        let at = now + Duration::from_secs(1);
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), Vec::new(), &state, area(100.0), at);
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, 400.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(200));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(200));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        motion.filter(&raw(egui::TouchPhase::End, 20.0, 400.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(210));
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 20.0), Vec::new(), &state, area(100.0), at + Duration::from_secs(1));
+        let other = |phase, y| vec![egui::Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(2), phase, pos: egui::pos2(20.0, y), force: None }];
+        motion.filter(&other(egui::TouchPhase::Start, 200.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(1100));
+        motion.filter(&other(egui::TouchPhase::Move, 500.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(1200));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1200));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, 70.0), Vec::new(), &state, area(100.0), at + Duration::from_millis(1500));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1500));
+        assert_eq!(state.mobile_ui.player_offset, 50.0, "the original header finger still owns the gesture");
+    }
+
+    #[test]
+    fn flick_release_dismisses_but_focus_loss_returns_without_navigation() {
+        let now = Instant::now();
+        for cancel in [false, true] {
+            let (mut motion, mut state, tree) = settled(now);
+            let size = Size::new(390.0, 844.0);
+            let frame = surface();
+            let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
+            let at = now + Duration::from_secs(1);
+            motion.filter(&raw(egui::TouchPhase::Start, 20.0, 20.0), Vec::new(), &state, area(), at);
+            motion.filter(&raw(egui::TouchPhase::Move, 20.0, 80.0), Vec::new(), &state, area(), at + Duration::from_millis(40));
+            let end = if cancel { vec![egui::Event::WindowFocused(false)] } else { raw(egui::TouchPhase::End, 20.0, 80.0) };
+            let output = motion.filter(&end, Vec::new(), &state, area(), at + Duration::from_millis(50));
+            if cancel { assert_eq!(output, vec![UiEvent::PointerLeave]); }
+            motion.advance(&mut state, &tree, size, at + Duration::from_millis(300));
+            assert_eq!(state.page, if cancel { Page::Playing } else { Page::Library });
+            assert!(state.player.playing);
+            assert_eq!(state.mobile_ui.player_offset, 0.0);
+        }
+    }
+
+    #[test]
+    fn a_batched_drag_consumes_only_its_pointer_units_and_keeps_keyboard_and_the_next_tap() {
+        let now = Instant::now();
+        let (mut motion, state, _) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let frame = surface();
+        let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
+        let at = now + Duration::from_secs(1);
+        let first = Point::new(20.0, 200.0);
+        let mut events = raw(egui::TouchPhase::Start, first.x, first.y);
+        events.extend(raw(egui::TouchPhase::Move, 20.0, 250.0));
+        events.extend(raw(egui::TouchPhase::End, 20.0, 250.0));
+        events.extend(raw(egui::TouchPhase::Start, 100.0, 20.0));
+        events.extend(raw(egui::TouchPhase::End, 100.0, 20.0));
+        let next = Point::new(100.0, 20.0);
+        let output = motion.filter(&events, vec![
+            UiEvent::PointerMove(first), UiEvent::PointerDown(first),
+            UiEvent::Text("ñ".into()), UiEvent::PointerLeave,
+            UiEvent::Scroll2D { position: first, delta_x: 0.0, delta_y: 50.0, direct: true, shift: false },
+            UiEvent::PointerLeave,
+            UiEvent::PointerMove(next), UiEvent::PointerDown(next), UiEvent::PointerUp(next), UiEvent::PointerLeave,
+        ], &state, area(), at);
+        assert_eq!(output, vec![UiEvent::PointerMove(first), UiEvent::PointerDown(first), UiEvent::Text("ñ".into()),
+            UiEvent::PointerLeave, UiEvent::PointerMove(next), UiEvent::PointerDown(next), UiEvent::PointerUp(next), UiEvent::PointerLeave]);
+    }
+
+    #[test]
+    fn saved_background_has_only_paint_and_is_invalid_after_resize() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        let mut state = phone();
+        state.page = Page::Library;
+        let size = Size::new(390.0, 844.0);
+        let frame = UiTree::new(Element::button("background-button", "Library")).layout(size);
+        motion.remember(&frame, &state, size);
+        state.page = Page::Playing;
+        state.mobile_ui.player_offset = 50.0;
+        let saved = motion.underlay(&state, size).expect("same-size background");
+        assert_eq!(saved.commands, frame.commands);
+        assert!(saved.access.is_empty() && saved.regions.is_empty());
+        assert!(motion.underlay(&state, Size::new(844.0, 390.0)).is_none());
+        state.mobile_ui.player_offset = 0.0;
+        assert!(motion.underlay(&state, size).is_none());
+    }
+
+    #[test]
+    fn catching_an_entering_player_keeps_the_grabbed_point_under_the_finger() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        let mut state = phone();
+        let tree = UiTree::new(Element::spacer());
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, &tree, size, now);
+        let at = now + Duration::from_millis(80);
+        motion.advance(&mut state, &tree, size, at);
+        let base = state.mobile_ui.player_offset;
+        let frame = surface();
+        let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, base + 20.0), Vec::new(), &state, area(), at);
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(20));
+        assert_eq!(state.mobile_ui.player_offset, base, "hold the surface while deciding its axis");
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, base + 80.0), Vec::new(), &state, area(), at + Duration::from_millis(50));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(50));
+        assert_eq!(state.mobile_ui.player_offset, base + 60.0);
+        motion.filter(&raw(egui::TouchPhase::Cancel, 20.0, base + 80.0), Vec::new(), &state, area(), at + Duration::from_millis(60));
+        motion.advance(&mut state, &tree, size, at + Duration::from_millis(280));
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        assert_eq!(state.page, Page::Playing);
+    }
+}

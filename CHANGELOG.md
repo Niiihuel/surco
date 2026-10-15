@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.3.0
+
+### Added
+
+- Native iOS launch screen using the Surco mark and matching dark background.
+- Interactive player dismissal: pull down from the header or from content at its
+  top, release early to return, or complete the gesture to close without pausing.
+- Compact player and detail headers retain titles and playback controls while
+  scrolling. The player includes current lyrics and available artist information.
+- iOS Reduce Motion support, including changes made while the app is open.
+
+### Changed
+
+- Mobile content continues beneath stable headers and transport bars with edge
+  fades, transient scroll indicators and reachable first and last rows.
+- Page entrances leave navigation stable; Search's header moves when editing,
+  and the player follows the finger even when its entrance is interrupted.
+- Library's import card scrolls with the list.
+
+### Fixed
+
+- Changing tracks resets the lyrics viewport, including before the first timed
+  line and when returning to a previously played song.
+- Opening the mobile player requests matching lyrics and artist information.
+- Covered songs cannot receive taps through the floating bars.
+
 ## 0.2.0
 
 ### Added

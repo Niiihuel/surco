@@ -1,6 +1,6 @@
 //! Scroll content beneath the phone's floating header and transport bars.
 
-use super::{Element, SCHEME};
+use super::{Element, SCHEME, SCROLL_INDICATOR};
 use limn::ElementKind;
 
 const EDGE_FADE: f32 = 24.0;
@@ -66,7 +66,7 @@ fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32) {
     scroll.style.top_fade = Some((SCHEME.canvas, top + EDGE_FADE));
     scroll.style.bottom_fade = Some((SCHEME.canvas, bottom + EDGE_FADE));
     let element = std::mem::replace(scroll, Element::spacer());
-    *scroll = element.scrollbar_visibility(limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 });
+    *scroll = element.scrollbar_visibility(SCROLL_INDICATOR);
     if let ElementKind::Scroll { appearance, .. } = &mut scroll.kind {
         *appearance = limn::ScrollbarAppearance::overlay().buttons(false).rail_width(4.0).thumb_width(2.0);
     }

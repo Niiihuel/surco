@@ -42,6 +42,14 @@ fn library_target(key: &str) -> Option<Target> {
 
 #[derive(Default)]
 pub(crate) struct MobileUi {
+    /// Host-owned translation of the full player surface in logical points.
+    pub player_offset: f32,
+    /// An explicit dismissal requests animation before the Host navigates back.
+    pub player_close: bool,
+    /// Animated Search header height; None outside the Search tab.
+    pub search_header: Option<f32>,
+    /// The shared chrome condenses only after the current title scrolls above it.
+    pub compact_header: bool,
     pub search_editing: bool,
     pub search_filter: SearchFilter,
     pub pending: Option<(String, Instant)>,
@@ -219,6 +227,9 @@ impl State {
                     return Some(Vec::new());
                 }
                 match id.as_str() {
+                    "mobile-player-dismiss" => {
+                        self.mobile_ui.player_close = self.page == Page::Playing && !self.queue_open;
+                    }
                     "mobile-search" | "mobile-discover" => {
                         self.mobile_search = true;
                         if self.page != Page::Search { self.go(Page::Search); }
