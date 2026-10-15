@@ -30,10 +30,9 @@ ya existe para iOS, con el App ID explícito `io.github.niiihuel.surco`. El SKU 
 un identificador interno de App Store Connect y no cambia el Bundle ID del build.
 Aceptá los acuerdos pendientes de tu cuenta si Apple los muestra.
 
-Estado inicial: se cargaron los siete secrets de GitHub y se validó el perfil
-App Store Connect. Se creó manualmente el grupo **Surco interno**, con
-distribución automática desactivada; al crearlo todavía tenía cero testers y
-cero builds. El primer build debe pasar el preflight y el procesamiento de Apple.
+Los siete secrets de GitHub están cargados y el perfil App Store Connect fue
+validado. El grupo **Surco interno** está creado, con distribución automática
+desactivada; el build se asigna manualmente cuando Apple termina de procesarlo.
 
 El preflight consulta la API real de App Store Connect y falla antes de compilar
 si ese registro no existe o la clave no tiene acceso. No crea ni reutiliza una
@@ -118,28 +117,23 @@ como secretos. ([Guía de firma de GitHub](https://docs.github.com/en/actions/ho
 
 ## 4. Generar y subir el build
 
-El botón manual de Actions aparece cuando el workflow está en la rama
-predeterminada. Para registrar el workflow antes de integrar la rama, se agregó
-temporalmente un trigger `push` limitado a `feature/settings-ios` y únicamente
-a cambios en `.github/workflows/testflight.yml`. Con la autorización explícita
-para probar la app por TestFlight, esa primera corrida firma el IPA, lo valida
-con Apple y lo sube. El fallback de subida por `push` se limita a ese bootstrap.
-
-Una vez ejecutado al menos una vez, GitHub permite dispararlo por API o CLI
-contra una rama o tag. Después del registro, retiramos tanto el trigger temporal
-como su fallback de subida y conservamos `workflow_dispatch`. Para generar otro
-IPA sin subirlo desde la rama revisada:
+El workflow **TestFlight** ya está registrado y se ejecuta manualmente. La
+[primera ejecución de firma y subida](https://github.com/Niiihuel/surco/actions/runs/38699781352)
+está en curso; todavía no confirma un build recibido o habilitado por Apple.
+Para generar otro IPA sin subirlo desde la rama revisada:
 
 ```bash
 gh workflow run testflight.yml --repo Niiihuel/surco --ref feature/settings-ios -f upload=false
 ```
 
-Para solicitar la subida, se usa `-f upload=true`. El registro del workflow no
-implica que se haya integrado a `main` ni que exista un build procesado en Apple.
+Para solicitar la subida, se usa `-f upload=true`. GitHub permite ejecutar un
+workflow registrado contra una rama o tag por API o CLI; el botón **Run workflow**
+en la web aparece cuando el archivo está en la rama predeterminada. El registro
+del workflow no implica que se haya integrado a `main`.
 ([Eventos GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch),
 [CLI oficial](https://cli.github.com/manual/gh_workflow_run))
 
-En **Actions → TestFlight → Run workflow**, usá la rama revisada:
+Al ejecutar el workflow, elegí la rama revisada:
 
 1. Con `upload` desactivado, se verifica la app en Apple y se genera un IPA firmado
    revisable en el artefacto `surco-testflight`.
@@ -170,9 +164,8 @@ local no confirma que Apple ya haya habilitado el build.
 2. Completá export compliance y la información de pruebas que Apple solicite.
    Respondé según las integraciones reales de la app; el workflow no declara
    automáticamente exenciones ni las respuestas de App Privacy.
-3. En el grupo **Surco interno** ya creado, agregá tu usuario App Store Connect
-   con acceso a Surco Music y asigná el build manualmente. La distribución
-   automática de ese grupo está desactivada.
+3. Asigná el build manualmente al grupo **Surco interno** para que lo reciban
+   sus usuarios. La distribución automática de ese grupo está desactivada.
 4. Instalá la app TestFlight de Apple en tu iPhone, aceptá la invitación y tocá
    **Instalar** en Surco.
 
