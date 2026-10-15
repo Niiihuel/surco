@@ -40,10 +40,12 @@ fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Ele
     let header = Element::row(vec![cover(state, &context.artwork_url, 56.0, palette),
         Text::new(&context.title, palette).font_size(18.0).truncate().render().centered_y().flex(1.0),
     ]).gap(16.0).padding(8.0);
-    let mut body = vec![header, Separator::horizontal(palette).render(),
-        row("open", "Abrir", Icon::ArrowRight), row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin),
-    ];
-    if context.key.starts_with("album:") || context.key.starts_with("artist:") {
+    let kept = context.entry.as_ref().is_none_or(|entry| state.card_entry_kept(entry));
+    let mut body = vec![header, Separator::horizontal(palette).render(), row("open", "Abrir", Icon::ArrowRight)];
+    if kept { body.push(row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin)); }
+    if context.entry.is_some() && !kept {
+        body.push(row("keep", if context.key.starts_with("artist:") { "Seguir artista" } else { "Guardar en tu biblioteca" }, Icon::Add));
+    } else if context.key.starts_with("album:") || context.key.starts_with("artist:") {
         body.push(row("remove", if context.key.starts_with("artist:") { "Dejar de seguir" } else { "Quitar de tu biblioteca" }, Icon::Minus));
     }
     BottomSheet::new(base, true, "Opciones de biblioteca", "", "mobile-library-close", SCHEME.menu())
