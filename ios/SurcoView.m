@@ -64,7 +64,11 @@ typedef struct {
         owner->_keyboardScreen = nil;
         [owner requestRepaint];
     }];
-    [_observers addObjectsFromArray:@[frame, hide]];
+    id motion = [center addObserverForName:UIAccessibilityReduceMotionStatusDidChangeNotification object:nil
+                                    queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        [weakSelf requestRepaint];
+    }];
+    [_observers addObjectsFromArray:@[frame, hide, motion]];
     for (NSNotificationName name in @[AVAudioSessionRouteChangeNotification,
                                      AVAudioSessionMediaServicesWereResetNotification]) {
         id token = [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue
@@ -201,6 +205,11 @@ char *surco_ui_copy_route(void *handle) {
 }
 
 void surco_ui_free_string(char *value) { free(value); }
+
+int surco_reduce_motion_enabled(void) {
+    NSCAssert(NSThread.isMainThread, @"Surco accessibility preferences must run on the main thread");
+    return UIAccessibilityIsReduceMotionEnabled() ? 1 : 0;
+}
 
 int surco_ui_copy_text(const uint8_t *bytes, size_t length) {
     NSCAssert(NSThread.isMainThread, @"Surco clipboard must run on the main thread");
