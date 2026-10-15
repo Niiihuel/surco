@@ -9,7 +9,7 @@ The six tests cover:
 - A playlist draft closes by dragging its header. Reopening it proves the draft was canceled.
 - Connections opens from Settings without playback and exposes the native route picker and volume slider.
 - Holding a Home card directly opens UIKit's context menu. Like and Unlike act on the held synthetic track without playback or network requests.
-- The 119 canvas symbols and eight additional native action symbols resolve to real `UIImage` symbols in the simulator's UIKit, without launching the app. This checks the current CI runtime; older supported iOS versions still need hardware/runtime validation.
+- The 121 canvas symbols and eight additional native action symbols resolve to real `UIImage` symbols in the simulator's UIKit, without launching the app. This checks the current CI runtime; older supported iOS versions still need hardware/runtime validation.
 
 Controls inside sheets are addressed by accessibility IDs. Until the Rust canvas exposes platform accessibility elements, only entry taps and the card hold have coordinate fallbacks. `EntryGeometry.json` records their actual Rust Frame rectangles at the CI iPhone 17 Pro size (402×874, safe insets 62/34, canvas 402×778); a Rust unit test rejects drift. XCTest rejects another window size rather than guessing coordinates. This is not iPad coverage. Assertion failures include the UI hierarchy, and successful checkpoints retain screenshots in the result bundle.
 
