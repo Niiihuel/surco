@@ -14,6 +14,7 @@
 		100000000000000000000019 /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* AVFAudio.framework */; };
 		10000000000000000000001C /* SurcoView.m in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* SurcoView.m */; };
 		10000000000000000000001E /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001F /* AVKit.framework */; };
+		100000000000000000000020 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* LaunchScreen.storyboard */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -27,6 +28,7 @@
 		10000000000000000000001B /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
 		10000000000000000000001D /* SurcoView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoView.m; sourceTree = "<group>"; };
 		10000000000000000000001F /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
+		100000000000000000000021 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -49,6 +51,7 @@
 				10000000000000000000001B /* AVFAudio.framework */,
 				10000000000000000000001F /* AVKit.framework */,
 				100000000000000000000003 /* Info.plist */,
+				100000000000000000000021 /* LaunchScreen.storyboard */,
 				100000000000000000000012 /* Assets.xcassets */,
 				100000000000000000000014 /* PrivacyInfo.xcprivacy */,
 				100000000000000000000007 /* Products */,
@@ -108,6 +111,7 @@
 			files = (
 				100000000000000000000013 /* Assets.xcassets in Resources */,
 				100000000000000000000015 /* PrivacyInfo.xcprivacy in Resources */,
+				100000000000000000000020 /* LaunchScreen.storyboard in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
