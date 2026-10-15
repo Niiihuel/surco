@@ -26,6 +26,11 @@ class IOSBuildTests(unittest.TestCase):
         self.assertEqual(info.get("UIUserInterfaceStyle"), "Dark", "native surfaces match Surco's fixed dark appearance")
         storyboard = ET.parse(root / "ios" / f'{info["UILaunchStoryboardName"]}.storyboard').getroot()
         self.assertEqual(storyboard.get("launchScreen"), "YES")
+        self.assertRegex(storyboard.get("toolsVersion", ""), r"^\d+(?:\.\d+)*$",
+                         "ibtool needs the document toolsVersion while unarchiving")
+        plugin = storyboard.find("dependencies/plugIn[@identifier='com.apple.InterfaceBuilder.IBCocoaTouchPlugin']")
+        self.assertRegex(plugin.get("version", ""), r"^\d+(?:\.\d+)*$",
+                         "keep the Interface Builder plugin version with the document metadata")
         view = storyboard.find(".//viewController/view")
         name = view.find("color[@key='backgroundColor']").get("name")
         self.assertIsNotNone(name, "avoid systemBackground changing to white in light mode")
