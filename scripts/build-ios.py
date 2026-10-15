@@ -100,9 +100,12 @@ def smoke_simulator(app, sdk_version, env, artifacts):
     udid = run(["xcrun", "simctl", "create", "Surco CI", device_type, runtime],
                env, logs / "simulator-create.log", timeout=60).strip()
     launched_at = time.time()
+    smoked = False
     try:
         run(["xcrun", "simctl", "boot", udid], env, logs / "simulator-boot.log", timeout=60)
-        run(["xcrun", "simctl", "bootstatus", udid, "-b"], env, logs / "simulator-ready.log", timeout=180)
+        # A fresh runtime performs OS data migration before any app can be installed.
+        # This infrastructure budget is separate from Surco's launch/survival checks.
+        run(["xcrun", "simctl", "bootstatus", udid, "-b"], env, logs / "simulator-ready.log", timeout=600)
         run(["xcrun", "simctl", "install", udid, str(app)], env, logs / "simulator-install.log", timeout=120)
         launch_env = {**env, "SIMCTL_CHILD_RUST_BACKTRACE": "1"}
         # Cold CI simulators can take over two minutes to finish LaunchServices registration.
@@ -123,11 +126,22 @@ def smoke_simulator(app, sdk_version, env, artifacts):
         os.kill(pid, 0)
         (artifacts / "smoke.json").write_text(json.dumps({"bundle_id": bundle_id, "pid": pid,
                                                          "launch_survived_seconds": 8}, indent=2) + "\n")
+        smoked = True
     finally:
         run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
              "--predicate", f'process == "Surco" OR process == "ReportCrash" OR '
              f'eventMessage CONTAINS "{bundle_id}"'], env, logs / "simulator-system.log",
             quiet=True, check=False, timeout=60)
+        if not smoked:
+            # Keep the OS services excluded by the app-only log, before deleting this device.
+            run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "10m", "--style", "compact",
+                 "--predicate", 'process == "locationd" OR process == "installd" OR process == "SpringBoard" OR '
+                 'process CONTAINS[c] "Migrator" OR subsystem CONTAINS[c] "CoreLocation" OR '
+                 'eventMessage CONTAINS[c] "migration"'], env, logs / "simulator-startup-system.log",
+                quiet=True, check=False, timeout=60)
+            run(["log", "show", "--last", "10m", "--style", "compact", "--predicate",
+                 'process == "CoreSimulatorService" OR subsystem BEGINSWITH "com.apple.CoreSimulator"'],
+                env, logs / "coresimulator-host.log", quiet=True, check=False, timeout=60)
         # CrashReporter may finish writing the report after the process has already exited.
         for attempt in range(6):
             try:
