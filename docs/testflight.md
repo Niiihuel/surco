@@ -33,7 +33,7 @@ Para actualizar: abrí **TestFlight → Surco → Actualizar** y comprobá que i
 testers ni se enviaron invitaciones nuevas. La instalación y la prueba física
 de esta versión todavía no están confirmadas por el usuario.
 
-El árbol de `main` coincide con `ef6dbbb`, que pasó
+El árbol del commit de entrega `7e76a02` coincide con `ef6dbbb`, que pasó
 [CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38744477519) y
 [CI iOS](https://github.com/Niiihuel/surco/actions/runs/38744477042), con captura
 final aprobada y smoke de arranque de ocho segundos sin crash. El posterior
@@ -44,8 +44,11 @@ compiló bien, pero su intento 1 falló en `simctl install` por timeout de 120 s
 antes de arrancar la app, tras un boot de unos 88 segundos con DataMigration;
 device-unsigned sí pasó. El único reintento del job fallido también agotó el
 tiempo de instalación antes de arrancar la app, sin cambios de código ni de
-timeout. Se prepara un ajuste separado del toolchain de CI unsigned, todavía
-sin resultado de validación. El fallo y ambos intentos se conservan en la
+timeout. El [PR #13](https://github.com/Niiihuel/surco/pull/13) alinea el
+toolchain de CI unsigned con el usado para firmar esta beta; sus
+[checks iOS](https://github.com/Niiihuel/surco/actions/runs/38749338228) y
+[escritorio](https://github.com/Niiihuel/surco/actions/runs/38749338318) siguen
+en curso. La causa exacta del bloqueo de instalación no está establecida. El fallo y ambos intentos se conservan en la
 [validación de motion](ios-polish/MOTION-VALIDATION.md), junto con la procedencia
 separada de capturas y clips. Las pruebas físicas de 0.3.0 siguen pendientes.
 
