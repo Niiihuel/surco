@@ -52,7 +52,7 @@ toolchain de CI unsigned con el usado para firmar esta beta. Su primer head
 pasaron. El simulador completó readiness, instalación, lanzamiento y el primer
 control de proceso tras ocho segundos; produjo un PNG válido, pero `simctl`
 screenshot venció su timeout. No se ejecutaron el control final ni la escritura
-de `smoke.json`: ese intento falló y su causa sigue en análisis. El nuevo head
+de `smoke.json`: ese intento falló y su causa exacta no quedó establecida. El nuevo head
 `5420763` amplía solo el presupuesto de screenshot a 180 segundos, conservando
 retorno exitoso, ambos controles de proceso y `smoke.json`; 14 tests Python pasan.
 En el [CI iOS final](https://github.com/Niiihuel/surco/actions/runs/38755079773)
@@ -60,8 +60,9 @@ pasaron simulador y device-unsigned; el
 [CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38755079488)
 pasó en las tres plataformas. El resultado se verificó a las 15:05:28 UTC:
 retorno correcto de captura, ambos controles de proceso y smoke completo. El
-PR #13 está validado, todavía pendiente de merge y revisión de sus artefactos
-nativos. Esto no reemplaza la prueba física del iPhone. El fallo y ambos intentos se conservan en la
+PR #13 fue integrado como `50b692d11236c14aaea0755b7e23f0aa51610235` a las
+15:08:59 UTC. La PNG nativa de 1206×2622, ambos controles de proceso, el smoke
+de ocho segundos y la lista vacía de crash reports fueron revisados y aceptados. Esto no reemplaza la prueba física del iPhone. El fallo y ambos intentos se conservan en la
 [validación de motion](ios-polish/MOTION-VALIDATION.md), junto con la procedencia
 separada de capturas y clips. Las pruebas físicas de 0.3.0 siguen pendientes.
 
