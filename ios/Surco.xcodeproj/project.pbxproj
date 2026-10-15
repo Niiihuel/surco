@@ -6,6 +6,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		20000000000000000000000F /* SymbolNames.json in Resources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000010 /* SymbolNames.json */; };
+		20000000000000000000000D /* EntryGeometry.json in Resources */ = {isa = PBXBuildFile; fileRef = 20000000000000000000000E /* EntryGeometry.json */; };
+		200000000000000000000001 /* SurcoNativeUITests.m in Sources */ = {isa = PBXBuildFile; fileRef = 200000000000000000000002 /* SurcoNativeUITests.m */; };
 		100000000000000000000001 /* main.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000002 /* main.m */; };
 		100000000000000000000013 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000012 /* Assets.xcassets */; };
 		100000000000000000000015 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000014 /* PrivacyInfo.xcprivacy */; };
@@ -15,9 +18,25 @@
 		10000000000000000000001C /* SurcoView.m in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* SurcoView.m */; };
 		10000000000000000000001E /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001F /* AVKit.framework */; };
 		100000000000000000000020 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* LaunchScreen.storyboard */; };
+		100000000000000000000022 /* SurcoSurfaces.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* SurcoSurfaces.m */; };
+		100000000000000000000024 /* SurcoSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000025 /* SurcoSheet.m */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		20000000000000000000000B /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 10000000000000000000000C /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000008;
+			remoteInfo = Surco;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
+		200000000000000000000010 /* SymbolNames.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = SymbolNames.json; path = "SurcoNativeUITests/SymbolNames.json"; sourceTree = "<group>"; };
+		20000000000000000000000E /* EntryGeometry.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; name = EntryGeometry.json; path = "SurcoNativeUITests/EntryGeometry.json"; sourceTree = "<group>"; };
+		200000000000000000000002 /* SurcoNativeUITests.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; name = SurcoNativeUITests.m; path = "SurcoNativeUITests/SurcoNativeUITests.m"; sourceTree = "<group>"; };
+		200000000000000000000003 /* SurcoNativeUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SurcoNativeUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		100000000000000000000002 /* main.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = main.m; sourceTree = "<group>"; };
 		100000000000000000000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		100000000000000000000004 /* Surco.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Surco.app; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -29,9 +48,14 @@
 		10000000000000000000001D /* SurcoView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoView.m; sourceTree = "<group>"; };
 		10000000000000000000001F /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 		100000000000000000000021 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		100000000000000000000023 /* SurcoSurfaces.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoSurfaces.m; sourceTree = "<group>"; };
+		100000000000000000000025 /* SurcoSheet.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoSheet.m; sourceTree = "<group>"; };
+		100000000000000000000026 /* SurcoSurfaces.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SurcoSurfaces.h; sourceTree = "<group>"; };
+		100000000000000000000027 /* SurcoSheet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SurcoSheet.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		200000000000000000000005 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 		100000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -44,9 +68,16 @@
 		100000000000000000000006 = {
 			isa = PBXGroup;
 			children = (
+				200000000000000000000010 /* SymbolNames.json */,
+				20000000000000000000000E /* EntryGeometry.json */,
+				200000000000000000000002 /* SurcoNativeUITests.m */,
 				100000000000000000000002 /* main.m */,
 				100000000000000000000017 /* SurcoMedia.m */,
 				10000000000000000000001D /* SurcoView.m */,
+				100000000000000000000023 /* SurcoSurfaces.m */,
+				100000000000000000000025 /* SurcoSheet.m */,
+				100000000000000000000026 /* SurcoSurfaces.h */,
+				100000000000000000000027 /* SurcoSheet.h */,
 				10000000000000000000001A /* MediaPlayer.framework */,
 				10000000000000000000001B /* AVFAudio.framework */,
 				10000000000000000000001F /* AVKit.framework */,
@@ -60,13 +91,24 @@
 		};
 		100000000000000000000007 /* Products */ = {
 			isa = PBXGroup;
-			children = (100000000000000000000004 /* Surco.app */);
+			children = (100000000000000000000004 /* Surco.app */, 200000000000000000000003 /* SurcoNativeUITests.xctest */);
 			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		200000000000000000000007 /* SurcoNativeUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 200000000000000000000008 /* Build configuration list for PBXNativeTarget "SurcoNativeUITests" */;
+			buildPhases = (200000000000000000000004 /* Sources */, 200000000000000000000005 /* Frameworks */, 200000000000000000000006 /* Resources */);
+			buildRules = ();
+			dependencies = (20000000000000000000000C /* PBXTargetDependency */);
+			name = SurcoNativeUITests;
+			productName = SurcoNativeUITests;
+			productReference = 200000000000000000000003 /* SurcoNativeUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		100000000000000000000008 /* Surco */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 100000000000000000000009 /* Build configuration list for PBXNativeTarget "Surco" */;
@@ -89,6 +131,7 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = YES;
+				TargetAttributes = {200000000000000000000007 = {CreatedOnToolsVersion = 26.6; TestTargetID = 100000000000000000000008; }; };
 				LastUpgradeCheck = 1640;
 			};
 			buildConfigurationList = 10000000000000000000000D /* Build configuration list for PBXProject "Surco" */;
@@ -100,11 +143,12 @@
 			productRefGroup = 100000000000000000000007 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (100000000000000000000008 /* Surco */);
+			targets = (100000000000000000000008 /* Surco */, 200000000000000000000007 /* SurcoNativeUITests */);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		200000000000000000000006 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (20000000000000000000000D /* EntryGeometry.json in Resources */, 20000000000000000000000F /* SymbolNames.json in Resources */); runOnlyForDeploymentPostprocessing = 0; };
 		10000000000000000000000B /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -118,15 +162,52 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		200000000000000000000004 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (200000000000000000000001 /* SurcoNativeUITests.m in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 		10000000000000000000000A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */, 10000000000000000000001C /* SurcoView.m in Sources */);
+			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */, 10000000000000000000001C /* SurcoView.m in Sources */, 100000000000000000000022 /* SurcoSurfaces.m in Sources */, 100000000000000000000024 /* SurcoSheet.m in Sources */);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		20000000000000000000000C /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 100000000000000000000008 /* Surco */; targetProxy = 20000000000000000000000B /* PBXContainerItemProxy */; };
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		200000000000000000000009 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.niiihuel.surco.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Surco;
+			};
+			name = Debug;
+		};
+		20000000000000000000000A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ARCHS = arm64;
+				CODE_SIGN_STYLE = Automatic;
+				ENABLE_TESTING_SEARCH_PATHS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				PRODUCT_BUNDLE_IDENTIFIER = io.github.niiihuel.surco.uitests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = iphonesimulator;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = Surco;
+			};
+			name = Release;
+		};
 		10000000000000000000000E /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -160,7 +241,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.niiihuel.surco;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -177,7 +258,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Info.plist;
-				MARKETING_VERSION = 0.3.0;
+				MARKETING_VERSION = 0.4.0;
 				PRODUCT_BUNDLE_IDENTIFIER = io.github.niiihuel.surco;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -188,6 +269,12 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		200000000000000000000008 /* Build configuration list for PBXNativeTarget "SurcoNativeUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (200000000000000000000009 /* Debug */, 20000000000000000000000A /* Release */);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		100000000000000000000009 /* Build configuration list for PBXNativeTarget "Surco" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

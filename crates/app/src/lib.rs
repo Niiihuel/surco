@@ -17,7 +17,11 @@ mod media_keys;
 mod mobile_input;
 mod mobile_motion;
 #[cfg(any(target_os = "ios", test))]
+mod native_surfaces;
+#[cfg(any(target_os = "ios", test))]
 mod ios_ui;
+#[cfg(any(target_os = "ios", test))]
+mod ios_symbols;
 mod paths;
 mod player;
 mod state;
@@ -64,6 +68,8 @@ struct Host {
     #[cfg(target_os = "ios")]
     native_ui: Option<ios_ui::NativeUi>,
     #[cfg(target_os = "ios")]
+    surfaces: native_surfaces::Controller,
+    #[cfg(target_os = "ios")]
     keyboard_inset: limn::ScalarTransition,
 }
 
@@ -89,6 +95,26 @@ fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
     } else {
         reset
     }
+}
+
+fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Frame {
+    tree.set_root(view::view(state, window));
+    let frame = tree.layout(window);
+    // Header geometry must match this page and this scroll position, including
+    // the first paint after an input event when no later repaint is scheduled.
+    if mobile_motion::update_header(state, tree) {
+        tree.set_root(view::view(state, window));
+        tree.layout(window)
+    } else {
+        frame
+    }
+}
+
+fn native_surfaces_present(state: &State) -> bool {
+    #[cfg(any(target_os = "ios", test))]
+    { native_surfaces::has_sheet(state) }
+    #[cfg(not(any(target_os = "ios", test)))]
+    { let _ = state; false }
 }
 
 impl Host {
@@ -217,17 +243,36 @@ impl eframe::App for Host {
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
-        if let Some(native) = &mut self.native_ui {
+        {
+            let mut surface_events = Vec::new();
             self.state.mobile_ui.native_routes = false;
-            if let Ok(handle) = _frame.window_handle() {
-                if let RawWindowHandle::UiKit(handle) = handle.as_raw() {
-                    // eframe supplies the live main-thread UIView for this window.
-                    unsafe { native.update_view(handle.ui_view); }
-                    self.state.mobile_ui.native_routes = true;
+            self.state.mobile_ui.native_surfaces = false;
+            if let Some(native) = &mut self.native_ui {
+                if let Ok(handle) = _frame.window_handle() {
+                    if let RawWindowHandle::UiKit(handle) = handle.as_raw() {
+                        // eframe supplies the live main-thread UIView for this window.
+                        unsafe { native.update_view(handle.ui_view); }
+                        self.state.mobile_ui.native_routes = true;
+                        self.state.mobile_ui.native_surfaces = true;
+                    }
+                }
+                self.state.mobile_ui.route = native.current_route().map(|route| (route.name.clone(), route.port_type.clone()));
+                match native.take_surface_events::<native_surfaces::Event>() {
+                    Ok(events) => surface_events = events,
+                    Err(error) => eprintln!("Surco native surface events: {error}"),
                 }
             }
-            self.state.mobile_ui.route = native.current_route().map(|route| (route.name.clone(), route.port_type.clone()));
-            self.state.mobile_ui.keyboard_visible = native.keyboard_top(ctx.viewport_rect()).is_some();
+            for event in surface_events {
+                if matches!(event, native_surfaces::Event::MenuOpen { .. }) {
+                    self.tree.handle_event(limn::UiEvent::PointerLeave);
+                    self.touch = mobile_input::TouchInput::default();
+                }
+                let commands = self.surfaces.apply(&mut self.state, event);
+                self.send(commands);
+                self.stirred = Instant::now();
+            }
+            self.state.mobile_ui.keyboard_visible = self.native_ui.as_ref().is_some_and(|native| native.keyboard_top(ctx.viewport_rect()).is_some())
+                && !(self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state));
         }
         #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
@@ -246,7 +291,9 @@ impl eframe::App for Host {
         #[cfg(target_os = "ios")]
         let area = {
             let now = Instant::now();
-            let covered = self.native_ui.as_ref().map_or(0.0, |native| native.keyboard_occlusion(ctx.viewport_rect(), area));
+            let native_sheet = self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state);
+            let covered = if native_sheet { 0.0 } else { self.native_ui.as_ref().map_or(0.0, |native| native.keyboard_occlusion(ctx.viewport_rect(), area)) };
+            if native_sheet { self.keyboard_inset.snap_to(0.0, now); }
             if self.state.mobile_ui.keyboard_visible && covered == 0.0 {
                 self.keyboard_inset.snap_to(0.0, now);
             } else {
@@ -286,9 +333,8 @@ impl eframe::App for Host {
         let sounding = self.state.player.playing && !still;
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
-        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        self.tree.set_root(view::view(&self.state, window));
         // Escape leaves the whole window to the app again, and the screen follows.
         if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             let commands = self.state.update(&UiAction::Clicked { id: "cinema".into() });
@@ -358,7 +404,7 @@ impl eframe::App for Host {
         if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
         }
-        let input_frame = self.tree.layout(window);
+        let input_frame = layout_view(&mut self.state, &mut self.tree, window);
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
@@ -374,8 +420,16 @@ impl eframe::App for Host {
                 scroll: self.tree.scroll_offset("mobile-playing"),
             }, Instant::now())
         } else { input };
+        #[cfg(target_os = "ios")]
+        let input = if self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state) {
+            self.tree.handle_event(limn::UiEvent::PointerLeave);
+            self.touch = mobile_input::TouchInput::default();
+            Vec::new()
+        } else { input };
         for event in input {
             self.stirred = Instant::now();
+            #[cfg(target_os = "ios")]
+            if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { .. }) { continue; }
             #[cfg(target_os = "ios")]
             if matches!(event, limn::UiEvent::Paste(_)) {
                 // egui-winit's iOS clipboard is app-local. The shortcut still
@@ -420,10 +474,9 @@ impl eframe::App for Host {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
-        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        self.tree.set_root(view::view(&self.state, window));
-        let frame = self.tree.layout(window);
+        let frame = layout_view(&mut self.state, &mut self.tree, window);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -445,10 +498,9 @@ impl eframe::App for Host {
                                 let commands = self.state.update(&action);
                                 self.send(commands);
                             }
-                            let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+                            let commands = self.motion.advance(&mut self.state, window, Instant::now());
                             self.send(commands);
-                            self.tree.set_root(view::view(&self.state, window));
-                            frame = self.tree.layout(window);
+                            frame = layout_view(&mut self.state, &mut self.tree, window);
                         }
                         Err(error) => {
                             eprintln!("Surco clipboard: {error}");
@@ -461,8 +513,11 @@ impl eframe::App for Host {
             }
             frame
         };
-        if self.state.mobile {
+        let native_sheet = self.state.mobile_ui.native_surfaces && native_surfaces_present(&self.state);
+        if self.state.mobile && !native_sheet {
             mobile_input::update_ime(&ctx, &self.tree, &frame, area.min);
+        } else if native_sheet {
+            ctx.output_mut(|output| { output.mutable_text_under_cursor = false; output.ime = None; });
         }
         #[cfg(target_os = "ios")]
         if let Some(native) = &mut self.native_ui {
@@ -473,6 +528,12 @@ impl eframe::App for Host {
                 && self.state.sharing.is_none() && self.state.creating.is_none() && self.state.importing.is_none()
                 && self.state.confirm.is_none() && !self.state.equalizer_open && !self.state.missed_open;
             native.route_picker(slot.unwrap_or(egui::Rect::ZERO), visible && slot.is_some());
+            let payload = self.surfaces.payload(&self.state, &frame, area.min);
+            if let Err(error) = native.update_surfaces(&payload) {
+                eprintln!("Surco native surfaces: {error}");
+                self.state.mobile_ui.native_surfaces = false;
+                ctx.request_repaint();
+            }
         }
         limn_egui::set_cursor(&ctx, self.tree.cursor());
         if let Some(underlay) = self.motion.underlay(&self.state, window) {
@@ -584,6 +645,8 @@ pub fn run() -> eframe::Result {
         options,
         Box::new(move |creation| {
             limn_egui::install_fonts(&creation.egui_ctx);
+            #[cfg(target_os = "ios")]
+            ios_symbols::install();
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
             limn_egui::set_image_cache_entries(256);
             // Beside the settings; without a place of its own the library lasts the session.
@@ -632,6 +695,8 @@ pub fn run() -> eframe::Result {
                 motion: mobile_motion::Motion::new(Instant::now()),
                 #[cfg(target_os = "ios")]
                 native_ui,
+                #[cfg(target_os = "ios")]
+                surfaces: native_surfaces::Controller::default(),
                 #[cfg(target_os = "ios")]
                 keyboard_inset: limn::ScalarTransition::new(0.0, Instant::now()),
             }))

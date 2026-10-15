@@ -17,7 +17,7 @@ concurrency:
 
 env:
   # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
-  LIMN_REF: f8cabafc7910e95ad800d63f76eb71490ab39ca4
+  LIMN_REF: bfdee5546999a657fa29c852756ca6b75da3d925
   # Match TestFlight's Xcode/SDK; macos-26 includes the iOS 26.5 simulator runtime.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'
@@ -72,8 +72,14 @@ jobs:
         working-directory: surco
         run: python3 -m unittest discover -s scripts -p 'test_*.py'
 
+      - name: Software keyboard for native interactions
+        if: matrix.platform == 'simulator'
+        run: defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool NO
+
       - name: Build and verify
         working-directory: surco
+        env:
+          SURCO_IOS_NATIVE_UI_TESTS: ${{ matrix.platform == 'simulator' && '1' || '0' }}
         run: python3 scripts/build-ios.py "${{ matrix.platform }}"
 
       - name: Apps, screenshot and logs

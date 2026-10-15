@@ -40,10 +40,12 @@ fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Ele
     let header = Element::row(vec![cover(state, &context.artwork_url, 56.0, palette),
         Text::new(&context.title, palette).font_size(18.0).truncate().render().centered_y().flex(1.0),
     ]).gap(16.0).padding(8.0);
-    let mut body = vec![header, Separator::horizontal(palette).render(),
-        row("open", "Abrir", Icon::ArrowRight), row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin),
-    ];
-    if context.key.starts_with("album:") || context.key.starts_with("artist:") {
+    let kept = context.entry.as_ref().is_none_or(|entry| state.card_entry_kept(entry));
+    let mut body = vec![header, Separator::horizontal(palette).render(), row("open", "Abrir", Icon::ArrowRight)];
+    if kept { body.push(row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin)); }
+    if context.entry.is_some() && !kept {
+        body.push(row("keep", if context.key.starts_with("artist:") { "Seguir artista" } else { "Guardar en tu biblioteca" }, Icon::Add));
+    } else if context.key.starts_with("album:") || context.key.starts_with("artist:") {
         body.push(row("remove", if context.key.starts_with("artist:") { "Dejar de seguir" } else { "Quitar de tu biblioteca" }, Icon::Minus));
     }
     BottomSheet::new(base, true, "Opciones de biblioteca", "", "mobile-library-close", SCHEME.menu())
@@ -61,14 +63,14 @@ fn track_header(state: &State, track: &Track, palette: ComponentPalette) -> Elem
 fn connections(state: &State, base: Element, palette: ComponentPalette) -> Element {
     let name = state.mobile_ui.route.as_ref().map_or("Salida del sistema", |(name, _)| name.as_str());
     let route = Element::panel(Element::row(vec![
-        Element::icon(Icon::Audio).foreground(palette.text).size(Some(32.0), Some(32.0)).centered_y(),
+        Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).size(Some(32.0), Some(32.0)).centered_y(),
         Element::column(vec![Text::new("ESCUCHANDO EN", palette).role(TextRole::Caption).muted().render(),
             Text::new(name, palette).font_size(22.0).truncate().render()]).gap(8.0).flex(1.0),
         Element::icon(Icon::Check).foreground(palette.text).centered_y(),
     ]).gap(16.0).padding(20.0)).background(SCHEME.raised).radius(12.0);
     // UIKit owns the visible route button and its tap. This slot only reserves
     // geometry; no simulated click or private picker presentation is used.
-    let picker = Element::panel(if cfg!(target_os = "ios") { Element::spacer() } else { Element::icon(Icon::Audio).foreground(palette.text).centered() })
+    let picker = Element::panel(if cfg!(target_os = "ios") { Element::spacer() } else { Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).centered() })
         .size(Some(TAP), Some(TAP))
         .accessible(limn::Access::new(limn::Role::Group).id("ios-route-picker").name("Selector de destinos de audio"));
     let choose = Element::row(vec![Element::column(vec![

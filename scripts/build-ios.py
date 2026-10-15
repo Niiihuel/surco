@@ -128,6 +128,11 @@ def smoke_simulator(app, sdk_version, env, artifacts):
         os.kill(pid, 0)
         (artifacts / "smoke.json").write_text(json.dumps({"bundle_id": bundle_id, "pid": pid,
                                                          "launch_survived_seconds": 8}, indent=2) + "\n")
+        if env.get("SURCO_IOS_NATIVE_UI_TESTS") == "1":
+            # Reuse this ready device and Rust archive. The caller's finally block
+            # retains diagnostics and owns cleanup even if a real interaction fails.
+            run([sys.executable, str(ROOT / "scripts/run-ios-ui-tests.py"), "--udid", udid, "--seed-fixture"],
+                env, logs / "native-ui-runner.log", timeout=2100)
         smoked = True
     finally:
         run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",

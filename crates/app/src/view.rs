@@ -63,6 +63,8 @@ pub const CLIP_SURFACE: &str = "now-clip";
 pub const CLIP_BACKDROP: &str = "now-clip-glow";
 /// The mark of the lyrics: words in a bubble.
 const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
+// A route chooser is distinct from a waveform; UIKit supplies airplay.audio on iOS.
+const AUDIO_ROUTE: &str = include_str!("../assets/icons/airplay-audio.svg");
 /// A shelf with more tiles than this gets arrows to move along it.
 const SHELF_FITS: usize = 4;
 /// What dims a cover under what is drawn over it.
@@ -447,7 +449,7 @@ fn import_picture() -> Option<limn::RasterImage> {
 }
 
 /// The library's offer to bring music in from another app, until it is used or put away.
-fn import_card(width: f32, palette: ComponentPalette, phone: bool) -> Element {
+fn import_card(width: f32, palette: ComponentPalette, phone: bool, native: bool) -> Element {
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let close = if phone { mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(CANVAS).radius(22.0) }
         else { on_picture("import-dismiss", Icon::Close, "No mostrar más", palette) };
@@ -467,7 +469,14 @@ fn import_card(width: f32, palette: ComponentPalette, phone: bool) -> Element {
     let about = if phone { about.font_size(14.0) } else { about }.render();
     let go = Button::new("import-open", "Importar", raised).size(if phone { ControlSize::Spacious } else { ControlSize::Compact }).render();
     let go = if phone { go.size(None, Some(44.0)) } else { go };
-    Element::panel(Element::column(vec![top, title, about, Element::row(vec![go])]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
+    let mut actions = vec![go];
+    if phone && native && cfg!(any(target_os = "ios", test)) {
+        // UIKit draws and handles UIPasteControl in this slot. Pasting prepares
+        // the import form; fetching a playlist still requires its explicit submit.
+        actions.push(Element::panel(Element::spacer()).size(Some(112.0), Some(44.0))
+            .accessible(limn::Access::new(limn::Role::Group).id("ios-paste:import-card").name("Pegar enlace de playlist")));
+    }
+    Element::panel(Element::column(vec![top, title, about, Element::row(actions).gap(8.0)]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
 }
 
 /// What cannot be undone asks before it is done.
@@ -1004,7 +1013,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
     if !state.settings.import_dismissed && wanted.is_empty() {
-        let card = import_card(width - 16.0, palette, state.mobile);
+        let card = import_card(width - 16.0, palette, state.mobile, state.mobile_ui.native_surfaces);
         if state.mobile {
             if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
                 let rows = std::mem::replace(child.as_mut(), Element::spacer());
@@ -1034,7 +1043,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let quick = |id: String, name: &str, picture: Element| {
-        ListRow::new(id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render()
+        let element = ListRow::new(&id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render();
+        mobile_card_context(state, &id, element)
     };
     let mut tiles = Vec::new();
     if !state.saved.is_empty() {
@@ -1152,15 +1162,19 @@ fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwor
         None => tile,
     }
     .render();
+    mobile_card_context(state, &row, element)
+}
+
+fn mobile_card_context(state: &State, row: &str, element: Element) -> Element {
     if !state.mobile { return element; }
-    let Some(track) = state.track_at(&row) else { return element; };
-    let action = format!("more:{row}");
-    let scrim = ComponentPalette { surface: COVER_SCRIM, hover: COVER_SCRIM, selected: COVER_SCRIM, ..palette };
-    let more = IconButton::new(&action, Icon::More, scrim).variant(ButtonVariant::Subtle).round()
-        .accessibility_label(format!("Opciones de {}", track.title)).render().size(Some(44.0), Some(44.0));
-    let over = Element::column(vec![Element::row(vec![Element::spacer().flex(1.0), more]).padding(4.0), Element::spacer().flex(1.0)]);
-    ContextMenu::new(format!("tile-context:{row}:{}", track.id), Element::stack(vec![element, over]).size(Some(TILE_WIDTH), None),
-        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, "Opciones de la canción"))], SCHEME.menu())
+    let Some(action) = state.card_context_action(row) else { return element; };
+    let target = state.track_at(row).map_or_else(|| format!("tile-context:{row}"),
+        |track| format!("tile-context:{row}:{}", track.id));
+    // Touch and hold owns contextual actions; keep the cover and its primary
+    // tap target clear. UIKit supplies the iOS menu, with this retained target
+    // also serving keyboard and non-iOS context requests.
+    ContextMenu::new(target, element,
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, "Opciones"))], SCHEME.menu())
         .open_action(action).render()
 }
 
@@ -1182,17 +1196,17 @@ fn middle(element: Element) -> Element {
 }
 
 /// One entry of a row's menu.
-struct Action {
+pub(crate) struct Action {
     /// What a click on it reports.
-    id: String,
-    label: &'static str,
+    pub(crate) id: String,
+    pub(crate) label: &'static str,
     icon: Icon,
     /// A second line: what the action leads to.
-    detail: Option<String>,
+    pub(crate) detail: Option<String>,
 }
 
 /// What a row's menu offers for its track. `None` is a divider.
-fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>> {
+pub(crate) fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>> {
     let item = |action: &str, label, icon, detail| Some(Action { id: format!("do:{action}:{row}"), label, icon: Icon::Custom(icon), detail });
     let mut actions = vec![
         item("queue", "Agregar a la cola", include_str!("../assets/icons/list-plus.svg"), None),

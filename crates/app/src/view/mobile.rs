@@ -10,6 +10,8 @@ mod sheets;
 pub(super) mod details;
 #[cfg(test)]
 mod dialog_tests;
+#[cfg(test)]
+mod native_ui_geometry_tests;
 
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;
@@ -108,15 +110,17 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
     let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
-    let content = chrome::under_bars(content, top_height, bottom_height);
+    let tint = if state.page == Page::Playing {
+        state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)).copied()
+    } else { None };
+    let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
+    let header_edge = tint.map_or(SCHEME.canvas, |color| header_edge_color(color, lower));
+    let content = chrome::under_bars(content, top_height, bottom_height, header_edge);
     let mut top = Element::column(top).background(SCHEME.canvas).block_pointer("mobile-header-bar");
-    if state.page == Page::Playing {
-        if let Some(tint) = state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)) {
-            // Match the full player's wash over an opaque base, so scrolled text
-            // cannot show through the compact transport.
-            let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
-            top = top.vertical_gradient(vec![Color { a: 150, ..*tint }, Color { a: lower, ..*tint }]);
-        }
+    if let Some(tint) = tint {
+        // Match the full player's wash over an opaque base, so scrolled text
+        // cannot show through the compact transport.
+        top = top.vertical_gradient(vec![Color { a: 150, ..tint }, Color { a: lower, ..tint }]);
     }
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), Element::column(bottom)]);
     let content = Element::stack(vec![content, bars]);
@@ -126,6 +130,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
+    // UIKit owns these surfaces when its bridge is ready. Keep the limn
+    // implementation available on other platforms or if the bridge is unavailable.
+    if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = playlist_dialog(state, tree, window.width, palette);
@@ -133,6 +140,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = confirm_dialog(state, tree, palette);
     limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
         .max_height(680.0).body(equalizer(state, palette)).render()
+}
+
+/// Opaque color where the header's wash meets the edge scrim. Compositing over
+/// the canvas prevents a black seam without allowing scrolled text through it.
+fn header_edge_color(tint: Color, alpha: u8) -> Color {
+    let channel = |tint: u8, base: u8| {
+        ((u32::from(tint) * u32::from(alpha) + u32::from(base) * u32::from(255 - alpha) + 127) / 255) as u8
+    };
+    Color::rgb(channel(tint.r, SCHEME.canvas.r), channel(tint.g, SCHEME.canvas.g), channel(tint.b, SCHEME.canvas.b))
 }
 
 fn route_key(state: &State) -> String {
@@ -174,7 +190,7 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         .accessible(limn::Access::new(limn::Role::Button).name(format!("Abrir reproductor: {}", track.title))).flex(1.0);
     let controls = Element::row(vec![
         open,
-        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
         icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
     ]).gap(8.0).padding(8.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();
@@ -207,6 +223,7 @@ mod tests {
     use crate::backend::Command;
     use crate::player::PlayerView;
     use limn::{UiAction, UiTree};
+    use surco_core::ArtistRef;
 
     fn playing_state() -> State {
         let track = Track { id: "song".into(), title: "Una canción con un título largo para el teléfono".into(), artist: "Un artista".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 180_000 };
@@ -260,6 +277,28 @@ mod tests {
     }
 
     #[test]
+    fn the_player_scroll_edge_uses_its_header_tint_instead_of_a_black_band() {
+        let mut state = playing_state();
+        state.page = Page::Playing;
+        state.player.current.as_mut().unwrap().artwork_url = Some("cover".into());
+        state.tints.insert("cover".into(), Color::rgb(200, 100, 50));
+        let size = Size::new(390.0, 700.0);
+        let mut tree = UiTree::new(super::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        tree.handle_event(limn::UiEvent::ScrollDirect { position: limn::Point::new(20.0, 400.0), delta_y: -100.0 });
+        let frame = tree.layout(size);
+        let edge = frame.commands.iter().find_map(|command| match command {
+            limn::DrawCommand::FillVerticalGradient { rect, top, bottom }
+                if rect.y == HEADER_HEIGHT && rect.height == 48.0 && bottom.a == 0 => Some(*top),
+            _ => None,
+        }).expect("the player's top edge is visible after scrolling");
+        assert_eq!(edge.a, 255, "the edge masks the song content beneath it");
+        assert!(edge.r > edge.g && edge.g > edge.b && edge.b > SCHEME.canvas.b,
+            "the edge joins the warm header wash: {edge:?}");
+    }
+
+    #[test]
     fn library_import_card_actions_have_phone_sized_touch_targets() {
         let mut state = playing_state();
         state.page = Page::Library;
@@ -273,6 +312,26 @@ mod tests {
                 assert!(rect.width >= TAP && rect.height >= TAP, "{id}: {rect:?}");
                 assert!(rect.x >= 0.0 && rect.x + rect.width <= width && rect.y + rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
             }
+        }
+    }
+
+    #[test]
+    fn library_import_card_reserves_a_native_paste_control_without_replacing_import() {
+        let mut state = playing_state();
+        state.page = Page::Library;
+        state.mobile_ui.native_surfaces = true;
+        for width in [320.0, 390.0, 430.0] {
+            let size = Size::new(width, 844.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            let paste = frame.access.iter().find(|node| node.id == "ios-paste:import-card").unwrap();
+            let import = frame.access.iter().find(|node| node.id == "import-open").unwrap();
+            assert_eq!(paste.role, limn::Role::Group);
+            assert!(paste.rect.width >= 112.0 && paste.rect.height >= TAP);
+            assert!(paste.rect.x >= import.rect.x + import.rect.width);
+            assert!(paste.rect.x + paste.rect.width <= width);
+            assert!(paste.rect.y + paste.rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
         }
     }
 
@@ -318,17 +377,52 @@ mod tests {
     }
 
     #[test]
-    fn home_track_tiles_offer_the_same_hold_and_overflow_actions_as_rows() {
+    fn home_track_tiles_keep_the_cover_clear_and_hold_the_correct_song() {
         let mut state = playing_state();
         let track = state.current().unwrap().clone();
         state.because.push((track.clone(), vec![track.clone()]));
         let tile = tile(&state, "rec:0:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
-        let frame = UiTree::new(tile).layout(Size::new(TILE_WIDTH, 240.0));
-        let more = frame.access.iter().find(|node| node.id == "more:rec:0:0").unwrap();
-        assert!(more.rect.width >= 44.0 && more.rect.height >= 44.0);
-        assert!(frame.context_menu_at(limn::Point::new(30.0, 60.0)).is_some());
-        state.update(&UiAction::Clicked { id: "more:rec:0:0".into() });
+        let mut tree = UiTree::new(tile);
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(Size::new(TILE_WIDTH, 240.0));
+        assert!(!frame.access.iter().any(|node| node.id.starts_with("more:")),
+            "the artwork has no permanent overflow button");
+        let point = limn::Point::new(30.0, 60.0);
+        assert_eq!(frame.context_menu_at(point), Some("tile-context:rec:0:0:song"));
+        let actions = tree.handle_event(limn::UiEvent::ContextMenu { position: point });
+        assert_eq!(actions, vec![UiAction::Clicked { id: "more:rec:0:0".into() }]);
+        state.update(&actions[0]);
         assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
+    }
+
+    #[test]
+    fn home_album_and_artist_cards_offer_hold_actions_in_quick_access_and_shelves() {
+        let mut state = playing_state();
+        state.page = Page::Search;
+        state.collection.recent = vec![
+            Entry::Album(AlbumRef { id: "album".into(), title: "Un álbum".into(), artist: Some("Una banda".into()), year: String::new(), artwork_url: None }),
+            Entry::Artist(ArtistRef { id: "artist".into(), name: "Una artista".into(), subscribers: None, artwork_url: None }),
+        ];
+        state.collection.kept = state.collection.recent.clone();
+        for index in 0..2 {
+            let row = format!("recent:{index}");
+            let size = Size::new(390.0, 844.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            let rect = frame.access.iter().find(|node| node.id == row).unwrap().rect;
+            let actions = tree.handle_event(limn::UiEvent::ContextMenu {
+                position: limn::Point::new(rect.x + 20.0, rect.y + 20.0),
+            });
+            assert_eq!(actions, vec![UiAction::Clicked { id: format!("entry-more:{row}") }]);
+            let entry = &state.collection.kept[index];
+            let row = format!("home-kept:{index}");
+            let mut tree = UiTree::new(tile(&state, row.clone(), entry.title(), None, entry.artwork(), false, SCHEME.palette()));
+            tree.set_reduced_motion(true);
+            tree.layout(Size::new(TILE_WIDTH, 240.0));
+            assert_eq!(tree.handle_event(limn::UiEvent::ContextMenu { position: limn::Point::new(20.0, 60.0) }),
+                vec![UiAction::Clicked { id: format!("entry-more:{row}") }]);
+        }
     }
 
     #[test]

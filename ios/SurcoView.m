@@ -2,9 +2,11 @@
 #import <UIKit/UIKit.h>
 #import <AVKit/AVKit.h>
 #import <AVFAudio/AVFAudio.h>
+#import "SurcoSurfaces.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef void (*SurcoUiWake)(void *context);
 
@@ -18,6 +20,7 @@ typedef struct {
     __weak UIView *_view;
     __weak UIScreen *_keyboardScreen;
     AVRoutePickerView *_picker;
+    SurcoSurfaces *_surfaces;
     NSMutableArray<id> *_observers;
     CGRect _keyboardFrame;
     uint64_t _routeRevision;
@@ -32,6 +35,8 @@ typedef struct {
 - (char *)copyRoute;
 - (void)placePicker:(CGRect)rect visible:(BOOL)visible;
 - (void)setTint:(UIColor *)tint active:(UIColor *)active;
+- (void)updateSurfaces:(NSDictionary *)payload scale:(CGFloat)scale;
+- (NSArray<NSDictionary *> *)takeSurfaceEvents;
 @end
 
 @implementation SurcoNativeView
@@ -44,6 +49,7 @@ typedef struct {
     _routeRevision = 1;
     _observers = [NSMutableArray array];
     __weak SurcoNativeView *weakSelf = self;
+    _surfaces = [[SurcoSurfaces alloc] initWithWake:^{ [weakSelf requestRepaint]; }];
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     id frame = [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil
                                    queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
@@ -92,6 +98,8 @@ typedef struct {
     // callback first makes it harmless before Rust releases its Context allocation.
     _wake = NULL;
     _context = NULL;
+    [_surfaces invalidate];
+    _surfaces = nil;
     for (id token in _observers) [NSNotificationCenter.defaultCenter removeObserver:token];
     [_observers removeAllObjects];
     _picker.hidden = YES;
@@ -102,7 +110,8 @@ typedef struct {
 }
 
 - (void)updateView:(UIView *)view geometry:(SurcoUiGeometry *)geometry {
-    if (_view != view) {
+    BOOL viewChanged = _view != view;
+    if (viewChanged) {
         [_picker removeFromSuperview];
         _picker.hidden = YES;
         _picker.userInteractionEnabled = NO;
@@ -111,6 +120,8 @@ typedef struct {
     *geometry = (SurcoUiGeometry){0};
     geometry->route_revision = _routeRevision;
     if (!view) return;
+    // A replaced view is attached by updatePayload later in this frame.
+    if (!viewChanged) [_surfaces refresh];
     CGRect bounds = view.bounds;
     geometry->width = bounds.size.width;
     geometry->height = bounds.size.height;
@@ -180,6 +191,10 @@ typedef struct {
     _picker.tintColor = tint;
     _picker.activeTintColor = active;
 }
+- (void)updateSurfaces:(NSDictionary *)payload scale:(CGFloat)scale {
+    [_surfaces updatePayload:payload view:_view scale:scale];
+}
+- (NSArray<NSDictionary *> *)takeSurfaceEvents { return [_surfaces takeEvents]; }
 @end
 
 void *surco_ui_create(SurcoUiWake wake, void *context) {
@@ -250,3 +265,57 @@ void surco_ui_picker_colors(void *handle, uint32_t tint, uint32_t active) {
     NSCAssert(NSThread.isMainThread, @"Surco native UI must run on the main thread");
     [(__bridge SurcoNativeView *)handle setTint:SurcoUiColor(tint) active:SurcoUiColor(active)];
 }
+
+int surco_ui_surfaces(void *handle, const uint8_t *bytes, size_t length, double scale) {
+    NSCAssert(NSThread.isMainThread, @"Surco native surfaces must run on the main thread");
+    if (!isfinite(scale) || scale <= 0) return 0;
+    NSData *data = [NSData dataWithBytes:bytes length:length];
+    id payload = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![payload isKindOfClass:NSDictionary.class]) return 0;
+    [(__bridge SurcoNativeView *)handle updateSurfaces:payload scale:scale];
+    return 1;
+}
+
+char *surco_ui_take_surface_events(void *handle) {
+    NSCAssert(NSThread.isMainThread, @"Surco native surfaces must run on the main thread");
+    NSArray *events = [(__bridge SurcoNativeView *)handle takeSurfaceEvents];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:events ?: @[] options:0 error:NULL];
+    if (!data) return NULL;
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return json ? strdup(json.UTF8String) : NULL;
+}
+
+// White premultiplied RGBA coverage for limn's tintable, size-cached icon textures.
+// Symbols are loaded from this device's UIKit; no Apple artwork is bundled or exported.
+uint8_t *surco_ui_symbol(const uint8_t *name, size_t length, uint16_t pixels) {
+    NSCAssert(NSThread.isMainThread, @"SF Symbols must be rendered on the main thread");
+    if (!name || !length || length > 128 || !pixels || pixels > 512) return NULL;
+    @autoreleasepool {
+        NSString *symbolName = [[NSString alloc] initWithBytes:name length:length encoding:NSUTF8StringEncoding];
+        if (!symbolName.length) return NULL;
+        UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:pixels weight:UIImageSymbolWeightRegular];
+        UIImage *image = [UIImage systemImageNamed:symbolName withConfiguration:configuration];
+        if (!image || image.size.width <= 0 || image.size.height <= 0) return NULL;
+        image = [image imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        size_t rowBytes = (size_t)pixels * 4;
+        uint8_t *bytes = calloc(pixels, rowBytes);
+        if (!bytes) return NULL;
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(bytes, pixels, pixels, 8, rowBytes, colorSpace,
+                                                    kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        CGColorSpaceRelease(colorSpace);
+        if (!context) { free(bytes); return NULL; }
+        CGFloat factor = pixels / MAX(image.size.width, image.size.height);
+        CGSize size = CGSizeMake(image.size.width * factor, image.size.height * factor);
+        CGRect rect = CGRectMake((pixels - size.width) / 2, (pixels - size.height) / 2, size.width, size.height);
+        CGContextTranslateCTM(context, 0, pixels);
+        CGContextScaleCTM(context, 1, -1);
+        UIGraphicsPushContext(context);
+        [image drawInRect:rect];
+        UIGraphicsPopContext();
+        CGContextRelease(context);
+        return bytes;
+    }
+}
+
+void surco_ui_free_symbol(uint8_t *bytes) { free(bytes); }

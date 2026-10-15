@@ -407,6 +407,48 @@ mod tests {
     }
 
     #[test]
+    fn consecutive_horizontal_touches_keep_the_shelf_position_after_repaints_and_loading() {
+        let shelf = |count| Element::scroll("page", Element::column(vec![
+            Element::horizontal_scroll_2d("shelf", Element::column(vec![
+                Element::row((0..count).map(|i| Element::button(format!("song:{i}"), "A song")
+                    .size(Some(100.0), Some(60.0))).collect()).gap(12.0),
+                Element::spacer().size(None, Some(40.0)),
+            ])).drag_to_pan().size(Some(240.0), Some(100.0)),
+            Element::spacer().size(None, Some(400.0)),
+        ])).size(Some(240.0), Some(160.0));
+        let mut tree = UiTree::new(shelf(6));
+        let mut input = TouchInput::default();
+        // Begin in the shelf's open space: limn starts its pointer pan there
+        // before the touch adapter takes over at the movement threshold.
+        send(&mut input, &mut tree, &touch(egui::TouchPhase::Start, Pos2::new(160.0, 80.0)));
+        assert!(send(&mut input, &mut tree, &touch(egui::TouchPhase::Move, Pos2::new(80.0, 80.0))).is_empty());
+        assert!(send(&mut input, &mut tree, &touch(egui::TouchPhase::End, Pos2::new(80.0, 80.0))).is_empty());
+        assert_eq!(tree.horizontal_scroll_offset("shelf"), 80.0);
+        assert_eq!(tree.scroll_offset("page"), 0.0);
+
+        tree.set_root(shelf(6));
+        tree.layout(Size::new(240.0, 160.0));
+        tree.set_root(Element::text("Another route"));
+        tree.layout(Size::new(240.0, 160.0));
+        tree.set_root(shelf(8));
+        tree.layout(Size::new(240.0, 160.0));
+        assert_eq!(tree.horizontal_scroll_offset("shelf"), 80.0);
+
+        send(&mut input, &mut tree, &touch(egui::TouchPhase::Start, Pos2::new(200.0, 40.0)));
+        assert_eq!(tree.horizontal_scroll_offset("shelf"), 80.0, "a new touch cannot revive the old pointer pan");
+        assert!(send(&mut input, &mut tree, &touch(egui::TouchPhase::Move, Pos2::new(140.0, 40.0))).is_empty());
+        assert!(send(&mut input, &mut tree, &touch(egui::TouchPhase::End, Pos2::new(140.0, 40.0))).is_empty());
+        assert_eq!(tree.horizontal_scroll_offset("shelf"), 140.0);
+        assert_eq!(tree.scroll_offset("page"), 0.0);
+
+        // Normal card taps still dispatch once, without moving either axis.
+        send(&mut input, &mut tree, &touch(egui::TouchPhase::Start, Pos2::new(40.0, 40.0)));
+        assert_eq!(send(&mut input, &mut tree, &touch(egui::TouchPhase::End, Pos2::new(40.0, 40.0))),
+            vec![UiAction::Clicked { id: "song:1".into() }]);
+        assert_eq!(tree.horizontal_scroll_offset("shelf"), 140.0);
+    }
+
+    #[test]
     fn a_tap_clicks_once_but_panning_cancels_the_pressed_row() {
         let root = Element::scroll(
             "list",

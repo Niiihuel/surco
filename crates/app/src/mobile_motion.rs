@@ -54,7 +54,7 @@ impl Motion {
 
     pub fn set_reduced_motion(&mut self, reduced: bool) { self.reduced = reduced; }
 
-    pub fn advance(&mut self, state: &mut State, tree: &UiTree, size: Size, now: Instant) -> Vec<Command> {
+    pub fn advance(&mut self, state: &mut State, size: Size, now: Instant) -> Vec<Command> {
         let reduced = self.reduced || state.settings.reduce_motion;
         let showing = state.mobile && state.page == Page::Playing;
         if showing && !self.showing {
@@ -94,13 +94,6 @@ impl Motion {
             self.search.snap_to(HEADER, now);
             state.mobile_ui.search_header = None;
         }
-        let anchor = match state.page {
-            Page::Playing if !state.queue_open => Some("mobile-player-title"),
-            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
-            _ => None,
-        };
-        state.mobile_ui.compact_header = state.mobile && anchor
-            .and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
         Vec::new()
     }
 
@@ -222,6 +215,17 @@ impl Motion {
     }
 }
 
+/// Call only after laying out the current page, before publishing its frame.
+pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
+    let anchor = match state.page {
+        Page::Playing if !state.queue_open => Some("mobile-player-title"),
+        Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
+        _ => None,
+    };
+    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
+    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact
+}
+
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
     if !state.mobile || state.page != Page::Playing || state.queue_open
         || !point.x.is_finite() || !point.y.is_finite() || point.x < 0.0 || point.x >= size.width
@@ -246,7 +250,8 @@ mod tests {
     use super::*;
     use crate::player::PlayerView;
     use limn::{Component, Element, HitRegion, Rect, Slider, ComponentPalette};
-    use surco_core::Track;
+    use crate::state::Playlist;
+    use surco_core::{Album, AlbumRef, Artist, Track};
 
     fn phone() -> State {
         let track = Track { id: "song".into(), title: "Canción".into(), artist: "Artista".into(), artist_id: None,
@@ -283,13 +288,255 @@ mod tests {
         events
     }
 
-    fn settled(now: Instant) -> (Motion, State, UiTree) {
+    fn settled(now: Instant) -> (Motion, State) {
         let mut motion = Motion::new(now);
         let mut state = phone();
-        let tree = UiTree::new(Element::spacer());
-        motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now);
-        motion.advance(&mut state, &tree, Size::new(390.0, 844.0), now + Duration::from_millis(320));
-        (motion, state, tree)
+        motion.advance(&mut state, Size::new(390.0, 844.0), now);
+        motion.advance(&mut state, Size::new(390.0, 844.0), now + Duration::from_millis(320));
+        (motion, state)
+    }
+
+    fn detail_pages(state: &mut State) -> Vec<(Page, &'static str, &'static str)> {
+        let tracks: Vec<_> = (0..30).map(|index| Track {
+            id: format!("song-{index}"), title: format!("Canción {index}"), ..state.current().unwrap().clone()
+        }).collect();
+        state.collection.playlists.push(Playlist { id: 7, name: "Rutas de madrugada".into(), collaborative: false, tracks: tracks.clone() });
+        vec![
+            (Page::Playlist(7), "mobile-playlist", "Rutas de madrugada"),
+            (Page::Album(Album { id: "album".into(), title: "Un álbum".into(), artist: "Artista".into(), artist_id: None,
+                year: "2026".into(), artwork_url: None, tracks: tracks.clone() }), "mobile-album", "Un álbum"),
+            (Page::Artist(Artist { id: "artist".into(), name: "Una artista".into(), subscribers: None, artwork_url: None,
+                songs: tracks, albums: vec![AlbumRef { id: "release".into(), title: "Álbum real".into(), artist: None, year: String::new(), artwork_url: None }],
+                singles: vec![AlbumRef { id: "single".into(), title: "Sencillo real".into(), artist: None, year: String::new(), artwork_url: None }] }), "mobile-artist", "Una artista"),
+        ]
+    }
+
+    fn paint_header(motion: &mut Motion, state: &mut State, tree: &mut UiTree, size: Size, now: Instant) -> Frame {
+        motion.advance(state, size, now);
+        crate::layout_view(state, tree, size)
+    }
+
+    #[test]
+    fn detail_headers_keep_the_title_after_culling_and_expand_when_scrolled_back_to_top() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        for (page, scroll, title) in detail_pages(&mut state) {
+            state.page = page;
+            let mut motion = Motion::new(now);
+            let mut tree = UiTree::new(crate::view::view(&state, size));
+            tree.set_reduced_motion(true);
+            tree.layout(size);
+            assert!(tree.anchor_offset("mobile-detail-title").unwrap() > HEADER);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+
+            tree.reveal_at_start("mobile-detail-title", 0.0);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "title takes over the header while passing it");
+
+            tree.scroll_to_end(scroll);
+            let end = tree.layout(size);
+            let last = if matches!(state.page, Page::Artist(_)) { "page-single:0" } else { "page-track:29" };
+            assert!(end.access.iter().any(|node| node.id == last), "the end of {scroll} is visible");
+            assert!(tree.anchor_offset("mobile-detail-title").unwrap() < 0.0, "the culled title retains its actual geometry");
+            let end = paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "{scroll} stays compact after its title is culled");
+            assert!(end.commands.iter().any(|command| matches!(command,
+                limn::DrawCommand::Text { text, font_size, .. } if text == title && *font_size == 18.0)), "the compact title is painted");
+
+            tree.scroll_to_start(scroll);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header, "scrolling back restores the expanded header");
+
+            tree.scroll_to_end(scroll);
+            tree.layout(size);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(state.mobile_ui.compact_header, "jumping straight to the end also keeps the title");
+        }
+    }
+
+    #[test]
+    fn compact_geometry_is_not_inherited_by_another_detail_or_an_unrelated_page() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[0].0.clone();
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-playlist");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+
+        for page in [pages[1].0.clone(), Page::Library] {
+            state.page = page;
+            // The host advances motion once against the previous page's frame.
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+            paint_header(&mut motion, &mut state, &mut tree, size, now);
+            assert!(!state.mobile_ui.compact_header);
+        }
+        state.page = pages[0].0.clone();
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(tree.scroll_offset("mobile-playlist") > 0.0, "navigation restores the named viewport");
+        assert!(tree.anchor_offset("mobile-detail-title").unwrap() < 0.0);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "restoring a deep viewport also restores its compact title");
+    }
+
+    #[test]
+    fn navigation_never_measures_the_previous_pages_visible_title_for_the_new_route() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[0].0.clone();
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.reveal_at_start("mobile-detail-title", 0.0);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(tree.anchor_offset("mobile-detail-title").unwrap() < HEADER);
+        assert!(state.mobile_ui.compact_header);
+
+        state.page = pages[1].0.clone();
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header, "the outgoing playlist title is not an album measurement");
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        tree.scroll_to_end("mobile-album");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+        let narrow = Size::new(320.0, 600.0);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        assert!(state.mobile_ui.compact_header, "a deep viewport remains compact after resizing");
+        tree.scroll_to_start("mobile-album");
+        tree.layout(narrow);
+        paint_header(&mut motion, &mut state, &mut tree, narrow, now);
+        assert!(!state.mobile_ui.compact_header, "the new layout replaces its measured position at the top");
+    }
+
+    #[test]
+    fn player_transport_remains_compact_over_long_lyrics_and_queue_navigation() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        state.settings.reduce_motion = true;
+        state.lyrics = Some(("song".into(), crate::state::Lyrics::Plain {
+            lines: vec!["Una letra larga que ocupa varias líneas de la pantalla ".repeat(24); 4], source: "Fixture".into(),
+        }));
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-playing");
+        tree.layout(size);
+        assert!(tree.anchor_offset("mobile-player-title").unwrap() < 0.0);
+        let end = paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header);
+        assert!(end.access.iter().any(|node| node.id == "mobile-player-header-play"));
+        state.queue_open = true;
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        state.queue_open = false;
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "queue navigation retains the deep player's geometry");
+        tree.scroll_to_start("mobile-playing");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header);
+        let track = Track { id: "next-song".into(), title: "Otra canción".into(), ..state.current().unwrap().clone() };
+        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header, "another track starts with its own title geometry");
+    }
+
+    #[test]
+    fn a_new_album_identity_can_start_at_the_restored_deep_offset() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[1].0.clone();
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-album");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        let Page::Album(mut next) = state.page.clone() else { unreachable!() };
+        next.id = "next-album".into();
+        next.title = "El álbum siguiente".into();
+        state.page = Page::Album(next);
+        let next = paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "a new identity requires no previous visible measurement");
+        assert!(next.commands.iter().any(|command| matches!(command,
+            limn::DrawCommand::Text { text, font_size, .. } if text == "El álbum siguiente" && *font_size == 18.0)));
+    }
+
+    #[test]
+    fn a_direct_jump_uses_the_hosts_input_then_advance_then_layout_order() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        let pages = detail_pages(&mut state);
+        state.page = pages[0].0.clone();
+        state.player.playing = false;
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.handle_event(UiEvent::ScrollDirect { position: Point::new(200.0, 400.0), delta_y: -10_000.0 });
+        // Host advances against the old Frame while the new offset is already set.
+        let jumped = paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(tree.is_scroll_at_end("mobile-playlist", 0.1));
+        assert!(state.mobile_ui.compact_header, "the first paint is correct without more input or playback ticks");
+        assert!(jumped.commands.iter().any(|command| matches!(command,
+            limn::DrawCommand::Text { text, font_size, .. } if text == "Rutas de madrugada" && *font_size == 18.0)));
+    }
+
+    #[test]
+    fn a_new_track_has_a_compact_transport_at_an_already_deep_player_offset() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 778.0);
+        let mut state = phone();
+        state.settings.reduce_motion = true;
+        let lines = vec!["Una letra larga que ocupa varias líneas de la pantalla ".repeat(24); 4];
+        state.lyrics = Some(("song".into(), crate::state::Lyrics::Plain { lines: lines.clone(), source: "Fixture".into() }));
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        tree.scroll_to_end("mobile-playing");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        let track = Track { id: "next-song".into(), title: "La siguiente canción".into(), ..state.current().unwrap().clone() };
+        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
+        state.lyrics = Some(("next-song".into(), crate::state::Lyrics::Plain { lines, source: "Fixture".into() }));
+        let next = paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.compact_header, "a new track requires no previous visible title");
+        assert!(next.access.iter().any(|node| node.id == "mobile-player-header-play"));
+        assert!(next.commands.iter().any(|command| matches!(command,
+            limn::DrawCommand::Text { text, font_size, .. } if text == "La siguiente canción" && *font_size == 17.0)));
     }
 
     #[test]
@@ -297,17 +544,16 @@ mod tests {
         let now = Instant::now();
         let mut motion = Motion::new(now);
         let mut state = phone();
-        let tree = UiTree::new(Element::spacer());
         let size = Size::new(390.0, 844.0);
-        motion.advance(&mut state, &tree, size, now);
+        motion.advance(&mut state, size, now);
         assert_eq!(state.mobile_ui.player_offset, size.height);
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(80));
+        motion.advance(&mut state, size, now + Duration::from_millis(80));
         let middle = state.mobile_ui.player_offset;
         assert!(middle > 0.0 && middle < size.height);
         state.update(&limn::UiAction::Clicked { id: "mobile-player-dismiss".into() });
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(80));
+        motion.advance(&mut state, size, now + Duration::from_millis(80));
         assert_eq!(state.mobile_ui.player_offset, middle, "closing starts from the displayed position");
-        let commands = motion.advance(&mut state, &tree, size, now + Duration::from_millis(320));
+        let commands = motion.advance(&mut state, size, now + Duration::from_millis(320));
         assert_eq!(state.page, Page::Library);
         assert!(state.player.playing && commands.iter().all(|command| !matches!(command, Command::PlayPause)));
     }
@@ -315,7 +561,7 @@ mod tests {
     #[test]
     fn a_normal_tap_passes_unchanged_but_a_claim_cancels_press_and_consumes_pan_and_release() {
         let now = Instant::now();
-        let (mut motion, mut state, tree) = settled(now);
+        let (mut motion, mut state) = settled(now);
         let size = Size::new(390.0, 844.0);
         let at = now + Duration::from_secs(1);
         let down = vec![UiEvent::PointerMove(Point::new(20.0, 200.0)), UiEvent::PointerDown(Point::new(20.0, 200.0))];
@@ -326,11 +572,11 @@ mod tests {
         let pan = vec![UiEvent::PointerLeave, UiEvent::Scroll2D { position: Point::new(20.0, 200.0), delta_x: 0.0, delta_y: 60.0, direct: true, shift: false }];
         let consumed = motion.filter(&raw(egui::TouchPhase::Move, 20.0, 260.0), pan, &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1500));
         assert_eq!(consumed, vec![UiEvent::PointerLeave]);
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1500));
+        motion.advance(&mut state, size, at + Duration::from_millis(1500));
         assert_eq!(state.mobile_ui.player_offset, 60.0);
         let released = motion.filter(&raw(egui::TouchPhase::End, 20.0, 260.0), vec![UiEvent::PointerUp(Point::new(20.0, 260.0)), UiEvent::PointerLeave], &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1510));
         assert!(!released.iter().any(|event| matches!(event, UiEvent::PointerUp(_) | UiEvent::Scroll2D { .. })));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1730));
+        motion.advance(&mut state, size, at + Duration::from_millis(1730));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         assert_eq!(state.page, Page::Playing, "a short slow pull returns instead of navigating");
     }
@@ -361,16 +607,16 @@ mod tests {
     #[test]
     fn reduced_motion_snaps_autonomous_motion_but_does_not_disable_direct_manipulation() {
         let now = Instant::now();
-        let (mut motion, mut state, tree) = settled(now);
+        let (mut motion, mut state) = settled(now);
         state.settings.reduce_motion = true;
         let size = Size::new(390.0, 844.0);
         let at = now + Duration::from_secs(1);
         motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at);
         motion.filter(&raw(egui::TouchPhase::Move, 20.0, 240.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(100));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(100));
+        motion.advance(&mut state, size, at + Duration::from_millis(100));
         assert_eq!(state.mobile_ui.player_offset, 40.0);
         motion.filter(&raw(egui::TouchPhase::Cancel, 20.0, 240.0), Vec::new(), &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(110));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(110));
+        motion.advance(&mut state, size, at + Duration::from_millis(110));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         assert!(!motion.active(at + Duration::from_millis(110)));
     }
@@ -378,50 +624,50 @@ mod tests {
     #[test]
     fn search_header_retargets_from_its_current_height_and_queue_navigation_does_not_reopen_player() {
         let now = Instant::now();
-        let (mut motion, mut state, tree) = settled(now);
+        let (mut motion, mut state) = settled(now);
         let size = Size::new(390.0, 844.0);
         state.queue_open = true;
-        motion.advance(&mut state, &tree, size, now + Duration::from_secs(1));
+        motion.advance(&mut state, size, now + Duration::from_secs(1));
         state.queue_open = false;
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(1100));
+        motion.advance(&mut state, size, now + Duration::from_millis(1100));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         state.page = Page::Search;
         state.mobile_search = true;
-        motion.advance(&mut state, &tree, size, now + Duration::from_secs(2));
+        motion.advance(&mut state, size, now + Duration::from_secs(2));
         assert_eq!(state.mobile_ui.search_header, Some(HEADER));
         state.mobile_ui.search_editing = true;
-        motion.advance(&mut state, &tree, size, now + Duration::from_secs(2));
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2080));
+        motion.advance(&mut state, size, now + Duration::from_secs(2));
+        motion.advance(&mut state, size, now + Duration::from_millis(2080));
         let middle = state.mobile_ui.search_header.unwrap();
         assert!(middle > 0.0 && middle < HEADER);
         state.mobile_ui.search_editing = false;
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2080));
+        motion.advance(&mut state, size, now + Duration::from_millis(2080));
         assert_eq!(state.mobile_ui.search_header, Some(middle));
-        motion.advance(&mut state, &tree, size, now + Duration::from_millis(2300));
+        motion.advance(&mut state, size, now + Duration::from_millis(2300));
         assert_eq!(state.mobile_ui.search_header, Some(HEADER));
     }
 
     #[test]
     fn starting_in_scrolled_body_stays_ineligible_and_a_second_finger_cannot_move_the_player() {
         let now = Instant::now();
-        let (mut motion, mut state, tree) = settled(now);
+        let (mut motion, mut state) = settled(now);
         let size = Size::new(390.0, 844.0);
         let frame = surface();
         let area = |scroll| DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll };
         let at = now + Duration::from_secs(1);
         motion.filter(&raw(egui::TouchPhase::Start, 20.0, 200.0), Vec::new(), &state, area(100.0), at);
         motion.filter(&raw(egui::TouchPhase::Move, 20.0, 400.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(200));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(200));
+        motion.advance(&mut state, size, at + Duration::from_millis(200));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         motion.filter(&raw(egui::TouchPhase::End, 20.0, 400.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(210));
         motion.filter(&raw(egui::TouchPhase::Start, 20.0, 20.0), Vec::new(), &state, area(100.0), at + Duration::from_secs(1));
         let other = |phase, y| vec![egui::Event::Touch { device_id: egui::TouchDeviceId(1), id: egui::TouchId(2), phase, pos: egui::pos2(20.0, y), force: None }];
         motion.filter(&other(egui::TouchPhase::Start, 200.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(1100));
         motion.filter(&other(egui::TouchPhase::Move, 500.0), Vec::new(), &state, area(0.0), at + Duration::from_millis(1200));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1200));
+        motion.advance(&mut state, size, at + Duration::from_millis(1200));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         motion.filter(&raw(egui::TouchPhase::Move, 20.0, 70.0), Vec::new(), &state, area(100.0), at + Duration::from_millis(1500));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(1500));
+        motion.advance(&mut state, size, at + Duration::from_millis(1500));
         assert_eq!(state.mobile_ui.player_offset, 50.0, "the original header finger still owns the gesture");
     }
 
@@ -429,7 +675,7 @@ mod tests {
     fn flick_release_dismisses_but_focus_loss_returns_without_navigation() {
         let now = Instant::now();
         for cancel in [false, true] {
-            let (mut motion, mut state, tree) = settled(now);
+            let (mut motion, mut state) = settled(now);
             let size = Size::new(390.0, 844.0);
             let frame = surface();
             let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
@@ -439,7 +685,7 @@ mod tests {
             let end = if cancel { vec![egui::Event::WindowFocused(false)] } else { raw(egui::TouchPhase::End, 20.0, 80.0) };
             let output = motion.filter(&end, Vec::new(), &state, area(), at + Duration::from_millis(50));
             if cancel { assert_eq!(output, vec![UiEvent::PointerLeave]); }
-            motion.advance(&mut state, &tree, size, at + Duration::from_millis(300));
+            motion.advance(&mut state, size, at + Duration::from_millis(300));
             assert_eq!(state.page, if cancel { Page::Playing } else { Page::Library });
             assert!(state.player.playing);
             assert_eq!(state.mobile_ui.player_offset, 0.0);
@@ -449,7 +695,7 @@ mod tests {
     #[test]
     fn a_batched_drag_consumes_only_its_pointer_units_and_keeps_keyboard_and_the_next_tap() {
         let now = Instant::now();
-        let (mut motion, state, _) = settled(now);
+        let (mut motion, state) = settled(now);
         let size = Size::new(390.0, 844.0);
         let frame = surface();
         let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
@@ -496,22 +742,21 @@ mod tests {
         let now = Instant::now();
         let mut motion = Motion::new(now);
         let mut state = phone();
-        let tree = UiTree::new(Element::spacer());
         let size = Size::new(390.0, 844.0);
-        motion.advance(&mut state, &tree, size, now);
+        motion.advance(&mut state, size, now);
         let at = now + Duration::from_millis(80);
-        motion.advance(&mut state, &tree, size, at);
+        motion.advance(&mut state, size, at);
         let base = state.mobile_ui.player_offset;
         let frame = surface();
         let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
         motion.filter(&raw(egui::TouchPhase::Start, 20.0, base + 20.0), Vec::new(), &state, area(), at);
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(20));
+        motion.advance(&mut state, size, at + Duration::from_millis(20));
         assert_eq!(state.mobile_ui.player_offset, base, "hold the surface while deciding its axis");
         motion.filter(&raw(egui::TouchPhase::Move, 20.0, base + 80.0), Vec::new(), &state, area(), at + Duration::from_millis(50));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(50));
+        motion.advance(&mut state, size, at + Duration::from_millis(50));
         assert_eq!(state.mobile_ui.player_offset, base + 60.0);
         motion.filter(&raw(egui::TouchPhase::Cancel, 20.0, base + 80.0), Vec::new(), &state, area(), at + Duration::from_millis(60));
-        motion.advance(&mut state, &tree, size, at + Duration::from_millis(280));
+        motion.advance(&mut state, size, at + Duration::from_millis(280));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         assert_eq!(state.page, Page::Playing);
     }

@@ -22,6 +22,7 @@ pub(crate) enum SearchFilter {
     Albums,
 }
 
+#[derive(Clone)]
 pub(crate) struct TrackContext {
     pub row: String,
     pub track: Track,
@@ -29,10 +30,18 @@ pub(crate) struct TrackContext {
     pub upcoming: Option<Vec<Track>>,
 }
 
+#[derive(Clone)]
 pub(crate) struct LibraryContext {
     pub key: String,
     pub title: String,
     pub artwork_url: Option<String>,
+    pub entry: Option<Entry>,
+}
+
+#[derive(Clone)]
+pub(crate) enum CardContext {
+    Track(TrackContext),
+    Library(LibraryContext),
 }
 
 fn library_target(key: &str) -> Option<Target> {
@@ -60,13 +69,15 @@ pub(crate) struct MobileUi {
     pub connections: bool,
     pub route: Option<(String, String)>,
     pub native_routes: bool,
+    /// UIKit context menus, sheets and paste controls are attached to the live canvas.
+    pub native_surfaces: bool,
     pub keyboard_visible: bool,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
 }
 
 impl State {
-    fn mobile_library_context(&self, key: &str) -> Option<LibraryContext> {
+    pub(crate) fn mobile_library_context(&self, key: &str) -> Option<LibraryContext> {
         let (title, artwork_url) = if let Some(id) = key.strip_prefix("playlist:") {
             let playlist = self.collection.playlist(id.parse().ok()?)?;
             (playlist.name.as_str(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
@@ -77,7 +88,60 @@ impl State {
             let entry = self.collection.kept.iter().find(|entry| entry.target() == target)?;
             (entry.title(), entry.artwork().clone())
         };
-        Some(LibraryContext { key: key.into(), title: title.into(), artwork_url })
+        let entry = library_target(key).and_then(|target| self.collection.kept.iter().find(|entry| entry.target() == target)).cloned();
+        Some(LibraryContext { key: key.into(), title: title.into(), artwork_url, entry })
+    }
+
+    pub(crate) fn card_entry_kept(&self, entry: &Entry) -> bool {
+        self.collection.kept.iter().any(|held| held.is(entry))
+    }
+
+    /// Capture an identity while its row is visible, before asynchronous catalog updates.
+    pub(crate) fn card_context(&self, row: &str) -> Option<CardContext> {
+        if let Some(track) = self.track_at(row) {
+            return Some(CardContext::Track(TrackContext { row: row.into(), track: track.clone(),
+                playlist: match self.page { Page::Playlist(id) if row.starts_with("page-track:") => Some(id), _ => None },
+                upcoming: row.starts_with("upcoming:").then(|| self.player.upcoming.clone()),
+            }));
+        }
+        let row = row.strip_prefix("home-").unwrap_or(row);
+        if row == "downloads" || row == "liked" {
+            return self.mobile_library_context(row).map(CardContext::Library);
+        }
+        let (kind, index) = row.split_once(':')?;
+        let index = index.parse::<usize>().ok()?;
+        if kind == "playlist" {
+            return self.mobile_library_context(&format!("playlist:{}", self.collection.playlists.get(index)?.id)).map(CardContext::Library);
+        }
+        let entry = match kind {
+            "recent" => self.collection.recent.get(index).cloned(),
+            "kept" => self.collection.kept.get(index).cloned(),
+            "pick-album" => self.picked_albums.get(index).cloned().map(Entry::Album),
+            "pick-artist" => self.picked_artists.get(index).cloned().map(Entry::Artist),
+            "album" => self.found.albums.get(index).cloned().map(Entry::Album),
+            "artist" => self.found.artists.get(index).cloned().map(Entry::Artist),
+            "page-album" => match &self.page { Page::Artist(artist) => artist.albums.get(index).cloned().map(Entry::Album), _ => None },
+            "page-single" => match &self.page { Page::Artist(artist) => artist.singles.get(index).cloned().map(Entry::Album), _ => None },
+            _ => None,
+        }?;
+        let key = match &entry { Entry::Album(album) => format!("album:{}", album.id), Entry::Artist(artist) => format!("artist:{}", artist.id) };
+        Some(CardContext::Library(LibraryContext { key, title: entry.title().into(), artwork_url: entry.artwork().clone(), entry: Some(entry) }))
+    }
+
+    pub(crate) fn card_context_action(&self, row: &str) -> Option<String> {
+        self.card_context(row).map(|context| match context {
+            CardContext::Track(_) => format!("more:{row}"),
+            CardContext::Library(_) => format!("entry-more:{row}"),
+        })
+    }
+
+    #[cfg(any(target_os = "ios", test))]
+    pub(crate) fn apply_card_context(&mut self, context: CardContext, action: &str) -> Vec<Command> {
+        match context {
+            CardContext::Track(context) => { self.mobile_ui.context = Some(context); }
+            CardContext::Library(context) => { self.mobile_ui.library = Some(context); }
+        }
+        self.update(&UiAction::Clicked { id: action.into() })
     }
 
     pub(crate) fn mobile_query(&mut self, value: &str, now: Instant) {
@@ -143,6 +207,14 @@ impl State {
             }
             UiAction::Submitted { id, .. } if id == "search" => return Some(self.mobile_submit()),
             UiAction::Clicked { id } => {
+                if let Some(row) = id.strip_prefix("entry-more:") {
+                    self.mobile_ui.library = self.card_context(row).and_then(|context| match context { CardContext::Library(context) => Some(context), _ => None });
+                    self.mobile_ui.context = None;
+                    self.mobile_ui.connections = false;
+                    self.mobile_ui.search_editing = false;
+                    self.mobile_ui.blur = true;
+                    return Some(Vec::new());
+                }
                 if let Some(target) = id.strip_prefix("ios-paste:") {
                     let valid = match target {
                         "search" if self.page == Page::Search => {
@@ -172,6 +244,10 @@ impl State {
                     let context = self.mobile_ui.library.take()?;
                     let key = context.key;
                     return Some(match action {
+                        "keep" => {
+                            if let Some(entry) = context.entry.filter(|entry| !self.card_entry_kept(entry)) { self.collection.toggle(entry); }
+                            Vec::new()
+                        }
                         "pin" => { self.collection.pin(&key); Vec::new() }
                         "remove" => {
                             if let Some(target) = library_target(&key) {
@@ -193,11 +269,7 @@ impl State {
                 if let Some(row) = id.strip_prefix("more:") {
                     self.mobile_ui.library = None;
                     self.mobile_ui.connections = false;
-                    self.mobile_ui.context = self.track_at(row).cloned().map(|track| TrackContext {
-                        row: row.to_owned(), track,
-                        playlist: match self.page { Page::Playlist(id) if row.starts_with("page-track:") => Some(id), _ => None },
-                        upcoming: row.starts_with("upcoming:").then(|| self.player.upcoming.clone()),
-                    });
+                    self.mobile_ui.context = self.card_context(row).and_then(|context| match context { CardContext::Track(context) => Some(context), _ => None });
                     self.mobile_ui.search_editing = false;
                     self.mobile_ui.blur = true;
                     return Some(Vec::new());
