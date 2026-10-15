@@ -81,6 +81,13 @@ mod native {
         fn surco_ui_picker_colors(handle: *mut c_void, tint: u32, active: u32);
         fn surco_ui_copy_text(bytes: *const u8, length: usize) -> i32;
         fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
+        fn surco_reduce_motion_enabled() -> i32;
+    }
+
+    /// Read the system preference on UIKit's main thread; the host combines it with its setting.
+    /// https://developer.apple.com/documentation/uikit/uiaccessibility/isreducemotionenabled
+    pub fn reduce_motion_enabled() -> bool {
+        unsafe { surco_reduce_motion_enabled() != 0 }
     }
 
     extern "C" fn wake(context: *mut c_void) {
@@ -239,7 +246,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi};
+pub use native::{CurrentRoute, NativeUi, reduce_motion_enabled};
 
 #[cfg(test)]
 mod tests {
