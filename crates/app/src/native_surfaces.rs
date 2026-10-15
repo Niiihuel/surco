@@ -11,6 +11,7 @@ pub(crate) struct Payload {
     pub menus: Vec<Menu>,
     pub sheet: Option<Sheet>,
     pub paste: Option<PasteSlot>,
+    pub reduce_motion: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -82,7 +83,7 @@ pub(crate) struct Controller {
 
 impl Controller {
     pub fn payload(&mut self, state: &State, frame: &Frame, origin: Pos2) -> Payload {
-        let mut payload = Payload::default();
+        let mut payload = Payload { reduce_motion: state.settings.reduce_motion || !state.motion, ..Payload::default() };
         self.menus.clear();
         self.paste = None;
         if !state.mobile { self.sheet = None; self.active_menu = None; return payload; }
@@ -99,7 +100,7 @@ impl Controller {
         self.sheet = None;
         for (index, region) in frame.regions.iter().enumerate() {
             if region.kind != limn::HitKind::Button { continue; }
-            let Some(visible) = visible_rect(frame, index + 1, region.rect) else { continue };
+            let Some(visible) = visible_rect(frame, index + 1, region.rect, false) else { continue };
             let center = Point::new(visible.x + visible.width / 2.0, visible.y + visible.height / 2.0);
             if frame.context_menu_at(center).is_none() { continue; }
             let Some(target) = state.card_context(&region.id) else { continue };
@@ -115,9 +116,14 @@ impl Controller {
             if !paste_valid(state, target) { continue; }
             let id = format!("ios-paste:{target}");
             let Some(node) = frame.access.iter().find(|node| node.id == id && !node.disabled) else { continue };
-            let Some(visible) = visible_rect(frame, 0, node.rect) else { continue };
+            let in_header = target == "search";
+            let Some(visible) = visible_rect(frame, 0, node.rect, in_header) else { continue };
             let center = Point::new(visible.x + visible.width / 2.0, visible.y + visible.height / 2.0);
-            if frame.press_region(center).is_some_and(|region| region.kind == limn::HitKind::Surface) { continue; }
+            if frame.press_region(center).is_some_and(|region| match region.kind {
+                limn::HitKind::Surface => !(in_header && region.id == "mobile-header-bar"),
+                limn::HitKind::Button => region.id != id,
+                _ => false,
+            }) { continue; }
             if let Some(rect) = screen_rect(visible, origin).filter(|rect| rect[2] >= 44.0 && rect[3] >= 44.0) {
                 self.paste = Some(target.into());
                 payload.paste = Some(PasteSlot { target: target.into(), rect });
@@ -175,7 +181,10 @@ impl Controller {
                         state.importing = Some(text);
                         state.import_unknown = false;
                         state.mobile_ui.blur = true;
-                    } else { return state.update(&UiAction::InputChanged { id: target, value: text }); }
+                    } else {
+                        if target == "search" { state.focus = Some(target.clone()); state.mobile_ui.blur = false; }
+                        return state.update(&UiAction::InputChanged { id: target, value: text });
+                    }
                 }
             }
             _ => {}
@@ -195,12 +204,13 @@ pub(crate) fn has_sheet(state: &State) -> bool {
         || state.mobile_ui.connections || state.mobile_ui.library.is_some() || state.mobile_ui.context.is_some()
 }
 
-fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect) -> Option<limn::Rect> {
+fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect, in_header: bool) -> Option<limn::Rect> {
     let mut top = rect.y;
     let mut bottom = rect.y + rect.height;
     for overlay in frame.regions.iter().skip(floor).filter(|region| region.kind == limn::HitKind::Surface) {
         if overlay.rect.intersection(rect).is_none() { continue; }
         match overlay.id.as_str() {
+            "mobile-header-bar" if in_header => {}
             "mobile-header-bar" => top = top.max(overlay.rect.y + overlay.rect.height),
             "mobile-mini-bar" | "mobile-nav-bar" => bottom = bottom.min(overlay.rect.y),
             // A floating limn surface owns this card until it is dismissed.
@@ -276,6 +286,7 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
     if state.equalizer_open {
         let mut sheet = shell("Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close");
         sheet.large = true;
+        sheet.rows.push(text(if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" }, true));
         sheet.rows.push(Row::Slider { id: "equalizer:preamp".into(), title: "Preamplificador".into(), value: state.equalizer.preamp_db, min: -state::EQUALIZER_DB, max: state::EQUALIZER_DB });
         sheet.rows.extend(surco_audio::equalizer::BAND_HZ.iter().zip(state.equalizer.bands_db).enumerate().map(|(i, (hz, gain))| Row::Slider {
             id: format!("equalizer:{i}"), title: if *hz >= 1000.0 { format!("{:.0} kHz", hz / 1000.0) } else { format!("{hz:.0} Hz") },
@@ -365,7 +376,7 @@ fn paste_valid(state: &State, target: &str) -> bool {
     match target {
         "import-link" => state.importing.is_some() && sheet_spec(state).is_some_and(|(key, _)| key == "import"),
         "import-card" => state.page == state::Page::Library && !state.settings.import_dismissed && !has_sheet(state),
-        "search" => state.page == state::Page::Search && state.mobile_search && state.mobile_ui.search_editing && !has_sheet(state),
+        "search" => state.page == state::Page::Search && state.mobile_search && !has_sheet(state),
         _ => false,
     }
 }
@@ -540,6 +551,53 @@ mod tests {
         assert_eq!(action["id"], "test");
         assert_eq!(serde_json::from_str::<Event>(r#"{"kind":"sheet_input","sheet":"1","id":"import-link","text":"ñ"}"#).unwrap(),
             Event::SheetInput { sheet: "1".into(), id: "import-link".into(), text: "ñ".into() });
+    }
+
+    #[test]
+    fn native_payload_combines_app_and_system_reduced_motion_preferences() {
+        let mut state = phone();
+        state.motion = true;
+        let mut controller = Controller::default();
+        assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], false);
+        state.settings.reduce_motion = true;
+        assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], true);
+        state.settings.reduce_motion = false;
+        state.motion = false;
+        assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], true);
+    }
+
+    #[test]
+    fn native_search_paste_has_one_system_slot_inside_its_header_and_focuses_without_submitting() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_search = true;
+        let size = Size::new(390.0, 844.0);
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        let slot = frame.access.iter().find(|node| node.id == "ios-paste:search").unwrap();
+        assert_eq!(slot.role, limn::Role::Group, "UIKit supplies the only visible paste button");
+        assert!(!frame.regions.iter().any(|region| region.id == "ios-paste:search" && region.kind == limn::HitKind::Button));
+        let mut controller = Controller::default();
+        let payload = controller.payload(&state, &frame, Pos2::new(0.0, 59.0));
+        assert_eq!(payload.paste.as_ref().unwrap().target, "search");
+        assert_eq!(payload.paste.as_ref().unwrap().rect[1], slot.rect.y + 59.0);
+        assert!(controller.apply(&mut state, Event::Paste { target: "search".into(), text: "https://youtu.be/a-song".into() }).is_empty());
+        assert_eq!(state.query, "https://youtu.be/a-song");
+        assert!(state.mobile_ui.search_editing && state.mobile_ui.pending.is_none());
+        assert_eq!(state.focus.as_deref(), Some("search"));
+    }
+
+    #[test]
+    fn native_equalizer_keeps_all_shared_controls_and_reports_its_current_state() {
+        let mut state = phone();
+        state.equalizer_open = true;
+        let mut controller = Controller::default();
+        let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
+        assert_eq!(sheet.rows.iter().filter(|row| matches!(row, Row::Slider { .. })).count(), surco_audio::equalizer::BAND_HZ.len() + 1);
+        assert!(sheet.actions.iter().any(|action| action.id == "equalizer-reset"));
+        assert!(sheet.rows.iter().any(|row| matches!(row, Row::Text { title, .. } if title == "Plano")));
+        state.equalizer.preamp_db = 3.0;
+        let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
+        assert!(sheet.rows.iter().any(|row| matches!(row, Row::Text { title, .. } if title == "Personalizado")));
     }
 
     #[test]

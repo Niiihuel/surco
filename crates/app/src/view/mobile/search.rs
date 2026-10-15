@@ -20,10 +20,14 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     }
     let row = Element::row(row).gap(4.0);
     if cfg!(any(target_os = "ios", test)) {
-        Element::column(vec![row,
+        let paste = if state.mobile_ui.native_surfaces {
+            Element::spacer().size(Some(112.0), Some(TAP))
+                .accessible(limn::Access::new(limn::Role::Group).id("ios-paste:search").name("Pegar en la búsqueda"))
+        } else {
             Button::new("ios-paste:search", "Pegar", palette)
-                .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(TAP)),
-        ]).gap(8.0).padding(12.0)
+                .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(TAP))
+        };
+        Element::column(vec![row, paste]).gap(8.0).padding(12.0)
     } else { row.padding(12.0) }
 }
 
