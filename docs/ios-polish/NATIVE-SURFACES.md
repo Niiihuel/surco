@@ -10,6 +10,8 @@ The migration card uses `UIPasteControl` on iOS 16 and later with an explicit `U
 
 The bridge runs on the main thread and passes copied UTF-8 JSON. Native events carry the menu/sheet identity; Rust rejects stale or unoffered actions. Payloads are cached until content, scale or geometry changes. Destroying or changing the backing canvas detaches native controls and invalidates callbacks.
 
+iOS icons use the device's SF Symbols through `surco_ui_symbol(name, length, pixels)`. The main-thread call returns a `pixels × pixels` white premultiplied RGBA mask, or NULL for an unavailable symbol. The caller releases it with `surco_ui_free_symbol`. limn caches this mask by semantic icon and physical size, then applies its existing color and opacity. Rust maps only interface symbols; Surco artwork keeps its identity. Other platforms retain their existing icon pack. Tab icons use filled variants with text labels, following Apple's [SF Symbols](https://developer.apple.com/design/human-interface-guidelines/sf-symbols) and [tab bar guidance](https://developer.apple.com/design/human-interface-guidelines/tab-bars).
+
 Acceptance requires the Rust controller regressions, normal dependency-graph workspace tests, framework checks, a real Xcode build and native interaction tests. Linux source review and a startup screenshot alone do not establish native gesture, paste or editing behavior.
 
 Primary API references:

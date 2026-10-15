@@ -284,3 +284,38 @@ char *surco_ui_take_surface_events(void *handle) {
     NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
     return json ? strdup(json.UTF8String) : NULL;
 }
+
+// White premultiplied RGBA coverage for limn's tintable, size-cached icon textures.
+// Symbols are loaded from this device's UIKit; no Apple artwork is bundled or exported.
+uint8_t *surco_ui_symbol(const uint8_t *name, size_t length, uint16_t pixels) {
+    NSCAssert(NSThread.isMainThread, @"SF Symbols must be rendered on the main thread");
+    if (!name || !length || length > 128 || !pixels || pixels > 512) return NULL;
+    @autoreleasepool {
+        NSString *symbolName = [[NSString alloc] initWithBytes:name length:length encoding:NSUTF8StringEncoding];
+        if (!symbolName.length) return NULL;
+        UIImageSymbolConfiguration *configuration = [UIImageSymbolConfiguration configurationWithPointSize:pixels weight:UIImageSymbolWeightRegular];
+        UIImage *image = [UIImage systemImageNamed:symbolName withConfiguration:configuration];
+        if (!image || image.size.width <= 0 || image.size.height <= 0) return NULL;
+        image = [image imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+        size_t rowBytes = (size_t)pixels * 4;
+        uint8_t *bytes = calloc(pixels, rowBytes);
+        if (!bytes) return NULL;
+        CGColorSpaceRef colorSpace = CGColorSpaceCreateDeviceRGB();
+        CGContextRef context = CGBitmapContextCreate(bytes, pixels, pixels, 8, rowBytes, colorSpace,
+                                                    kCGImageAlphaPremultipliedLast | kCGBitmapByteOrder32Big);
+        CGColorSpaceRelease(colorSpace);
+        if (!context) { free(bytes); return NULL; }
+        CGFloat factor = pixels / MAX(image.size.width, image.size.height);
+        CGSize size = CGSizeMake(image.size.width * factor, image.size.height * factor);
+        CGRect rect = CGRectMake((pixels - size.width) / 2, (pixels - size.height) / 2, size.width, size.height);
+        CGContextTranslateCTM(context, 0, pixels);
+        CGContextScaleCTM(context, 1, -1);
+        UIGraphicsPushContext(context);
+        [image drawInRect:rect];
+        UIGraphicsPopContext();
+        CGContextRelease(context);
+        return bytes;
+    }
+}
+
+void surco_ui_free_symbol(uint8_t *bytes) { free(bytes); }
