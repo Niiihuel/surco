@@ -15,6 +15,8 @@ mod ios_media;
 mod library;
 mod media_keys;
 mod mobile_input;
+#[cfg(any(target_os = "ios", test))]
+mod ios_ui;
 mod paths;
 mod player;
 mod state;
@@ -36,6 +38,9 @@ use backend::{Command, Event};
 use player::PlayerView;
 use state::{Side, State};
 
+#[cfg(target_os = "ios")]
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
 struct Host {
     tree: UiTree,
     state: State,
@@ -54,6 +59,10 @@ struct Host {
     stirred: Instant,
     script: Script,
     touch: mobile_input::TouchInput,
+    #[cfg(target_os = "ios")]
+    native_ui: Option<ios_ui::NativeUi>,
+    #[cfg(target_os = "ios")]
+    keyboard_inset: limn::ScalarTransition,
 }
 
 /// What the command line asked the window to do by itself.
@@ -185,6 +194,19 @@ impl eframe::App for Host {
         let still = self.state.settings.reduce_motion;
         self.tree.set_reduced_motion(still);
         self.state.motion = !still;
+        #[cfg(target_os = "ios")]
+        if let Some(native) = &mut self.native_ui {
+            self.state.mobile_ui.native_routes = false;
+            if let Ok(handle) = _frame.window_handle() {
+                if let RawWindowHandle::UiKit(handle) = handle.as_raw() {
+                    // eframe supplies the live main-thread UIView for this window.
+                    unsafe { native.update_view(handle.ui_view); }
+                    self.state.mobile_ui.native_routes = true;
+                }
+            }
+            self.state.mobile_ui.route = native.current_route().map(|route| (route.name.clone(), route.port_type.clone()));
+            self.state.mobile_ui.keyboard_visible = native.keyboard_top(ctx.viewport_rect()).is_some();
+        }
         #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
             // Keep phone controls inside the platform's notch and home-indicator insets.
@@ -199,6 +221,18 @@ impl eframe::App for Host {
         };
         #[cfg(target_os = "windows")]
         let area = window::show(ui, self.state.cinema);
+        #[cfg(target_os = "ios")]
+        let area = {
+            let now = Instant::now();
+            let covered = self.native_ui.as_ref().map_or(0.0, |native| native.keyboard_occlusion(ctx.viewport_rect(), area));
+            if self.state.mobile_ui.keyboard_visible && covered == 0.0 {
+                self.keyboard_inset.snap_to(0.0, now);
+            } else {
+                self.keyboard_inset.retarget_with_motion(covered, now, Duration::from_millis(220), still);
+            }
+            if self.keyboard_inset.is_active(now) { ctx.request_repaint(); }
+            egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, (area.max.y - self.keyboard_inset.value(now)).max(area.min.y + 44.0)))
+        };
         let window = Size::new(area.width(), area.height());
 
         // Ctrl+B folds the library, as it folds a sidebar anywhere.
@@ -311,7 +345,7 @@ impl eframe::App for Host {
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
             self.touch.translate(&raw, input, area.min, &input_frame,
-                |id| matches!(id, "mobile-context-close:drag" | "mobile-connections-close:drag"))
+                state::mobile::is_sheet_handle)
         } else { input };
         for event in input {
             self.stirred = Instant::now();
@@ -338,11 +372,21 @@ impl eframe::App for Host {
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
+        if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
-        if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         if self.state.mobile {
             mobile_input::update_ime(&ctx, &self.tree, &frame, area.min);
+        }
+        #[cfg(target_os = "ios")]
+        if let Some(native) = &mut self.native_ui {
+            let slot = frame.access.iter().find(|node| node.id == "ios-route-picker").map(|node| {
+                egui::Rect::from_min_size(area.min + egui::vec2(node.rect.x, node.rect.y), egui::vec2(node.rect.width, node.rect.height))
+            }).filter(|rect| rect.width() >= 43.9 && rect.height() >= 43.9);
+            let visible = self.state.mobile_ui.native_routes && self.state.mobile_ui.connections
+                && self.state.sharing.is_none() && self.state.creating.is_none() && self.state.importing.is_none()
+                && self.state.confirm.is_none() && !self.state.equalizer_open && !self.state.missed_open;
+            native.route_picker(slot.unwrap_or(egui::Rect::ZERO), visible && slot.is_some());
         }
         limn_egui::set_cursor(&ctx, self.tree.cursor());
         limn_egui::paint_at(ui, &frame, area.min);
@@ -473,6 +517,14 @@ pub fn run() -> eframe::Result {
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
                 state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
             }
+            #[cfg(target_os = "ios")]
+            let native_ui = match ios_ui::NativeUi::new(&creation.egui_ctx) {
+                Ok(mut native) => {
+                    native.set_route_picker_colors(egui::Color32::WHITE, egui::Color32::WHITE);
+                    Some(native)
+                }
+                Err(error) => { eprintln!("Surco native controls are unavailable: {error}"); None }
+            };
             Ok(Box::new(Host {
                 tree: UiTree::new(Element::spacer()),
                 state,
@@ -487,6 +539,10 @@ pub fn run() -> eframe::Result {
                 stirred: Instant::now(),
                 script,
                 touch: mobile_input::TouchInput::default(),
+                #[cfg(target_os = "ios")]
+                native_ui,
+                #[cfg(target_os = "ios")]
+                keyboard_inset: limn::ScalarTransition::new(0.0, Instant::now()),
             }))
         }),
     )

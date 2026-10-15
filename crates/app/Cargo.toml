@@ -45,3 +45,4 @@ souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"
 [target.'cfg(target_os = "ios")'.dependencies]
 # eframe's iOS event loop logs startup errors before exiting instead of returning them.
 log = "0.4"
+raw-window-handle = "0.6.2"

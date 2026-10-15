@@ -5,6 +5,14 @@ use super::*;
 const SEARCH_DELAY: Duration = Duration::from_millis(280);
 const SEARCH_HISTORY: usize = 12;
 
+fn sheet_dismiss_id(handle: &str) -> Option<&str> {
+    let id = handle.strip_suffix(":drag")?;
+    matches!(id, "mobile-context-close" | "mobile-connections-close" | "playlist-cancel"
+        | "import-cancel" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close").then_some(id)
+}
+
+pub(crate) fn is_sheet_handle(id: &str) -> bool { sheet_dismiss_id(id).is_some() }
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SearchFilter {
     #[default]
@@ -32,8 +40,8 @@ pub(crate) struct MobileUi {
     pub connections: bool,
     pub route: Option<(String, String)>,
     pub native_routes: bool,
-    pub context_drag: Option<limn::BottomSheetDrag>,
-    pub connections_drag: Option<limn::BottomSheetDrag>,
+    pub keyboard_visible: bool,
+    pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
 }
 
@@ -77,16 +85,23 @@ impl State {
     }
 
     pub(super) fn mobile_action(&mut self, action: &UiAction) -> Option<Vec<Command>> {
-        if self.mobile_ui.context_drag.as_mut().is_some_and(|drag| drag.handle_action(action)) {
-            self.mobile_ui.context = None;
-            self.mobile_ui.context_drag = None;
-            return Some(Vec::new());
+        if let UiAction::DragStarted { id, .. } = action {
+            if let Some(dismiss) = sheet_dismiss_id(id) {
+                self.mobile_ui.sheet_drag = Some((dismiss.to_owned(), limn::BottomSheetDrag::new(dismiss)));
+            }
         }
-        if self.mobile_ui.connections_drag.as_mut().is_some_and(|drag| drag.handle_action(action)) {
-            self.mobile_ui.connections = false;
-            self.mobile_ui.connections_drag = None;
-            return Some(Vec::new());
+        if let Some((dismiss, drag)) = &mut self.mobile_ui.sheet_drag {
+            if drag.handle_action(action) {
+                let id = dismiss.clone();
+                self.mobile_ui.sheet_drag = None;
+                return Some(self.update(&UiAction::Clicked { id }));
+            }
+            if matches!(action, UiAction::DragCancelled { .. } | UiAction::Dropped { .. }) {
+                self.mobile_ui.sheet_drag = None;
+                return Some(Vec::new());
+            }
         }
+        if matches!(action, UiAction::Clicked { .. }) { self.mobile_ui.sheet_drag = None; }
         match action {
             UiAction::InputChanged { id, value } if id == "search" => {
                 self.mobile_query(value, Instant::now());
@@ -96,7 +111,6 @@ impl State {
             UiAction::Clicked { id } => {
                 if let Some(row) = id.strip_prefix("more:") {
                     self.mobile_ui.connections = false;
-                    self.mobile_ui.connections_drag = None;
                     self.mobile_ui.context = self.track_at(row).cloned().map(|track| TrackContext {
                         row: row.to_owned(), track,
                         playlist: match self.page { Page::Playlist(id) if row.starts_with("page-track:") => Some(id), _ => None },
@@ -104,13 +118,11 @@ impl State {
                     });
                     self.mobile_ui.search_editing = false;
                     self.mobile_ui.blur = true;
-                    self.mobile_ui.context_drag = Some(limn::BottomSheetDrag::new("mobile-context-close"));
                     return Some(Vec::new());
                 }
                 if let Some((action, row)) = id.strip_prefix("do:").and_then(|rest| rest.split_once(':')) {
                     let commands = self.act(action, row);
                     self.mobile_ui.context = None;
-                    self.mobile_ui.context_drag = None;
                     self.menu = None;
                     return Some(commands);
                 }
@@ -158,17 +170,15 @@ impl State {
                     }
                     "search-submit" => return Some(self.mobile_submit()),
                     "recent-search-clear" => self.collection.searches.clear(),
+                    "mobile-context-close" => self.mobile_ui.context = None,
+                    "mobile-connections-close" => self.mobile_ui.connections = false,
                     "mobile-notice-close" => self.mobile_ui.notice = None,
-                    "mobile-context-close" => { self.mobile_ui.context = None; self.mobile_ui.context_drag = None; }
                     "mobile-connections" | "setting:connections" => {
                         self.mobile_ui.context = None;
-                        self.mobile_ui.context_drag = None;
                         self.mobile_ui.connections = true;
-                        self.mobile_ui.connections_drag = Some(limn::BottomSheetDrag::new("mobile-connections-close"));
                         self.mobile_ui.blur = true;
                         self.mobile_ui.search_editing = false;
                     }
-                    "mobile-connections-close" => { self.mobile_ui.connections = false; self.mobile_ui.connections_drag = None; }
                     // Navigation must cancel delayed requests from the search tab.
                     "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
                         self.mobile_ui.pending = None;
@@ -265,5 +275,20 @@ mod tests {
         let old = r#"{"kept":[],"recent":[]}"#;
         let collection: Collection = serde_json::from_str(old).unwrap();
         assert!(collection.searches.is_empty());
+    }
+
+    #[test]
+    fn swiping_a_form_cancels_instead_of_confirming_it() {
+        let mut state = phone();
+        state.creating = Some(Draft::default());
+        let id = "playlist-cancel:drag".to_owned();
+        state.update(&UiAction::DragStarted { id: id.clone(), position: limn::Point::new(40.0, 20.0) });
+        state.update(&UiAction::Dropped { id, target: None, position: limn::Point::new(42.0, 100.0) });
+        assert!(state.creating.is_none() && state.collection.playlists.is_empty());
+        state.confirm = Some(Confirm::ClearDownloads);
+        let id = "confirm-cancel:drag".to_owned();
+        state.update(&UiAction::DragStarted { id: id.clone(), position: limn::Point::new(40.0, 20.0) });
+        state.update(&UiAction::DragCancelled { id });
+        assert!(state.confirm.is_some(), "cancelled gestures leave the sheet open");
     }
 }

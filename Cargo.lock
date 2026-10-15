@@ -4698,6 +4698,7 @@ dependencies = [
  "limn-egui",
  "log",
  "percent-encoding",
+ "raw-window-handle",
  "serde",
  "serde_json",
  "sha1 0.10.7",

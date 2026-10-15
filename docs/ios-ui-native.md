@@ -9,7 +9,7 @@ Declare the module with `#[cfg(any(target_os = "ios", test))] mod ios_ui;` so it
 ```rust,ignore
 let mut native = ios_ui::NativeUi::new(&creation.egui_ctx)?;
 // At the beginning of every UI frame:
-if let raw_window_handle::RawWindowHandle::UIKit(handle) = frame.window_handle()?.as_raw() {
+if let raw_window_handle::RawWindowHandle::UiKit(handle) = frame.window_handle()?.as_raw() {
     unsafe { native.update_view(handle.ui_view) };
 }
 ```

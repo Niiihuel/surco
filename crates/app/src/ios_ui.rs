@@ -1,6 +1,6 @@
 //! Native keyboard geometry and the visible system audio-route control.
 
-use eframe::egui::{Rect, pos2, vec2};
+use eframe::egui::Rect;
 
 fn logical_rect(rect: Rect, native_scale: f32, pixels_per_point: f32) -> Option<Rect> {
     let scale = native_scale / pixels_per_point;
@@ -45,7 +45,7 @@ fn picker_visible(slot: Rect, visible: bool, full: Rect) -> bool {
 #[cfg(target_os = "ios")]
 mod native {
     use super::*;
-    use eframe::egui::{Color32, Context};
+    use eframe::egui::{Color32, Context, pos2, vec2};
     use serde::Deserialize;
     use std::ffi::{CStr, c_char, c_void};
     use std::ptr::NonNull;

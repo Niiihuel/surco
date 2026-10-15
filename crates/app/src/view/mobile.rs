@@ -45,6 +45,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let header = Element::row(header).gap(8.0).padding(16.0);
 
     let editing = searching && state.mobile_ui.search_editing;
+    let keyboard = editing || state.mobile_ui.keyboard_visible;
     let mut parts = if editing { Vec::new() } else { vec![header] };
     if searching { parts.push(search::field(state, palette)); }
     if let Some(notice) = &state.mobile_ui.notice {
@@ -61,12 +62,12 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         pane(state, window.width, palette)
     };
     parts.push(content.flex(1.0));
-    if state.page != Page::Playing && !editing {
+    if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             parts.push(mini_player(state, track, palette));
         }
     }
-    if state.page != Page::Playing && !editing { parts.push(navigation(state, palette)); }
+    if state.page != Page::Playing && !keyboard { parts.push(navigation(state, palette)); }
     let face = if state.page == Page::Search { if searching { "mobile:search" } else { "mobile:home" } }
         else if state.page == Page::Playing { if state.queue_open { "mobile:queue" } else { "mobile:player" } }
         else { "mobile:page" };
@@ -129,7 +130,7 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
     let body = Element::row(vec![cover(state, &track.artwork_url, 48.0, palette).radius(4.0), copy]).gap(12.0);
     let main = Element::clickable(&row, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {subtitle}", track.title))).flex(1.0);
     let row_element = Element::row(vec![main, dots.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0));
-    ContextMenu::new(format!("mobile-context:{row}"), row_element,
+    ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,
         vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, "Opciones de la canción"))], SCHEME.menu())
         .open_action(more).render()
 }
