@@ -12,6 +12,8 @@ import json
 import os
 from pathlib import Path
 import runpy
+import signal
+import subprocess
 import uuid
 
 
@@ -29,6 +31,47 @@ def validate_summary(summary):
         raise RuntimeError("Native UI tests failed or skipped; inspect native-ui.xcresult")
     if summary.get("totalTestCount", 0) < 6 or summary.get("passedTests") != summary.get("totalTestCount"):
         raise RuntimeError("Expected all six native iOS tests to execute and pass")
+
+
+@contextmanager
+def record_simulator(udid, artifacts, env):
+    """Finalize H.264 evidence before fixture restoration and simulator cleanup."""
+    video = artifacts / "native-interactions.mp4"
+    if video.exists():
+        raise RuntimeError(f"Preserving existing recording: {video}")
+    command = ["xcrun", "simctl", "io", udid, "recordVideo", "--codec=h264", str(video)]
+    with (artifacts / "video-recording.log").open("w") as log:
+        log.write(json.dumps(command) + "\n")
+        log.flush()
+        process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=log, stderr=subprocess.STDOUT)
+        body_failed = False
+        try:
+            yield
+        except BaseException:
+            body_failed = True
+            raise
+        finally:
+            try:
+                ended_early = process.poll() is not None
+                if not ended_early:
+                    try:
+                        # simctl's documented Control-C stop path:
+                        # https://developer.apple.com/videos/play/wwdc2020/10647/
+                        process.send_signal(signal.SIGINT)
+                    except ProcessLookupError:
+                        pass
+                try:
+                    code = process.wait(timeout=30)
+                except subprocess.TimeoutExpired as error:
+                    process.kill()
+                    process.wait(timeout=10)
+                    raise RuntimeError("Simulator recording did not finalize after SIGINT; recorder killed") from error
+                if ended_early or code != 0 or not video.is_file() or not video.stat().st_size:
+                    raise RuntimeError(f"Simulator recording did not finalize successfully (exit {code}); inspect video-recording.log")
+            except Exception as error:
+                log.write(str(error) + "\n")
+                if not body_failed:
+                    raise
 
 
 @contextmanager
@@ -84,6 +127,7 @@ def run_tests(udid, config, derived, artifacts, env, *, seed_fixture=False):
         artifacts / "source-sha.log", quiet=True, timeout=30).strip()
     (artifacts / "execution.json").write_text(json.dumps({"command": command, "simulator": udid,
         "source": source, "owns_simulator": False, "seed_fixture": seed_fixture,
+        "video": "native-interactions.mp4", "video_codec": "h264",
         "fixture_sha256": hashlib.sha256(FIXTURE.read_bytes()).hexdigest(),
         "geometry_sha256": hashlib.sha256(GEOMETRY.read_bytes()).hexdigest(),
         "symbols_sha256": hashlib.sha256(SYMBOLS.read_bytes()).hexdigest()}, indent=2) + "\n")
@@ -91,7 +135,8 @@ def run_tests(udid, config, derived, artifacts, env, *, seed_fixture=False):
         failure = None
         summary = None
         try:
-            build["run"](command, env, artifacts / "xcodebuild-native-ui.log", timeout=1500)
+            with record_simulator(udid, artifacts, env):
+                build["run"](command, env, artifacts / "xcodebuild-native-ui.log", timeout=1500)
         except Exception as error:
             failure = error
         # Retain screenshots and the normal summary even when XCTest fails.

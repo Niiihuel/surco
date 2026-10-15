@@ -132,7 +132,7 @@ def smoke_simulator(app, sdk_version, env, artifacts):
             # Reuse this ready device and Rust archive. The caller's finally block
             # retains diagnostics and owns cleanup even if a real interaction fails.
             run([sys.executable, str(ROOT / "scripts/run-ios-ui-tests.py"), "--udid", udid, "--seed-fixture"],
-                env, logs / "native-ui-runner.log", timeout=1800)
+                env, logs / "native-ui-runner.log", timeout=2100)
         smoked = True
     finally:
         run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
