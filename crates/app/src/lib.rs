@@ -78,6 +78,17 @@ struct Script {
     requested: bool,
 }
 
+fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
+    let reset = std::mem::take(&mut state.lyrics_scroll_reset);
+    if reset { tree.scroll_to_start("lyrics-list"); }
+    if let Some(line) = state.line_to_reveal() {
+        tree.center(&line);
+        true
+    } else {
+        reset
+    }
+}
+
 impl Host {
     fn send(&self, commands: Vec<Command>) {
         for command in commands {
@@ -331,8 +342,7 @@ impl eframe::App for Host {
             }
         }
         // The line being sung is kept in the middle of its list.
-        if let Some(line) = self.state.line_to_reveal() {
-            self.tree.center(&line);
+        if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
         }
         let input_frame = self.tree.layout(window);
@@ -637,6 +647,71 @@ fn ios_logging() {
     static LOGGER: StderrLogger = StderrLogger;
     if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
+#[cfg(test)]
+mod lyrics_viewport_tests {
+    use super::*;
+    use surco_core::{Track, lyrics::Line};
+
+    fn song(id: &str, position: f64) -> PlayerView {
+        PlayerView {
+            current: Some(Track { id: id.into(), title: id.into(), artist: "Artist".into(),
+                artist_id: None, album: None, album_id: None, artwork_url: None,
+                duration_ms: 200_000 }),
+            position, duration: 200.0, playing: true, ..PlayerView::default()
+        }
+    }
+
+    fn lyrics(state: &mut State, id: &str) {
+        state.apply(Event::Lyrics { track_id: id.into(), lines: Some((0..40)
+            .map(|index| Line { at_ms: 5_000 + index * 1_000, text: format!("Verse {index}") })
+            .collect()) });
+    }
+
+    #[test]
+    fn changing_tracks_resets_scrolled_lyrics_before_the_first_line_including_returning_tracks() {
+        let size = Size::new(390.0, 500.0);
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = state::Page::Lyrics;
+        state.show(song("a", 40.0));
+        lyrics(&mut state, "a");
+        let mut tree = UiTree::new(view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        for id in ["b", "a"] {
+            tree.scroll_to_end("lyrics-list");
+            tree.layout(size);
+            assert!(tree.scroll_offset("lyrics-list") > 0.0);
+            state.show(song(id, 0.0));
+            lyrics(&mut state, id);
+            tree.set_root(view::view(&state, size));
+            update_lyrics_viewport(&mut state, &mut tree);
+            tree.layout(size);
+            assert_eq!(tree.scroll_offset("lyrics-list"), 0.0,
+                "new track {id} must not inherit the last song's viewport");
+
+            tree.scroll_to_end("lyrics-list");
+            tree.layout(size);
+            let manual = tree.scroll_offset("lyrics-list");
+            state.show(song(id, 1.0));
+            tree.set_root(view::view(&state, size));
+            update_lyrics_viewport(&mut state, &mut tree);
+            tree.layout(size);
+            assert_eq!(tree.scroll_offset("lyrics-list"), manual,
+                "same-track ticks before its first line preserve manual scrolling");
+        }
+        state.show(song("a", 20.0));
+        tree.set_root(view::view(&state, size));
+        assert!(update_lyrics_viewport(&mut state, &mut tree));
+        tree.layout(size);
+        // Center requests set the scroll target after measuring the row; the
+        // following paint uses that target, just like Host's input/paint passes.
+        let frame = tree.layout(size);
+        assert!(frame.regions.iter().any(|region| region.id == "lyric:15"),
+            "following the active line still reveals its real row");
     }
 }
 

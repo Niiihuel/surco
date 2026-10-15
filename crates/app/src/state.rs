@@ -584,6 +584,8 @@ pub struct State {
     pub lyrics: Option<(String, Lyrics)>,
     /// The line the list was last scrolled to.
     lyric_shown: Option<usize>,
+    /// Consumed by the Host before following the new track's first timed line.
+    pub(crate) lyrics_scroll_reset: bool,
     pub outputs: Vec<AudioOutputDevice>,
     pub outputs_loading: bool,
     pub outputs_error: Option<String>,
@@ -769,6 +771,7 @@ impl Default for State {
             column_drag: None,
             lyrics: None,
             lyric_shown: None,
+            lyrics_scroll_reset: false,
             outputs: Vec::new(),
             outputs_loading: false,
             outputs_error: None,
@@ -1452,7 +1455,9 @@ impl State {
                 if self.current().is_some() && self.page != Page::Playing {
                     self.go(Page::Playing);
                 }
-                Vec::new()
+                let mut commands = self.ask_lyrics();
+                commands.extend(self.ask_about());
+                commands
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -1899,6 +1904,10 @@ impl State {
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
         let before = self.player.current.as_ref().map(|track| track.id.as_str());
         let now = player.current.as_ref().map(|track| track.id.as_str());
+        if before != now {
+            self.lyrics_scroll_reset = true;
+            self.lyric_shown = None;
+        }
         // The video's sound in a song's place is that song still: until the song is back
         // with the window, or something else plays.
         let video = self.footage().map(|footage| footage.video.id.clone());
@@ -1942,7 +1951,7 @@ impl State {
     /// The artist of what plays is looked for once, while the panel that presents them
     /// shows: by their name, so the next track of theirs asks nothing.
     fn ask_about(&mut self) -> Vec<Command> {
-        let shown = self.shows_playing();
+        let shown = self.shows_playing() || (self.mobile && self.page == Page::Playing);
         let Some(track) = self.player.current.as_ref().filter(|_| shown) else { return Vec::new() };
         if self.about.as_ref().is_some_and(|(asked, _)| *asked == track.artist) {
             return Vec::new();
@@ -2075,7 +2084,7 @@ impl State {
     /// The lyrics are only looked for while they are on screen, once for each track.
     fn ask_lyrics(&mut self) -> Vec<Command> {
         // Their page shows them all, and the panel of what plays a few of them.
-        let shown = self.lyrics_open() || self.shows_playing();
+        let shown = self.lyrics_open() || self.shows_playing() || (self.mobile && self.page == Page::Playing);
         let Some(track) = self.player.current.as_ref().filter(|_| shown) else { return Vec::new() };
         if self.lyrics.as_ref().is_some_and(|(asked, _)| *asked == track.id) {
             return Vec::new();
@@ -2909,6 +2918,21 @@ mod tests {
         assert_eq!(click(&mut state, "pick-album:0"), vec![Command::Open(Target::Album("lp".into()))]);
         assert_eq!(click(&mut state, "pick-artist:0"), vec![Command::Open(Target::Artist("who".into()))]);
         assert_eq!(click(&mut state, "heard:1"), vec![Command::PlayList { tracks: vec![track("b"), track("a")], index: 1 }]);
+    }
+
+    #[test]
+    fn the_mobile_player_requests_its_own_lyrics_and_artist_once() {
+        let mut state = State { mobile: true, panel_open: false,
+            ..without_clips() };
+        let playing = PlayerView { current: Some(track("a")), playing: false,
+            duration: 200.0, ..PlayerView::default() };
+        let commands = state.show(playing.clone());
+        assert!(!commands.iter().any(|command| matches!(command, Command::Lyrics(_) | Command::About(_))));
+        let commands = click(&mut state, "mobile-playing");
+        assert!(commands.contains(&Command::Lyrics(track("a"))));
+        assert!(commands.iter().any(|command| matches!(command, Command::About(_))));
+        let commands = state.show(PlayerView { position: 1.0, ..playing });
+        assert!(!commands.iter().any(|command| matches!(command, Command::Lyrics(_) | Command::About(_))));
     }
 
     #[test]
