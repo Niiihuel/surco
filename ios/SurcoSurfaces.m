@@ -134,7 +134,10 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
 }
-- (void)refresh { [self reconcileSheet]; }
+- (void)refresh {
+    [self updatePaste:_desiredPaste];
+    [self reconcileSheet];
+}
 - (void)updatePaste:(NSDictionary *)slot {
     CGRect rect = slot ? [self rect:slot[@"rect"]] : CGRectNull;
     BOOL visible = slot && _view.window && !_desiredSheet && !_menuVisible &&
