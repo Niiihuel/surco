@@ -340,7 +340,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .hint(about)
             .sizing(DIALOG_FIELD)
             .rows();
-        if cfg!(target_os = "ios") {
+        if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
                 .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
         }

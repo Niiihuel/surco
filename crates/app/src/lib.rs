@@ -403,6 +403,7 @@ impl eframe::App for Host {
                 if self.state.focus.as_deref() == Some(&target) {
                     self.state.focus = None;
                     self.tree.focus(&target);
+                    self.tree.reveal(&target);
                     frame = self.tree.layout(window);
                 }
                 if mobile_input::can_paste(&self.tree, &frame, &target) {
