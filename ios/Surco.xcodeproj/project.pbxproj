@@ -12,6 +12,8 @@
 		100000000000000000000016 /* SurcoMedia.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000017 /* SurcoMedia.m */; };
 		100000000000000000000018 /* MediaPlayer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001A /* MediaPlayer.framework */; };
 		100000000000000000000019 /* AVFAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001B /* AVFAudio.framework */; };
+		10000000000000000000001C /* SurcoView.m in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* SurcoView.m */; };
+		10000000000000000000001E /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001F /* AVKit.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -23,13 +25,15 @@
 		100000000000000000000017 /* SurcoMedia.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoMedia.m; sourceTree = "<group>"; };
 		10000000000000000000001A /* MediaPlayer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MediaPlayer.framework; path = System/Library/Frameworks/MediaPlayer.framework; sourceTree = SDKROOT; };
 		10000000000000000000001B /* AVFAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFAudio.framework; path = System/Library/Frameworks/AVFAudio.framework; sourceTree = SDKROOT; };
+		10000000000000000000001D /* SurcoView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoView.m; sourceTree = "<group>"; };
+		10000000000000000000001F /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		100000000000000000000005 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
-			files = (100000000000000000000018 /* MediaPlayer.framework in Frameworks */, 100000000000000000000019 /* AVFAudio.framework in Frameworks */);
+			files = (100000000000000000000018 /* MediaPlayer.framework in Frameworks */, 100000000000000000000019 /* AVFAudio.framework in Frameworks */, 10000000000000000000001E /* AVKit.framework in Frameworks */);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXFrameworksBuildPhase section */
@@ -40,8 +44,10 @@
 			children = (
 				100000000000000000000002 /* main.m */,
 				100000000000000000000017 /* SurcoMedia.m */,
+				10000000000000000000001D /* SurcoView.m */,
 				10000000000000000000001A /* MediaPlayer.framework */,
 				10000000000000000000001B /* AVFAudio.framework */,
+				10000000000000000000001F /* AVKit.framework */,
 				100000000000000000000003 /* Info.plist */,
 				100000000000000000000012 /* Assets.xcassets */,
 				100000000000000000000014 /* PrivacyInfo.xcprivacy */,
@@ -111,7 +117,7 @@
 		10000000000000000000000A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */);
+			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */, 10000000000000000000001C /* SurcoView.m in Sources */);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

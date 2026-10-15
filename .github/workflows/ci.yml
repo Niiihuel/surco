@@ -15,8 +15,8 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # The commit of limn the app is built against: limn moves on its own, and a build of
-  # the app must not change under it. It is the tag v0.1.43.
-  LIMN_REF: b595149d9635df63fd898fa0f7f289b13d818634
+  # the app must not change under it. This commit includes the reviewed mobile primitives.
+  LIMN_REF: a3ce02a630a5e8310efecbdad6a7d1b7767cf63c
 
 jobs:
   build:

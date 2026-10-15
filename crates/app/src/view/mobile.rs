@@ -2,10 +2,17 @@
 
 use super::*;
 
+mod search;
+mod home;
+mod sheets;
+pub(super) mod details;
+#[cfg(test)]
+mod dialog_tests;
+
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;
 
-fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
+pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
     IconButton::new(id, glyph, palette).variant(ButtonVariant::Ghost)
         .accessibility_label(label).size(ControlSize::Spacious).render().size(Some(TAP), Some(TAP))
 }
@@ -19,54 +26,61 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Playing => if state.queue_open { "Cola de reproducción" } else { "Ahora suena" },
         Page::Lyrics => "Letra",
         Page::Search if searching => "Buscar",
-        Page::Search => "Surco",
+        Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())),
         Page::Downloads => "Descargas",
         Page::Liked => "Tus me gusta",
         _ => "Tu música",
     };
     let mut header = Vec::new();
-    if state.can_go_back() {
-        header.push(icon("back", Icon::ArrowLeft, "Volver", palette));
+    if state.can_go_back() || state.page == Page::Playing {
+        header.push(icon(if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
     }
     header.push(Text::new(title, palette).font_size(24.0).render().centered_y().flex(1.0));
-    if state.page == Page::Playing {
+    if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
     }
-    if state.page != Page::Settings {
+    if state.page != Page::Settings && state.page != Page::Playing {
         header.push(icon("settings", Icon::Settings, "Configuración", palette));
     }
     let header = Element::row(header).gap(8.0).padding(16.0);
 
-    let mut parts = vec![header];
-    if state.page == Page::Search {
-        let field = SearchField::new("search", &state.query, "Canciones, artistas o un enlace", SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)).flex(1.0);
-        let submit = icon("search-submit", Icon::Search, "Buscar música", palette);
-        parts.push(Element::row(vec![field, submit]).gap(8.0).padding(16.0));
+    let editing = searching && state.mobile_ui.search_editing;
+    let keyboard = editing || state.mobile_ui.keyboard_visible;
+    let mut parts = if editing { Vec::new() } else { vec![header] };
+    if searching { parts.push(search::field(state, palette)); }
+    if let Some(notice) = &state.mobile_ui.notice {
+        parts.push(Element::panel(Element::row(vec![Text::new(notice, palette).render().flex(1.0),
+            icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0)).background(SCHEME.raised));
     }
     let content = if state.page == Page::Playing && state.queue_open {
         upcoming(state, palette)
-    } else if searching && state.submitted.is_none() && !state.searching {
-        centered(Empty::new("Encontrá tu próxima canción", "Buscá un tema o artista, o pegá el enlace de una playlist.", palette).icon(Icon::Search).render())
+    } else if searching {
+        search::content(state, window.width, palette)
+    } else if state.page == Page::Search {
+        home::content(state, window.width, palette)
     } else {
         pane(state, window.width, palette)
     };
     parts.push(content.flex(1.0));
-    if state.page != Page::Playing {
+    if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             parts.push(mini_player(state, track, palette));
         }
     }
-    parts.push(navigation(state, palette));
-    let tree = Element::panel(Element::column(parts)).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
+    if state.page != Page::Playing && !keyboard { parts.push(navigation(state, palette)); }
+    let face = if state.page == Page::Search { if searching { "mobile:search" } else { "mobile:home" } }
+        else if state.page == Page::Playing { if state.queue_open { "mobile:queue" } else { "mobile:player" } }
+        else { "mobile:page" };
+    let content = Element::column(parts).animate_enter(face);
+    let content = if state.page == Page::Playing { state.current().map_or(content.clone(), |track| washed(state, &track.artwork_url, content)) } else { content };
+    let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
+    let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = playlist_dialog(state, tree, window.width, palette);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
     let tree = confirm_dialog(state, tree, palette);
-    // Settings opens the same equalizer as desktop without squeezing it into a footer.
-    Modal::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
-        .width(Modal::fit_width(window.width, 360.0))
-        .body(equalizer(state, palette)).render()
+    limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
+        .max_height(680.0).body(equalizer(state, palette)).render()
 }
 
 fn navigation(state: &State, palette: ComponentPalette) -> Element {
@@ -98,17 +112,34 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         .accessible(limn::Access::new(limn::Role::Button).name(format!("Abrir reproductor: {}", track.title))).flex(1.0);
     let controls = Element::row(vec![
         open,
+        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
         icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
-        icon("next", Icon::SkipForward, "Siguiente canción", palette),
     ]).gap(8.0).padding(8.0);
-    Element::panel(controls).background(SCHEME.raised).radius(PANEL_RADIUS).padding(8.0)
+    let progress = Progress::new(state.progress(), palette).height(2.0).render();
+    Element::panel(Element::column(vec![controls, progress])).background(SCHEME.raised).radius(PANEL_RADIUS).padding(8.0)
+}
+
+/// Overflow stays visible on touch screens, independently of pointer hover.
+pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &str, palette: ComponentPalette) -> Element {
+    let more = format!("more:{row}");
+    let dots = icon(&more, Icon::More, &format!("Opciones de {}", track.title), palette);
+    let copy = Element::column(vec![
+        Text::new(&track.title, palette).font_size(16.0).truncate().render(),
+        Text::new(subtitle, palette).font_size(13.0).muted().truncate().render(),
+    ]).gap(5.0).centered_y().flex(1.0);
+    let body = Element::row(vec![cover(state, &track.artwork_url, 48.0, palette).radius(4.0), copy]).gap(12.0);
+    let main = Element::clickable(&row, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {subtitle}", track.title))).flex(1.0);
+    let row_element = Element::row(vec![main, dots.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0));
+    ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, "Opciones de la canción"))], SCHEME.menu())
+        .open_action(more).render()
 }
 
 pub(super) fn playing(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let Some(track) = state.current() else {
         return centered(Empty::new("Todavía no hay música", "Elegí una canción para empezar a escuchar.", palette).icon(Icon::MusicNote).render());
     };
-    let side = (width - 64.0).clamp(160.0, 300.0);
+    let side = (width - 48.0).clamp(160.0, 380.0);
     let time = Element::row(vec![
         Text::new(clock(f64::from(state.progress()) * state.player.duration), palette).role(TextRole::Caption).muted().render(),
         Element::spacer().flex(1.0),
@@ -131,8 +162,18 @@ pub(super) fn playing(state: &State, width: f32, palette: ComponentPalette) -> E
         Element::column(vec![Text::new(&track.title, palette).font_size(24.0).truncate().render(), Text::new(&track.artist, palette).role(TextRole::Body).muted().truncate().render()]).gap(8.0).flex(1.0),
         icon("like", if liked { Icon::HeartFill } else { Icon::Heart }, if liked { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).centered_y(),
     ]).gap(16.0);
-    let mut body = vec![cover(state, &track.artwork_url, side, palette).centered_x(), details, Element::column(vec![seek, time]), controls,
-        Button::new("lyrics", "Ver letra", palette).icon(Icon::Custom(LYRICS)).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render().size(None, Some(TAP)),
+    let tools = Element::row(vec![
+        icon("mobile-connections", Icon::Audio, "Conectar a un dispositivo", palette),
+        Element::spacer().flex(1.0),
+        icon("more:current", Icon::More, "Opciones de la canción", palette),
+        icon("queue", Icon::Playlist, "Ver cola", palette),
+    ]);
+    let lyric_card = Element::panel(Element::column(vec![
+        Element::row(vec![Text::new("Letra", palette).role(TextRole::Heading).render().flex(1.0), Element::icon(Icon::ArrowRight).foreground(palette.text).centered_y()]),
+        Text::new("Seguí cada palabra mientras escuchás.", palette).muted().render(),
+    ]).gap(12.0).padding(20.0)).background(SCHEME.raised).radius(12.0);
+    let mut body = vec![cover(state, &track.artwork_url, side, palette).radius(8.0).centered_x(), details, Element::column(vec![seek, time]), controls, tools,
+        Element::clickable("lyrics", lyric_card).accessible(limn::Access::new(limn::Role::Button).name("Ver letra")),
     ];
     if let Some(error) = &state.player.error {
         body.push(Alert::new("No se pudo reproducir", error, palette).id("mobile-player-error").render());
@@ -163,10 +204,15 @@ mod tests {
                 state.page = page;
                 let mut tree = UiTree::new(super::view(&state, size));
                 let frame = tree.layout(size);
-                assert_eq!(frame.access.iter().filter(|node| node.id == "settings").count(), usize::from(state.page != Page::Settings));
-                for id in ["home", "mobile-search", "mobile-library", "play-pause", "next"] {
+                assert_eq!(frame.access.iter().filter(|node| node.id == "settings").count(), usize::from(!matches!(state.page, Page::Settings | Page::Playing)));
+                let ids = if state.page == Page::Playing { vec!["play-pause", "next", "previous", "queue", "mobile-connections"] } else { vec!["home", "mobile-search", "mobile-library", "play-pause", "mobile-connections"] };
+                for id in ids {
                     let nodes: Vec<_> = frame.access.iter().filter(|node| node.id == id).collect();
                     assert_eq!(nodes.len(), 1, "one {id} on {:?} at {size:?}", state.page);
+                    // Access nodes deduplicate IDs; hit regions also catch two live
+                    // buttons sharing the same retained color/focus state.
+                    assert_eq!(frame.regions.iter().filter(|region| region.id == id && region.kind == limn::HitKind::Button).count(), 1,
+                        "one hit target for {id} on {:?}", state.page);
                     let rect = nodes[0].rect;
                     assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= size.width + 0.01 && rect.y + rect.height <= size.height + 0.01, "{id}: {rect:?}");
                     assert!(rect.width >= TAP && rect.height >= TAP, "{id} is touch sized: {rect:?}");
@@ -177,11 +223,80 @@ mod tests {
     }
 
     #[test]
+    fn navigation_labels_are_visible_and_tabs_do_not_overlap() {
+        let mut state = playing_state();
+        state.player.current = None;
+        let mut tree = UiTree::new(super::view(&state, Size::new(390.0, 844.0)));
+        let frame = tree.layout(Size::new(390.0, 844.0));
+        for label in ["Inicio", "Buscar", "Biblioteca"] {
+            let positions: Vec<_> = frame.commands.iter().filter_map(|command| match command {
+                limn::DrawCommand::Text { text, position, .. } if text == label => Some(position),
+                _ => None,
+            }).collect();
+            assert_eq!(positions.len(), 1, "{label}: {positions:?}");
+        }
+        let tabs: Vec<_> = ["home", "mobile-search", "mobile-library"].iter().map(|id| frame.access.iter().find(|node| node.id == *id).unwrap().rect).collect();
+        for pair in tabs.windows(2) { assert!(pair[0].x + pair[0].width <= pair[1].x + 0.1, "{tabs:?}"); }
+    }
+
+    #[test]
+    fn editing_search_reserves_the_keyboard_without_changing_playback() {
+        let mut state = playing_state();
+        state.mobile_search = true;
+        state.mobile_ui.search_editing = true;
+        state.page = Page::Search;
+        for size in [Size::new(320.0, 360.0), Size::new(390.0, 500.0)] {
+            let frame = UiTree::new(super::view(&state, size)).layout(size);
+            assert!(!frame.access.iter().any(|node| matches!(node.id.as_str(), "home" | "mobile-library" | "play-pause")));
+            for id in ["search", "mobile-search-cancel"] {
+                let rect = frame.access.iter().find(|node| node.id == id).unwrap().rect;
+                assert!(rect.x >= 0.0 && rect.x + rect.width <= size.width + 0.1 && rect.height >= TAP, "{id}: {rect:?}");
+            }
+        }
+        assert!(state.player.playing);
+        assert_eq!(state.current().unwrap().id, "song");
+    }
+
+    #[test]
+    fn device_sheet_has_a_real_native_slot_and_closes_without_playing_a_row() {
+        let mut state = playing_state();
+        state.update(&UiAction::Clicked { id: "mobile-connections".into() });
+        state.mobile_ui.route = Some(("Auriculares".into(), "BluetoothA2DP".into()));
+        for width in [320.0, 390.0, 430.0] {
+            let size = Size::new(width, 720.0);
+            let mut tree = UiTree::new(super::view(&state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            let slot = frame.access.iter().find(|node| node.id == "ios-route-picker").unwrap().rect;
+            assert!(slot.width >= TAP && slot.height >= TAP && slot.x + slot.width <= width);
+            assert!(frame.commands.iter().any(|command| matches!(command, limn::DrawCommand::Text { text, .. } if text == "Auriculares")));
+        }
+        assert!(state.update(&UiAction::Clicked { id: "mobile-connections-close".into() }).is_empty());
+        assert!(!state.mobile_ui.connections && state.player.playing);
+    }
+
+    #[test]
+    fn home_track_tiles_offer_the_same_hold_and_overflow_actions_as_rows() {
+        let mut state = playing_state();
+        let track = state.current().unwrap().clone();
+        state.because.push((track.clone(), vec![track.clone()]));
+        let tile = tile(&state, "rec:0:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
+        let frame = UiTree::new(tile).layout(Size::new(TILE_WIDTH, 240.0));
+        let more = frame.access.iter().find(|node| node.id == "more:rec:0:0").unwrap();
+        assert!(more.rect.width >= 44.0 && more.rect.height >= 44.0);
+        assert!(frame.context_menu_at(limn::Point::new(30.0, 60.0)).is_some());
+        state.update(&UiAction::Clicked { id: "more:rec:0:0".into() });
+        assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
+    }
+
+    #[test]
     fn phone_pages_use_the_existing_search_and_playback_commands() {
         let mut state = playing_state();
         let click = |state: &mut State, id: &str| state.update(&UiAction::Clicked { id: id.into() });
         click(&mut state, "mobile-search");
-        assert!(state.mobile_search && state.page == Page::Search && state.focus.as_deref() == Some("search"));
+        assert!(state.mobile_search && state.page == Page::Search && state.focus.is_none());
+        click(&mut state, "mobile-search-edit");
+        assert_eq!(state.focus.as_deref(), Some("search"));
         state.update(&UiAction::InputChanged { id: "search".into(), value: "De música ligera".into() });
         assert_eq!(click(&mut state, "search-submit"), vec![Command::Search("De música ligera".into())]);
         click(&mut state, "mobile-library");

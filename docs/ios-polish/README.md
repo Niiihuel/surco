@@ -1,4 +1,4 @@
-# Surco iOS: finished playback and mobile interface
+# Surco iOS: playback and mobile interface
 
 The user delegates implementation and product decisions, including reusable limn PRs. Preserve Surco/limn identity and the shared Rust engine/UI. The supplied Spotify mobile kit is interaction/layout evidence; use Surco content, fonts, icons and palette. Keep desktop behavior intact.
 
@@ -10,6 +10,16 @@ The user delegates implementation and product decisions, including reusable limn
 - `device-connections`: current real output and native Bluetooth/AirPlay route selection. Depends on ios-media and mobile-primitives.
 
 Build ios-media and limn IME fixes first, in parallel. Then land reusable gestures/sheets and rebuild the mobile screens; connect the native route control to the finished device sheet. Validate each slice before combining it in a new TestFlight beta.
+
+## Implementation status · 2026-10-15
+
+- Playback integration is merged in [Surco PR #2](https://github.com/Niiihuel/surco/pull/2): AVAudioSession activation, interruption/route recovery, system commands and asynchronous Now Playing artwork, with the existing Rust engine.
+- Reusable framework changes are merged: [limn #46](https://github.com/Niiihuel/limn/pull/46) keeps platform text focus stable, [#47](https://github.com/Niiihuel/limn/pull/47) adds controlled bottom sheets, and [#48](https://github.com/Niiihuel/limn/pull/48) adds context-aware touch holds and focus dismissal.
+- [Surco UI PR #3](https://github.com/Niiihuel/surco/pull/3) remains open. Its implementation includes Home/Search/Library, detail pages, player/queue/lyrics/settings, debounced search and explicit keyboard intent, real command actions, 44-point controls, and scrollable form sheets with fixed action footers. Library list/compact/grid overflow and holds share a sheet with a captured stable key; track contexts preserve the selected track, and queue removal rejects a changed queue.
+- The iOS Host integrates native keyboard geometry and the visible AVRoutePickerView slot. The connections sheet shows the real current output and points initial Bluetooth pairing to iOS Settings. Native controls hide when covered by another modal. See [native UI integration](../ios-ui-native.md).
+- [iOS run 38709439039](https://github.com/Niiihuel/surco/actions/runs/38709439039) passed simulator startup and unsigned device compilation/linking at `dd9ef703d76ddde1eee29dc3737e89d3d7db9490`, including the Host bridge. Later UI/library closure changes still need the final head's review and CI; this run is an intermediate validation record.
+
+Physical background/locked playback, Bluetooth/AirPlay switching, interruption/call recovery, headset commands and Dynamic Island presentation still require the user's iPhone checks. A new signed TestFlight beta, tester-group assignment, the final CI run, UI merge and repository cleanup are not recorded as complete here. The device checklist is in [ios.md](../ios.md#build-and-validation).
 
 ## Shared engineering contract
 
@@ -25,4 +35,4 @@ Build ios-media and limn IME fixes first, in parallel. Then land reusable gestur
 
 https://www.figma.com/design/h3crk4qRhavJSDKgFPxKWR/Spotify---Mobile-UI-Kit--Community-?node-id=0-1
 
-Browser inspection confirmed Home (428×926, dark surface #111111), separate Home/Search/Library navigation, anchored compact player, search recents and an explicit searching/keyboard state. Inspect player, actions and Listening on before finalizing those screens. The Figma connector is not installed in this session; the file is readable in Chrome.
+Read-only Chrome inspection covered Home/Library, Search (428×926, dark surface #111111), full player, action patterns and Listening on. The implementation uses Surco's real content and existing limn tokens. Specific frame links and interaction decisions are recorded in [SPEC-mobile-screens.md](SPEC-mobile-screens.md).

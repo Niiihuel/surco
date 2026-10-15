@@ -266,7 +266,7 @@ fn screen_rect(rect: limn::Rect, origin: Pos2) -> egui::Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use limn::{Element, Size, UiAction};
+    use limn::{Component, Element, Size, UiAction};
 
     // The order egui-winit emits, including its emulated primary pointer.
     fn touch(phase: egui::TouchPhase, position: Pos2) -> Vec<egui::Event> {
@@ -325,6 +325,45 @@ mod tests {
             .into_iter()
             .flat_map(|event| tree.handle_event(event))
             .collect()
+    }
+
+    #[test]
+    fn a_context_hold_and_touch_pan_share_the_host_without_playing_on_release() {
+        let root = || {
+            let row = limn::ContextMenu::new("actions-row", Element::button("play-row", "A song").size(Some(200.0), Some(80.0)),
+                vec![limn::ContextMenuEntry::Item(limn::ContextMenuItem::new("more-row", "Opciones"))], limn::ComponentPalette::neutral_dark())
+                .open_action("more-row").render();
+            Element::scroll("songs", Element::column(vec![row, Element::spacer().size(None, Some(500.0))]))
+                .size(Some(240.0), Some(160.0))
+        };
+        let run = |ctx: &egui::Context, tree: &mut UiTree, input: &mut TouchInput, raw: Vec<egui::Event>, time: f64| {
+            let frame = tree.layout(Size::new(240.0, 160.0));
+            let mut actions = Vec::new();
+            let mut output = ctx.run_ui(egui::RawInput { events: raw.clone(), time: Some(time), ..Default::default() }, |ui| {
+                let events = limn_egui::events_with_touch(ui.ctx(), Pos2::ZERO, &frame);
+                for event in input.translate(&raw, events, Pos2::ZERO, &frame, |_| false) {
+                    actions.extend(tree.handle_event(event));
+                }
+            });
+            output.textures_delta.clear();
+            actions
+        };
+        let down = Pos2::new(30.0, 40.0);
+        let ctx = egui::Context::default();
+        let mut tree = UiTree::new(root());
+        let mut input = TouchInput::default();
+        assert!(run(&ctx, &mut tree, &mut input, touch(egui::TouchPhase::Start, down), 0.0).is_empty());
+        assert_eq!(run(&ctx, &mut tree, &mut input, Vec::new(), 0.5), vec![UiAction::Clicked { id: "more-row".into() }]);
+        assert!(run(&ctx, &mut tree, &mut input, touch(egui::TouchPhase::End, down), 0.6).is_empty());
+
+        let ctx = egui::Context::default();
+        let mut tree = UiTree::new(root());
+        let mut input = TouchInput::default();
+        run(&ctx, &mut tree, &mut input, touch(egui::TouchPhase::Start, down), 0.0);
+        let moved = down + egui::vec2(0.0, -12.0);
+        assert!(run(&ctx, &mut tree, &mut input, touch(egui::TouchPhase::Move, moved), 0.1).is_empty());
+        assert!(run(&ctx, &mut tree, &mut input, Vec::new(), 0.6).is_empty());
+        assert!(run(&ctx, &mut tree, &mut input, touch(egui::TouchPhase::End, moved), 0.7).is_empty());
     }
 
     #[test]

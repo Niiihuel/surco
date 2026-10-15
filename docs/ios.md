@@ -23,21 +23,42 @@ maintaining two application interfaces.
 
 ## Phone interface
 
-The phone layout has bottom navigation, full-width pages, a searchable catalog,
-library, mini-player, full player, lyrics, queue and settings. It uses the existing
-commands and playback state. Touch targets are at least 44 logical pixels for the
-main navigation and transport. Host input adapts finger scrolling without
-turning a pan into a row click, and advertises focused fields to the platform
-keyboard.
+The phone layout has Home/Search/Library navigation, album/artist/playlist detail,
+mini-player, full player, lyrics, queue and spacious settings. It uses the existing
+commands, collection and playback state. Search debounces typing, rejects stale
+answers and records explicit submissions. Opening the Search tab waits for a tap
+before requesting the keyboard; Home's discovery action enters editing directly.
+
+Track and library options are reachable by a visible overflow button or a stationary
+hold. Moving, scrolling or cancelling the gesture cancels the hold; releasing a
+consumed hold does not play the row. Library options work in list, compact and grid
+views, capture the stable item key/title/artwork, and open, pin/unpin or remove the
+selected album/artist without relying on its old list index. Track menus retain the
+selected track; removing a queue occurrence checks its captured queue first.
+
+The redesigned navigation, transport, overflow, sheet actions, form fields and EQ
+sliders use targets of at least 44 points. Playlist/import/share/confirmation
+forms and the equalizer use limn bottom sheets: the body scrolls while close and
+footer actions remain reachable above the keyboard. The Host reads native keyboard
+geometry, respects safe areas and egui scale, avoids counting a keyboard resize
+twice, and clears focus on explicit dismissal. Floating keyboards do not resize the
+entire app. Reusable focus, sheets and gesture behavior comes from merged limn
+[PR #46](https://github.com/Niiihuel/limn/pull/46),
+[#47](https://github.com/Niiihuel/limn/pull/47) and
+[#48](https://github.com/Niiihuel/limn/pull/48).
 
 On a desktop, `cargo run -p surco -- --mobile` previews this layout. Existing
 `--click`, `--slide` and `--screenshot` arguments still work for visual checks.
 
 On iOS, CPAL exposes the system's current audio route rather than a separate
-device for every Bluetooth headphone. Pair in iOS Settings and choose the route
-in Control Center. An in-app native route picker is not part of this first slice.
-The desktop output picker remains unchanged. Desktop executable self-updates
-are disabled on iOS, where application bundles must be signed.
+device for every Bluetooth headphone. The player, mini-player and settings open a
+connections sheet with the current route's real name and a visible native
+AVRoutePickerView. iOS owns the destination list; pair new headphones/speakers in
+iOS Settings first, then use the system route control. There is no simulated device
+list, private picker invocation, fake AVPlayer or Bluetooth scan. See
+[the native keyboard/route bridge](ios-ui-native.md). The desktop output picker
+remains unchanged. Desktop executable self-updates are disabled on iOS, where
+application bundles must be signed.
 
 ## System playback
 
@@ -53,14 +74,18 @@ recovery reload from the last reported position, reusing that buffer when availa
 Interruptions pause playback; automatic resume requires Apple's `shouldResume`, the
 same track, and no later transport decision. Disconnecting headphones pauses;
 resetting media services rebuilds configuration and waits for a new play request.
+An explicit Play retries session activation even when iOS did not send the matching
+interruption-ended notification; automatic resume still requires the conditions above.
 
 Now Playing metadata and remote play/pause/next/previous/seek commands run through
 the backend's existing `MediaKeys` boundary, including while the window sleeps.
 Artwork loads asynchronously and is checked against the current track and URL.
-iOS extrapolates progress between meaningful metadata updates. Now Playing supplies
-the system's Lock Screen, Control Center and supported Dynamic Island presentation;
-no ActivityKit extension or duplicate Swift interface is needed. Native observers
-and remote-command targets are removed when the integration shuts down.
+iOS extrapolates progress between meaningful metadata updates. The bridge publishes
+the data used by the system's Lock Screen, Control Center and supported Dynamic
+Island presentation; iOS controls that presentation. No ActivityKit extension or
+duplicate Swift interface is needed. Native observers and remote-command targets
+are removed when the integration shuts down. These hardware behaviors still need
+the physical-device checks listed below.
 
 Sources: [Apple's playback configuration](https://developer.apple.com/documentation/avfoundation/configuring-your-app-for-media-playback),
 [interruption handling](https://developer.apple.com/documentation/avfaudio/handling-audio-interruptions),
@@ -78,6 +103,15 @@ The iOS path is supplied explicitly because eframe 0.36.2 does not provide a
 default storage directory for iOS. Desktop paths stay unchanged.
 
 ## Build and validation
+
+Playback is merged in [Surco PR #2](https://github.com/Niiihuel/surco/pull/2);
+the mobile UI/native Host work is in the still-open
+[PR #3](https://github.com/Niiihuel/surco/pull/3). The intermediate
+[iOS run 38709439039](https://github.com/Niiihuel/surco/actions/runs/38709439039)
+passed both simulator startup and unsigned device compilation/linking at
+`dd9ef703d76ddde1eee29dc3737e89d3d7db9490`, including Host keyboard/route integration.
+That result does not cover later closure changes or establish final CI, a newly
+signed beta, tester assignment or physical audio verification.
 
 The **iOS** GitHub Actions workflow uses macOS, Xcode and the pinned limn revision.
 It builds the same Rust static library and links a minimal Xcode application for:
@@ -116,8 +150,14 @@ signed build on an iPhone, validate:
   On a supported iPhone, inspect the system's expanded Dynamic Island controls.
 - Receive/decline a call while playing, and repeat while already paused. A manual
   pause or different track during an interruption must cancel automatic resume.
-- Connect Bluetooth headphones/speakers and change outputs in Control Center.
+- Open the connections sheet from player, mini-player and settings. Select paired
+  Bluetooth headphones/speakers or an available AirPlay destination using the native
+  button; also check route changes made in Control Center.
   Disconnect headphones: playback should pause and stay paused on the speaker.
+- Type, paste, transfer focus and dismiss the keyboard in search, playlist creation
+  and import. Check controls with keyboard visible, rotation, long titles, sheet
+  dragging, stationary holds and scrolling without accidental playback. Cover the
+  connections sheet with another modal and confirm its native button cannot intercept taps.
 - Use iOS Settings > Developer > Reset Media Services: playback must stay paused
   until requested and then recover. No microphone access prompt should appear.
 
