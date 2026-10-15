@@ -2,17 +2,19 @@
 
 `SurcoNativeUI` is a separate shared XCTest scheme. It tests the Release app through public XCUIAutomation, without app launch scripts, injected selectors, or production test hooks. The regular `Surco` archive scheme remains app-only.
 
-The nine tests cover:
+The eleven tests cover:
 
 - The playlist card's real `UIPasteControl` prepares an import form from a copied `NSURL`, copied UTF-16 text, and a usable text representation whose accompanying URL representation cannot be decoded. It never fetches a playlist automatically.
 - The form uses a full-width `UITextField` with UIKit's own editing menu, without a second Paste button. Real copied text pastes through that menu, and pasting over a native text selection replaces it once.
 - Native menu paste and Unicode typing survive keyboard presentation, model updates and rotation. Return dismisses the keyboard, and Cancel closes the form.
+- Search uses a real `UISearchBar` and `UISearchTextField`: native editing-menu paste, Unicode typing and reflow preserve the editor; Return dismisses the keyboard and the native clear action empties the query without a separate Paste button.
+- Native Search cancellation preserves the query while dismissing the keyboard. Navigating to Library and back to Search keeps that text without automatically refocusing the field. These scenarios do not depend on catalog results or submit playlist imports.
 - A playlist draft closes by dragging its header. Reopening it proves the draft was canceled.
 - Connections opens from Settings without playback and exposes the native route picker and volume slider.
 - Holding a Home card directly opens UIKit's context menu. Like and Unlike act on the held synthetic track without playback or network requests.
 - The 121 canvas symbols and eight additional native action symbols resolve to real `UIImage` symbols in the simulator's UIKit, without launching the app. This checks the current CI runtime; older supported iOS versions still need hardware/runtime validation.
 
-Controls inside sheets are addressed by accessibility IDs. Until the Rust canvas exposes platform accessibility elements, only entry taps and the card hold have coordinate fallbacks. `EntryGeometry.json` records their actual Rust Frame rectangles at the CI iPhone 17 Pro size (402×874, safe insets 62/34, canvas 402×778); a Rust unit test rejects drift. XCTest rejects another window size rather than guessing coordinates. This is not iPad coverage. Assertion failures include the UI hierarchy, and successful checkpoints retain screenshots in the result bundle.
+Native controls are addressed by accessibility IDs. Until the Rust canvas exposes platform accessibility elements, only entry taps and the card hold have coordinate fallbacks. `EntryGeometry.json` records their actual Rust Frame rectangles at the CI iPhone 17 Pro size (402×874, safe insets 62/34, full-window canvas 402×874); a Rust unit test rejects drift. XCTest rejects another window size rather than guessing coordinates. This is not iPad coverage. Assertion failures include the UI hierarchy, and successful checkpoints retain screenshots in the result bundle.
 
 After building the Rust simulator archive, run on a booted simulator owned by the caller:
 
@@ -20,7 +22,7 @@ After building the Rust simulator archive, run on a booted simulator owned by th
 python3 scripts/run-ios-ui-tests.py --udid SIMULATOR_UUID --seed-fixture
 ```
 
-The runner reuses `target/ios/simulator/Rust.xcconfig` and `DerivedData`, disables parallel tests, and writes `artifacts/native-ui/native-ui.xcresult`, the command, source SHA, fixture hashes, Xcode log and JSON summary. It exports attachments into `artifacts/native-ui/attachments`, including when XCTest fails, so screenshots can be reviewed without Xcode. Existing result bundles are preserved; use `--artifacts` for another run. It requires at least nine passed tests and rejects failures, skips and empty or incomplete test plans.
+The runner reuses `target/ios/simulator/Rust.xcconfig` and `DerivedData`, disables parallel tests, and writes `artifacts/native-ui/native-ui.xcresult`, the command, source SHA, fixture hashes, Xcode log and JSON summary. It exports attachments into `artifacts/native-ui/attachments`, including when XCTest fails, so screenshots can be reviewed without Xcode. Existing result bundles are preserved; use `--artifacts` for another run. It requires at least eleven passed tests and rejects failures, skips and empty or incomplete test plans.
 
 `--seed-fixture` explicitly opts into synthetic app data for this run. After terminating Surco, the runner temporarily writes `SyntheticCollection.ron` to this bundle's `Library/Application Support/surco/app.ron`. It restores the original bytes in `finally`, or removes only that file if it did not exist. Downloads and other files are untouched. The fixture contains six invented tracks with no audio, lyrics or artwork URLs, no playlists, autoplay disabled and volume zero. Without this flag, the caller must prepare equivalent data for the Home context-menu test. The tests cancel drafts and never submit imports or start playback. Normal app startup can still request recommendations and version information; the held card is persisted locally and does not depend on those responses.
 
