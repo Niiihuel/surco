@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.2.0
+
+### Added
+
+- An iPhone interface with a new Home, focused search with recent queries and
+  filters, a full-screen player, and touch-sized library, album and artist pages.
+- Hold a song or a library item to open its actions. The same actions are available
+  from the visible options button, and sheets can be dismissed with a swipe.
+- Native iOS playback sessions, lock-screen and Control Center metadata and
+  controls, background audio, and recovery for interruptions and audio route changes.
+- A device sheet with the current audio output and Apple's native AirPlay and
+  Bluetooth output picker.
+
+### Changed
+
+- Mobile settings, playlist forms, sharing, confirmations and the equalizer use
+  scrollable sheets with accessible controls and fixed action buttons.
+- Search keeps keyboard focus while results arrive, ignores stale responses, and
+  adjusts the available space when the iOS keyboard changes height.
+- Mobile motion, long presses and sheets use the reviewed limn framework changes
+  from PRs #46, #47 and #48, preserving Surco's visual theme.
+
+### Fixed
+
+- Removing a queued song cannot remove a different occurrence if playback advances
+  while its action sheet is open.
+- Paused iOS audio outputs are released and rebuilt safely when playback resumes.
+
 ## 0.1.4
 
 ### Added
