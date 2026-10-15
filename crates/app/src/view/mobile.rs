@@ -209,6 +209,10 @@ mod tests {
                 for id in ids {
                     let nodes: Vec<_> = frame.access.iter().filter(|node| node.id == id).collect();
                     assert_eq!(nodes.len(), 1, "one {id} on {:?} at {size:?}", state.page);
+                    // Access nodes deduplicate IDs; hit regions also catch two live
+                    // buttons sharing the same retained color/focus state.
+                    assert_eq!(frame.regions.iter().filter(|region| region.id == id && region.kind == limn::HitKind::Button).count(), 1,
+                        "one hit target for {id} on {:?}", state.page);
                     let rect = nodes[0].rect;
                     assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= size.width + 0.01 && rect.y + rect.height <= size.height + 0.01, "{id}: {rect:?}");
                     assert!(rect.width >= TAP && rect.height >= TAP, "{id} is touch sized: {rect:?}");
@@ -269,6 +273,20 @@ mod tests {
         }
         assert!(state.update(&UiAction::Clicked { id: "mobile-connections-close".into() }).is_empty());
         assert!(!state.mobile_ui.connections && state.player.playing);
+    }
+
+    #[test]
+    fn home_track_tiles_offer_the_same_hold_and_overflow_actions_as_rows() {
+        let mut state = playing_state();
+        let track = state.current().unwrap().clone();
+        state.because.push((track.clone(), vec![track.clone()]));
+        let tile = tile(&state, "rec:0:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
+        let frame = UiTree::new(tile).layout(Size::new(TILE_WIDTH, 240.0));
+        let more = frame.access.iter().find(|node| node.id == "more:rec:0:0").unwrap();
+        assert!(more.rect.width >= 44.0 && more.rect.height >= 44.0);
+        assert!(frame.context_menu_at(limn::Point::new(30.0, 60.0)).is_some());
+        state.update(&UiAction::Clicked { id: "more:rec:0:0".into() });
+        assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
     }
 
     #[test]

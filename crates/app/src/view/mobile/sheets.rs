@@ -3,6 +3,10 @@
 use super::*;
 use limn::{BottomSheet, Separator};
 
+#[cfg(test)]
+#[path = "library_tests.rs"]
+mod library_tests;
+
 pub(super) fn render(state: &State, base: Element, palette: ComponentPalette) -> Element {
     let context = state.mobile_ui.context.as_ref();
     let body = context.map_or_else(Element::spacer, |context| {
@@ -24,7 +28,27 @@ pub(super) fn render(state: &State, base: Element, palette: ComponentPalette) ->
     });
     let base = BottomSheet::new(base, context.is_some(), "Opciones de la canción", "", "mobile-context-close", SCHEME.menu())
         .max_height(680.0).body(body).render();
-    connections(state, base, palette)
+    connections(state, library_sheet(state, base, palette), palette)
+}
+
+fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
+    let Some(context) = &state.mobile_ui.library else { return base };
+    let pinned = state.collection.pinned.contains(&context.key);
+    let row = |action: &str, label: &str, glyph| ListRow::new(format!("library-action:{action}"), label, palette)
+        .sizing(ListRowSizing { height: Some(52.0), title_size: 15.0, ..TRACK_ROW })
+        .leading(Element::icon(glyph).foreground(palette.text).size(Some(24.0), Some(24.0))).render();
+    let header = Element::row(vec![cover(state, &context.artwork_url, 56.0, palette),
+        Text::new(&context.title, palette).font_size(18.0).truncate().render().centered_y().flex(1.0),
+    ]).gap(16.0).padding(8.0);
+    let mut body = vec![header, Separator::horizontal(palette).render(),
+        row("open", "Abrir", Icon::ArrowRight), row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin),
+    ];
+    if context.key.starts_with("album:") || context.key.starts_with("artist:") {
+        body.push(row("remove", if context.key.starts_with("artist:") { "Dejar de seguir" } else { "Quitar de tu biblioteca" }, Icon::Minus));
+    }
+    BottomSheet::new(base, true, "Opciones de biblioteca", "", "mobile-library-close", SCHEME.menu())
+        .max_height(480.0).body(Element::column(body).gap(8.0))
+        .return_focus(format!("library-more:{}", context.key)).render()
 }
 
 fn track_header(state: &State, track: &Track, palette: ComponentPalette) -> Element {

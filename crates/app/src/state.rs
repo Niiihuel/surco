@@ -966,6 +966,9 @@ impl State {
         if row == "current" {
             return self.current();
         }
+        if let Some((shelf, index)) = row.strip_prefix("rec:").and_then(|row| row.split_once(':')) {
+            return self.because.get(shelf.parse::<usize>().ok()?)?.1.get(index.parse::<usize>().ok()?);
+        }
         let (list, index) = row.split_once(':')?;
         let index = index.parse::<usize>().ok()?;
         match list {

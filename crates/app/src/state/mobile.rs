@@ -8,7 +8,7 @@ const SEARCH_HISTORY: usize = 12;
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
     matches!(id, "mobile-context-close" | "mobile-connections-close" | "playlist-cancel"
-        | "import-cancel" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close").then_some(id)
+        | "import-cancel" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close").then_some(id)
 }
 
 pub(crate) fn is_sheet_handle(id: &str) -> bool { sheet_dismiss_id(id).is_some() }
@@ -29,6 +29,17 @@ pub(crate) struct TrackContext {
     pub upcoming: Option<Vec<Track>>,
 }
 
+pub(crate) struct LibraryContext {
+    pub key: String,
+    pub title: String,
+    pub artwork_url: Option<String>,
+}
+
+fn library_target(key: &str) -> Option<Target> {
+    key.strip_prefix("album:").map(|id| Target::Album(id.into()))
+        .or_else(|| key.strip_prefix("artist:").map(|id| Target::Artist(id.into())))
+}
+
 #[derive(Default)]
 pub(crate) struct MobileUi {
     pub search_editing: bool,
@@ -37,6 +48,7 @@ pub(crate) struct MobileUi {
     /// The host consumes this once after changing the view.
     pub blur: bool,
     pub context: Option<TrackContext>,
+    pub library: Option<LibraryContext>,
     pub connections: bool,
     pub route: Option<(String, String)>,
     pub native_routes: bool,
@@ -46,6 +58,20 @@ pub(crate) struct MobileUi {
 }
 
 impl State {
+    fn mobile_library_context(&self, key: &str) -> Option<LibraryContext> {
+        let (title, artwork_url) = if let Some(id) = key.strip_prefix("playlist:") {
+            let playlist = self.collection.playlist(id.parse().ok()?)?;
+            (playlist.name.as_str(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
+        } else if key == "downloads" { ("Descargas", None) }
+        else if key == "liked" { ("Tus me gusta", None) }
+        else {
+            let target = library_target(key)?;
+            let entry = self.collection.kept.iter().find(|entry| entry.target() == target)?;
+            (entry.title(), entry.artwork().clone())
+        };
+        Some(LibraryContext { key: key.into(), title: title.into(), artwork_url })
+    }
+
     pub(crate) fn mobile_query(&mut self, value: &str, now: Instant) {
         self.query = value.to_owned();
         self.mobile_ui.search_editing = true;
@@ -109,7 +135,38 @@ impl State {
             }
             UiAction::Submitted { id, .. } if id == "search" => return Some(self.mobile_submit()),
             UiAction::Clicked { id } => {
+                if let Some(key) = id.strip_prefix("library-more:") {
+                    self.mobile_ui.library = self.mobile_library_context(key);
+                    self.mobile_ui.context = None;
+                    self.mobile_ui.connections = false;
+                    self.mobile_ui.search_editing = false;
+                    self.mobile_ui.blur = true;
+                    return Some(Vec::new());
+                }
+                if let Some(action) = id.strip_prefix("library-action:") {
+                    let context = self.mobile_ui.library.take()?;
+                    let key = context.key;
+                    return Some(match action {
+                        "pin" => { self.collection.pin(&key); Vec::new() }
+                        "remove" => {
+                            if let Some(target) = library_target(&key) {
+                                self.collection.kept.retain(|entry| entry.target() != target);
+                                self.collection.pinned.retain(|held| held != &key);
+                            }
+                            Vec::new()
+                        }
+                        "open" => {
+                            if let Some(target) = library_target(&key) { self.open(target) }
+                            else if let Some(id) = key.strip_prefix("playlist:").and_then(|id| id.parse::<u64>().ok()) {
+                                let index = self.collection.playlists.iter().position(|playlist| playlist.id == id);
+                                index.map_or_else(Vec::new, |index| self.click(&format!("playlist:{index}")))
+                            } else { self.click(&key) }
+                        }
+                        _ => Vec::new(),
+                    });
+                }
                 if let Some(row) = id.strip_prefix("more:") {
+                    self.mobile_ui.library = None;
                     self.mobile_ui.connections = false;
                     self.mobile_ui.context = self.track_at(row).cloned().map(|track| TrackContext {
                         row: row.to_owned(), track,
@@ -145,12 +202,13 @@ impl State {
                     return Some(Vec::new());
                 }
                 match id.as_str() {
-                    "mobile-search" => {
+                    "mobile-search" | "mobile-discover" => {
                         self.mobile_search = true;
-                        self.mobile_ui.search_editing = false;
-                        self.mobile_ui.blur = true;
-                        self.focus = None;
                         if self.page != Page::Search { self.go(Page::Search); }
+                        let editing = id == "mobile-discover";
+                        self.mobile_ui.search_editing = editing;
+                        self.mobile_ui.blur = !editing;
+                        self.focus = editing.then(|| "search".into());
                     }
                     "mobile-search-edit" => {
                         self.mobile_ui.search_editing = true;
@@ -171,9 +229,11 @@ impl State {
                     "search-submit" => return Some(self.mobile_submit()),
                     "recent-search-clear" => self.collection.searches.clear(),
                     "mobile-context-close" => self.mobile_ui.context = None,
+                    "mobile-library-close" => self.mobile_ui.library = None,
                     "mobile-connections-close" => self.mobile_ui.connections = false,
                     "mobile-notice-close" => self.mobile_ui.notice = None,
                     "mobile-connections" | "setting:connections" => {
+                        self.mobile_ui.library = None;
                         self.mobile_ui.context = None;
                         self.mobile_ui.connections = true;
                         self.mobile_ui.blur = true;
@@ -181,6 +241,7 @@ impl State {
                     }
                     // Navigation must cancel delayed requests from the search tab.
                     "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
+                        self.mobile_ui.library = None;
                         self.mobile_ui.pending = None;
                         self.mobile_ui.search_editing = false;
                         self.mobile_ui.context = None;
@@ -225,6 +286,18 @@ mod tests {
         click(&mut state, "mobile-search-cancel");
         assert!(!state.mobile_ui.search_editing);
         assert!(state.mobile_tick(now + Duration::from_secs(5)).is_empty());
+    }
+
+    #[test]
+    fn discovery_focuses_search_while_the_search_tab_waits_for_a_tap() {
+        let mut state = phone();
+        state.page = Page::Library;
+        click(&mut state, "mobile-discover");
+        assert!(state.page == Page::Search && state.mobile_search && state.mobile_ui.search_editing);
+        assert_eq!(state.focus.as_deref(), Some("search"));
+        assert!(!state.mobile_ui.blur);
+        click(&mut state, "mobile-search");
+        assert!(!state.mobile_ui.search_editing && state.mobile_ui.blur && state.focus.is_none());
     }
 
     #[test]

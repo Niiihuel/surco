@@ -516,18 +516,11 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
             window_tree,
             state.confirm.is_some(),
             "Confirmar acción",
-            "",
+            format!("{title}\n\n{about}"),
             "confirm-cancel",
             palette,
         )
         .max_height(480.0)
-        .body(
-            Element::column(vec![
-                Text::new(title, palette).font_size(18.0).render(),
-                Text::new(about, palette).muted().render(),
-            ])
-            .gap(12.0),
-        )
         .footer(dialog_footer(cancel, confirm))
         .initial_focus("confirm-cancel")
         .backdrop_dismiss(false)
@@ -899,14 +892,15 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut header = vec![
         Text::new(if state.mobile { "Guardado para vos" } else { "Tu biblioteca" }, palette).font_size(15.0).muted().render().centered_y(),
         Element::spacer().flex(1.0),
-        IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Dense }).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y(),
+        if state.mobile { mobile::icon("playlist-new", Icon::Add, "Crear playlist", palette).centered_y() }
+        else { IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y() },
     ];
     if !state.mobile {
         header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
     }
     let header = Element::row(header)
     .gap(8.0)
-    .size(None, Some(40.0));
+    .size(None, Some(if state.mobile { 44.0 } else { 40.0 }));
     let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
     let filters = segments(
         "library-filter",
@@ -937,14 +931,17 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         Filter::Albums => "Buscar en Álbumes",
     };
     let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
+    let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).centered_y() }
+        else { header_button("library-search", glyph, TooltipSpec::new(hint), palette).render().centered_y() };
     let mut tools = if open > 0.0 {
         // It grows out of where the magnifier was to all the row has left beside the order,
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
-        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(ControlSize::Compact).render().centered_y().flex(grown);
-        vec![field, header_button("library-search", Icon::Close, TooltipSpec::new("Cerrar la búsqueda"), palette).render().centered_y(), Element::spacer().flex(1.0 - grown)]
+        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
+        let field = if state.mobile { field.size(None, Some(44.0)) } else { field };
+        vec![field.centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
     } else {
-        vec![header_button("library-search", Icon::Search, TooltipSpec::new(looking), palette).render().centered_y(), Element::spacer().flex(1.0)]
+        vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
     };
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
     let choice = |id: &str, label: &str, chosen: bool| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).selected(chosen));
@@ -999,6 +996,14 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                     if here { row.filled() } else { row }.render()
                 }
             };
+            if state.mobile {
+                let more = format!("library-more:{key}");
+                let dots = mobile::icon(&more, Icon::More, &format!("Opciones de {name}"), palette);
+                let entry = if view == LibraryView::Grid {
+                    Element::stack(vec![entry, Element::row(vec![Element::spacer().flex(1.0), dots.background(SCHEME.raised).radius(22.0)]).padding(4.0)])
+                } else { Element::row(vec![entry.flex(1.0), dots.centered_y()]).gap(4.0) };
+                return ContextMenu::new(format!("library-context:{key}"), entry, Vec::new(), SCHEME.menu()).open_action(more).render();
+            }
             let pin = ContextMenuItem::new(format!("pin:{key}"), if held { "Desfijar" } else { "Fijar arriba" });
             ContextMenu::new(format!("library-context:{key}"), entry, vec![ContextMenuEntry::Item(pin)], SCHEME.menu()).render()
         })
@@ -1148,16 +1153,27 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
 }
 
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
+    let row = id.clone();
     let tile = MediaTile::new(id, title, palette).width(TILE_WIDTH).round(round);
     let tile = match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
         Some(image) => tile.artwork(Element::raster_image(image.clone().cover())),
         None => tile,
     };
-    match subtitle {
+    let element = match subtitle {
         Some(subtitle) => tile.subtitle(subtitle),
         None => tile,
     }
-    .render()
+    .render();
+    if !state.mobile { return element; }
+    let Some(track) = state.track_at(&row) else { return element; };
+    let action = format!("more:{row}");
+    let scrim = ComponentPalette { surface: COVER_SCRIM, hover: COVER_SCRIM, selected: COVER_SCRIM, ..palette };
+    let more = IconButton::new(&action, Icon::More, scrim).variant(ButtonVariant::Subtle).round()
+        .accessibility_label(format!("Opciones de {}", track.title)).render().size(Some(44.0), Some(44.0));
+    let over = Element::column(vec![Element::row(vec![Element::spacer().flex(1.0), more]).padding(4.0), Element::spacer().flex(1.0)]);
+    ContextMenu::new(format!("tile-context:{row}:{}", track.id), Element::stack(vec![element, over]).size(Some(TILE_WIDTH), None),
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, "Opciones de la canción"))], SCHEME.menu())
+        .open_action(action).render()
 }
 
 fn release_tiles(state: &State, prefix: &str, releases: &[AlbumRef], palette: ComponentPalette) -> Vec<Element> {

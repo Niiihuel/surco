@@ -114,6 +114,10 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
     state.collection.playlists.push(Playlist { id: 1, name: "Una playlist de un nombre muy largo que no debe cubrir los botones al confirmar su eliminación".into(), collaborative: false, tracks: Vec::new() });
     state.confirm = Some(Confirm::DeletePlaylist(1));
     let frame = tree(&state, size).layout(size);
+    let dialog = frame.access.iter().find(|node| node.id == "confirm-cancel:dialog").unwrap();
+    let spoken = dialog.description.as_deref().unwrap();
+    assert!(spoken.contains(&state.collection.playlists[0].name), "the reader identifies the actual playlist");
+    assert!(spoken.contains("canciones"), "the reader hears the deletion's consequences");
     for id in ["confirm-yes", "confirm-cancel", "confirm-cancel:close"] {
         target(&frame, id, size);
     }
