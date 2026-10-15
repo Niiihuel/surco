@@ -29,8 +29,8 @@ def validate_summary(summary):
     """A successful build or an empty test plan is not an interaction pass."""
     if summary.get("result") != "Passed" or summary.get("failedTests") != 0 or summary.get("skippedTests") != 0:
         raise RuntimeError("Native UI tests failed or skipped; inspect native-ui.xcresult")
-    if summary.get("totalTestCount", 0) < 6 or summary.get("passedTests") != summary.get("totalTestCount"):
-        raise RuntimeError("Expected all six native iOS tests to execute and pass")
+    if summary.get("totalTestCount", 0) < 9 or summary.get("passedTests") != summary.get("totalTestCount"):
+        raise RuntimeError("Expected all nine native iOS tests to execute and pass")
 
 
 @contextmanager

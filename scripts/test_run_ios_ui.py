@@ -71,12 +71,18 @@ class NativeUIGateTests(unittest.TestCase):
                 pass
 
     def test_all_native_interactions_must_execute_and_pass(self):
-        complete = {"result": "Passed", "totalTestCount": 6, "passedTests": 6, "failedTests": 0, "skippedTests": 0}
+        complete = {"result": "Passed", "totalTestCount": 9, "passedTests": 9, "failedTests": 0, "skippedTests": 0}
         script["validate_summary"](complete)
         for incomplete in [
             {},
             {**complete, "totalTestCount": 0, "passedTests": 0},
             {**complete, "totalTestCount": 5, "passedTests": 5},
+            {**complete, "totalTestCount": 6, "passedTests": 6},
+            {**complete, "totalTestCount": 8, "passedTests": 8},
+            {**complete, "passedTests": 8},
+            {**complete, "result": "Failed"},
+            {**complete, "failedTests": 1},
+            {**complete, "skippedTests": 1},
             {**complete, "failedTests": 1, "passedTests": 3, "result": "Failed"},
             {**complete, "skippedTests": 1, "passedTests": 3},
             {key: value for key, value in complete.items() if key != "failedTests"},
@@ -127,8 +133,8 @@ class NativeUIGateTests(unittest.TestCase):
                             if fails:
                                 raise RuntimeError("real XCTest failure")
                         if command[:4] == ["xcrun", "xcresulttool", "get", "test-results"]:
-                            return json.dumps({"result": "Passed", "totalTestCount": 6,
-                                "passedTests": 6, "failedTests": 0, "skippedTests": 0})
+                            return json.dumps({"result": "Passed", "totalTestCount": 9,
+                                "passedTests": 9, "failedTests": 0, "skippedTests": 0})
                         return ""
 
                     with patch.dict(script["build"], {"run": fake_run}), patch.object(subprocess, "Popen", return_value=process):

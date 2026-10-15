@@ -37,20 +37,34 @@ copy action. Song/playlist sharing and limn's Copy/Cut actions use the same path
 The synchronous FFI passes UTF-8 bytes with their length; NSString copies them,
 so Unicode and embedded NULs do not truncate the payload.
 
-`NativeUi::paste_text` reads only after a user paste action. Search and import
-provide visible **Pegar** buttons. The Host binds each request to its original
-field, mounts/focuses that field if the button just opened it, then checks that it
-is still visible, focused, enabled and outside an open context menu before
-reading. `PasteTo` delivers the result to that field. Empty/unavailable text leaves
-the field unchanged. Normal search text follows typing's debounce; links and
-playlist imports still wait for explicit submission.
+Search remains a limn canvas text field with a visible native `UIPasteControl`
+on iOS 16 and later. Its recipient accepts the representations supported by
+`NSString` and `NSURL`, including UTF-16 text. A URL representation that cannot be
+loaded falls back to one available text representation. Results are bound to the
+original target and discarded if the control is hidden, retargeted or destroyed.
+The playlist migration card uses the same recipient and opens an editable draft;
+it never starts importing automatically. iOS 15 uses an explicit-tap fallback.
+
+The import drawer instead contains a full-width native `UITextField`. UIKit owns
+selection, the **Pegar** editing menu and physical-keyboard shortcuts; there is no
+redundant Paste button beside the editor. Its editing events update Rust's draft
+without replacing the live field or caret. Return dismisses the keyboard; only
+the explicit Import action fetches a playlist.
+
+`NativeUi::paste_text` remains the explicit paste bridge for canvas-editor
+fallbacks. The Host binds a request to its original field and checks that it is
+still visible, focused, enabled and outside an open context menu before reading.
+`PasteTo` delivers the result to that field. Empty/unavailable text leaves it
+unchanged. Normal search text follows typing's debounce; links still wait for
+explicit submission.
 
 Clipboard contents are never polled, logged or read to decide whether a button is
 enabled. iOS may ask for paste permission; the bridge respects its result. The
 current winit UIKit backend does not provide universal physical-keyboard shortcuts
-or a native editing menu. Use the visible Paste controls instead of depending on
-Cmd+V. Any explicit egui paste event that does arrive is redirected to the system
-clipboard rather than its app-local fallback.
+or a native editing menu to the canvas Search field, so its visible Paste control
+remains available. That limitation does not apply to the drawer's native
+`UITextField`. Any explicit egui paste event that does arrive is redirected to
+the system clipboard rather than its app-local fallback.
 
 Surco enables eframe's `links` feature so its existing external-link actions use
 webbrowser's public UIKit implementation. No separate URL-opening bridge is needed.
@@ -76,6 +90,8 @@ Physical checks remain for the user: type in every input, rotate with keyboard v
 - [Apple keyboard frame coordinate space](https://developer.apple.com/documentation/uikit/uiresponder/keyboardframeenduserinfokey): the notification's end frame uses screen coordinates; iOS 16.1+ identifies the UIScreen in `notification.object`.
 - [Apple coordinate-space conversion](https://developer.apple.com/documentation/uikit/uicoordinatespace/convert(_:to:)-3imkt): convert from the notification screen into the attached view instead of assuming window and screen frames match.
 - [Apple UIView](https://developer.apple.com/documentation/uikit/uiview): UIKit main-thread ownership, view bounds, subviews and content scale.
+- [Apple native editing menus](https://developer.apple.com/documentation/uikit/uieditmenuinteraction): standard `UITextField` editors are preconfigured for selection and editing actions.
+- [Apple paste configuration](https://developer.apple.com/documentation/uikit/uipasteconfiguration): derive accepted representations from the `NSString` and `NSURL` classes the recipient loads.
 - [Apple AVRoutePickerView](https://developer.apple.com/documentation/avkit/avroutepickerview): visible system destination control; `prioritizesVideoDevices = false` for audio. Its `player` property is macOS-only and is not needed here.
 - [Apple route-change handling](https://developer.apple.com/documentation/avfaudio/responding-to-audio-route-changes): current route outputs provide real port names and types.
 - [raw-window-handle 0.6.2 UIKit handle](https://docs.rs/raw-window-handle/0.6.2/raw_window_handle/struct.UiKitWindowHandle.html): the public main-thread UIView pointer used by the eframe/winit host.
