@@ -2,9 +2,11 @@
 #import <UIKit/UIKit.h>
 #import <AVKit/AVKit.h>
 #import <AVFAudio/AVFAudio.h>
+#import "SurcoSurfaces.h"
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 typedef void (*SurcoUiWake)(void *context);
 
@@ -18,6 +20,7 @@ typedef struct {
     __weak UIView *_view;
     __weak UIScreen *_keyboardScreen;
     AVRoutePickerView *_picker;
+    SurcoSurfaces *_surfaces;
     NSMutableArray<id> *_observers;
     CGRect _keyboardFrame;
     uint64_t _routeRevision;
@@ -32,6 +35,8 @@ typedef struct {
 - (char *)copyRoute;
 - (void)placePicker:(CGRect)rect visible:(BOOL)visible;
 - (void)setTint:(UIColor *)tint active:(UIColor *)active;
+- (void)updateSurfaces:(NSDictionary *)payload scale:(CGFloat)scale;
+- (NSArray<NSDictionary *> *)takeSurfaceEvents;
 @end
 
 @implementation SurcoNativeView
@@ -44,6 +49,7 @@ typedef struct {
     _routeRevision = 1;
     _observers = [NSMutableArray array];
     __weak SurcoNativeView *weakSelf = self;
+    _surfaces = [[SurcoSurfaces alloc] initWithWake:^{ [weakSelf requestRepaint]; }];
     NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
     id frame = [center addObserverForName:UIKeyboardWillChangeFrameNotification object:nil
                                    queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
@@ -92,6 +98,8 @@ typedef struct {
     // callback first makes it harmless before Rust releases its Context allocation.
     _wake = NULL;
     _context = NULL;
+    [_surfaces invalidate];
+    _surfaces = nil;
     for (id token in _observers) [NSNotificationCenter.defaultCenter removeObserver:token];
     [_observers removeAllObjects];
     _picker.hidden = YES;
@@ -180,6 +188,10 @@ typedef struct {
     _picker.tintColor = tint;
     _picker.activeTintColor = active;
 }
+- (void)updateSurfaces:(NSDictionary *)payload scale:(CGFloat)scale {
+    [_surfaces updatePayload:payload view:_view scale:scale];
+}
+- (NSArray<NSDictionary *> *)takeSurfaceEvents { return [_surfaces takeEvents]; }
 @end
 
 void *surco_ui_create(SurcoUiWake wake, void *context) {
@@ -249,4 +261,23 @@ static UIColor *SurcoUiColor(uint32_t rgba) {
 void surco_ui_picker_colors(void *handle, uint32_t tint, uint32_t active) {
     NSCAssert(NSThread.isMainThread, @"Surco native UI must run on the main thread");
     [(__bridge SurcoNativeView *)handle setTint:SurcoUiColor(tint) active:SurcoUiColor(active)];
+}
+
+int surco_ui_surfaces(void *handle, const uint8_t *bytes, size_t length, double scale) {
+    NSCAssert(NSThread.isMainThread, @"Surco native surfaces must run on the main thread");
+    if (!isfinite(scale) || scale <= 0) return 0;
+    NSData *data = [NSData dataWithBytes:bytes length:length];
+    id payload = [NSJSONSerialization JSONObjectWithData:data options:0 error:NULL];
+    if (![payload isKindOfClass:NSDictionary.class]) return 0;
+    [(__bridge SurcoNativeView *)handle updateSurfaces:payload scale:scale];
+    return 1;
+}
+
+char *surco_ui_take_surface_events(void *handle) {
+    NSCAssert(NSThread.isMainThread, @"Surco native surfaces must run on the main thread");
+    NSArray *events = [(__bridge SurcoNativeView *)handle takeSurfaceEvents];
+    NSData *data = [NSJSONSerialization dataWithJSONObject:events ?: @[] options:0 error:NULL];
+    if (!data) return NULL;
+    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
+    return json ? strdup(json.UTF8String) : NULL;
 }

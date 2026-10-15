@@ -15,6 +15,8 @@
 		10000000000000000000001C /* SurcoView.m in Sources */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001D /* SurcoView.m */; };
 		10000000000000000000001E /* AVKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 10000000000000000000001F /* AVKit.framework */; };
 		100000000000000000000020 /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000021 /* LaunchScreen.storyboard */; };
+		100000000000000000000022 /* SurcoSurfaces.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000023 /* SurcoSurfaces.m */; };
+		100000000000000000000024 /* SurcoSheet.m in Sources */ = {isa = PBXBuildFile; fileRef = 100000000000000000000025 /* SurcoSheet.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -29,6 +31,10 @@
 		10000000000000000000001D /* SurcoView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoView.m; sourceTree = "<group>"; };
 		10000000000000000000001F /* AVKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVKit.framework; path = System/Library/Frameworks/AVKit.framework; sourceTree = SDKROOT; };
 		100000000000000000000021 /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
+		100000000000000000000023 /* SurcoSurfaces.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoSurfaces.m; sourceTree = "<group>"; };
+		100000000000000000000025 /* SurcoSheet.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = SurcoSheet.m; sourceTree = "<group>"; };
+		100000000000000000000026 /* SurcoSurfaces.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SurcoSurfaces.h; sourceTree = "<group>"; };
+		100000000000000000000027 /* SurcoSheet.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = SurcoSheet.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -47,6 +53,10 @@
 				100000000000000000000002 /* main.m */,
 				100000000000000000000017 /* SurcoMedia.m */,
 				10000000000000000000001D /* SurcoView.m */,
+				100000000000000000000023 /* SurcoSurfaces.m */,
+				100000000000000000000025 /* SurcoSheet.m */,
+				100000000000000000000026 /* SurcoSurfaces.h */,
+				100000000000000000000027 /* SurcoSheet.h */,
 				10000000000000000000001A /* MediaPlayer.framework */,
 				10000000000000000000001B /* AVFAudio.framework */,
 				10000000000000000000001F /* AVKit.framework */,
@@ -121,7 +131,7 @@
 		10000000000000000000000A /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
-			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */, 10000000000000000000001C /* SurcoView.m in Sources */);
+			files = (100000000000000000000001 /* main.m in Sources */, 100000000000000000000016 /* SurcoMedia.m in Sources */, 10000000000000000000001C /* SurcoView.m in Sources */, 100000000000000000000022 /* SurcoSurfaces.m in Sources */, 100000000000000000000024 /* SurcoSheet.m in Sources */);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */

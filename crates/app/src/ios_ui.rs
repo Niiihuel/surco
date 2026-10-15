@@ -82,6 +82,8 @@ mod native {
         fn surco_ui_copy_text(bytes: *const u8, length: usize) -> i32;
         fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
         fn surco_reduce_motion_enabled() -> i32;
+        fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
+        fn surco_ui_take_surface_events(handle: *mut c_void) -> *mut c_char;
     }
 
     /// Read the system preference on UIKit's main thread; the host combines it with its setting.
@@ -103,6 +105,8 @@ mod native {
         geometry: Geometry,
         route: Option<CurrentRoute>,
         route_revision: u64,
+        surface_payload: Option<(String, f32)>,
+        view: Option<NonNull<c_void>>,
     }
 
     impl NativeUi {
@@ -117,6 +121,8 @@ mod native {
                 geometry: Geometry::default(),
                 route: None,
                 route_revision: 0,
+                surface_payload: None,
+                view: None,
             })
         }
 
@@ -127,6 +133,10 @@ mod native {
         /// this window. The pointer only needs to remain valid during this main-thread call;
         /// the native owner stores a weak UIView reference.
         pub unsafe fn update_view(&mut self, view: NonNull<c_void>) {
+            if self.view != Some(view) {
+                self.surface_payload = None;
+                self.view = Some(view);
+            }
             unsafe { surco_ui_update(self.handle.as_ptr(), view.as_ptr(), &mut self.geometry) };
             if self.geometry.route_revision != self.route_revision {
                 self.route_revision = self.geometry.route_revision;
@@ -179,6 +189,29 @@ mod native {
 
         pub fn current_route(&self) -> Option<&CurrentRoute> {
             self.route.as_ref()
+        }
+
+        /// Publish controlled UIKit surfaces only when their content/geometry changes.
+        pub fn update_surfaces(&mut self, payload: &impl serde::Serialize) -> Result<(), String> {
+            let json = serde_json::to_string(payload).map_err(|error| error.to_string())?;
+            let scale = self.ctx.pixels_per_point() / self.geometry.scale as f32;
+            if !scale.is_finite() || scale <= 0.0 { return Err("Invalid native surface scale".into()); }
+            if self.surface_payload.as_ref().is_some_and(|(old, old_scale)| old == &json && *old_scale == scale) {
+                return Ok(());
+            }
+            if unsafe { surco_ui_surfaces(self.handle.as_ptr(), json.as_ptr(), json.len(), f64::from(scale)) } == 0 {
+                return Err("iOS could not update its controls".into());
+            }
+            self.surface_payload = Some((json, scale));
+            Ok(())
+        }
+
+        pub fn take_surface_events<T: serde::de::DeserializeOwned>(&mut self) -> Result<Vec<T>, String> {
+            let json = unsafe { surco_ui_take_surface_events(self.handle.as_ptr()) };
+            if json.is_null() { return Err("iOS could not read its control events".into()); }
+            let events = serde_json::from_slice(unsafe { CStr::from_ptr(json) }.to_bytes());
+            unsafe { surco_ui_free_string(json) };
+            events.map_err(|error| format!("Invalid iOS control event: {error}"))
         }
 
         /// Write only in response to an explicit Copy/Cut action. NSString copies the bytes.
