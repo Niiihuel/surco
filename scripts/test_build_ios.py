@@ -186,6 +186,50 @@ class IOSBuildTests(unittest.TestCase):
                 self.assertEqual((artifacts / "logs/simulator-startup-system.log").exists(), screenshot_times_out)
                 self.assertIn(["xcrun", "simctl", "delete", "owned-simulator"], calls)
 
+    def test_native_interactions_use_the_owned_simulator_before_cleanup_and_propagate_failures(self):
+        for interaction_fails in (False, True):
+            with self.subTest(failure=interaction_fails), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                app = root / "Surco.app"
+                app.mkdir()
+                bundle_id = "io.github.niiihuel.surco"
+                (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": bundle_id}))
+                artifacts = root / "artifacts"
+                (artifacts / "logs").mkdir(parents=True)
+                calls = []
+                inventory = {"devices": {"com.apple.CoreSimulator.SimRuntime.iOS-26-5": [
+                    {"isAvailable": True, "name": "iPhone 17", "deviceTypeIdentifier": "phone"}]}}
+
+                def fake_run(command, env, log, **options):
+                    calls.append(command)
+                    log.write_text("completed")
+                    if "devices" in command:
+                        return json.dumps(inventory)
+                    if "create" in command:
+                        return "owned-simulator\n"
+                    if "launch" in command:
+                        return f"{bundle_id}: 12345\n"
+                    if any(str(part).endswith("run-ios-ui-tests.py") for part in command) and interaction_fails:
+                        raise RuntimeError("native interaction failed")
+                    return ""
+
+                globals_ = script["smoke_simulator"].__globals__
+                with patch.dict(globals_, {"run": fake_run, "collect_crash_reports": lambda *args: []}), \
+                        patch.object(time, "sleep"), patch.object(script["os"], "kill"):
+                    if interaction_fails:
+                        with self.assertRaisesRegex(RuntimeError, "native interaction failed"):
+                            script["smoke_simulator"](app, "26.5", {"SURCO_IOS_NATIVE_UI_TESTS": "1"}, artifacts)
+                    else:
+                        script["smoke_simulator"](app, "26.5", {"SURCO_IOS_NATIVE_UI_TESTS": "1"}, artifacts)
+                interactions = [command for command in calls if any(str(part).endswith("run-ios-ui-tests.py") for part in command)]
+                self.assertEqual(len(interactions), 1, "native interactions are a required gate, without retries")
+                command = interactions[0]
+                self.assertEqual(command[command.index("--udid") + 1], "owned-simulator")
+                self.assertLess(calls.index(command), calls.index(["xcrun", "simctl", "delete", "owned-simulator"]))
+                self.assertEqual(sum("create" in command for command in calls), 1, "reuse the startup-smoke simulator")
+                self.assertEqual(sum("boot" in command for command in calls), 1)
+                self.assertIn(["xcrun", "simctl", "shutdown", "owned-simulator"], calls)
+
     def test_linker_flags_keep_framework_order_duplicates_and_archive_spaces(self):
         archive = Path("/a checkout/target/libsurco_app.a")
         config = script["linker_configuration"](archive, "-framework UIKit -lc++ -framework Metal -lc++")

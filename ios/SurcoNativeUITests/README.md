@@ -21,4 +21,6 @@ The runner reuses `target/ios/simulator/Rust.xcconfig` and `DerivedData`, disabl
 
 The caller handles simulator creation, readiness, software keyboard configuration and cleanup. In ephemeral CI, disable the Simulator host preference `ConnectHardwareKeyboard` before launching tests so keyboard assertions exercise the on-screen keyboard. This script never erases, boots, shuts down or deletes a supplied simulator.
 
+The iOS workflow enables `SURCO_IOS_NATIVE_UI_TESTS=1` only for its simulator matrix job. `build-ios.py` runs the native interactions after the existing startup smoke, using that same booted simulator before its `finally` cleanup. A test failure propagates through the build job; startup screenshot success cannot substitute for an interaction pass. Device builds keep their existing unsigned packaging path.
+
 Apple references: [XCUIApplication](https://developer.apple.com/documentation/xcuiautomation/xcuiapplication), [coordinate gestures](https://developer.apple.com/documentation/xcuiautomation/xcuicoordinate), [Xcode test schemes](https://developer.apple.com/documentation/xcode/organizing-tests-to-improve-feedback), and [the xcresulttool commands introduced in Xcode 16](https://developer.apple.com/documentation/xcode-release-notes/xcode-16_3-release-notes).

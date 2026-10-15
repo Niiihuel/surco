@@ -37,6 +37,7 @@ def run_tests(udid, config, derived, artifacts, env):
         "xcodebuild", "-project", str(ROOT / "ios/Surco.xcodeproj"), "-scheme", "SurcoNativeUI",
         "-configuration", "Release", "-sdk", "iphonesimulator", "-destination", f"id={udid}",
         "-derivedDataPath", str(derived), "-xcconfig", str(config), "CODE_SIGNING_ALLOWED=NO",
+        f"CURRENT_PROJECT_VERSION={env.get('GITHUB_RUN_NUMBER', '1')}",
         "-parallel-testing-enabled", "NO", "-maximum-concurrent-test-simulator-destinations", "1",
         "-resultBundlePath", str(result), "-only-testing:SurcoNativeUITests", "test",
     ]
