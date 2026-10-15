@@ -224,8 +224,12 @@ impl Quality {
 pub enum Lyrics {
     Loading,
     Lines(Vec<Line>),
-    /// Nobody has synced them.
+    /// Available words without timing; they never seek or follow the playback clock.
+    Plain { lines: Vec<String>, source: String },
+    /// The request completed but the provider has no usable lyrics.
     Missing,
+    /// A provider/network failure can be requested again after its rate-limit cooldown.
+    Failed { message: String, retry_at: Instant },
 }
 
 /// How many tracks a shelf of the home page holds.
@@ -1340,6 +1344,16 @@ impl State {
                 }
                 self.ask_lyrics()
             }
+            "retry-lyrics" => {
+                let retry = self.current().zip(self.lyrics.as_ref()).is_some_and(|(track, (id, lyrics))| {
+                    *id == track.id && match lyrics {
+                        Lyrics::Failed { retry_at, .. } => Instant::now() >= *retry_at,
+                        Lyrics::Missing => true,
+                        _ => false,
+                    }
+                });
+                if retry { self.lyrics = None; self.ask_lyrics() } else { Vec::new() }
+            }
             _ if id.starts_with("shelf-back:") || id.starts_with("shelf-on:") => {
                 let (way, shelf) = id.split_once(':').unwrap_or_default();
                 self.shelf_push = Some((shelf.to_owned(), if way == "shelf-on" { 1.0 } else { -1.0 }));
@@ -1859,8 +1873,24 @@ impl State {
             }
             Event::Lyrics { track_id, lines } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
-                    if *asked == track_id {
+                    if *asked == track_id && (lines.is_some() || !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. })) {
                         *lyrics = lines.map_or(Lyrics::Missing, Lyrics::Lines);
+                    }
+                }
+                Vec::new()
+            }
+            Event::LyricsPlain { track_id, lines, source } => {
+                if let Some((asked, lyrics)) = &mut self.lyrics {
+                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_)) { *lyrics = Lyrics::Plain { lines, source }; }
+                }
+                Vec::new()
+            }
+            Event::LyricsFailed { track_id, message, retry_after } => {
+                if let Some((asked, lyrics)) = &mut self.lyrics {
+                    if *asked == track_id && !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. }) {
+                        let now = Instant::now();
+                        let retry_at = now.checked_add(retry_after).unwrap_or(now + Duration::from_secs(86_400));
+                        *lyrics = Lyrics::Failed { message, retry_at };
                     }
                 }
                 Vec::new()
@@ -2098,6 +2128,14 @@ impl State {
     pub fn lines(&self) -> &[Line] {
         match (&self.lyrics, &self.player.current) {
             (Some((asked, Lyrics::Lines(lines))), Some(track)) if *asked == track.id => lines,
+            _ => &[],
+        }
+    }
+
+    /// The un-timed words for the current track only.
+    pub fn plain_lyrics(&self) -> &[String] {
+        match (&self.lyrics, &self.player.current) {
+            (Some((asked, Lyrics::Plain { lines, .. })), Some(track)) if *asked == track.id => lines,
             _ => &[],
         }
     }
@@ -2968,6 +3006,55 @@ mod tests {
         assert_eq!(state.page, Page::Downloads);
         click(&mut state, "back");
         assert!(state.lyrics_open(), "and the way back passes through them");
+    }
+
+    #[test]
+    fn a_failed_lyrics_lookup_can_be_requested_again_without_duplicate_inflight_work() {
+        let mut state = State { mobile: true, panel_open: false, ..without_clips() };
+        state.show(PlayerView { current: Some(track("a")), ..PlayerView::default() });
+        assert!(click(&mut state, "mobile-playing").contains(&Command::Lyrics(track("a"))));
+        assert!(click(&mut state, "retry-lyrics").is_empty(), "an in-flight lookup is already working");
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: None });
+        assert_eq!(click(&mut state, "retry-lyrics"), vec![Command::Lyrics(track("a"))],
+            "a failed lookup must not poison this song for the rest of its playback");
+        assert_eq!(state.lyrics, Some(("a".into(), Lyrics::Loading)));
+    }
+
+    #[test]
+    fn lyric_provider_failures_honor_cooldown_and_plain_results_never_seek() {
+        let mut state = State { mobile: true, panel_open: false, ..without_clips() };
+        state.show(PlayerView { current: Some(track("a")), position: 30.0, ..PlayerView::default() });
+        click(&mut state, "lyrics");
+        state.apply(Event::LyricsFailed { track_id: "old".into(), message: "rate limited".into(), retry_after: Duration::from_secs(60) });
+        assert_eq!(state.lyrics, Some(("a".into(), Lyrics::Loading)), "unrelated errors are ignored");
+        state.apply(Event::LyricsFailed { track_id: "a".into(), message: "rate limited".into(), retry_after: Duration::from_secs(60) });
+        assert!(matches!(&state.lyrics, Some((_, Lyrics::Failed { message, .. })) if message == "rate limited"));
+        assert!(click(&mut state, "retry-lyrics").is_empty(), "respect the provider's Retry-After");
+        if let Some((_, Lyrics::Failed { retry_at, .. })) = &mut state.lyrics {
+            *retry_at = Instant::now() - Duration::from_secs(1);
+        }
+        assert_eq!(click(&mut state, "retry-lyrics"), vec![Command::Lyrics(track("a"))]);
+        state.apply(Event::LyricsPlain { track_id: "old".into(), lines: vec!["stale".into()], source: "Test".into() });
+        assert!(state.plain_lyrics().is_empty());
+        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["First line".into(), "Second line".into()], source: "Test".into() });
+        assert_eq!(state.plain_lyrics(), ["First line", "Second line"]);
+        assert!(state.lines().is_empty() && state.active_line().is_none() && state.line_to_reveal().is_none());
+        assert!(click(&mut state, "lyric:0").is_empty(), "plain words have no seek time");
+    }
+
+    #[test]
+    fn late_lyrics_failures_cannot_erase_words_already_loaded_for_the_returned_track() {
+        let mut state = State { mobile: true, panel_open: false, ..without_clips() };
+        state.show(PlayerView { current: Some(track("a")), ..PlayerView::default() });
+        click(&mut state, "lyrics");
+        let lines = vec![Line { at_ms: 1000, text: "Available words".into() }];
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines.clone()) });
+        // A→B→A can leave an older request for A in flight. Its failure is not newer knowledge.
+        state.apply(Event::LyricsFailed { track_id: "a".into(), message: "late timeout".into(), retry_after: Duration::ZERO });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: None });
+        assert_eq!(state.lines(), lines);
+        state.apply(Event::LyricsPlain { track_id: "a".into(), lines: vec!["untimed".into()], source: "Test".into() });
+        assert_eq!(state.lines(), lines, "a late plain result cannot downgrade synchronized words");
     }
 
     #[test]

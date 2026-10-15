@@ -12,7 +12,9 @@ use base64::Engine as _;
 use surco_audio::equalizer::{self, EqualizerValues};
 use surco_audio::{AudioOutputDevice, Load, MediaBuffer, NativeAudio};
 use surco_core::discover;
-use surco_core::lyrics::{parse_lrc, Line};
+use surco_core::lyrics::Line;
+
+mod lyrics;
 use surco_video::{Clip, Film};
 use futures_util::future::join_all;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
@@ -185,6 +187,10 @@ pub enum Event {
     OutputFailed(String),
     /// A track's lines and when each starts, or none when nobody has synced them.
     Lyrics { track_id: String, lines: Option<Vec<Line>> },
+    /// Available text without synchronization; these lines have no seek position.
+    LyricsPlain { track_id: String, lines: Vec<String>, source: String },
+    /// A transient provider/network failure is not evidence that the song has no lyrics.
+    LyricsFailed { track_id: String, message: String, retry_after: Duration },
     /// A track's own video, or none when it has no such video.
     Clip { track_id: String, footage: Option<Arc<Footage>> },
     /// A part of the home page's picks.
@@ -242,6 +248,7 @@ struct Downloads {
 struct Shared {
     reply: Box<dyn Fn(Event) + Send + Sync>,
     youtube: YouTube,
+    lyrics: lyrics::Provider,
     audio: NativeAudio,
     /// Bumped by every `Effect::Play`. A task that finds another number was overtaken and stops.
     generation: AtomicU64,
@@ -524,6 +531,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
     Ok(Shared {
         reply: Box::new(reply),
         youtube,
+        lyrics: lyrics::Provider::default(),
         audio,
         generation: AtomicU64::new(0),
         handovers: AtomicU64::new(0),
@@ -619,11 +627,20 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Lyrics(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                let lines = lyrics(&shared, &track).await;
-                (shared.reply)(Event::Lyrics { track_id: track.id, lines });
+                let event = match shared.lyrics.fetch(&shared.youtube, &track).await {
+                    Ok(Some(lyrics::Found::Synced(lines))) => Event::Lyrics { track_id: track.id, lines: Some(lines) },
+                    Ok(Some(lyrics::Found::Plain { lines, source })) => Event::LyricsPlain { track_id: track.id, lines, source },
+                    Ok(None) => Event::Lyrics { track_id: track.id, lines: None },
+                    Err(failure) => {
+                        // Deliberately no track names, request URLs, headers or provider body.
+                        eprintln!("[surco::lyrics] {}", failure.message);
+                        Event::LyricsFailed { track_id: track.id, message: failure.message, retry_after: failure.retry_after }
+                    }
+                };
+                (shared.reply)(event);
             });
         }
-        (Command::Lyrics(track), Err(_)) => reply(Event::Lyrics { track_id: track.id, lines: None }),
+        (Command::Lyrics(track), Err(_)) => reply(Event::LyricsFailed { track_id: track.id, message: "No se pudo iniciar el servicio de letras. Volvé a abrir Surco.".into(), retry_after: Duration::ZERO }),
         (Command::Discover(taste), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move { discover(&shared, taste).await });
@@ -1042,8 +1059,6 @@ async fn footage(shared: &Shared, track: &Track) -> Option<Footage> {
     (!samples.is_empty()).then(|| Footage { clip: Clip { parameters: small.0.header.parameters.clone(), samples }, small, large, video })
 }
 
-/// Synced lyrics from LRCLIB. It is searched, not asked for the exact track, because an
-/// exact lookup misses on any difference in length; the entry closest in length wins.
 /// How many tracks the mix has, how many seeds get a shelf of their own, and how many
 /// artists and albums are picked.
 const MIX: usize = 20;
@@ -1082,16 +1097,6 @@ async fn discover(shared: &Shared, taste: Taste) {
     (shared.reply)(Event::Discovered(Picks::Albums(albums)));
 }
 
-async fn lyrics(shared: &Shared, track: &Track) -> Option<Vec<Line>> {
-    let request = shared.youtube.http().get("https://lrclib.net/api/search").query(&[("artist_name", &track.artist), ("track_name", &track.title)]);
-    let body = request.send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?;
-    let found: Vec<serde_json::Value> = serde_json::from_slice(&body).ok()?;
-    let seconds = track.duration_ms as f64 / 1000.0;
-    let apart = |entry: &serde_json::Value| (entry["duration"].as_f64().unwrap_or(0.0) - seconds).abs();
-    let best = found.iter().filter(|entry| entry["syncedLyrics"].is_string()).min_by(|a, b| apart(a).total_cmp(&apart(b)))?;
-    let lines = parse_lrc(best["syncedLyrics"].as_str()?);
-    (!lines.is_empty()).then_some(lines)
-}
 
 const NO_AUDIO: &str = "YouTube no ofreció audio para este tema.";
 
