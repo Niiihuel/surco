@@ -283,7 +283,7 @@ impl eframe::App for Host {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
-        let sounding = self.state.player.playing && !self.state.settings.reduce_motion;
+        let sounding = self.state.player.playing && !still;
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
         let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
@@ -340,7 +340,7 @@ impl eframe::App for Host {
             let now = Instant::now();
             let from = self.glide.as_ref().filter(|(gliding, _)| *gliding == shelf).map_or_else(|| self.tree.horizontal_scroll_offset(&shelf), |(_, spring)| spring.target());
             let to = (from + way * view::SHELF_STEP).max(0.0);
-            let mut spring = limn::ScalarSpring::new(if self.state.settings.reduce_motion { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
+            let mut spring = limn::ScalarSpring::new(if still { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
                 .motion(limn::SpringMotion::settling_in(Duration::from_millis(u64::from(limn::tokens().motion.move_ms) * 2)));
             spring.retarget(to, now);
             self.glide = Some((shelf, spring));

@@ -33,16 +33,34 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())),
         Page::Downloads => "Descargas",
         Page::Liked => "Tus me gusta",
+        Page::Album(album) if state.mobile_ui.compact_header => &album.title,
+        Page::Artist(artist) if state.mobile_ui.compact_header => &artist.name,
+        Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or("Playlist", |playlist| playlist.name.as_str()),
         _ => "Tu música",
     };
     let mut header = Vec::new();
     if state.can_go_back() || state.page == Page::Playing {
-        header.push(icon(if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
+        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
     }
-    header.push(Text::new(title, palette).font_size(if state.page == Page::Playing { 14.0 } else { 24.0 }).truncate().render().centered_y().flex(1.0));
+    let compact_player = state.page == Page::Playing && !state.queue_open && state.mobile_ui.compact_header;
+    let copy = if compact_player {
+        state.current().map_or_else(|| Text::new(title, palette).render(), |track| {
+            Element::column(vec![Text::new(&track.title, palette).font_size(17.0).truncate().render(),
+                Text::new(&track.artist, palette).font_size(12.0).muted().truncate().render()]).gap(4.0)
+        })
+    } else { Text::new(title, palette).font_size(if state.page == Page::Playing { 14.0 } else if state.mobile_ui.compact_header { 18.0 } else { 24.0 }).truncate().render() };
+    header.push(copy.centered_y().flex(1.0));
+    if compact_player {
+        if let Some(track) = state.current() {
+            header.push(icon("mobile-player-header-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart }, if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"));
+        }
+        header.push(icon("mobile-player-header-play", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette).dispatch_as("play-pause"));
+    } else if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
+        header.push(icon("mobile-detail-header-play", Icon::PlayFill, "Reproducir", palette).dispatch_as("page-play"));
+    }
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
-    } else if state.page == Page::Playing && state.current().is_some() {
+    } else if state.page == Page::Playing && !compact_player && state.current().is_some() {
         header.push(icon("mobile-player-header-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"));
     }
     if state.page != Page::Settings && state.page != Page::Playing && !matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
@@ -50,9 +68,14 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let header_height = if searching { if editing { 0.0 } else { HEADER_HEIGHT } } else { HEADER_HEIGHT };
+    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if editing { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
     let header = Element::panel(Element::row(header).gap(8.0).padding(16.0).size(None, Some(HEADER_HEIGHT)))
         .size(None, Some(header_height)).clip_children();
+    let header = if compact_player {
+        Element::stack(vec![header, Element::column(vec![Element::spacer().flex(1.0),
+            Progress::new(state.progress(), palette).height(2.0).render()])])
+            .size(None, Some(header_height)).clip_children()
+    } else { header };
     let mut top = vec![header];
     let mut top_height = header_height;
     if searching {
@@ -90,6 +113,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let content = Element::column(notices);
     let content = if state.page == Page::Playing { state.current().map_or(content.clone(), |track| washed(state, &track.artwork_url, content)) } else { content };
     let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
+    let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
@@ -329,8 +353,44 @@ mod tests {
             assert_eq!(last.press_region(margin).unwrap().id, "mobile-mini-bar");
             tree.handle_event(limn::UiEvent::PointerDown(margin));
             assert!(tree.handle_event(limn::UiEvent::PointerUp(margin)).is_empty());
-
+            state.mobile_ui.compact_header = true;
+            tree.set_root(super::view(&state, size));
+            let compact = tree.layout(size);
+            let id = "mobile-detail-header-play";
+            assert_eq!(compact.regions.iter().filter(|region| region.id == id).count(), 1);
+            let button = compact.access.iter().find(|node| node.id == id).unwrap().rect;
+            let point = limn::Point::new(button.x + 20.0, button.y + 20.0);
+            tree.handle_event(limn::UiEvent::PointerDown(point));
+            assert_eq!(tree.handle_event(limn::UiEvent::PointerUp(point)), vec![UiAction::Clicked { id: "page-play".into() }]);
         }
     }
 
+    #[test]
+    fn player_translation_moves_header_and_hits_together_without_duplicate_controls() {
+        let mut state = playing_state();
+        state.page = Page::Playing;
+        let size = Size::new(390.0, 844.0);
+        let mut tree = UiTree::new(super::view(&state, size));
+        tree.set_reduced_motion(true);
+        let first = tree.layout(size);
+        let original = first.access.iter().find(|node| node.id == "mobile-player-dismiss").unwrap().rect;
+        state.mobile_ui.player_offset = 100.0;
+        state.mobile_ui.compact_header = true;
+        state.collection.liked.push(state.current().unwrap().clone());
+        tree.set_root(super::view(&state, size));
+        let moved = tree.layout(size);
+        let close = moved.access.iter().find(|node| node.id == "mobile-player-dismiss").unwrap().rect;
+        assert_eq!(close.y, original.y + 100.0);
+        assert_ne!(moved.hit_test(limn::Point::new(original.x + 20.0, original.y + 20.0)), Some("mobile-player-dismiss"));
+        assert_eq!(moved.hit_test(limn::Point::new(close.x + 20.0, close.y + 20.0)), Some("mobile-player-dismiss"));
+        for id in ["mobile-player-header-play", "mobile-player-header-like", "play-pause", "like"] {
+            assert!(moved.regions.iter().filter(|region| region.id == id && region.kind == limn::HitKind::Button).count() <= 1);
+        }
+        for id in ["mobile-player-header-play", "mobile-player-header-like"] {
+            let control = moved.access.iter().find(|node| node.id == id).unwrap().rect;
+            assert!(control.width >= TAP && control.height >= TAP && control.y >= 100.0 && control.y + control.height <= 176.0);
+        }
+        assert_eq!(moved.access.iter().find(|node| node.id == "mobile-player-header-like").unwrap().name, "Quitar de Tus me gusta");
+        assert!(state.player.playing);
+    }
 }
