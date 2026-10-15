@@ -12,6 +12,8 @@
   controls, background audio, and recovery for interruptions and audio route changes.
 - A device sheet with the current audio output and Apple's native AirPlay and
   Bluetooth output picker.
+- iOS system clipboard support, with explicit Paste controls in search and playlist
+  import. Clipboard reads happen only after a paste action.
 
 ### Changed
 
@@ -27,6 +29,8 @@
 - Removing a queued song cannot remove a different occurrence if playback advances
   while its action sheet is open.
 - Paused iOS audio outputs are released and rebuilt safely when playback resumes.
+- Copied song links and playlist text reach the iPhone's system clipboard, and
+  external links open in the system browser.
 
 ## 0.1.4
 

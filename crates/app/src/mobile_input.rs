@@ -172,6 +172,16 @@ impl TouchInput {
     }
 }
 
+/// Gate system clipboard reads on the field that requested them, before touching UIKit.
+#[cfg(any(target_os = "ios", test))]
+pub fn can_paste(tree: &UiTree, frame: &Frame, target: &str) -> bool {
+    !tree.context_menu_open()
+        && tree.focused_id() == Some(target)
+        && frame.regions.iter().any(|region| region.id == target
+            && matches!(region.kind, HitKind::TextInput | HitKind::TextArea | HitKind::CodeEditor))
+        && !frame.access.iter().any(|node| node.id == target && node.disabled)
+}
+
 fn relative(position: Pos2, origin: Pos2) -> Point {
     Point::new(position.x - origin.x, position.y - origin.y)
 }
@@ -267,6 +277,36 @@ fn screen_rect(rect: limn::Rect, origin: Pos2) -> egui::Rect {
 mod tests {
     use super::*;
     use limn::{Component, Element, Size, UiAction};
+
+    #[test]
+    fn clipboard_reads_require_the_original_focused_visible_field() {
+        let size = Size::new(320.0, 200.0);
+        let mut tree = UiTree::new(Element::column(vec![
+            Element::text_input("original", "", "Search").size(None, Some(44.0)),
+            Element::text_input("other", "", "Other").size(None, Some(44.0)),
+        ]));
+        let frame = tree.layout(size);
+        assert!(!can_paste(&tree, &frame, "original"));
+        tree.focus("original");
+        let frame = tree.layout(size);
+        assert!(can_paste(&tree, &frame, "original"));
+        assert_eq!(tree.handle_event(UiEvent::PasteTo { id: "original".into(), text: "ñ 東京".into() }),
+            vec![UiAction::InputChanged { id: "original".into(), value: "ñ 東京".into() }]);
+        assert_eq!(tree.input_value("original"), Some("ñ 東京"));
+        tree.handle_event(UiEvent::ContextMenuKeyboard);
+        assert!(tree.context_menu_open());
+        let frame = tree.layout(size);
+        assert!(!can_paste(&tree, &frame, "original"));
+        tree.dismiss_context_menu();
+        tree.focus("other");
+        let frame = tree.layout(size);
+        assert!(!can_paste(&tree, &frame, "original"));
+        assert!(tree.handle_event(UiEvent::PasteTo { id: "original".into(), text: "ñ 東京".into() }).is_empty());
+        assert_eq!(tree.input_value("other"), Some(""));
+        tree.set_root(Element::spacer());
+        let frame = tree.layout(size);
+        assert!(!can_paste(&tree, &frame, "other"));
+    }
 
     // The order egui-winit emits, including its emulated primary pointer.
     fn touch(phase: egui::TouchPhase, position: Pos2) -> Vec<egui::Event> {

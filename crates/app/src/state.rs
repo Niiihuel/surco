@@ -534,6 +534,8 @@ pub struct State {
     pub list_exported: Option<u64>,
     /// Text on its way to the clipboard; the window takes it.
     pub copy: Option<String>,
+    /// A field targeted by an explicit user paste request; never read on a timer.
+    pub paste: Option<String>,
     /// Covers already asked for, arrived or not.
     covers: HashSet<String>,
     /// The tracks kept on disk, newest first, and the ids on their way there.
@@ -738,6 +740,7 @@ impl Default for State {
             list_exported: None,
             shelf_push: None,
             copy: None,
+            paste: None,
             covers: HashSet::new(),
             saved: Vec::new(),
             saving: HashSet::new(),
@@ -1097,6 +1100,14 @@ impl State {
             }
         }
         match action {
+            UiAction::CopyRequested { text } => {
+                self.copy = Some(text.clone());
+                Vec::new()
+            }
+            UiAction::PasteRequested { id } => {
+                self.paste = Some(id.clone());
+                Vec::new()
+            }
             UiAction::InputChanged { id, value } if id == "search" => {
                 self.query = value.clone();
                 Vec::new()

@@ -202,6 +202,29 @@ char *surco_ui_copy_route(void *handle) {
 
 void surco_ui_free_string(char *value) { free(value); }
 
+int surco_ui_copy_text(const uint8_t *bytes, size_t length) {
+    NSCAssert(NSThread.isMainThread, @"Surco clipboard must run on the main thread");
+    NSString *text = [[NSString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding];
+    if (!text) return 0;
+    UIPasteboard.generalPasteboard.string = text;
+    return 1;
+}
+
+uint8_t *surco_ui_paste_text(size_t *length) {
+    NSCAssert(NSThread.isMainThread, @"Surco clipboard must run on the main thread");
+    *length = 0;
+    // Called only after a user paste request; UIKit owns any privacy permission prompt.
+    NSString *text = UIPasteboard.generalPasteboard.string;
+    if (!text) return NULL;
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    if (!data) return NULL;
+    uint8_t *copy = malloc(MAX(data.length, 1));
+    if (!copy) return NULL;
+    if (data.length) memcpy(copy, data.bytes, data.length);
+    *length = data.length;
+    return copy;
+}
+
 void surco_ui_picker(void *handle, double x, double y, double w, double h, int visible) {
     NSCAssert(NSThread.isMainThread, @"Surco native UI must run on the main thread");
     [(__bridge SurcoNativeView *)handle placePicker:CGRectMake(x, y, w, h) visible:visible != 0];

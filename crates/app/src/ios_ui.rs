@@ -79,6 +79,8 @@ mod native {
         fn surco_ui_free_string(value: *mut c_char);
         fn surco_ui_picker(handle: *mut c_void, x: f64, y: f64, w: f64, h: f64, visible: i32);
         fn surco_ui_picker_colors(handle: *mut c_void, tint: u32, active: u32);
+        fn surco_ui_copy_text(bytes: *const u8, length: usize) -> i32;
+        fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
     }
 
     extern "C" fn wake(context: *mut c_void) {
@@ -170,6 +172,26 @@ mod native {
 
         pub fn current_route(&self) -> Option<&CurrentRoute> {
             self.route.as_ref()
+        }
+
+        /// Write only in response to an explicit Copy/Cut action. NSString copies the bytes.
+        pub fn copy_text(&mut self, text: &str) -> Result<(), String> {
+            if unsafe { surco_ui_copy_text(text.as_ptr(), text.len()) } != 0 {
+                Ok(())
+            } else {
+                Err("iOS could not write text to the system clipboard".into())
+            }
+        }
+
+        /// Read once after a user paste gesture. iOS may request paste permission.
+        /// Never call this from update_view, a timer or an availability check.
+        pub fn paste_text(&mut self) -> Result<Option<String>, String> {
+            let mut length = 0;
+            let bytes = unsafe { surco_ui_paste_text(&mut length) };
+            if bytes.is_null() { return Ok(None); }
+            let text = String::from_utf8(unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec());
+            unsafe { surco_ui_free_string(bytes.cast()) };
+            text.map(Some).map_err(|_| "iOS returned invalid clipboard text".into())
         }
 
         /// Place the real system button in an egui screen-coordinate slot (including area.min).

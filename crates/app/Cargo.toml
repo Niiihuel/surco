@@ -15,7 +15,7 @@ crate-type = ["rlib", "staticlib"]
 surco-core = { path = "../core" }
 limn = { path = "../../../lienzo/crates/limn", default-features = false }
 limn-egui = { path = "../../../lienzo/crates/limn-egui", default-features = false }
-eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence"] }
+eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence", "links"] }
 # Saves the frame for `--screenshot`, and reads a cover's colors for the tint of its card.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 fastrand = "2"

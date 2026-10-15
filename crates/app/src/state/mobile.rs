@@ -135,6 +135,23 @@ impl State {
             }
             UiAction::Submitted { id, .. } if id == "search" => return Some(self.mobile_submit()),
             UiAction::Clicked { id } => {
+                if let Some(target) = id.strip_prefix("ios-paste:") {
+                    let valid = match target {
+                        "search" if self.page == Page::Search => {
+                            self.mobile_search = true;
+                            self.mobile_ui.search_editing = true;
+                            true
+                        }
+                        "import-link" => self.importing.is_some(),
+                        _ => false,
+                    };
+                    if valid {
+                        self.focus = Some(target.into());
+                        self.paste = Some(target.into());
+                        self.mobile_ui.blur = false;
+                    }
+                    return Some(Vec::new());
+                }
                 if let Some(key) = id.strip_prefix("library-more:") {
                     self.mobile_ui.library = self.mobile_library_context(key);
                     self.mobile_ui.context = None;
@@ -316,6 +333,44 @@ mod tests {
         click(&mut state, "mobile-search-clear");
         assert!(state.query.is_empty() && state.submitted.is_none());
         assert!(state.mobile_ui.search_editing);
+    }
+
+    #[test]
+    fn clipboard_actions_keep_the_payload_and_explicit_paste_target() {
+        let mut state = phone();
+        let text = "Surco · ñ 東京\0después";
+        assert!(state.update(&UiAction::CopyRequested { text: text.into() }).is_empty());
+        assert_eq!(state.copy.as_deref(), Some(text));
+        assert!(click(&mut state, "ios-paste:search").is_empty());
+        assert_eq!(state.paste.as_deref(), Some("search"));
+        assert!(state.mobile_search && state.mobile_ui.search_editing);
+        assert_eq!(state.focus.as_deref(), Some("search"));
+        state.paste = None;
+        assert!(click(&mut state, "ios-paste:import-link").is_empty());
+        assert!(state.paste.is_none(), "a closed form cannot request clipboard access");
+        state.importing = Some(String::new());
+        click(&mut state, "ios-paste:import-link");
+        assert_eq!(state.paste.as_deref(), Some("import-link"));
+        assert!(state.update(&UiAction::PasteRequested { id: "creating-name".into() }).is_empty());
+        assert_eq!(state.paste.as_deref(), Some("creating-name"));
+        assert!(state.importing.as_ref().is_some_and(String::is_empty));
+    }
+
+    #[test]
+    fn clipboard_paste_uses_query_debounce_but_links_and_imports_wait_for_submit() {
+        let mut state = phone();
+        click(&mut state, "ios-paste:search");
+        assert!(state.update(&UiAction::InputChanged { id: "search".into(), value: "Cerati".into() }).is_empty());
+        assert_eq!(state.mobile_tick(Instant::now() + Duration::from_secs(2)), vec![Command::Search("Cerati".into())]);
+        assert!(state.update(&UiAction::InputChanged { id: "search".into(), value: "https://youtu.be/song".into() }).is_empty());
+        assert!(state.mobile_ui.pending.is_none());
+        assert!(state.mobile_tick(Instant::now() + Duration::from_secs(2)).is_empty());
+        assert!(state.open_url.is_none());
+        state.importing = Some(String::new());
+        let link = "https://open.spotify.com/playlist/example";
+        assert!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: link.into() }).is_empty());
+        assert_eq!(state.importing.as_deref(), Some(link));
+        assert!(state.import_progress.is_none());
     }
 
     #[test]
