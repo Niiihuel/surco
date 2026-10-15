@@ -34,19 +34,21 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
     let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(size.width, size.height));
     let context = eframe::egui::Context::default();
     limn_egui::install_fonts(&context);
-    context.set_pixels_per_point(fixture["pixels_per_point"].as_f64().unwrap() as f32);
-    context.begin_pass(RawInput {
+    let mut input = RawInput {
         screen_rect: Some(full),
         safe_area_insets: Some(SafeAreaInsets(safe)),
         ..Default::default()
-    });
+    };
+    input.viewports.entry(eframe::egui::ViewportId::ROOT).or_default().native_pixels_per_point =
+        Some(fixture["pixels_per_point"].as_f64().unwrap() as f32);
+    context.begin_pass(input);
     state.mobile_ui.content_insets = crate::mobile_content_insets(full, context.content_rect(), 0.0);
     let mut targets = serde_json::Map::new();
     for (page, key, ids) in [
         (
             Page::Search,
             "home",
-            vec!["mobile-library", "settings", "heard:0"],
+            vec!["mobile-search", "mobile-library", "settings", "heard:0"],
         ),
         (
             Page::Library,

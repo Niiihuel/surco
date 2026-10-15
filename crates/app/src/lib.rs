@@ -848,13 +848,16 @@ mod mobile_geometry_tests {
     fn phone_canvas_and_painter_cover_the_real_safe_edges() {
         let ctx = egui::Context::default();
         let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(402.0, 874.0));
-        let output = ctx.run_ui(RawInput {
+        let mut output = ctx.run_ui(RawInput {
             screen_rect: Some(full),
             safe_area_insets: Some(SafeAreaInsets(MarginF32 { top: 62.0, bottom: 34.0, left: 0.0, right: 0.0 })),
             events: vec![egui::Event::PointerMoved(pos2(20.0, 100.0))],
             ..Default::default()
         }, |ui| {
-            assert_eq!(ui.max_rect(), Rect::from_min_max(pos2(0.0, 62.0), pos2(402.0, 840.0)));
+            let safe = Rect::from_min_max(pos2(0.0, 62.0), pos2(402.0, 840.0));
+            assert_eq!(ctx.content_rect(), safe);
+            // A panel can restrict its painter even though the root Ui spans the viewport.
+            ui.set_clip_rect(safe);
             let canvas = mobile_canvas(ui, false);
             assert_eq!(canvas, full);
             assert_eq!(ui.clip_rect(), full);
@@ -865,6 +868,7 @@ mod mobile_geometry_tests {
                 "input uses full-canvas coordinates without subtracting the safe top again");
             ui.painter().rect_filled(canvas, 0.0, Color32::BLUE);
         });
+        output.textures_delta.clear();
         assert!(output.shapes.iter().any(|shape|
             shape.clip_rect == full && matches!(&shape.shape,
                 egui::Shape::Rect(rect) if rect.rect == full && rect.fill == Color32::BLUE)),

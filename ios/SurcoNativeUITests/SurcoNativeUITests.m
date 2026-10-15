@@ -67,9 +67,8 @@
 - (CGPoint)entryPoint:(NSString *)identifier page:(NSString *)page {
     NSArray *rect = self.entryGeometry[@"targets"][page][identifier];
     XCTAssertEqual(rect.count, 4u, @"Missing verified Frame target %@:%@", page, identifier);
-    CGFloat top = [self.entryGeometry[@"safe_insets"][0] doubleValue];
     return CGPointMake([rect[0] doubleValue] + [rect[2] doubleValue] / 2.0,
-        top + [rect[1] doubleValue] + [rect[3] doubleValue] / 2.0);
+        [rect[1] doubleValue] + [rect[3] doubleValue] / 2.0);
 }
 - (XCUICoordinate *)entryCoordinate:(NSString *)identifier page:(NSString *)page {
     CGPoint point = [self entryPoint:identifier page:page];
