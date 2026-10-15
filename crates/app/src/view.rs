@@ -1,5 +1,7 @@
 //! The window, described from the state. Rebuilt on every frame.
 
+mod mobile;
+
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
@@ -164,6 +166,9 @@ const ARTIST_PICTURE: f32 = 128.0;
 const PAGE_TITLE: f32 = 26.0;
 
 pub fn view(state: &State, window: Size) -> Element {
+    if state.mobile {
+        return mobile::view(state, window);
+    }
     let palette = SCHEME.palette();
     if state.cinema {
         return update_dialog(state, cinema(state, window, palette), palette);
@@ -652,12 +657,15 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
     }
     // A panel is shut from its own header.
-    let header = Element::row(vec![
-        header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y(),
-        Text::new("Tu biblioteca", palette).font_size(15.0).muted().render().centered_y(),
+    let mut header = vec![
+        Text::new(if state.mobile { "Guardado para vos" } else { "Tu biblioteca" }, palette).font_size(15.0).muted().render().centered_y(),
         Element::spacer().flex(1.0),
-        header_button("playlist-new", Icon::Add, TooltipSpec::new("Crear playlist"), palette).render().centered_y(),
-    ])
+        IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Dense }).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y(),
+    ];
+    if !state.mobile {
+        header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
+    }
+    let header = Element::row(header)
     .gap(8.0)
     .size(None, Some(40.0));
     let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
@@ -1157,6 +1165,8 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Downloads => "page:downloads".to_owned(),
         Page::Liked => "page:liked".to_owned(),
         Page::Playlist(id) => format!("page:playlist:{id}"),
+        Page::Library => "page:library".to_owned(),
+        Page::Playing => "page:playing".to_owned(),
         Page::Settings => "page:settings".to_owned(),
         Page::Lyrics => "page:lyrics".to_owned(),
         Page::News => "page:news".to_owned(),
@@ -1195,6 +1205,8 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .gap(12.0),
         ),
         Page::Downloads => downloads_page(state, width, palette),
+        Page::Library => library(state, false, width, palette),
+        Page::Playing => mobile::playing(state, width, palette),
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, palette),
         Page::News => news_page(state, width, palette),
@@ -1331,14 +1343,17 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     } else {
         format!("{} {} en este equipo.", state.outputs.len(), if state.outputs.len() == 1 { "salida disponible" } else { "salidas disponibles" })
     };
-    let mut connections = vec![
+    let mut connections = if state.mobile { vec![
+        row("Salida de audio", "iOS envía la música al destino elegido en el sistema.").value("Del sistema").stacked(compact).render(),
+        row("Conectar por Bluetooth", "Vinculá tus auriculares o parlantes en Ajustes > Bluetooth. Después abrí el Centro de control de iOS y elegí el destino de audio.").render(),
+    ] } else { vec![
         row("Dispositivo de salida", "Elegí por dónde escuchar: parlantes, auriculares o una salida Bluetooth conectada al sistema.")
             .trailing(output).stacked(compact).render(),
         row("Salidas disponibles", &output_status)
             .trailing(action("setting:outputs-refresh", if state.outputs_loading { "Buscando…" } else { "Actualizar" }, !state.outputs_loading))
             .stacked(compact).render(),
         row("Conectar por Bluetooth", "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.").render(),
-    ];
+    ] };
     if let Some(notice) = &state.output_notice {
         connections.push(Alert::new("Salida de audio", notice, card).id("setting:output-notice").compact(compact).render());
     }
@@ -1352,8 +1367,20 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         Tab::new("library-view:list", "Lista", 0.0).active(state.settings.library_view == LibraryView::List),
         Tab::new("library-view:grid", "Cuadrícula", 0.0).active(state.settings.library_view == LibraryView::Grid),
     ]);
+    let mut visualization = vec![switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)];
+    if !state.mobile {
+        visualization.splice(0..0, [
+            switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
+            switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
+            switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
+        ]);
+    }
     let body = vec![
-        PageHeader::new("Configuración", card).description("Tu música, a tu manera. Los cambios se guardan en este equipo.").stacked(compact).render(),
+        if state.mobile {
+            Text::new("Los cambios se guardan en este equipo.", card).muted().render()
+        } else {
+            PageHeader::new("Configuración", card).description("Los cambios se guardan en este equipo.").stacked(compact).render()
+        },
         group(
             "Reproducción",
             vec![
@@ -1371,12 +1398,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
                 row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
             ],
         ),
-        group("Visualización", vec![
-            switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
-            switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
-            switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
-            switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
-        ]),
+        group("Visualización", visualization),
         group(
             "Biblioteca",
             vec![
@@ -1406,7 +1428,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Acerca de",
             vec![
-                row("Versión", "Surco para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
+                row("Versión", if state.mobile { "Surco para iOS." } else { "Surco para escritorio." }).value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
                 row("Licencias de terceros", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
             ],
         ),

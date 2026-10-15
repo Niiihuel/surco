@@ -476,6 +476,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         }
         // Asked once, as the app opens: it is looked for again for as long as the app stays open.
         (Command::CheckUpdate, Ok(shared)) => {
+            // iOS distributes signed application bundles; the desktop updater replaces an executable.
+            if cfg!(target_os = "ios") {
+                return Vec::new();
+            }
             let shared = shared.clone();
             tokio::spawn(async move {
                 loop {

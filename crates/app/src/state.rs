@@ -36,6 +36,10 @@ pub enum Page {
     Liked,
     /// One of the user's lists, by its id.
     Playlist(u64),
+    /// The saved collection as a full page on a phone.
+    Library,
+    /// The phone's full player, backed by the same playback state.
+    Playing,
     Settings,
     /// The lines of what plays, in the middle of the window.
     Lyrics,
@@ -429,6 +433,10 @@ impl Side {
 pub const ARTIST_SONGS_SHOWN: usize = 10;
 
 pub struct State {
+    /// Use the phone layout; desktop previews can opt in without a second player.
+    pub mobile: bool,
+    /// The search tab is open even before a query has been submitted.
+    pub mobile_search: bool,
     pub query: String,
     /// The query whose results are shown or awaited. Answers for any other are stale.
     pub submitted: Option<String>,
@@ -672,6 +680,8 @@ pub fn equalizer_from(text: &str) -> Option<EqualizerValues> {
 impl Default for State {
     fn default() -> Self {
         Self {
+            mobile: cfg!(target_os = "ios"),
+            mobile_search: false,
             query: String::new(),
             submitted: None,
             searching: false,
@@ -776,6 +786,9 @@ impl State {
         let query = self.query.trim().to_owned();
         if query.is_empty() {
             return Vec::new();
+        }
+        if self.mobile {
+            self.mobile_search = true;
         }
         // A link to a track is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
@@ -1360,6 +1373,7 @@ impl State {
                 Vec::new()
             }
             "home" => {
+                self.mobile_search = false;
                 self.page = Page::Search;
                 self.history.clear();
                 self.query.clear();
@@ -1368,6 +1382,28 @@ impl State {
                 self.search_error = None;
                 self.found = Found::default();
                 self.ask_picks()
+            }
+            "mobile-search" => {
+                self.mobile_search = true;
+                if self.page != Page::Search {
+                    self.go(Page::Search);
+                }
+                self.focus = Some("search".into());
+                Vec::new()
+            }
+            "search-submit" => self.search(),
+            "mobile-library" => {
+                self.mobile_search = false;
+                if self.page != Page::Library {
+                    self.go(Page::Library);
+                }
+                Vec::new()
+            }
+            "mobile-playing" => {
+                if self.current().is_some() && self.page != Page::Playing {
+                    self.go(Page::Playing);
+                }
+                Vec::new()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -1878,7 +1914,7 @@ impl State {
 
     /// Whether the right panel shows what plays, the one place a clip is seen.
     fn shows_playing(&self) -> bool {
-        self.panel_open && !self.queue_open
+        !self.mobile && self.panel_open && !self.queue_open
     }
 
     /// The song that plays, also while its video's own sound has its place.

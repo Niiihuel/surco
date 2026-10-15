@@ -1,0 +1,85 @@
+name: iOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*ios*', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'ios/**', 'scripts/*ios*', '.github/workflows/ios.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # v0.1.43, matching Cargo.lock and the desktop workflows.
+  LIMN_REF: b595149d9635df63fd898fa0f7f289b13d818634
+  # macos-15 includes Xcode 16.4 and its iOS 18.5 simulator runtime.
+  DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+  IPHONEOS_DEPLOYMENT_TARGET: '15.0'
+  CARGO_BUILD_JOBS: '3'
+
+jobs:
+  build:
+    name: iOS · ${{ matrix.platform }}
+    runs-on: macos-15
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [simulator, device-unsigned]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: surco
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Niiihuel/limn
+          ref: ${{ env.LIMN_REF }}
+          path: lienzo
+
+      - name: Apple tools
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-version
+          xcrun --sdk iphonesimulator --show-sdk-version
+          cmake --version
+          ninja --version
+
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - name: Rust build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            surco/target
+          key: ios-${{ runner.arch }}-${{ matrix.platform }}-xcode16.4-${{ hashFiles('surco/Cargo.lock') }}
+
+      - name: Check packaging script
+        working-directory: surco
+        run: python3 scripts/test_build_ios.py
+
+      - name: Build and verify
+        working-directory: surco
+        run: python3 scripts/build-ios.py "${{ matrix.platform }}"
+
+      - name: Apps, screenshot and logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-${{ matrix.platform }}
+          path: surco/target/ios/${{ matrix.platform }}/artifacts/
+          if-no-files-found: error
+          retention-days: 14

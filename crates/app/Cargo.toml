@@ -5,7 +5,11 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Surco: a native music player for the desktop, drawn with limn."
+description = "Surco: a native music player drawn with limn."
+
+[lib]
+name = "surco_app"
+crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 surco-core = { path = "../core" }
