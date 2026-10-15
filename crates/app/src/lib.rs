@@ -97,6 +97,19 @@ fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
     }
 }
 
+fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Frame {
+    tree.set_root(view::view(state, window));
+    let frame = tree.layout(window);
+    // Header geometry must match this page and this scroll position, including
+    // the first paint after an input event when no later repaint is scheduled.
+    if mobile_motion::update_header(state, tree) {
+        tree.set_root(view::view(state, window));
+        tree.layout(window)
+    } else {
+        frame
+    }
+}
+
 fn native_surfaces_present(state: &State) -> bool {
     #[cfg(any(target_os = "ios", test))]
     { native_surfaces::has_sheet(state) }
@@ -320,9 +333,8 @@ impl eframe::App for Host {
         let sounding = self.state.player.playing && !still;
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
-        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        self.tree.set_root(view::view(&self.state, window));
         // Escape leaves the whole window to the app again, and the screen follows.
         if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
             let commands = self.state.update(&UiAction::Clicked { id: "cinema".into() });
@@ -392,7 +404,7 @@ impl eframe::App for Host {
         if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
         }
-        let input_frame = self.tree.layout(window);
+        let input_frame = layout_view(&mut self.state, &mut self.tree, window);
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
@@ -462,10 +474,9 @@ impl eframe::App for Host {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
-        let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+        let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        self.tree.set_root(view::view(&self.state, window));
-        let frame = self.tree.layout(window);
+        let frame = layout_view(&mut self.state, &mut self.tree, window);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -487,10 +498,9 @@ impl eframe::App for Host {
                                 let commands = self.state.update(&action);
                                 self.send(commands);
                             }
-                            let commands = self.motion.advance(&mut self.state, &self.tree, window, Instant::now());
+                            let commands = self.motion.advance(&mut self.state, window, Instant::now());
                             self.send(commands);
-                            self.tree.set_root(view::view(&self.state, window));
-                            frame = self.tree.layout(window);
+                            frame = layout_view(&mut self.state, &mut self.tree, window);
                         }
                         Err(error) => {
                             eprintln!("Surco clipboard: {error}");
