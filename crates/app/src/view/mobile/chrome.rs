@@ -1,6 +1,6 @@
 //! Scroll content beneath the phone's floating header and transport bars.
 
-use super::{Element, SCHEME, SCROLL_INDICATOR};
+use super::{Color, Element, SCHEME, SCROLL_INDICATOR};
 use limn::ElementKind;
 
 const EDGE_FADE: f32 = 48.0;
@@ -11,12 +11,12 @@ const EDGE_FADE: f32 = 48.0;
 /// Programmatic reveals must account for the overlaid bars: plain `reveal` reserves
 /// only 12px. Use `reveal_at_start` with `top` (a direct Scroll), or EDGE_FADE below
 /// fixed controls; `scroll_to_end` already includes the bottom content spacer.
-pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32) -> Element {
+pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32, header_edge: Color) -> Element {
     let top = top.max(0.0);
     let bottom = bottom.max(0.0);
     match &mut content.kind {
         ElementKind::Scroll { .. } => {
-            scroll_insets(&mut content, top, bottom);
+            scroll_insets(&mut content, top, bottom, header_edge);
             content
         }
         ElementKind::Column(children)
@@ -26,7 +26,7 @@ pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32) -> Element
                     .all(|child| matches!(child.kind, ElementKind::Scroll { .. })) =>
         {
             for child in children {
-                scroll_insets(child, top, bottom);
+                scroll_insets(child, top, bottom, header_edge);
             }
             content
         }
@@ -39,7 +39,7 @@ pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32) -> Element
                 .iter_mut()
                 .filter(|child| matches!(child.kind, ElementKind::Scroll { .. }))
             {
-                scroll_insets(child, 0.0, bottom);
+                scroll_insets(child, 0.0, bottom, header_edge);
             }
             // Keep the original gap between controls, without adding it after the top inset.
             let body = Element::column(std::mem::take(children))
@@ -57,7 +57,7 @@ fn space(height: f32) -> Element {
     Element::spacer().size(None, Some(height))
 }
 
-fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32) {
+fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32, header_edge: Color) {
     let ElementKind::Scroll { child, .. } = &mut scroll.kind else {
         return;
     };
@@ -66,7 +66,7 @@ fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32) {
     // The whole transition must sit beside the opaque chrome. A gradient
     // spanning the bar's height spends most of its opacity behind the bar,
     // leaving only a faint sliver visible at the content edge.
-    scroll.style.top_fade = Some((SCHEME.canvas, EDGE_FADE));
+    scroll.style.top_fade = Some((header_edge, EDGE_FADE));
     scroll.style.bottom_fade = (bottom > 0.0).then_some((SCHEME.canvas, EDGE_FADE));
     let element = std::mem::replace(scroll, Element::spacer());
     *scroll = element.fade_insets(top, bottom).scrollbar_visibility(SCROLL_INDICATOR);
@@ -115,7 +115,7 @@ mod tests {
             Element::spacer().flex(1.0),
             Element::button("footer", "Transport").size(None, Some(BOTTOM)),
         ]);
-        let mut tree = UiTree::new(Element::stack(vec![under_bars(body, TOP, BOTTOM), bars]));
+        let mut tree = UiTree::new(Element::stack(vec![under_bars(body, TOP, BOTTOM, SCHEME.canvas), bars]));
         tree.set_reduced_motion(true);
         tree
     }
@@ -170,7 +170,7 @@ mod tests {
             let content = Element::column(vec![list()])
                 .bottom_background_fade(wash, 120.0)
                 .flex(1.0);
-            let content = under_bars(content, TOP, BOTTOM);
+            let content = under_bars(content, TOP, BOTTOM, SCHEME.canvas);
             assert_eq!(content.style.bottom_background_fade, Some((wash, 120.0)));
             let mut tree = UiTree::new(content);
             tree.set_reduced_motion(true);
@@ -271,7 +271,7 @@ mod tests {
                 Element::spacer().flex(1.0),
             ])
             .flex(1.0);
-            let frame = UiTree::new(under_bars(content, TOP, BOTTOM)).layout(size);
+            let frame = UiTree::new(under_bars(content, TOP, BOTTOM, SCHEME.canvas)).layout(size);
             assert!(
                 !frame
                     .regions

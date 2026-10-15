@@ -108,15 +108,17 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
     let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
-    let content = chrome::under_bars(content, top_height, bottom_height);
+    let tint = if state.page == Page::Playing {
+        state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)).copied()
+    } else { None };
+    let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
+    let header_edge = tint.map_or(SCHEME.canvas, |color| header_edge_color(color, lower));
+    let content = chrome::under_bars(content, top_height, bottom_height, header_edge);
     let mut top = Element::column(top).background(SCHEME.canvas).block_pointer("mobile-header-bar");
-    if state.page == Page::Playing {
-        if let Some(tint) = state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)) {
-            // Match the full player's wash over an opaque base, so scrolled text
-            // cannot show through the compact transport.
-            let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
-            top = top.vertical_gradient(vec![Color { a: 150, ..*tint }, Color { a: lower, ..*tint }]);
-        }
+    if let Some(tint) = tint {
+        // Match the full player's wash over an opaque base, so scrolled text
+        // cannot show through the compact transport.
+        top = top.vertical_gradient(vec![Color { a: 150, ..tint }, Color { a: lower, ..tint }]);
     }
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), Element::column(bottom)]);
     let content = Element::stack(vec![content, bars]);
@@ -136,6 +138,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = confirm_dialog(state, tree, palette);
     limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
         .max_height(680.0).body(equalizer(state, palette)).render()
+}
+
+/// Opaque color where the header's wash meets the edge scrim. Compositing over
+/// the canvas prevents a black seam without allowing scrolled text through it.
+fn header_edge_color(tint: Color, alpha: u8) -> Color {
+    let channel = |tint: u8, base: u8| {
+        ((u32::from(tint) * u32::from(alpha) + u32::from(base) * u32::from(255 - alpha) + 127) / 255) as u8
+    };
+    Color::rgb(channel(tint.r, SCHEME.canvas.r), channel(tint.g, SCHEME.canvas.g), channel(tint.b, SCHEME.canvas.b))
 }
 
 fn route_key(state: &State) -> String {
@@ -261,6 +272,28 @@ mod tests {
         }
         let tabs: Vec<_> = ["home", "mobile-search", "mobile-library"].iter().map(|id| frame.access.iter().find(|node| node.id == *id).unwrap().rect).collect();
         for pair in tabs.windows(2) { assert!(pair[0].x + pair[0].width <= pair[1].x + 0.1, "{tabs:?}"); }
+    }
+
+    #[test]
+    fn the_player_scroll_edge_uses_its_header_tint_instead_of_a_black_band() {
+        let mut state = playing_state();
+        state.page = Page::Playing;
+        state.player.current.as_mut().unwrap().artwork_url = Some("cover".into());
+        state.tints.insert("cover".into(), Color::rgb(200, 100, 50));
+        let size = Size::new(390.0, 700.0);
+        let mut tree = UiTree::new(super::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        tree.handle_event(limn::UiEvent::ScrollDirect { position: limn::Point::new(20.0, 400.0), delta_y: -100.0 });
+        let frame = tree.layout(size);
+        let edge = frame.commands.iter().find_map(|command| match command {
+            limn::DrawCommand::FillVerticalGradient { rect, top, bottom }
+                if rect.y == HEADER_HEIGHT && rect.height == 48.0 && bottom.a == 0 => Some(*top),
+            _ => None,
+        }).expect("the player's top edge is visible after scrolling");
+        assert_eq!(edge.a, 255, "the edge masks the song content beneath it");
+        assert!(edge.r > edge.g && edge.g > edge.b && edge.b > SCHEME.canvas.b,
+            "the edge joins the warm header wash: {edge:?}");
     }
 
     #[test]
