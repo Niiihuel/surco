@@ -45,10 +45,23 @@ antes de arrancar la app, tras un boot de unos 88 segundos con DataMigration;
 device-unsigned sí pasó. El único reintento del job fallido también agotó el
 tiempo de instalación antes de arrancar la app, sin cambios de código ni de
 timeout. El [PR #13](https://github.com/Niiihuel/surco/pull/13) alinea el
-toolchain de CI unsigned con el usado para firmar esta beta; sus
-[checks iOS](https://github.com/Niiihuel/surco/actions/runs/38749338228) y
-[escritorio](https://github.com/Niiihuel/surco/actions/runs/38749338318) siguen
-en curso. La causa exacta del bloqueo de instalación no está establecida. El fallo y ambos intentos se conservan en la
+toolchain de CI unsigned con el usado para firmar esta beta. Su primer head
+`65561cf` falló en readiness antes de instalar. En `940a4b1`,
+[escritorio](https://github.com/Niiihuel/surco/actions/runs/38752153515) y el
+[job device-unsigned](https://github.com/Niiihuel/surco/actions/runs/38752153497)
+pasaron. El simulador completó readiness, instalación, lanzamiento y el primer
+control de proceso tras ocho segundos; produjo un PNG válido, pero `simctl`
+screenshot venció su timeout. No se ejecutaron el control final ni la escritura
+de `smoke.json`: ese intento falló y su causa sigue en análisis. El nuevo head
+`5420763` amplía solo el presupuesto de screenshot a 180 segundos, conservando
+retorno exitoso, ambos controles de proceso y `smoke.json`; 14 tests Python pasan.
+En el [CI iOS final](https://github.com/Niiihuel/surco/actions/runs/38755079773)
+pasaron simulador y device-unsigned; el
+[CI de escritorio](https://github.com/Niiihuel/surco/actions/runs/38755079488)
+pasó en las tres plataformas. El resultado se verificó a las 15:05:28 UTC:
+retorno correcto de captura, ambos controles de proceso y smoke completo. El
+PR #13 está validado, todavía pendiente de merge y revisión de sus artefactos
+nativos. Esto no reemplaza la prueba física del iPhone. El fallo y ambos intentos se conservan en la
 [validación de motion](ios-polish/MOTION-VALIDATION.md), junto con la procedencia
 separada de capturas y clips. Las pruebas físicas de 0.3.0 siguen pendientes.
 
