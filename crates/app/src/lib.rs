@@ -349,6 +349,13 @@ impl eframe::App for Host {
         } else { input };
         for event in input {
             self.stirred = Instant::now();
+            #[cfg(target_os = "ios")]
+            if matches!(event, limn::UiEvent::Paste(_)) {
+                // egui-winit's iOS clipboard is app-local. The shortcut still
+                // represents a user gesture; bind the system read to its field.
+                self.state.paste = self.tree.focused_id().map(str::to_owned);
+                continue;
+            }
             for action in self.tree.handle_event(event) {
                 let commands = self.state.update(&action);
                 self.send(commands);
@@ -360,6 +367,19 @@ impl eframe::App for Host {
             self.tree.set_input_value("search", self.state.query.clone());
         }
         if let Some(text) = self.state.copy.take() {
+            #[cfg(target_os = "ios")]
+            {
+                let result = self.native_ui.as_mut()
+                    .ok_or_else(|| "iOS clipboard is unavailable".to_owned())
+                    .and_then(|native| native.copy_text(&text));
+                if let Err(error) = result {
+                    eprintln!("Surco clipboard: {error}");
+                    self.state.mobile_ui.notice = Some("No se pudo copiar el texto.".into());
+                    self.state.copied = false;
+                    self.state.list_copied = None;
+                    self.state.list_exported = None;
+                }
+            }
             ctx.copy_text(text);
         }
         if let Some(url) = self.state.open_url.take() {
@@ -375,6 +395,41 @@ impl eframe::App for Host {
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         self.tree.set_root(view::view(&self.state, window));
         let frame = self.tree.layout(window);
+        #[cfg(target_os = "ios")]
+        let frame = {
+            let mut frame = frame;
+            if let Some(target) = self.state.paste.take() {
+                // A visible Pegar button may have just mounted the Search field.
+                if self.state.focus.as_deref() == Some(&target) {
+                    self.state.focus = None;
+                    self.tree.focus(&target);
+                    self.tree.reveal(&target);
+                    frame = self.tree.layout(window);
+                }
+                if mobile_input::can_paste(&self.tree, &frame, &target) {
+                    let result = self.native_ui.as_mut()
+                        .ok_or_else(|| "iOS clipboard is unavailable".to_owned())
+                        .and_then(ios_ui::NativeUi::paste_text);
+                    match result {
+                        Ok(Some(text)) if !text.is_empty() => {
+                            for action in self.tree.handle_event(limn::UiEvent::PasteTo { id: target, text }) {
+                                let commands = self.state.update(&action);
+                                self.send(commands);
+                            }
+                            self.tree.set_root(view::view(&self.state, window));
+                            frame = self.tree.layout(window);
+                        }
+                        Err(error) => {
+                            eprintln!("Surco clipboard: {error}");
+                            self.state.mobile_ui.notice = Some("No se pudo pegar el texto.".into());
+                            ctx.request_repaint();
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            frame
+        };
         if self.state.mobile {
             mobile_input::update_ime(&ctx, &self.tree, &frame, area.min);
         }

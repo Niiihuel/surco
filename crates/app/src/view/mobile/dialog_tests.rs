@@ -67,15 +67,27 @@ fn playlist_fields_scroll_while_creation_actions_stay_above_the_keyboard() {
 
 #[test]
 fn importing_has_a_touch_field_and_fixed_actions_in_a_short_viewport() {
-    let size = Size::new(320.0, 360.0);
     let mut state = State::default();
     state.mobile = true;
     state.importing = Some("https://music.youtube.com/playlist?list=long-link".into());
-    let mut tree = tree(&state, size);
-    reveal(&mut tree, "import-link", size);
-    let frame = tree.layout(size);
-    for id in ["import-cancel", "import-go", "import-cancel:close"] {
-        target(&frame, id, size);
+    for size in [Size::new(320.0, 240.0), Size::new(320.0, 360.0), Size::new(390.0, 360.0), Size::new(430.0, 360.0)] {
+        let mut tree = tree(&state, size);
+        reveal(&mut tree, "import-link", size);
+        assert!(tree.focus("import-link"));
+        reveal(&mut tree, "ios-paste:import-link", size);
+        let frame = tree.layout(size);
+        for id in ["import-cancel", "import-go", "import-cancel:close"] {
+            target(&frame, id, size);
+        }
+        tree.scroll_to_end("modal_body:import-cancel");
+        let frame = tree.layout(size);
+        if size.height == 240.0 {
+            assert!(!crate::mobile_input::can_paste(&tree, &frame, "import-link"), "the focused field scrolled out of view");
+        }
+        assert!(tree.focus("import-link"));
+        tree.reveal("import-link");
+        let frame = tree.layout(size);
+        assert!(crate::mobile_input::can_paste(&tree, &frame, "import-link"));
     }
 }
 

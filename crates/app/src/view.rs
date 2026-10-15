@@ -340,6 +340,10 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .hint(about)
             .sizing(DIALOG_FIELD)
             .rows();
+        if cfg!(any(target_os = "ios", test)) {
+            fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
+                .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
+        }
         fields.push(
             Text::new(
                 "Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».",

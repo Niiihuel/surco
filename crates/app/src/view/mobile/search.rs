@@ -18,7 +18,13 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
         if !state.query.is_empty() { row.push(icon("mobile-search-clear", Icon::Close, "Borrar búsqueda", palette)); }
         row.push(Button::new("mobile-search-cancel", "Cancelar", palette).variant(ButtonVariant::Ghost).size(ControlSize::Spacious).render().size(None, Some(TAP)));
     }
-    Element::row(row).gap(4.0).padding(12.0)
+    let row = Element::row(row).gap(4.0);
+    if cfg!(any(target_os = "ios", test)) {
+        Element::column(vec![row,
+            Button::new("ios-paste:search", "Pegar", palette)
+                .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(TAP)),
+        ]).gap(8.0).padding(12.0)
+    } else { row.padding(12.0) }
 }
 
 pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> Element {

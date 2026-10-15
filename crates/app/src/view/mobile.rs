@@ -245,13 +245,18 @@ mod tests {
         state.mobile_search = true;
         state.mobile_ui.search_editing = true;
         state.page = Page::Search;
-        for size in [Size::new(320.0, 360.0), Size::new(390.0, 500.0)] {
-            let frame = UiTree::new(super::view(&state, size)).layout(size);
+        for size in [Size::new(320.0, 360.0), Size::new(390.0, 500.0), Size::new(430.0, 500.0)] {
+            let mut tree = UiTree::new(super::view(&state, size));
+            let frame = tree.layout(size);
             assert!(!frame.access.iter().any(|node| matches!(node.id.as_str(), "home" | "mobile-library" | "play-pause")));
-            for id in ["search", "mobile-search-cancel"] {
+            for id in ["search", "mobile-search-cancel", "ios-paste:search"] {
                 let rect = frame.access.iter().find(|node| node.id == id).unwrap().rect;
-                assert!(rect.x >= 0.0 && rect.x + rect.width <= size.width + 0.1 && rect.height >= TAP, "{id}: {rect:?}");
+                assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= size.width + 0.1
+                    && rect.y + rect.height <= size.height + 0.1 && rect.height >= TAP, "{id}: {rect:?}");
             }
+            assert!(tree.focus("search"));
+            let frame = tree.layout(size);
+            assert!(crate::mobile_input::can_paste(&tree, &frame, "search"));
         }
         assert!(state.player.playing);
         assert_eq!(state.current().unwrap().id, "song");
