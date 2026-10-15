@@ -119,7 +119,9 @@ como secretos. ([Guía de firma de GitHub](https://docs.github.com/en/actions/ho
 
 El workflow **TestFlight** ya está registrado y se ejecuta manualmente. La
 [primera ejecución de firma y subida](https://github.com/Niiihuel/surco/actions/runs/38699781352)
-está en curso; todavía no confirma un build recibido o habilitado por Apple.
+terminó correctamente: generó el primer IPA firmado y lo subió a App Store Connect.
+Todavía está pendiente que el build aparezca y termine su procesamiento en Apple;
+la subida no confirma que ya esté disponible para probar.
 Para generar otro IPA sin subirlo desde la rama revisada:
 
 ```bash
@@ -159,6 +161,14 @@ local no confirma que Apple ya haya habilitado el build.
 [manual altool](https://help.apple.com/asc/appsaltool/en.lproj/apdATD1E53-D1E1A1303-D1E53A1126.html))
 
 ## 5. Instalar en el iPhone
+
+La distribución actual autorizada es **fuera de Francia**. La app incorpora TLS
+mediante rustls (`ring` y `aws-lc-rs`), además de TOTP/HMAC-SHA1 y hashes SHA256:
+usa algoritmos estándar incluidos en la app, no solo el cifrado del SO Apple.
+Apple distingue ese caso del cifrado limitado al sistema operativo y señala la
+declaración francesa para distribución por App Store en Francia. Antes de ampliar
+la distribución a ese país, revisá la clasificación y documentación aplicables.
+([Documentación de cifrado de Apple](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/))
 
 1. En **App Store Connect → Surco Music → TestFlight**, esperá que termine el procesamiento.
 2. Completá export compliance y la información de pruebas que Apple solicite.
