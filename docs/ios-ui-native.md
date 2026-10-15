@@ -30,11 +30,46 @@ limn's merged [stable-focus #46](https://github.com/Niiihuel/limn/pull/46), [bot
 
 Touch holds and explicit overflow use the same action sheet; movement/cancel prevents activation on release. The library sheet captures the canonical item key, title and artwork instead of an index, while track actions capture the selected track. Form, confirmation, library and device sheets use the shared controlled drag interpreter; dragging a confirmation cancels it. Their scrolling bodies leave close controls and action footers visible in a short keyboard viewport.
 
+## System clipboard and external links
+
+`NativeUi::copy_text` writes to the iPhone's general pasteboard after an explicit
+copy action. Song/playlist sharing and limn's Copy/Cut actions use the same path.
+The synchronous FFI passes UTF-8 bytes with their length; NSString copies them,
+so Unicode and embedded NULs do not truncate the payload.
+
+`NativeUi::paste_text` reads only after a user paste action. Search and import
+provide visible **Pegar** buttons. The Host binds each request to its original
+field, mounts/focuses that field if the button just opened it, then checks that it
+is still visible, focused, enabled and outside an open context menu before
+reading. `PasteTo` delivers the result to that field. Empty/unavailable text leaves
+the field unchanged. Normal search text follows typing's debounce; links and
+playlist imports still wait for explicit submission.
+
+Clipboard contents are never polled, logged or read to decide whether a button is
+enabled. iOS may ask for paste permission; the bridge respects its result. The
+current winit UIKit backend does not provide universal physical-keyboard shortcuts
+or a native editing menu. Use the visible Paste controls instead of depending on
+Cmd+V. Any explicit egui paste event that does arrive is redirected to the system
+clipboard rather than its app-local fallback.
+
+Surco enables eframe's `links` feature so its existing external-link actions use
+webbrowser's public UIKit implementation. No separate URL-opening bridge is needed.
+
 ## Validation
 
-Rust tests cover docked/floating/hidden keyboard geometry, safe-area accounting, Retina/egui zoom, native-slot visibility, focus intent and gesture cancellation. Layout/state tests cover 320/390/430-point widths, short form viewports, overflow/hold equivalence and captured library/track identities. Native UIKit/AVKit compilation and linking, including the Host integration, passed in the intermediate [iOS run 38709439039](https://github.com/Niiihuel/surco/actions/runs/38709439039) at `dd9ef703d76ddde1eee29dc3737e89d3d7db9490` (simulator and unsigned device). Later UI closure changes still require final-head CI; [UI PR #3](https://github.com/Niiihuel/surco/pull/3) is pending merge.
+Rust tests cover docked/floating/hidden keyboard geometry, safe-area accounting, Retina/egui zoom, native-slot visibility, focus intent and gesture cancellation. Layout/state tests cover 320/390/430-point widths, short form viewports, overflow/hold equivalence and captured library/track identities. Native UIKit/AVKit compilation and linking, including the final Host/UI closure changes, passed in [iOS run 38711825772](https://github.com/Niiihuel/surco/actions/runs/38711825772) for code head `16bd78e21c67a2563ff6999eb7030ef9303ff502` (simulator and unsigned device). [Desktop CI](https://github.com/Niiihuel/surco/actions/runs/38711825798) also passed, and [UI PR #3](https://github.com/Niiihuel/surco/pull/3) is merged.
 
-Physical checks remain for the user: type in every input, rotate with keyboard visible, dismiss/reopen and drag sheets, cover the route button with another modal, select paired Bluetooth headphones/speakers and AirPlay, then background/foreground and lock the iPhone. Calls, headset controls and Dynamic Island behavior also require a supported physical device. Simulator startup does not establish those results; this document does not record a newly signed beta or final release validation.
+The later [clipboard/link PR #4](https://github.com/Niiihuel/surco/pull/4), code head
+`787764e5d4aed7b899fdadf8d4629e30d57a7ab7`, passed
+[iOS simulator/device CI](https://github.com/Niiihuel/surco/actions/runs/38717476331)
+and [Linux/macOS/Windows CI](https://github.com/Niiihuel/surco/actions/runs/38717476437).
+PR #4 merged into `main` as `e5c0e8df3a2a2ee356f104d261b4f97aca77c54b`.
+Local validation passed 189 workspace tests (3 existing network tests ignored)
+and workspace/all-target Clippy with warnings denied. Paste layout is tested at
+320/390/430 points, including revealing a focused import field that was scrolled
+offscreen at 320×240. Rendered search and import controls were inspected separately.
+
+Physical checks remain for the user: type in every input, rotate with keyboard visible, dismiss/reopen and drag sheets, cover the route button with another modal, copy to another app and paste back into search/import, select paired Bluetooth headphones/speakers and AirPlay, then background/foreground and lock the iPhone. Calls, headset controls and Dynamic Island behavior also require a supported physical device. Simulator startup does not establish those results. Signed build details belong in [the TestFlight delivery guide](testflight.md).
 
 ## Primary references
 

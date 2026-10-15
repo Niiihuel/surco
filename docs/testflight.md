@@ -120,25 +120,25 @@ como secretos. ([Guía de firma de GitHub](https://docs.github.com/en/actions/ho
 El workflow **TestFlight** ya está registrado y se ejecuta manualmente. La
 [primera ejecución de firma y subida](https://github.com/Niiihuel/surco/actions/runs/38699781352)
 terminó correctamente: generó el primer IPA firmado y lo subió a App Store Connect.
-Todavía está pendiente que el build aparezca y termine su procesamiento en Apple;
-la subida no confirma que ya esté disponible para probar.
+El build inicial 0.1.4 (1.1) terminó de procesarse, fue asignado a **Surco interno**
+y el usuario confirmó su instalación y arranque en su iPhone.
 Para generar otro IPA sin subirlo desde la rama revisada:
 
 ```bash
-gh workflow run testflight.yml --repo Niiihuel/surco --ref feature/settings-ios -f upload=false
+gh workflow run testflight.yml --repo Niiihuel/surco --ref main -f upload=false
 ```
 
 Para solicitar la subida, se usa `-f upload=true`. GitHub permite ejecutar un
 workflow registrado contra una rama o tag por API o CLI; el botón **Run workflow**
-en la web aparece cuando el archivo está en la rama predeterminada. El registro
-del workflow no implica que se haya integrado a `main`.
+en la web aparece cuando el archivo está en la rama predeterminada. El workflow
+de Surco ya está integrado en `main`.
 ([Eventos GitHub](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_dispatch),
 [CLI oficial](https://cli.github.com/manual/gh_workflow_run))
 
 Al ejecutar el workflow, elegí la rama revisada:
 
-1. Con `upload` desactivado, se verifica la app en Apple y se genera un IPA firmado
-   revisable en el artefacto `surco-testflight`.
+1. Con `upload` desactivado, se consulta el registro de la app en Apple y se genera
+   un IPA firmado revisable en el artefacto `surco-testflight`.
 2. Con `upload` activado, también se ejecutan la validación Apple y la subida.
 
 El script reutiliza el motor Rust y su empaquetado iOS, archiva con firma manual

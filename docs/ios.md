@@ -104,14 +104,23 @@ default storage directory for iOS. Desktop paths stay unchanged.
 
 ## Build and validation
 
-Playback is merged in [Surco PR #2](https://github.com/Niiihuel/surco/pull/2);
-the mobile UI/native Host work is in the still-open
-[PR #3](https://github.com/Niiihuel/surco/pull/3). The intermediate
-[iOS run 38709439039](https://github.com/Niiihuel/surco/actions/runs/38709439039)
-passed both simulator startup and unsigned device compilation/linking at
-`dd9ef703d76ddde1eee29dc3737e89d3d7db9490`, including Host keyboard/route integration.
-That result does not cover later closure changes or establish final CI, a newly
-signed beta, tester assignment or physical audio verification.
+Playback is merged in [Surco PR #2](https://github.com/Niiihuel/surco/pull/2),
+and the mobile UI/native Host in [PR #3](https://github.com/Niiihuel/surco/pull/3).
+The UI code head `16bd78e21c67a2563ff6999eb7030ef9303ff502` passed
+[Linux/macOS/Windows CI](https://github.com/Niiihuel/surco/actions/runs/38711825798)
+and [iOS simulator/device CI](https://github.com/Niiihuel/surco/actions/runs/38711825772)
+before merging to `main` as `77ecb0d6ec9aaed61fbdfb4db7528b78d0b5a7df`.
+The subsequent [clipboard/link fix PR #4](https://github.com/Niiihuel/surco/pull/4)
+adds explicit system copy/paste and enables public UIKit URL opening. Its code
+head `787764e5d4aed7b899fdadf8d4629e30d57a7ab7` passed
+[iOS simulator/device CI](https://github.com/Niiihuel/surco/actions/runs/38717476331)
+and [Linux/macOS/Windows CI](https://github.com/Niiihuel/surco/actions/runs/38717476437).
+It merged into `main` as `e5c0e8df3a2a2ee356f104d261b4f97aca77c54b`.
+Local validation passed 189 Rust tests (3 existing network tests ignored),
+9 packaging/signing-script tests and workspace/all-target Clippy with warnings
+denied. Rendered phone and desktop screens were inspected, including the final
+native simulator screenshot. See [TestFlight delivery](testflight.md) for the
+signed build; automated checks do not establish physical audio behavior.
 
 The **iOS** GitHub Actions workflow uses macOS, Xcode and the pinned limn revision.
 It builds the same Rust static library and links a minimal Xcode application for:
@@ -137,8 +146,9 @@ application tarball preserving executable permissions, build metadata and logs.
 The simulator artifact also includes `simulator.png` and its startup result.
 
 The unsigned application cannot be installed directly on an iPhone. The manual
-**TestFlight** workflow signs with an Apple Distribution identity and an App Store
-Connect profile. Follow [the account setup and installation guide](testflight.md)
+**TestFlight** workflow signs with a valid distribution identity (`iPhone
+Distribution` in the current setup; `Apple Distribution` is also supported) and
+an App Store Connect profile. Follow [the account setup and installation guide](testflight.md)
 to register Surco, configure GitHub Secrets and install from TestFlight.
 Simulator startup does not establish physical audio behavior. After installing a
 signed build on an iPhone, validate:
@@ -158,6 +168,9 @@ signed build on an iPhone, validate:
   and import. Check controls with keyboard visible, rotation, long titles, sheet
   dragging, stationary holds and scrolling without accidental playback. Cover the
   connections sheet with another modal and confirm its native button cannot intercept taps.
+- Copy a song link or playlist text into another app. Use the visible Paste buttons
+  to bring a public link into search/import, including with the keyboard open and
+  the import body scrolled. Check iOS paste permission without losing existing text.
 - Use iOS Settings > Developer > Reset Media Services: playback must stay paused
   until requested and then recover. No microphone access prompt should appear.
 
