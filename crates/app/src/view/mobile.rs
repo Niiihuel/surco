@@ -92,12 +92,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         top.push(search::field(state, palette));
         top_height += search::field_height(state);
     }
-    // The notice participates in flow, so longer messages never cover an action.
-    let mut notices = Vec::new();
-    if let Some(notice) = &state.mobile_ui.notice {
-        notices.push(Element::panel(Element::row(vec![Text::new(notice, palette).render().flex(1.0),
-            icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0)).background(SCHEME.raised));
-    }
     let mut content = if state.page == Page::Playing && state.queue_open {
         upcoming(state, palette)
     } else if searching {
@@ -111,6 +105,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         // The mobile shell owns the full-height song color, including plain/error states.
         content.style.bottom_background_fade = None;
     }
+    let content = with_notice(content, state, palette);
     let mut bottom = Vec::new();
     let mut bottom_height = insets.bottom;
     if state.page != Page::Playing && !keyboard {
@@ -129,8 +124,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let footer = Element::column(bottom).background(footer_edge).block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
-    notices.push(content.flex(1.0));
-    let content = horizontal_inset(Element::column(notices), insets.left, insets.right);
+    let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
     let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
         .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
@@ -145,6 +139,31 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = confirm_dialog(state, tree, palette);
     limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
         .max_height(680.0).body(equalizer(state, palette)).render()
+}
+
+fn with_notice(mut content: Element, state: &State, palette: ComponentPalette) -> Element {
+    let Some(message) = &state.mobile_ui.notice else { return content; };
+    let notice = Element::panel(Element::row(vec![Text::new(message, palette).render().flex(1.0),
+        icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0))
+        .background(SCHEME.raised);
+    let mut notice = Some(notice);
+    if prepend_notice(&mut content, &mut notice) { return content; }
+    // Loading and error panes have no scroll of their own. Keep even a long
+    // notice reachable without adding a second viewport to the normal pages.
+    ScrollArea::new(format!("mobile-notice:{}", route_key(state)),
+        Element::column(vec![notice.unwrap(), content])).render().flex(1.0)
+}
+
+fn prepend_notice(content: &mut Element, notice: &mut Option<Element>) -> bool {
+    match &mut content.kind {
+        limn::ElementKind::Scroll { child, .. } => {
+            let body = std::mem::replace(child.as_mut(), Element::spacer());
+            **child = Element::column(vec![notice.take().unwrap(), body]);
+            true
+        }
+        limn::ElementKind::Column(children) => children.iter_mut().any(|child| prepend_notice(child, notice)),
+        _ => false,
+    }
 }
 
 fn horizontal_inset(content: Element, left: f32, right: f32) -> Element {

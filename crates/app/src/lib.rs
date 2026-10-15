@@ -65,6 +65,8 @@ struct Host {
     script: Script,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
+    /// The notice already revealed; ordinary repaints preserve manual scrolling.
+    notice: Option<String>,
     #[cfg(target_os = "ios")]
     native_ui: Option<ios_ui::NativeUi>,
     #[cfg(target_os = "ios")]
@@ -108,6 +110,30 @@ fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Fram
     } else {
         frame
     }
+}
+
+fn layout_with_notice(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> limn::Frame {
+    let mut frame = layout_view(state, tree, window);
+    let notice = state.mobile.then_some(state.mobile_ui.notice.as_deref()).flatten();
+    if seen.as_deref() == notice { return frame; }
+    *seen = notice.map(str::to_owned);
+    if seen.is_none() { return frame; }
+    // A first reveal locates a newly inserted notice even in a culled branch.
+    if !frame.access.iter().any(|node| node.id == "mobile-notice-close") {
+        tree.reveal("mobile-notice-close");
+        frame = layout_view(state, tree, window);
+    }
+    let Some(close) = frame.access.iter().find(|node| node.id == "mobile-notice-close") else { return frame; };
+    let center = limn::Point::new(close.rect.x + close.rect.width / 2.0, close.rect.y + close.rect.height / 2.0);
+    let Some(scroll) = frame.regions.iter().rev().find(|region|
+        region.kind == limn::HitKind::Scroll && region.rect.contains(center)) else { return frame; };
+    let header_bottom = frame.regions.iter().find(|region| region.id == "mobile-header-bar")
+        .map_or(0.0, |region| region.rect.y + region.rect.height);
+    // Fixed filters can already put this viewport below the header. Reserve
+    // only the remaining overlap plus room for the short decorative fade.
+    let margin = (header_bottom - scroll.rect.y).max(0.0) + 20.0;
+    tree.reveal_at_start("mobile-notice-close", margin);
+    layout_view(state, tree, window)
 }
 
 fn native_surfaces_present(state: &State) -> bool {
@@ -436,7 +462,7 @@ impl eframe::App for Host {
         if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
         }
-        let input_frame = layout_view(&mut self.state, &mut self.tree, window);
+        let input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
@@ -508,7 +534,7 @@ impl eframe::App for Host {
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        let frame = layout_view(&mut self.state, &mut self.tree, window);
+        let frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -532,7 +558,7 @@ impl eframe::App for Host {
                             }
                             let commands = self.motion.advance(&mut self.state, window, Instant::now());
                             self.send(commands);
-                            frame = layout_view(&mut self.state, &mut self.tree, window);
+                            frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
                         }
                         Err(error) => {
                             eprintln!("Surco clipboard: {error}");
@@ -725,6 +751,7 @@ pub fn run() -> eframe::Result {
                 script,
                 touch: mobile_input::TouchInput::default(),
                 motion: mobile_motion::Motion::new(Instant::now()),
+                notice: None,
                 #[cfg(target_os = "ios")]
                 native_ui,
                 #[cfg(target_os = "ios")]
