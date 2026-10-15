@@ -6,6 +6,8 @@ mod search;
 mod home;
 mod sheets;
 pub(super) mod details;
+#[cfg(test)]
+mod dialog_tests;
 
 const TAP: f32 = 44.0;
 const NAV_HEIGHT: f32 = 64.0;
@@ -76,10 +78,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = playlist_dialog(state, tree, window.width, palette);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
     let tree = confirm_dialog(state, tree, palette);
-    // Settings opens the same equalizer as desktop without squeezing it into a footer.
-    Modal::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
-        .width(Modal::fit_width(window.width, 360.0))
-        .body(equalizer(state, palette)).render()
+    limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
+        .max_height(680.0).body(equalizer(state, palette)).render()
 }
 
 fn navigation(state: &State, palette: ComponentPalette) -> Element {

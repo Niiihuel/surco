@@ -245,6 +245,79 @@ fn dialog_footer(cancel: Element, confirm: Element) -> Element {
 /// Making a playlist: its name, and whether others will add to it.
 fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(draft) = &state.creating else { return window_tree };
+    if state.mobile {
+        let name = TextField::new(
+            "playlist-name",
+            &draft.name,
+            state.collection.default_name(),
+            palette,
+        )
+        .size(ControlSize::Spacious)
+        .render()
+        .size(None, Some(44.0));
+        let kind = |id: &str, label: &str, selected| {
+            Button::new(id, label, palette)
+                .variant(if selected {
+                    ButtonVariant::Default
+                } else {
+                    ButtonVariant::Secondary
+                })
+                .render()
+                .size(None, Some(44.0))
+                .flex(1.0)
+        };
+        let kinds = Element::row(vec![
+            kind("playlist-kind:normal", "Normal", !draft.collaborative),
+            kind(
+                "playlist-kind:collaborative",
+                "Colaborativa",
+                draft.collaborative,
+            ),
+        ])
+        .gap(8.0);
+        let about = if draft.collaborative {
+            "Otras personas van a poder agregar canciones con un enlace. Por ahora queda marcada en este equipo: invitar llega con las cuentas."
+        } else {
+            "Solo vos agregás y quitás canciones."
+        };
+        let mut fields = FormField::new("Título", name, palette)
+            .sizing(DIALOG_FIELD)
+            .rows();
+        fields.extend(
+            FormField::new("Tipo", kinds, palette)
+                .hint(about)
+                .sizing(DIALOG_FIELD)
+                .rows(),
+        );
+        if let Some(track) = &draft.first {
+            fields.push(
+                Text::new(format!("Empieza con «{}».", track.title), palette)
+                    .muted()
+                    .render(),
+            );
+        }
+        let cancel = Button::new("playlist-cancel", "Cancelar", palette)
+            .variant(ButtonVariant::Outline)
+            .render()
+            .size(None, Some(44.0));
+        let create = Button::new("playlist-create", "Crear", palette)
+            .render()
+            .size(None, Some(44.0));
+        return limn::BottomSheet::new(
+            window_tree,
+            true,
+            "Nueva playlist",
+            "Juntá canciones bajo un nombre.",
+            "playlist-cancel",
+            palette,
+        )
+        .max_height(560.0)
+        .body(Element::column(fields).gap(8.0))
+        .footer(dialog_footer(cancel, create))
+        .initial_focus("playlist-name")
+        .return_focus("playlist-new")
+        .render();
+    }
     let dialog = Modal::fit_width(width, 440.0).max(240.0);
     // This dialog is short enough never to scroll: its form reaches both paddings.
     let form = Modal::fitted_body_width(dialog);
@@ -279,6 +352,54 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
 /// Bringing a list in from another app: its link there.
 fn import_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(link) = &state.importing else { return window_tree };
+    if state.mobile {
+        let field = TextField::new(
+            "import-link",
+            link,
+            "https://open.spotify.com/playlist/…",
+            palette,
+        )
+        .size(ControlSize::Spacious)
+        .render()
+        .size(None, Some(44.0));
+        let about = if state.import_unknown {
+            "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
+        } else {
+            "De Spotify (hasta 100 canciones), Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
+        };
+        let mut fields = FormField::new("Enlace de la lista", field, palette)
+            .hint(about)
+            .sizing(DIALOG_FIELD)
+            .rows();
+        fields.push(
+            Text::new(
+                "Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».",
+                palette,
+            )
+            .muted()
+            .render(),
+        );
+        let cancel = Button::new("import-cancel", "Cancelar", palette)
+            .variant(ButtonVariant::Outline)
+            .render()
+            .size(None, Some(44.0));
+        let go = Button::new("import-go", "Importar", palette)
+            .render()
+            .size(None, Some(44.0));
+        return limn::BottomSheet::new(
+            window_tree,
+            true,
+            "Importar de otras apps",
+            "Queda como una playlist tuya, con las canciones que el catálogo tenga.",
+            "import-cancel",
+            palette,
+        )
+        .max_height(560.0)
+        .body(Element::column(fields).gap(8.0))
+        .footer(dialog_footer(cancel, go))
+        .initial_focus("import-link")
+        .render();
+    }
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
     let about = if state.import_unknown {
         "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
@@ -301,6 +422,32 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
 /// The songs of a list brought in that the catalog does not have, to be looked for by hand.
 fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some((_, missed)) = state.imported.as_ref().filter(|_| state.missed_open) else { return window_tree };
+    if state.mobile {
+        let rows = missed
+            .iter()
+            .map(|song| Text::new(song, palette).font_size(14.0).render())
+            .collect();
+        let copy = Button::new("import-missed-copy", "Copiar la lista", palette)
+            .variant(ButtonVariant::Outline)
+            .icon(Icon::Copy)
+            .render()
+            .size(None, Some(44.0));
+        let close = Button::new("import-missed-close", "Cerrar", palette)
+            .render()
+            .size(None, Some(44.0));
+        return limn::BottomSheet::new(
+            window_tree,
+            true,
+            "No se encontraron",
+            "No están en el catálogo con ese nombre. Podés buscarlas a mano y agregarlas.",
+            "import-missed-close",
+            palette,
+        )
+        .max_height(600.0)
+        .body(Element::column(rows).gap(12.0))
+        .footer(dialog_footer(copy, close))
+        .render();
+    }
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
     let copy = Button::new("import-missed-copy", "Copiar la lista", palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Regular).render();
     let close = Button::new("import-missed-close", "Cerrar", palette).size(ControlSize::Regular).render();
@@ -357,6 +504,35 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         Some(Confirm::ClearRecent) => ("¿Borrar el historial de reproducciones?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
         None => (String::new(), "", ""),
     };
+    if state.mobile {
+        let cancel = Button::new("confirm-cancel", "Cancelar", palette)
+            .variant(ButtonVariant::Outline)
+            .render()
+            .size(None, Some(44.0));
+        let confirm = Button::new("confirm-yes", yes, palette)
+            .render()
+            .size(None, Some(44.0));
+        return limn::BottomSheet::new(
+            window_tree,
+            state.confirm.is_some(),
+            "Confirmar acción",
+            "",
+            "confirm-cancel",
+            palette,
+        )
+        .max_height(480.0)
+        .body(
+            Element::column(vec![
+                Text::new(title, palette).font_size(18.0).render(),
+                Text::new(about, palette).muted().render(),
+            ])
+            .gap(12.0),
+        )
+        .footer(dialog_footer(cancel, confirm))
+        .initial_focus("confirm-cancel")
+        .backdrop_dismiss(false)
+        .render();
+    }
     AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", palette)
         .confirm_label(yes)
         .cancel_label("Cancelar")
@@ -514,6 +690,64 @@ fn media_card(state: &State, id: &str, track: &Track, palette: ComponentPalette)
 
 /// Sharing a track: its card, as whoever opens the link will see it, over the link itself.
 fn share_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    if state.mobile {
+        let Some(track) = &state.sharing else {
+            return window_tree;
+        };
+        let playing = state.player.playing
+            && state
+                .current()
+                .is_some_and(|current| current.id == track.id);
+        let picture = Element::clickable(
+            "share-card",
+            cover(state, &track.artwork_url, 160.0, palette),
+        )
+        .accessible(limn::Access::new(limn::Role::Button).name(format!(
+            "{} {}",
+            if playing { "Pausar" } else { "Reproducir" },
+            track.title
+        )))
+        .centered_x();
+        let copy = Button::new(
+            "share-copy",
+            if state.copied {
+                "Enlace copiado"
+            } else {
+                "Copiar enlace"
+            },
+            palette,
+        )
+        .icon(if state.copied {
+            Icon::Check
+        } else {
+            Icon::Copy
+        })
+        .render()
+        .size(None, Some(44.0));
+        let body = Element::column(vec![
+            picture,
+            Text::new(&track.title, palette).font_size(20.0).render(),
+            Text::new(&track.artist, palette).muted().render(),
+            Text::new(share_link(track), palette)
+                .mono()
+                .muted()
+                .truncate()
+                .render(),
+        ])
+        .gap(12.0);
+        return limn::BottomSheet::new(
+            window_tree,
+            true,
+            "Compartir canción",
+            "El enlace la abre en YouTube Music; pegado en el buscador de Surco, se abre acá.",
+            "share-close",
+            palette,
+        )
+        .max_height(640.0)
+        .body(body)
+        .footer(copy)
+        .render();
+    }
     let (card, link) = match &state.sharing {
         Some(track) => (media_card(state, "share-card", track, palette), share_link(track)),
         None => (Element::spacer(), String::new()),
@@ -1950,24 +2184,77 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
 /// Ten bands and the preamp, a row each: the label, the slider and the gain it is set to.
 fn equalizer(state: &State, palette: ComponentPalette) -> Element {
     let text = |value: String, width: f32| {
-        Element::text(value).font_family(FontFamily::Monospace).font_size(11.0).foreground(palette.muted).size(Some(width), None).centered_y()
+        Element::text(value)
+            .font_family(FontFamily::Monospace)
+            .font_size(11.0)
+            .foreground(palette.muted)
+            .size(Some(width), None)
+            .centered_y()
     };
     let row = |id: String, label: String, gain: f32| {
+        let slider = Slider::new(id, (gain / EQUALIZER_DB + 1.0) / 2.0, palette)
+            .steps(EQUALIZER_DB as usize * 2 + 1)
+            .width(EQUALIZER_SLIDER)
+            .render();
+        let slider = if state.mobile {
+            slider.size(None, Some(44.0)).flex(1.0)
+        } else {
+            slider.centered_y()
+        };
         Element::row(vec![
             text(label, 36.0),
-            Slider::new(id, (gain / EQUALIZER_DB + 1.0) / 2.0, palette).steps(EQUALIZER_DB as usize * 2 + 1).width(EQUALIZER_SLIDER).render().centered_y(),
-            text(if gain == 0.0 { "0 dB".into() } else { format!("{gain:+.0} dB") }, 44.0),
+            slider,
+            text(
+                if gain == 0.0 {
+                    "0 dB".into()
+                } else {
+                    format!("{gain:+.0} dB")
+                },
+                44.0,
+            ),
         ])
         .gap(8.0)
     };
-    let hertz = |hz: f32| if hz >= 1000.0 { format!("{:.0}k", hz / 1000.0) } else { format!("{hz:.0}") };
+    let hertz = |hz: f32| {
+        if hz >= 1000.0 {
+            format!("{:.0}k", hz / 1000.0)
+        } else {
+            format!("{hz:.0}")
+        }
+    };
+    let reset = Button::new("equalizer-reset", "Restablecer", palette)
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Compact)
+        .render();
+    let reset = if state.mobile {
+        reset.size(None, Some(44.0))
+    } else {
+        reset
+    };
     let header = Element::row(vec![
-        Element::text("Ecualizador").font_family(FontFamily::Sans).font_size(13.0).foreground(palette.text).centered_y(),
+        Element::text("Ecualizador")
+            .font_family(FontFamily::Sans)
+            .font_size(13.0)
+            .foreground(palette.text)
+            .centered_y(),
         Element::spacer().flex(1.0),
-        Button::new("equalizer-reset", "Restablecer", palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render(),
+        reset,
     ]);
-    let mut rows = vec![header, row("equalizer:preamp".into(), "Pre".into(), state.equalizer.preamp_db)];
-    rows.extend(BAND_HZ.iter().zip(state.equalizer.bands_db).enumerate().map(|(band, (hz, gain))| row(format!("equalizer:{band}"), hertz(*hz), gain)));
+    let mut rows = vec![
+        header,
+        row(
+            "equalizer:preamp".into(),
+            "Pre".into(),
+            state.equalizer.preamp_db,
+        ),
+    ];
+    rows.extend(
+        BAND_HZ
+            .iter()
+            .zip(state.equalizer.bands_db)
+            .enumerate()
+            .map(|(band, (hz, gain))| row(format!("equalizer:{band}"), hertz(*hz), gain)),
+    );
     Element::column(rows).gap(6.0).padding(12.0)
 }
 
