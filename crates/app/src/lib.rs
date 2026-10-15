@@ -203,6 +203,8 @@ impl eframe::App for Host {
         // Motion stays on for a scripted run too: whoever looks at its window sees the app as
         // it is, and the screenshot is taken once things have settled.
         let still = self.state.settings.reduce_motion;
+        #[cfg(target_os = "ios")]
+        let still = still || ios_ui::reduce_motion_enabled();
         self.tree.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
