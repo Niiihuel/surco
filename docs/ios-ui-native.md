@@ -37,13 +37,20 @@ copy action. Song/playlist sharing and limn's Copy/Cut actions use the same path
 The synchronous FFI passes UTF-8 bytes with their length; NSString copies them,
 so Unicode and embedded NULs do not truncate the payload.
 
-Search remains a limn canvas text field with a visible native `UIPasteControl`
-on iOS 16 and later. Its recipient accepts the representations supported by
+Search uses one native `UISearchBar` attached to the canvas's `ios-search` slot.
+UIKit owns its editing menu, clear and Cancel controls, selection, caret and
+keyboard shortcuts. Rust owns query debounce, recent searches, results and
+navigation. Session and revision checks discard stale text/focus callbacks;
+ordinary results and reflow retain the live editor, including marked IME text.
+Return submits and dismisses the keyboard; Cancel keeps the query and results.
+
+The playlist migration card uses a native `UIPasteControl` on iOS 16 and later.
+Its recipient accepts the representations supported by
 `NSString` and `NSURL`, including UTF-16 text. A URL representation that cannot be
 loaded falls back to one available text representation. Results are bound to the
 original target and discarded if the control is hidden, retargeted or destroyed.
-The playlist migration card uses the same recipient and opens an editable draft;
-it never starts importing automatically. iOS 15 uses an explicit-tap fallback.
+Pasting opens an editable draft; it never starts importing automatically.
+iOS 15 uses an explicit-tap fallback for the card.
 
 The import drawer instead contains a full-width native `UITextField`. UIKit owns
 selection, the **Pegar** editing menu and physical-keyboard shortcuts; there is no
@@ -60,11 +67,9 @@ explicit submission.
 
 Clipboard contents are never polled, logged or read to decide whether a button is
 enabled. iOS may ask for paste permission; the bridge respects its result. The
-current winit UIKit backend does not provide universal physical-keyboard shortcuts
-or a native editing menu to the canvas Search field, so its visible Paste control
-remains available. That limitation does not apply to the drawer's native
-`UITextField`. Any explicit egui paste event that does arrive is redirected to
-the system clipboard rather than its app-local fallback.
+native editors provide their own editing menu and keyboard shortcuts. Any
+explicit egui paste event for a canvas fallback is redirected to the system
+clipboard rather than its app-local fallback.
 
 Surco enables eframe's `links` feature so its existing external-link actions use
 webbrowser's public UIKit implementation. No separate URL-opening bridge is needed.

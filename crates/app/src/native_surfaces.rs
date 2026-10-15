@@ -147,11 +147,10 @@ impl Controller {
             if !paste_valid(state, target) { continue; }
             let id = format!("ios-paste:{target}");
             let Some(node) = frame.access.iter().find(|node| node.id == id && !node.disabled) else { continue };
-            let in_header = target == "search";
-            let Some(visible) = visible_rect(frame, 0, node.rect, in_header) else { continue };
+            let Some(visible) = visible_rect(frame, 0, node.rect, false) else { continue };
             let center = Point::new(visible.x + visible.width / 2.0, visible.y + visible.height / 2.0);
             if frame.press_region(center).is_some_and(|region| match region.kind {
-                limn::HitKind::Surface => !(in_header && region.id == "mobile-header-bar"),
+                limn::HitKind::Surface => true,
                 limn::HitKind::Button => region.id != id,
                 _ => false,
             }) { continue; }
@@ -235,7 +234,6 @@ impl Controller {
                         state.import_unknown = false;
                         state.mobile_ui.blur = true;
                     } else {
-                        if target == "search" { state.focus = Some(target.clone()); state.mobile_ui.blur = false; }
                         return state.update(&UiAction::InputChanged { id: target, value: text });
                     }
                 }
@@ -434,7 +432,6 @@ fn paste_valid(state: &State, target: &str) -> bool {
     match target {
         "import-link" => state.importing.is_some() && sheet_spec(state).is_some_and(|(key, _)| key == "import"),
         "import-card" => state.page == state::Page::Library && !state.settings.import_dismissed && !has_sheet(state),
-        "search" => state.page == state::Page::Search && state.mobile_search && !has_sheet(state),
         _ => false,
     }
 }
