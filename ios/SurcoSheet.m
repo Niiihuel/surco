@@ -66,6 +66,9 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     NSArray *_structure;
     NSArray<UIButton *> *_footerButtons;
     NSArray<NSString *> *_footerIds;
+    __weak UITextField *_editingField;
+    CGSize _viewportSize;
+    BOOL _revealEditingField;
 }
 @property(nonatomic, copy, readwrite) NSString *surfaceId;
 @end
@@ -117,31 +120,42 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     _scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
     _scroll.accessibilityIdentifier = @"sheet-scroll";
     _body = SheetStack(@[], UILayoutConstraintAxisVertical, 16);
-    [_scroll addSubview:_body];
     _footer = SheetStack(@[], UILayoutConstraintAxisVertical, 8);
-    for (UIView *view in @[header, _scroll, _body, _footer]) view.translatesAutoresizingMaskIntoConstraints = NO;
-    [self.view addSubview:header];
+    // The whole form can scroll when the keyboard leaves little vertical room.
+    UIStackView *content = SheetStack(@[header, _body, _footer], UILayoutConstraintAxisVertical, 20);
+    for (UIView *view in @[_scroll, content]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    [_scroll addSubview:content];
     [self.view addSubview:_scroll];
-    [self.view addSubview:_footer];
     UILayoutGuide *safe = self.view.safeAreaLayoutGuide;
     [NSLayoutConstraint activateConstraints:@[
-        [header.topAnchor constraintEqualToAnchor:safe.topAnchor constant:20],
-        [header.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20],
-        [header.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20],
-        [_scroll.topAnchor constraintEqualToAnchor:header.bottomAnchor constant:12],
+        [_scroll.topAnchor constraintEqualToAnchor:safe.topAnchor],
         [_scroll.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor],
         [_scroll.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor],
-        [_scroll.bottomAnchor constraintEqualToAnchor:_footer.topAnchor constant:-12],
-        [_body.topAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.topAnchor constant:8],
-        [_body.bottomAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.bottomAnchor constant:-20],
-        [_body.leadingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.leadingAnchor constant:20],
-        [_body.trailingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.trailingAnchor constant:-20],
-        [_body.widthAnchor constraintEqualToAnchor:_scroll.frameLayoutGuide.widthAnchor constant:-40],
-        [_footer.leadingAnchor constraintEqualToAnchor:safe.leadingAnchor constant:20],
-        [_footer.trailingAnchor constraintEqualToAnchor:safe.trailingAnchor constant:-20],
-        [_footer.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor constant:-12],
+        [_scroll.bottomAnchor constraintEqualToAnchor:self.view.keyboardLayoutGuide.topAnchor],
+        [content.topAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.topAnchor constant:20],
+        [content.bottomAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.bottomAnchor constant:-12],
+        [content.leadingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.leadingAnchor constant:20],
+        [content.trailingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.trailingAnchor constant:-20],
+        [content.widthAnchor constraintEqualToAnchor:_scroll.frameLayoutGuide.widthAnchor constant:-40],
     ]];
     [self updateModel:_model];
+}
+
+- (void)revealEditor {
+    UITextField *field = _editingField;
+    if (!field.isFirstResponder || _scroll.isDragging || _scroll.bounds.size.height <= 0) return;
+    CGRect rect = [field convertRect:field.bounds toView:_scroll];
+    [_scroll scrollRectToVisible:CGRectInset(rect, 0, -8) animated:NO];
+}
+
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    CGSize viewport = _scroll.bounds.size;
+    if (_revealEditingField || !CGSizeEqualToSize(viewport, _viewportSize)) {
+        _viewportSize = viewport;
+        _revealEditingField = NO;
+        [self revealEditor];
+    }
 }
 
 - (UIButton *)actionButton {
@@ -397,6 +411,8 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         NSDictionary *model = _model;
         _model = nil;
         [self updateModel:model];
+        _revealEditingField = YES;
+        [self.view setNeedsLayout];
     }
 }
 
@@ -435,5 +451,13 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 - (BOOL)textFieldShouldReturn:(UITextField *)textField {
     [textField resignFirstResponder];
     return YES;
+}
+- (void)textFieldDidBeginEditing:(UITextField *)textField {
+    _editingField = textField;
+    _revealEditingField = YES;
+    [self.view setNeedsLayout];
+}
+- (void)textFieldDidEndEditing:(UITextField *)textField {
+    if (_editingField == textField) _editingField = nil;
 }
 @end

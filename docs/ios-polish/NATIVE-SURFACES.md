@@ -4,7 +4,7 @@ The player, pages, playback engine and app state remain in Rust/limn. UIKit owns
 
 `SurcoSurfaces` attaches a `UIContextMenuInteraction` to the existing canvas, rather than adding transparent views over cards. It snapshots the selected menu before presenting. Rust captures the corresponding track/collection target and only accepts actions offered for that opening. A native menu ends after its selection has been queued, preserving that target across list updates.
 
-`SurcoSheet` renders controlled text, fields, actions, segments, sliders and the visible system route picker. `UISheetPresentationController` handles medium/large detents, interactive dismissal, transitions and scroll handoff. Native fields keep their first responder and scroll position across model updates; the keyboard layout guide positions the footer. Confirmation uses `UIAlertController`.
+`SurcoSheet` renders controlled text, fields, actions, segments, sliders and the visible system route picker. `UISheetPresentationController` handles medium/large detents, interactive dismissal, transitions and scroll handoff. The header, fields and actions share one scroll viewport above the keyboard layout guide, so landscape editing keeps its full touch target. Native fields keep their first responder and scroll position across model updates; editing, viewport or text-size changes reveal the active field without rebuilding it. Confirmation uses `UIAlertController`.
 
 The migration card uses `UIPasteControl` on iOS 16 and later with an explicit `UIPasteConfigurationSupporting` recipient. Availability checks do not read pasteboard text. An asynchronous result is discarded if the control was hidden, retargeted or destroyed. iOS 15 retains an explicit-tap fallback.
 

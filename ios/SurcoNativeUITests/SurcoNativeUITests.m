@@ -41,6 +41,18 @@
     XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:self.app];
     XCTAssertEqual([XCTWaiter waitForExpectations:@[expectation] timeout:12], XCTWaiterResultCompleted);
 }
+- (void)waitForVisibleEditor:(XCUIElement *)field {
+    XCUIElement *scroll = [self element:@"sheet-scroll"];
+    NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
+        XCUIElement *editor = object;
+        CGRect visible = CGRectIntersection(editor.frame, scroll.frame);
+        return self.app.keyboards.firstMatch.exists && editor.hittable &&
+            !CGRectIsNull(visible) && visible.size.height >= 44 && visible.size.width >= 44;
+    }];
+    XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:field];
+    XCTAssertEqual([XCTWaiter waitForExpectations:@[expectation] timeout:12], XCTWaiterResultCompleted,
+        @"The editor needs a full touch target above the keyboard. Field: %@, scroll: %@", field, scroll);
+}
 - (void)launch {
     [self.app launch];
     XCTAssertTrue([self.app waitForState:XCUIApplicationStateRunningForeground timeout:30]);
@@ -130,15 +142,19 @@
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
     [self waitForLandscape:YES];
     XCTAssertEqualObjects(field.value, edited, @"Reflow keeps the live editor and its text");
-    [self waitFor:field predicate:@"hittable == YES"];
+    [self waitForVisibleEditor:field];
+    [field typeText:@"-apaisado"];
+    NSString *landscapeEdited = [edited stringByAppendingString:@"-apaisado"];
+    XCTAssertEqualObjects(field.value, landscapeEdited, @"The same editor remains usable above the landscape keyboard");
     [self attachScreenshot:@"native-import-keyboard-landscape"];
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
     [self waitForLandscape:NO];
+    XCTAssertEqualObjects(field.value, landscapeEdited, @"Portrait keeps the landscape edit");
     [field typeText:@"-surco"];
-    XCTAssertEqualObjects(field.value, [edited stringByAppendingString:@"-surco"]);
+    XCTAssertEqualObjects(field.value, [landscapeEdited stringByAppendingString:@"-surco"]);
     [field typeText:@"\n"];
     [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
-    XCTAssertEqualObjects(field.value, [edited stringByAppendingString:@"-surco"]);
+    XCTAssertEqualObjects(field.value, [landscapeEdited stringByAppendingString:@"-surco"]);
     XCTAssertTrue([self element:@"import-go"].exists, @"Return dismisses the keyboard and does not fetch the playlist");
     XCTAssertEqual(self.app.alerts.count, 0u);
     [self attachScreenshot:@"native-import-edited-after-reflow"];
