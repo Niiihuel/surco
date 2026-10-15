@@ -483,6 +483,17 @@ mod tests {
     }
 
     #[test]
+    fn passive_header_and_scrim_surfaces_do_not_pan_the_underlying_list() {
+        let mut frame = Frame::default();
+        frame.regions.push(limn::HitRegion { id: "list".into(), rect: limn::Rect::new(0.0, 0.0, 240.0, 500.0), kind: HitKind::Scroll });
+        frame.regions.push(limn::HitRegion { id: "header".into(), rect: limn::Rect::new(0.0, 0.0, 240.0, 76.0), kind: HitKind::Surface });
+        assert!(!can_pan(&frame, Point::new(20.0, 20.0), &|_| false));
+        assert!(can_pan(&frame, Point::new(20.0, 100.0), &|_| false));
+        frame.regions.push(limn::HitRegion { id: "scrim".into(), rect: limn::Rect::new(0.0, 0.0, 240.0, 500.0), kind: HitKind::Surface });
+        assert!(!can_pan(&frame, Point::new(20.0, 100.0), &|_| false));
+    }
+
+    #[test]
     fn the_focused_field_requests_the_keyboard_in_screen_coordinates() {
         let mut tree = UiTree::new(Element::column(vec![
             Element::text_input("query", "", "Search").size(Some(200.0), Some(44.0)),
