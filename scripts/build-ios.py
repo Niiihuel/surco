@@ -64,6 +64,32 @@ def simulator_template(inventory, sdk_version):
     raise RuntimeError(f"No available iPhone simulator for SDK {sdk_version}; install its runtime in Xcode")
 
 
+def collect_crash_reports(udid, artifacts, since, home=None):
+    """Retain this launch's Apple reports before deleting the owned simulator."""
+    home = Path.home() if home is None else Path(home)
+    device_logs = home / "Library" / "Developer" / "CoreSimulator" / "Devices" / udid / "data" / "Library" / "Logs"
+    sources = {
+        "host": home / "Library" / "Logs" / "DiagnosticReports",
+        "simulator-crash": device_logs / "CrashReporter",
+        "simulator-diagnostic": device_logs / "DiagnosticReports",
+    }
+    reports = []
+    for kind, directory in sources.items():
+        if not directory.is_dir():
+            continue
+        for source in directory.rglob("Surco*"):
+            if not source.is_file() or source.suffix not in (".ips", ".crash", ".diag"):
+                continue
+            if source.stat().st_mtime < since - 2:
+                continue
+            destination = artifacts / "crashes" / kind / source.relative_to(directory)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, destination)
+            reports.append(str(destination.relative_to(artifacts)))
+    (artifacts / "crash-reports.json").write_text(json.dumps(reports, indent=2) + "\n")
+    return reports
+
+
 def smoke_simulator(app, sdk_version, env, artifacts):
     logs = artifacts / "logs"
     inventory = json.loads(run(["xcrun", "simctl", "list", "devices", "available", "--json"],
@@ -73,6 +99,7 @@ def smoke_simulator(app, sdk_version, env, artifacts):
         bundle_id = plistlib.load(source)["CFBundleIdentifier"]
     udid = run(["xcrun", "simctl", "create", "Surco CI", device_type, runtime],
                env, logs / "simulator-create.log", timeout=60).strip()
+    launched_at = time.time()
     try:
         run(["xcrun", "simctl", "boot", udid], env, logs / "simulator-boot.log", timeout=60)
         run(["xcrun", "simctl", "bootstatus", udid, "-b"], env, logs / "simulator-ready.log", timeout=180)
@@ -97,8 +124,19 @@ def smoke_simulator(app, sdk_version, env, artifacts):
                                                          "launch_survived_seconds": 8}, indent=2) + "\n")
     finally:
         run(["xcrun", "simctl", "spawn", udid, "log", "show", "--last", "2m", "--style", "compact",
-             "--predicate", 'process == "Surco"'], env, logs / "simulator-system.log",
+             "--predicate", f'process == "Surco" OR process == "ReportCrash" OR '
+             f'eventMessage CONTAINS "{bundle_id}"'], env, logs / "simulator-system.log",
             quiet=True, check=False, timeout=60)
+        # CrashReporter may finish writing the report after the process has already exited.
+        for attempt in range(6):
+            try:
+                reports = collect_crash_reports(udid, artifacts, launched_at)
+            except OSError as error:
+                (logs / "crash-collection.log").write_text(str(error) + "\n")
+                break
+            if reports or attempt == 5:
+                break
+            time.sleep(1)
         run(["xcrun", "simctl", "terminate", udid, bundle_id], env, logs / "simulator-terminate.log",
             quiet=True, check=False, timeout=30)
         run(["xcrun", "simctl", "shutdown", udid], env, logs / "simulator-shutdown.log",

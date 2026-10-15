@@ -5,6 +5,7 @@ import runpy
 import shlex
 import subprocess
 import tempfile
+import time
 import unittest
 from unittest.mock import patch
 
@@ -13,6 +14,25 @@ script = runpy.run_path(str(Path(__file__).with_name("build-ios.py")))
 
 
 class IOSBuildTests(unittest.TestCase):
+    def test_crash_reports_preserve_only_current_surco_reports_before_simulator_deletion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            home = Path(directory)
+            host = home / "Library/Logs/DiagnosticReports"
+            simulator = home / "Library/Developer/CoreSimulator/Devices/test-device/data/Library/Logs/CrashReporter"
+            for source in (host, simulator):
+                source.mkdir(parents=True)
+                (source / "Surco-current.ips").write_text("native backtrace")
+                (source / "OtherApp-current.ips").write_text("unrelated")
+                stale = source / "Surco-stale.ips"
+                stale.write_text("previous launch")
+                stale.touch()
+                script["os"].utime(stale, (0, 0))
+            artifacts = home / "artifacts"
+            artifacts.mkdir()
+            reports = script["collect_crash_reports"]("test-device", artifacts, time.time(), home)
+            self.assertEqual(set(reports), {"crashes/host/Surco-current.ips", "crashes/simulator-crash/Surco-current.ips"})
+            self.assertTrue(all((artifacts / report).read_text() == "native backtrace" for report in reports))
+
     def test_cleanup_timeout_retains_logs_and_does_not_prevent_remaining_cleanup(self):
         with tempfile.TemporaryDirectory() as directory:
             log = Path(directory) / "cleanup.log"
