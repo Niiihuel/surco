@@ -1,0 +1,56 @@
+{
+  "contents": {
+    "tabbedSearchResultsRenderer": {
+      "tabs": [{
+        "tabRenderer": {
+          "content": {
+            "sectionListRenderer": {
+              "contents": [{
+                "musicShelfRenderer": {
+                  "contents": [
+                    {"musicResponsiveListItemRenderer": {
+                      "playlistItemData": {"videoId": "linked-song"},
+                      "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": []}}},
+                      "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Con álbum"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+                          {"text": "Artista uno"}, {"text": " • "},
+                          {"text": "Álbum enlazado", "navigationEndpoint": {"browseEndpoint": {"browseId": "MPRE-linked-album"}}},
+                          {"text": " • "}, {"text": "3:01"}
+                        ]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "1000 plays"}]}}}
+                      ]
+                    }},
+                    {"musicResponsiveListItemRenderer": {
+                      "playlistItemData": {"videoId": "unlinked-song"},
+                      "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": []}}},
+                      "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Sin enlace de álbum"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+                          {"text": "Artista dos"}, {"text": " • "}, {"text": "Álbum sin enlace"},
+                          {"text": " • "}, {"text": "4:02"}
+                        ]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "2000 plays"}]}}}
+                      ]
+                    }},
+                    {"musicResponsiveListItemRenderer": {
+                      "playlistItemData": {"videoId": "no-album-song"},
+                      "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": []}}},
+                      "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Sin álbum"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+                          {"text": "Artista tres"}, {"text": " • "}, {"text": "1:03"}
+                        ]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "3000 plays"}]}}}
+                      ]
+                    }}
+                  ]
+                }
+              }]
+            }
+          }
+        }
+      }]
+    }
+  }
+}
