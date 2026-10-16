@@ -106,7 +106,8 @@ def jwt_signature(der):
     return result
 
 
-def app_record(values, key, env):
+def asc(values, key, env, path, body=None):
+    """One App Store Connect API call with a fresh token; a body makes it a POST."""
     encode = lambda data: base64.urlsafe_b64encode(data).rstrip(b"=")
     header = {"alg": "ES256", "kid": values["APP_STORE_CONNECT_KEY_ID"], "typ": "JWT"}
     now = int(time.time())
@@ -121,17 +122,48 @@ def app_record(values, key, env):
         def redirect_request(self, *args, **kwargs):
             return None
 
-    query = urlencode({"filter[bundleId]": BUNDLE_ID, "fields[apps]": "name,bundleId", "limit": "1"})
-    request = Request("https://api.appstoreconnect.apple.com/v1/apps?" + query,
-                      headers={"Authorization": "Bearer " + token, "Accept": "application/json"})
+    request = Request("https://api.appstoreconnect.apple.com" + path, data=body and json.dumps(body).encode(),
+                      headers={"Authorization": "Bearer " + token, "Accept": "application/json",
+                               "Content-Type": "application/json"})
     try:
         with build_opener(NoRedirect).open(request, timeout=30) as response:
-            apps = json.load(response)["data"]
+            return json.loads(response.read() or b"null")
     except HTTPError as error:
-        raise RuntimeError(f"App Store Connect API returned HTTP {error.code}; check the team API key and app access") from error
+        raise RuntimeError(f"App Store Connect API returned HTTP {error.code} for {path.split('?')[0]}; "
+                           "check the team API key and app access") from error
+
+
+def app_record(values, key, env):
+    query = urlencode({"filter[bundleId]": BUNDLE_ID, "fields[apps]": "name,bundleId", "limit": "1"})
+    apps = asc(values, key, env, "/v1/apps?" + query)["data"]
     if not apps or apps[0]["attributes"]["bundleId"] != BUNDLE_ID:
         raise RuntimeError(f"Create the NEW Surco app record in App Store Connect with bundle ID {BUNDLE_ID} first")
     return apps[0]["id"]
+
+
+def deliver(values, key, env, app_id, version, build, wait=time.sleep):
+    """Wait for Apple to process the upload, then add it to every internal TestFlight group."""
+    query = urlencode({"filter[app]": app_id, "filter[version]": build,
+                       "filter[preReleaseVersion.version]": version, "fields[builds]": "processingState"})
+    for _ in range(60):
+        builds = asc(values, key, env, "/v1/builds?" + query)["data"]
+        state = builds[0]["attributes"]["processingState"] if builds else "UPLOADED"
+        print(f"Apple processing {version} ({build}): {state}", flush=True)
+        if state == "VALID":
+            break
+        if state in ("FAILED", "INVALID"):
+            raise RuntimeError(f"Apple marked {version} ({build}) {state}")
+        wait(30)
+    else:
+        raise RuntimeError(f"Apple has not processed {version} ({build}) in 30 minutes; add it to a group in App Store Connect")
+    groups = asc(values, key, env, "/v1/betaGroups?" + urlencode({"filter[app]": app_id, "filter[isInternalGroup]": "true",
+                                                                  "fields[betaGroups]": "name"}))["data"]
+    if not groups:
+        raise RuntimeError("The app has no internal TestFlight group to deliver to")
+    for group in groups:
+        asc(values, key, env, f"/v1/betaGroups/{group['id']}/relationships/builds",
+            {"data": [{"type": "builds", "id": builds[0]["id"]}]})
+        print(f"Delivered {version} ({build}) to TestFlight group {group['attributes']['name']}", flush=True)
 
 
 def validate_profile(profile, team, now=None):
@@ -254,12 +286,15 @@ def main():
                 execute("Upload IPA to TestFlight", ["xcrun", "altool", "--upload-app", *auth], upload_env, log=artifacts / "upload.log")
             (artifacts / "result.json").write_text(json.dumps({"app_id": app_id, "bundle_id": BUNDLE_ID, "version": version,
                 "build": build, "sdk": sdk, "uploaded": args.upload,
-                "next": "Wait for Apple processing, answer export compliance, then add the build to an internal TestFlight group."}, indent=2) + "\n")
+                "next": "The workflow adds the processed build to every internal TestFlight group." if args.upload
+                        else "Run the workflow with upload to deliver a build."}, indent=2) + "\n")
         finally:
             execute("Restore keychain search list", ["security", "list-keychains", "-d", "user", "-s", *old_keychains], public_env, check=False, timeout=30)
             if created:
                 execute("Delete temporary signing keychain", ["security", "delete-keychain", str(keychain)], public_env, check=False, timeout=30)
             installed.unlink(missing_ok=True)
+        if args.upload:
+            deliver(values, key, public_env, app_id, version, build)
 
 
 if __name__ == "__main__":

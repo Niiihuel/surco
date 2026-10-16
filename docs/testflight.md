@@ -258,14 +258,13 @@ declaración francesa para distribución por App Store en Francia. Antes de ampl
 la distribución a ese país, revisá la clasificación y documentación aplicables.
 ([Documentación de cifrado de Apple](https://developer.apple.com/help/app-store-connect/reference/app-information/export-compliance-documentation-for-encryption/))
 
-1. En **App Store Connect → Surco Music → TestFlight**, esperá que termine el procesamiento.
-2. Completá export compliance y la información de pruebas que Apple solicite.
-   Respondé según las integraciones reales de la app; el workflow no declara
-   automáticamente exenciones ni las respuestas de App Privacy.
-3. Asigná el build manualmente al grupo **Surco interno** para que lo reciban
-   sus usuarios. La distribución automática de ese grupo está desactivada.
-4. Instalá la app TestFlight de Apple en tu iPhone, aceptá la invitación y tocá
-   **Instalar** en Surco; para la instalación existente, tocá **Actualizar**.
+Con `upload` activado, el workflow espera a que Apple procese el build (hasta
+30 minutos) y lo agrega a todos los grupos internos de la app, como **Surco
+interno**. `Info.plist` declara `ITSAppUsesNonExemptEncryption = NO` (solo
+algoritmos estándar, fuera de Francia), así que Apple no vuelve a preguntar por
+cifrado. Las respuestas de App Privacy siguen siendo manuales.
+
+En el iPhone, abrí **TestFlight → Surco → Actualizar** cuando el workflow termine.
 
 Los builds duran 90 días. La prueba interna admite hasta 100 usuarios de App
 Store Connect; invitar testers externos añade Beta App Review y sus requisitos.

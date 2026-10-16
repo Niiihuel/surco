@@ -76,6 +76,23 @@ class TestFlightTests(unittest.TestCase):
         self.assertIn("filter%5BbundleId%5D=io.github.niiihuel.surco", request.full_url)
         self.assertTrue(request.headers["Authorization"].startswith("Bearer "))
 
+    def test_processed_build_is_added_to_every_internal_group(self):
+        calls = []
+        replies = iter([{"data": []}, {"data": [{"id": "B1", "attributes": {"processingState": "PROCESSING"}}]},
+                        {"data": [{"id": "B1", "attributes": {"processingState": "VALID"}}]},
+                        {"data": [{"id": "G1", "attributes": {"name": "Surco interno"}}]}, None])
+        function = script["deliver"]
+        with patch.dict(function.__globals__, {"asc": lambda *args: calls.append(args[3:]) or next(replies)}), \
+                patch("sys.stdout", io.StringIO()):
+            function({}, None, {}, "APP", "0.6.0", "8.1", wait=lambda seconds: None)
+        self.assertIn("filter%5Bversion%5D=8.1", calls[0][0])
+        self.assertIn("filter%5BisInternalGroup%5D=true", calls[3][0])
+        self.assertEqual(calls[4], ("/v1/betaGroups/G1/relationships/builds", {"data": [{"type": "builds", "id": "B1"}]}))
+        replies = iter([{"data": [{"id": "B1", "attributes": {"processingState": "INVALID"}}]}])
+        with patch.dict(function.__globals__, {"asc": lambda *args: next(replies)}), patch("sys.stdout", io.StringIO()):
+            with self.assertRaisesRegex(RuntimeError, "INVALID"):
+                function({}, None, {}, "APP", "0.6.0", "8.1", wait=lambda seconds: None)
+
     def test_secret_output_is_redacted_before_console_or_artifact_logs(self):
         function = script["execute"]
         with tempfile.TemporaryDirectory() as directory:
