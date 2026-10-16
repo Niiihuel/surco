@@ -2039,8 +2039,7 @@ fn cinema(state: &State, window: Size, palette: ComponentPalette) -> Element {
         }
         (_, Some(track)) => {
             let side = (room.height - CINEMA_TOP).min(room.width) * 0.8;
-            let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
-            let stage = over(cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px()));
+            let stage = over(sole_cover(state, &largest(state, track), side, palette).radius(RadiusRole::Panel.px()));
             match track.artwork_url.as_ref().and_then(|url| state.tints.get(url)) {
                 Some(tint) => stage.top_background_fade(Color { a: 150, ..*tint }, room.height),
                 None => stage,
@@ -2070,9 +2069,8 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                 let side = state.right_width - 32.0;
                 let link = |id: &str, action: &str, text: Element| inset(Element::clickable(id, text).dispatch_as(action));
                 let picture = {
-                        // The large rendition once it has arrived; until then, the row's.
-                        let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
-                        let cover = cover(state, if large.is_some() { &large } else { &track.artwork_url }, side, palette).radius(RadiusRole::Panel.px());
+                        // Not whole: a release's pictures beside it would make three.
+                        let cover = cover(state, &largest(state, track), side, palette).radius(RadiusRole::Panel.px());
                         // The song's own video goes over its cover, which stays until the first frame;
                         // under the pointer, what to see there and the way to see it large.
                         let mut layers = vec![cover];
@@ -2289,9 +2287,26 @@ fn equalizer(state: &State, palette: ComponentPalette) -> Element {
 }
 
 fn cover(state: &State, artwork: &Option<String>, side: f32, palette: ComponentPalette) -> Element {
+    picture(state, artwork, side, false, palette)
+}
+
+/// A cover shown large and alone, decoded whole: limn decodes the rest at 384 pixels a side,
+/// which three pixels a point blur past 128 points. limn keeps two such at once, so one a page.
+fn sole_cover(state: &State, artwork: &Option<String>, side: f32, palette: ComponentPalette) -> Element {
+    picture(state, artwork, side, true, palette)
+}
+
+/// The playing track's large rendition once it has arrived; until then, the row's.
+fn largest(state: &State, track: &Track) -> Option<String> {
+    let large = track.artwork_url.as_deref().map(large_cover).filter(|url| state.artwork.contains_key(url));
+    large.or_else(|| track.artwork_url.clone())
+}
+
+fn picture(state: &State, artwork: &Option<String>, side: f32, whole: bool, palette: ComponentPalette) -> Element {
     let radius = limn::tokens().radius.control;
     match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
         // Covers are square; a video's thumbnail and an artist's banner are not.
+        Some(image) if whole => Element::raster_image(image.clone().cover().full_resolution()).size(Some(side), Some(side)).radius(radius),
         Some(image) => Element::raster_image(image.clone().cover()).size(Some(side), Some(side)).radius(radius),
         None => Element::panel(Element::icon(Icon::MusicNote).foreground(palette.muted).centered())
             .size(Some(side), Some(side))

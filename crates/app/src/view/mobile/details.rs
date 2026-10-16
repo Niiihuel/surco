@@ -126,7 +126,7 @@ pub(in crate::view) fn album(
     scroll(
         "mobile-album",
         vec![
-            cover(state, &album.artwork_url, side, palette)
+            sole_cover(state, &album.artwork_url, side, palette)
                 .radius(8.0)
                 .centered_x(),
             about,
@@ -163,7 +163,7 @@ pub(in crate::view) fn artist(
         page_actions(state, vec![followed], palette)
     };
     let mut sections = vec![
-        cover(state, &artist.artwork_url, side, palette)
+        sole_cover(state, &artist.artwork_url, side, palette)
             .radius(side / 2.0)
             .centered_x(),
         Element::column(about).gap(8.0),
@@ -217,7 +217,7 @@ pub(in crate::view) fn playlist(
         .size(Some(side), Some(side))
         .radius(8.0)
     } else {
-        cover(state, &artwork, side, palette).radius(8.0)
+        sole_cover(state, &artwork, side, palette).radius(8.0)
     };
     let mut about = vec![
         Text::eyebrow(

@@ -23,7 +23,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     }
     controls.extend([timeline(state, palette), transport(state, palette), tools(palette)]);
     let main = Element::column(vec![
-        cover(state, &track.artwork_url, side, palette).radius(8.0).centered_x()
+        sole_cover(state, &largest(state, track), side, palette).radius(8.0).centered_x()
             .animate_enter(format!("mobile-player-cover:{}", track.id)),
         Element::column(controls).gap(12.0),
     ]).gap(32.0);

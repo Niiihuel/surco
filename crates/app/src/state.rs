@@ -599,8 +599,8 @@ pub struct State {
 }
 
 /// One request per cover, however many rows show it and however often it comes up.
-// shortcut: covers come at the catalog's largest size and stay for the whole run; ask for the
-// size on screen and evict when a long session's memory matters.
+// shortcut: covers come at `COVER_SIDE` whatever their place and stay for the whole run; ask for
+// the size on screen and evict when a long session's memory matters.
 fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item = &'a Option<String>>) -> Vec<Command> {
     let urls = urls.into_iter().flatten();
     urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
@@ -656,19 +656,39 @@ pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
     (!ids.is_empty() && !name.is_empty()).then_some((name, ids))
 }
 
-/// A cover's address at the size a large picture needs. The catalog's addresses end in the size
-/// they were listed at (`=w120-h120-…`); any other address is returned as it is.
+/// The side every cover is fetched at: a phone draws its rows and shelves at three pixels a
+/// point, and the catalog lists most covers at 60 or 120.
+pub const COVER_SIDE: u32 = 544;
+
+/// A cover's address at the size a large picture needs: a phone's player is 380 points wide.
 pub fn large_cover(url: &str) -> String {
-    const SIDE: &str = "544";
-    let digits = |text: &str| text.len() - text.trim_start_matches(|c: char| c.is_ascii_digit()).len();
-    let Some(start) = url.rfind("=w") else { return url.to_owned() };
-    let width = digits(&url[start + 2..]);
-    let rest = &url[start + 2 + width..];
-    let height = rest.strip_prefix("-h").map(digits).unwrap_or(0);
-    if width == 0 || height == 0 {
-        return url.to_owned();
+    cover_at(url, 1200)
+}
+
+/// A cover's address at `side` pixels or more. The catalog's addresses end in the size they were
+/// listed at (`=w120-h120-…`, `=s120-…`): a smaller one is scaled up to `side`, keeping its
+/// shape. Any other address is returned as it is.
+pub fn cover_at(url: &str, side: u32) -> String {
+    fn number(text: &str) -> Option<(u32, &str)> {
+        let end = text.find(|c: char| !c.is_ascii_digit()).unwrap_or(text.len());
+        text[..end].parse().ok().filter(|number| *number > 0).map(|number| (number, &text[end..]))
     }
-    format!("{}=w{SIDE}-h{SIDE}{}", &url[..start], &rest[2 + height..])
+    let sized = || {
+        let (head, tail) = url.rsplit_once('=')?;
+        // The size closes the path; an `=` in a query or before another segment is something else.
+        if head.contains('?') || tail.contains(['/', '?', '#']) {
+            return None;
+        }
+        if let Some((listed, rest)) = tail.strip_prefix('s').and_then(number) {
+            return Some(format!("{head}=s{}{rest}", listed.max(side)));
+        }
+        let (width, rest) = number(tail.strip_prefix('w')?)?;
+        let (height, rest) = number(rest.strip_prefix("-h")?)?;
+        let scale = (f64::from(side) / f64::from(width.max(height))).max(1.0);
+        let grown = |listed: u32| (f64::from(listed) * scale).round() as u32;
+        Some(format!("{head}=w{}-h{}{rest}", grown(width), grown(height)))
+    };
+    sized().unwrap_or_else(|| url.to_owned())
 }
 
 /// Where a track's artist lives: by link when the catalog gave one, by name otherwise.
@@ -3068,10 +3088,14 @@ mod tests {
 
     #[test]
     fn a_cover_is_asked_for_large_where_its_address_names_a_size() {
-        assert_eq!(large_cover("https://lh3.example/abc=w120-h120-l90-rj"), "https://lh3.example/abc=w544-h544-l90-rj");
-        assert_eq!(large_cover("https://lh3.example/abc=w60-h60"), "https://lh3.example/abc=w544-h544");
-        for other in ["https://i.ytimg.com/vi/x/hqdefault.jpg", "https://img/a", "https://x/=w-h1", "https://x/=w12", ""] {
-            assert_eq!(large_cover(other), other);
+        assert_eq!(large_cover("https://lh3.example/abc=w120-h120-l90-rj"), "https://lh3.example/abc=w1200-h1200-l90-rj");
+        assert_eq!(cover_at("https://lh3.example/abc=w60-h60", 544), "https://lh3.example/abc=w544-h544");
+        assert_eq!(cover_at("https://yt3.example/abc=s88-c-k-no-rj", 544), "https://yt3.example/abc=s544-c-k-no-rj");
+        assert_eq!(cover_at("https://lh3.example/abc=w540-h225-p", 1080), "https://lh3.example/abc=w1080-h450-p", "a banner keeps its shape");
+        assert_eq!(cover_at("https://lh3.example/abc=w2880-h1200-p", 544), "https://lh3.example/abc=w2880-h1200-p", "never smaller");
+        let others = ["https://i.ytimg.com/vi/x/hqdefault.jpg", "https://i.ytimg.com/vi/x/sddefault.jpg?sqp=a&rs=w12-h3", "https://img/a", "https://x/=w-h1", "https://x/=w12", "https://x/=sz", "https://x/a=w9-h9/b", ""];
+        for other in others {
+            assert_eq!(cover_at(other, 544), other);
         }
         let mut state = without_clips();
         let mut track = track("a");

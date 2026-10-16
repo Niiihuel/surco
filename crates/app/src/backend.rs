@@ -27,6 +27,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::library::Library;
+use crate::state::{cover_at, COVER_SIDE};
 use crate::update;
 use crate::media_keys::{MediaEvent, MediaKeys};
 #[cfg(target_os = "ios")]
@@ -1189,12 +1190,13 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
     buffer.fail();
 }
 
-/// A cover from the library when it is there, from the network otherwise.
+/// A cover from the library when it is there, from the network otherwise, where the catalog's
+/// own size would show blurred.
 async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
     let kept = shared.library.lock().unwrap().cover(url);
     match kept {
         Some(bytes) => Some(bytes),
-        None => Some(shared.youtube.http().get(url).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec()),
+        None => Some(shared.youtube.http().get(cover_at(url, COVER_SIDE)).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec()),
     }
 }
 
