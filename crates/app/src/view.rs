@@ -1375,10 +1375,53 @@ const MORE_WIDTH: f32 = 36.0;
 /// A page's tracks as a table `width` wide: what each is, the album it is on and how
 /// long it lasts, under heads that order them. `leaving` names the rows of a list that
 /// can lose one, which then closes where it was.
+/// How far apart a page's song rows stand, each row and the space after it.
+pub(crate) fn track_pitch(state: &State) -> f32 {
+    if state.mobile { MOBILE_TRACK_PITCH } else { TRACK_TABLE_ROW }
+}
+pub(crate) const MOBILE_TRACK_PITCH: f32 = 72.0;
+const TRACK_TABLE_ROW: f32 = 60.0;
+/// A list up to this long is built whole; a longer one only around what is in view.
+const BUILT_WHOLE: usize = 120;
+/// Rows are built in blocks this long, so scrolling rebuilds the list seldom.
+const ROW_BLOCK: usize = 16;
+
+/// Which of `count` rows `pitch` apart are built: those in view and a screen's worth on
+/// either side. `window` is where the list's top was against its scroll area at the last
+/// layout, and how tall the area is; a short list, or one not measured yet, is built whole.
+pub(crate) fn track_range(count: usize, pitch: f32, window: Option<(f32, f32)>) -> std::ops::Range<usize> {
+    let Some((top, height)) = window.filter(|_| count > BUILT_WHOLE && pitch > 0.0) else { return 0..count };
+    let row = |at: f32| (at / pitch).max(0.0) as usize;
+    let first = (row(-top - height) / ROW_BLOCK * ROW_BLOCK).min(count);
+    let last = (row(-top + 2.0 * height) + 1).div_ceil(ROW_BLOCK) * ROW_BLOCK;
+    first..last.clamp(first, count)
+}
+
+/// Rows of a song list with the ones `range` leaves out stood in for by space of their
+/// height, `gap` apart, so the list is as tall and its rows where they would be.
+fn windowed(rows: Vec<Element>, range: std::ops::Range<usize>, count: usize, pitch: f32, gap: f32) -> Element {
+    let room = |rows: usize| Element::spacer().size(None, Some((rows as f32 * pitch - gap).max(0.0)));
+    let mut column = Vec::with_capacity(rows.len() + 2);
+    if range.start > 0 { column.push(room(range.start)); }
+    column.extend(rows);
+    if range.end < count { column.push(room(count - range.end)); }
+    Element::column(column).gap(gap).anchor(TRACK_LIST)
+}
+
+/// The top of a page's song rows, as the Host measures it to know which are in view.
+pub(crate) const TRACK_LIST: &str = "track-list";
+
 fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Option<String>, width: f32, palette: ComponentPalette) -> Element {
+    let count = rows.len();
+    let range = track_range(count, track_pitch(state), state.track_window);
+    // Rows that only leave the built window are not removed: they must not play leaving.
+    let leaving = leaving.filter(|_| range == (0..count));
     if state.mobile {
-        return Element::column(rows.iter().map(|(place, track)| mobile::track_row(state, format!("page-track:{place}"), track, &track.artist, palette)).collect()).gap(4.0);
+        let built = rows[range.clone()].iter().map(|(place, track)| mobile::track_row(state, format!("page-track:{place}"), track, &track.artist, palette)).collect();
+        return windowed(built, range, count, MOBILE_TRACK_PITCH, 4.0);
     }
+    let first = range.start;
+    let rows = &rows[range.clone()];
     let mut columns = vec![TableColumn::fixed("index", "#", NUMBER_WIDTH).align_end(), TableColumn::flexible("title", "Título", TITLE_MIN).sortable()];
     if album {
         columns.push(TableColumn::fixed("album", "Álbum", state.album_width).sortable().resizable(ALBUM_FROM - TITLE_MIN - 280.0).optional(state.album_shown).hide_below(ALBUM_FROM));
@@ -1390,6 +1433,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
         .iter()
         .enumerate()
         .map(|(position, (place, track))| {
+            let position = first + position;
             let row = format!("page-track:{place}");
             let current = state.current().is_some_and(|current| current.id == track.id);
             // Numbered as they read, whatever their place in the list's own order.
@@ -1412,7 +1456,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             TableRow::new(&row, cells).controls([format!("more:{row}")])
         })
         .collect();
-    let sizing = TableSizing { row_height: 60.0, ..TableSizing::ROOMY };
+    let sizing = TableSizing { row_height: TRACK_TABLE_ROW, ..TableSizing::ROOMY };
     let (header, built) = Table::new("tracks", columns, width, palette)
         .rows(listed)
         .sort(state.page_sort.clone())
@@ -1427,7 +1471,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             None => element,
         }
     });
-    let body = Element::column(body.collect());
+    let body = windowed(body.collect(), range, count, TRACK_TABLE_ROW, 0.0);
     let body = match &leaving {
         Some(list) => body.keep_leaving(format!("{list}:rows")),
         None => body,

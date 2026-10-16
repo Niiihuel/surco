@@ -534,6 +534,9 @@ pub struct State {
     /// The band last moved: its name is lit and its point marked on the curve.
     pub equalizer_band: Option<usize>,
     pub artwork: HashMap<String, RasterImage>,
+    /// Where the page's song list began against its scroll area at the last layout, and the
+    /// area's height: a long list builds only the rows around what is in view.
+    pub track_window: Option<(f32, f32)>,
     /// The covers held, oldest first, so a long session lets the ones it saw first go.
     artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
@@ -796,6 +799,7 @@ impl Default for State {
             equalizer: EqualizerValues::FLAT,
             equalizer_band: None,
             artwork: HashMap::new(),
+            track_window: None,
             artwork_order: VecDeque::new(),
             tints: HashMap::new(),
             sharing: None,
@@ -995,6 +999,7 @@ impl State {
             self.search_page(false);
         }
         (self.page_sort, self.sort_open) = (None, false);
+        self.track_window = None;
         let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);

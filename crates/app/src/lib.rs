@@ -129,6 +129,16 @@ fn follow_lyrics(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut 
     Some(frame)
 }
 
+/// Measure where a long song list stands in its page and, when that brings rows into view
+/// that were not built, lay the page out again with them.
+fn follow_track_window(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    let measured = tree.anchor_offset(view::TRACK_LIST).map(|top| (top, window.height));
+    let (count, pitch) = (state.page_rows().len(), view::track_pitch(state));
+    let built = view::track_range(count, pitch, state.track_window);
+    state.track_window = measured;
+    (view::track_range(count, pitch, measured) != built).then(|| layout_with_notice(state, tree, window, seen))
+}
+
 /// Slide the player's lyric card so the line before the one being sung is at its top,
 /// laying out again when it moved.
 fn follow_lyric_card(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
@@ -593,6 +603,7 @@ impl eframe::App for Host {
         // Untouched since it was measured for input, that frame is this one too: building and
         // laying out a long list again costs a frame's worth of time for nothing.
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
+        let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -1200,6 +1211,67 @@ mod graphics_tests {
             let limits = ios_graphics_limits(&supported);
             assert_eq!(limits.max_texture_dimension_2d, requested);
             assert!(limits.check_limits(&supported));
+        }
+    }
+}
+
+#[cfg(test)]
+mod track_window_tests {
+    use super::*;
+    use surco_core::Track;
+
+    fn liked(mobile: bool, count: usize) -> (State, UiTree, Size) {
+        let size = if mobile { Size::new(402.0, 874.0) } else { Size::new(1180.0, 780.0) };
+        let mut state = State::default();
+        state.mobile = mobile;
+        state.collection.liked = (0..count).map(|index| Track { id: format!("t{index}"), title: format!("Song {index}"),
+            artist: "Artist".into(), artist_id: None, album: Some("Album".into()), album_id: None,
+            artwork_url: None, duration_ms: 1000 }).collect();
+        state.page = state::Page::Liked;
+        let mut tree = UiTree::new(Element::spacer());
+        tree.set_reduced_motion(true);
+        tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+        layout_view(&mut state, &mut tree, size);
+        (state, tree, size)
+    }
+
+    fn rows(frame: &limn::Frame) -> Vec<(usize, f32)> {
+        frame.access.iter().filter_map(|node| Some((node.id.strip_prefix("page-track:")?.parse().ok()?, node.rect.y))).collect()
+    }
+
+    #[test]
+    fn the_window_is_whole_for_short_lists_and_blocks_around_the_view_for_long_ones() {
+        assert_eq!(view::track_range(100, 60.0, Some((-6000.0, 800.0))), 0..100, "short lists are built whole");
+        assert_eq!(view::track_range(1000, 60.0, None), 0..1000, "an unmeasured list is built whole");
+        let range = view::track_range(1000, 60.0, Some((-6000.0, 800.0)));
+        assert!(range.start <= 86 && range.end >= 114 && range.len() < 80, "{range:?}");
+        assert_eq!(range.start % 16, 0);
+        assert_eq!(view::track_range(1000, 60.0, Some((-600_000.0, 800.0))), 1000..1000);
+    }
+
+    #[test]
+    fn a_long_list_builds_its_rows_in_view_where_the_whole_list_would_put_them() {
+        for mobile in [false, true] {
+            let (mut state, mut tree, size) = liked(mobile, 1000);
+            for offset in [0.0, 30_000.0, 1_000_000.0] {
+                state.track_window = None;
+                tree.set_scroll_offset("liked", offset);
+                let expected = rows(&layout_view(&mut state, &mut tree, size));
+                let extent = tree.scroll_offset("liked");
+                assert!(!expected.is_empty());
+                // The window follows the list until it holds what is in view.
+                let mut seen = None;
+                let mut passes = 0;
+                while follow_track_window(&mut state, &mut tree, size, &mut seen).is_some() {
+                    passes += 1;
+                    assert!(passes < 4, "the window settles");
+                }
+                assert!(state.track_window.is_some());
+                tree.set_scroll_offset("liked", offset);
+                let shown = layout_view(&mut state, &mut tree, size);
+                assert_eq!(tree.scroll_offset("liked"), extent, "the list is as tall either way (mobile {mobile}, {offset})");
+                assert_eq!(rows(&shown), expected, "rows stand where the whole list puts them (mobile {mobile}, {offset})");
+            }
         }
     }
 }

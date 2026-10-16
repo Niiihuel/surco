@@ -52,20 +52,13 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
         .render()
         .padding(16.0);
     }
-    Element::column(
-        rows.into_iter()
-            .map(|(place, track)| {
-                track_row(
-                    state,
-                    format!("page-track:{place}"),
-                    track,
-                    &track.artist,
-                    palette,
-                )
-            })
-            .collect(),
-    )
-    .gap(4.0)
+    let count = rows.len();
+    let range = crate::view::track_range(count, crate::view::MOBILE_TRACK_PITCH, state.track_window);
+    let built = rows[range.clone()]
+        .iter()
+        .map(|(place, track)| track_row(state, format!("page-track:{place}"), track, &track.artist, palette))
+        .collect();
+    crate::view::windowed(built, range, count, crate::view::MOBILE_TRACK_PITCH, 4.0)
 }
 
 fn scroll(id: &str, sections: Vec<Element>) -> Element {
