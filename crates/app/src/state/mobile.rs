@@ -3,7 +3,6 @@
 use super::*;
 
 const SEARCH_DELAY: Duration = Duration::from_millis(280);
-const SEARCH_HISTORY: usize = 12;
 
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
@@ -193,15 +192,9 @@ impl State {
     }
 
     fn mobile_submit(&mut self) -> Vec<Command> {
-        let query = self.query.trim().to_owned();
         self.mobile_ui.pending = None;
         self.mobile_ui.search_editing = false;
         self.mobile_ui.blur = true;
-        if !query.is_empty() && !query.contains("://") && transfer::source(&query).is_none() {
-            self.collection.searches.retain(|held| held.to_lowercase() != query.to_lowercase());
-            self.collection.searches.insert(0, query);
-            self.collection.searches.truncate(SEARCH_HISTORY);
-        }
         self.search()
     }
 
@@ -303,10 +296,6 @@ impl State {
                     self.menu = None;
                     return Some(commands);
                 }
-                if let Some(index) = id.strip_prefix("recent-search-remove:").and_then(|value| value.parse::<usize>().ok()) {
-                    if index < self.collection.searches.len() { self.collection.searches.remove(index); }
-                    return Some(Vec::new());
-                }
                 if let Some(index) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()) {
                     if let Some(query) = self.collection.searches.get(index).cloned() {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
@@ -357,7 +346,6 @@ impl State {
                         self.mobile_ui.blur = false;
                     }
                     "search-submit" => return Some(self.mobile_submit()),
-                    "recent-search-clear" => self.collection.searches.clear(),
                     "mobile-context-close" => self.mobile_ui.context = None,
                     "mobile-library-close" => self.mobile_ui.library = None,
                     "mobile-connections-close" => self.mobile_ui.connections = false,

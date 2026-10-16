@@ -12,7 +12,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     ]).gap(20.0).padding(24.0);
     let panel = Element::panel(intro).background(SCHEME.raised).radius(16.0);
     ScrollArea::new("mobile-home", Element::column(vec![panel,
-        heading("Seguí tu curiosidad", palette), search::browse(width - 32.0, palette),
+        heading("Seguí tu curiosidad", palette), search::browse(4, width - 32.0, 2, 98.0, palette),
         Element::row(vec![Element::icon(Icon::Heart).foreground(palette.muted).centered_y(),
             Text::new("Guardá tus favoritos y este espacio se vuelve cada vez más tuyo.", palette).muted().render().flex(1.0)]).gap(12.0).padding(8.0),
     ]).gap(24.0).padding(16.0)).render().flex(1.0)

@@ -2,7 +2,7 @@
 
 use super::*;
 
-mod search;
+pub(super) mod search;
 mod home;
 mod player;
 mod lyrics;

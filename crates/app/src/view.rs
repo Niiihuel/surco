@@ -115,7 +115,7 @@ const CHOSEN: Color = Color::rgb(31, 31, 31);
 const PROMO: Color = Color::rgb(36, 36, 36);
 const GAP: f32 = 8.0;
 const PANEL_RADIUS: f32 = 8.0;
-const TOP_BAR_HEIGHT: f32 = 56.0;
+pub(crate) const TOP_BAR_HEIGHT: f32 = 56.0;
 const SEARCH_MAX_WIDTH: f32 = 474.0;
 /// The room each end of the top bar keeps: three header buttons, for the bell, the
 /// settings and the way back to a panel that was shut.
@@ -747,16 +747,19 @@ const BELL_CHIP: f32 = 14.0;
 /// Across the top: the way back, home, and the search in the middle of the window. A side
 /// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
+    // The window's own buttons keep the end the system puts them at.
+    let (left, right) = state.caption;
+    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0 - 2.0 * left.max(right)).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
     // What was typed is taken back from a cross at the field's end, filled as the field is so it covers a long text.
-    let search = if state.query.is_empty() {
-        field
+    // An empty field keeps there the way to browse instead.
+    let end = if state.query.is_empty() {
+        IconButton::new("browse", Icon::Grid, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().active(state.page == Page::Browse).tooltip("Explorar").render()
     } else {
-        let clear = IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip("Borrar").render().centered_y();
-        Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), clear]).padding(6.0)])
-    }
-    .centered_y();
-    let mut leading = Vec::new();
+        IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip("Borrar").render()
+    };
+    let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]).centered_y();
+    let room = |width: f32| (width > 0.0).then(|| Element::spacer().size(Some(width), None));
+    let mut leading: Vec<Element> = room(left).into_iter().collect();
     if !state.library_open {
         leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new("Mostrar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
     }
@@ -779,8 +782,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
     }
+    trailing.extend(room(right));
     // Both ends take the same room, so the search stays in the middle of the window.
-    let end = |children: Vec<Element>| Element::row(children).gap(4.0).size(Some(TOP_BAR_END), None);
+    let end = |children: Vec<Element>| Element::row(children).gap(4.0).size(Some(TOP_BAR_END + left.max(right)), None);
     Element::panel(
         Element::row(vec![
             end(leading),
@@ -1122,6 +1126,27 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         sections.push(shelf(state, "home-artists", "Tus artistas", artists, palette));
     }
     ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+}
+
+/// Where a search starts: what was searched lately as cards to search again or forget,
+/// over every genre to browse.
+fn browse_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let mut sections = Vec::new();
+    let recent: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
+        let disc = Element::panel(Element::icon(Icon::Search).large_icon(TILE_WIDTH * 0.3).foreground(palette.muted).centered()).background(CHOSEN);
+        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(TILE_WIDTH).round(true).artwork(disc).subtitle("Búsqueda").render();
+        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round().tooltip(format!("Quitar «{query}»")).render();
+        Element::stack(vec![tile, Element::row(vec![Element::spacer().flex(1.0), forget])])
+    }).collect();
+    if !recent.is_empty() {
+        sections.push(shelf(state, "browse-recent", "Búsquedas recientes", recent, palette));
+    }
+    sections.push(heading("Explorar todo", palette));
+    let width = width - 24.0;
+    let columns = ((width / 200.0) as usize).clamp(2, 5);
+    let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
+    sections.push(mobile::search::browse(usize::MAX, width, columns, (side * 0.6).clamp(98.0, 160.0), palette));
+    ScrollArea::new("browse-page", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
 
 /// A page's content under the colour of its cover, which gives way to the surface below
@@ -1498,6 +1523,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Settings => "page:settings".to_owned(),
         Page::Lyrics => "page:lyrics".to_owned(),
         Page::News => "page:news".to_owned(),
+        Page::Browse => "page:browse".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
@@ -1539,6 +1565,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, 0.0, palette),
         Page::News => news_page(state, width, palette),
+        Page::Browse => browse_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
@@ -2629,6 +2656,45 @@ mod tests {
                 assert!(!found.iter().any(|id| id == "seek"), "nothing to seek without a track");
             }
         }
+    }
+
+    #[test]
+    fn the_search_starts_from_a_browse_page_of_recent_searches_and_genres() {
+        let size = Size::new(1180.0, 700.0);
+        let has = |state: &State, id: &str| ids(state, size).iter().any(|found| found == id);
+        let mut state = asked("Cerati");
+        assert!(has(&state, "search-clear") && !has(&state, "browse"), "a typed field ends in the cross that empties it");
+        state.search();
+        assert_eq!(state.collection.searches, ["Cerati"], "a search made on the desktop is remembered");
+        state.update(&limn::UiAction::Clicked { id: "home".into() });
+        assert!(has(&state, "browse"), "an empty field ends in the way to browse");
+        state.update(&limn::UiAction::Clicked { id: "browse".into() });
+        assert_eq!(state.page, Page::Browse);
+        for id in ["recent-search:0", "recent-search-remove:0", "browse:Rock argentino", "browse:Pop latino"] {
+            assert!(has(&state, id), "{id} is on the browse page");
+        }
+        assert!(matches!(state.update(&limn::UiAction::Clicked { id: "browse:Rock argentino".into() }).as_slice(), [crate::backend::Command::Search(query)] if query == "Rock argentino"));
+        assert_eq!(state.collection.searches, ["Rock argentino", "Cerati"]);
+        state.update(&limn::UiAction::Clicked { id: "recent-search-remove:1".into() });
+        assert_eq!(state.collection.searches, ["Rock argentino"]);
+    }
+
+    #[test]
+    fn the_top_bar_leaves_the_window_buttons_their_end() {
+        let size = Size::new(1180.0, 700.0);
+        let at = |state: &State, id: &str| {
+            let mut tree = UiTree::new(view(state, size));
+            tree.layout(size).regions.iter().find(|region| region.id == id).unwrap().rect
+        };
+        let mut state = State::default();
+        let (back, settings, search) = (at(&state, "back"), at(&state, "settings"), at(&state, "search"));
+        state.caption = (0.0, 138.0);
+        assert!(at(&state, "settings").x + at(&state, "settings").width <= size.width - 138.0, "Windows' buttons keep the right end");
+        assert_eq!(at(&state, "back"), back);
+        state.caption = (72.0, 0.0);
+        assert!(at(&state, "back").x >= 72.0, "macOS's lights keep the left end");
+        assert_eq!(at(&state, "settings"), settings);
+        assert!((at(&state, "search").x - search.x).abs() < 0.5, "the search stays in the middle");
     }
 
     #[test]

@@ -49,6 +49,8 @@ pub enum Page {
     News,
     /// The equaliser as a page of its own on a phone.
     Equalizer,
+    /// Where a search starts on the desktop: what was searched lately, and genres to browse.
+    Browse,
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -258,6 +260,8 @@ pub enum Updating {
     Failed(String),
 }
 
+/// How many explicit searches are remembered.
+const SEARCH_HISTORY: usize = 12;
 /// How many news are kept, and how many of an artist's releases of the year are listed
 /// when they are first followed.
 const NEWS_KEPT: usize = 60;
@@ -451,6 +455,8 @@ pub const ARTIST_SONGS_SHOWN: usize = 10;
 pub struct State {
     /// Use the phone layout; desktop previews can opt in without a second player.
     pub mobile: bool,
+    /// The room the window's own buttons take at the top bar's left and right ends.
+    pub caption: (f32, f32),
     /// The search tab is open even before a query has been submitted.
     pub mobile_search: bool,
     pub mobile_ui: mobile::MobileUi,
@@ -754,6 +760,7 @@ impl Default for State {
     fn default() -> Self {
         Self {
             mobile: cfg!(target_os = "ios"),
+            caption: (0.0, 0.0),
             mobile_search: false,
             mobile_ui: mobile::MobileUi::default(),
             query: String::new(),
@@ -884,6 +891,11 @@ impl State {
         // And so is a list of another app's.
         if transfer::source(&query).is_some() {
             return self.open(Target::Import(query));
+        }
+        if !query.contains("://") {
+            self.collection.searches.retain(|held| held.to_lowercase() != query.to_lowercase());
+            self.collection.searches.insert(0, query.clone());
+            self.collection.searches.truncate(SEARCH_HISTORY);
         }
         self.submitted = Some(query.clone());
         self.searching = true;
@@ -1296,6 +1308,18 @@ impl State {
             self.open_url = link.splitn(3, ':').nth(2).filter(|address| address.starts_with("https://") || address.starts_with("http://")).map(str::to_owned);
             return Vec::new();
         }
+        if let Some(index) = id.strip_prefix("recent-search-remove:").and_then(|value| value.parse::<usize>().ok()) {
+            if index < self.collection.searches.len() { self.collection.searches.remove(index); }
+            return Vec::new();
+        }
+        if let Some(query) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()).and_then(|index| self.collection.searches.get(index)) {
+            self.query = query.clone();
+            return self.search();
+        }
+        if let Some(query) = id.strip_prefix("browse:") {
+            self.query = query.to_owned();
+            return self.search();
+        }
         if let Some(key) = id.strip_prefix("pin:") {
             self.collection.pin(key);
             return Vec::new();
@@ -1683,6 +1707,16 @@ impl State {
                     self.copy = self.collection.playlist(id).map(|playlist| transfer::as_text(&playlist.tracks));
                     self.list_exported = self.copy.is_some().then_some(id);
                 }
+                Vec::new()
+            }
+            "browse" => {
+                if self.page != Page::Browse {
+                    self.go(Page::Browse);
+                }
+                Vec::new()
+            }
+            "recent-search-clear" => {
+                self.collection.searches.clear();
                 Vec::new()
             }
             "search-clear" => {

@@ -117,8 +117,8 @@ fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {
     }
     // Focusing the field keeps this page as it is: the keyboard rises over it
     // instead of the content being swapped while the header collapses.
-    body.push(section("Explorá tu próximo sonido", palette));
-    body.push(browse(width - 32.0, palette));
+    body.push(section("Explorar todo", palette));
+    body.push(browse(usize::MAX, width - 32.0, 2, 98.0, palette));
     ScrollArea::new("mobile-search-idle", Element::column(body).gap(16.0).padding(16.0)).render().flex(1.0)
 }
 
@@ -133,25 +133,65 @@ fn recent(index: usize, query: &str, palette: ComponentPalette) -> Element {
     Element::row(vec![main, forget.centered_y()]).gap(8.0).size(None, Some(56.0))
 }
 
+/// The genres to browse: the title on the card, what it searches for, and its colour.
+const GENRES: [(&str, &str, Color); 35] = [
+    ("Rock", "Rock argentino", Color::rgb(230, 30, 50)),
+    ("Pop", "Pop latino", Color::rgb(71, 125, 149)),
+    ("Cumbia", "Cumbia", Color::rgb(39, 133, 106)),
+    ("Trap", "Trap argentino", Color::rgb(186, 93, 7)),
+    ("Reggaetón", "Reggaetón", Color::rgb(220, 20, 140)),
+    ("Indie", "Indie latino", Color::rgb(96, 129, 8)),
+    ("Electrónica", "Electrónica", Color::rgb(13, 115, 236)),
+    ("Hip hop", "Hip hop", Color::rgb(30, 50, 100)),
+    ("Para bajar\nun cambio", "Acústico relajado", Color::rgb(141, 103, 171)),
+    ("Subí el\nvolumen", "Música para entrenar", Color::rgb(119, 119, 119)),
+    ("Folklore", "Folklore argentino", Color::rgb(232, 17, 91)),
+    ("Tango", "Tango", Color::rgb(176, 40, 151)),
+    ("Cuarteto", "Cuarteto cordobés", Color::rgb(225, 51, 0)),
+    ("R&B", "R&B", Color::rgb(165, 103, 82)),
+    ("Salsa", "Salsa", Color::rgb(80, 155, 245)),
+    ("Bachata", "Bachata", Color::rgb(20, 138, 8)),
+    ("Jazz", "Jazz", Color::rgb(230, 30, 50)),
+    ("Clásica", "Música clásica", Color::rgb(71, 125, 149)),
+    ("Metal", "Metal", Color::rgb(39, 133, 106)),
+    ("Punk", "Punk rock", Color::rgb(186, 93, 7)),
+    ("Blues", "Blues", Color::rgb(220, 20, 140)),
+    ("Soul y funk", "Soul funk", Color::rgb(96, 129, 8)),
+    ("Reggae", "Reggae", Color::rgb(13, 115, 236)),
+    ("K-pop", "K-pop", Color::rgb(30, 50, 100)),
+    ("Música\nbrasileña", "Música popular brasileña", Color::rgb(141, 103, 171)),
+    ("Lo-fi", "Lo-fi", Color::rgb(119, 119, 119)),
+    ("Fiesta", "Música para fiesta", Color::rgb(232, 17, 91)),
+    ("Dormir", "Música para dormir", Color::rgb(176, 40, 151)),
+    ("Concentración", "Música para concentrarse", Color::rgb(225, 51, 0)),
+    ("Románticas", "Baladas románticas", Color::rgb(165, 103, 82)),
+    ("Los 80", "Éxitos de los 80", Color::rgb(80, 155, 245)),
+    ("Los 90", "Éxitos de los 90", Color::rgb(20, 138, 8)),
+    ("Videojuegos", "Música de videojuegos", Color::rgb(230, 30, 50)),
+    ("Anime", "Anime openings", Color::rgb(71, 125, 149)),
+    ("Bandas\nsonoras", "Bandas sonoras de películas", Color::rgb(39, 133, 106)),
+];
+
 /// Figma "Card Type - horizontal": a bold title over the genre's color, with an
-/// artwork-like tile tucked into the corner and cropped by the card.
-pub(super) fn browse(width: f32, palette: ComponentPalette) -> Element {
-    let tile = |title: &str, query: &str, tint: Color| {
+/// artwork-like tile tucked into the corner and cropped by the card. The first `count`
+/// genres, `columns` cards to a row of `width`, each `height` tall; the corner tile grows
+/// with the card.
+pub(in crate::view) fn browse(count: usize, width: f32, columns: usize, height: f32, palette: ComponentPalette) -> Element {
+    let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
+    let art = (height * 0.65).round();
+    let tile = |&(title, query, tint): &(&str, &str, Color)| {
         // shortcut: limn has no rotation, so the Figma kit's 25° tilt is set square;
         // tilt it once Element can rotate.
-        let art = Element::panel(Element::icon(Icon::MusicNote).large_icon(28.0).foreground(Color::rgba(255, 255, 255, 190)).centered())
-            .background(mix(tint, Color::rgb(255, 255, 255), 0.18)).radius(4.0).size(Some(64.0), Some(64.0))
-            .shadow(Color::rgba(0, 0, 0, 64), limn::Point::new(0.0, 0.0), 10.0, 0.0).translate(limn::Point::new(14.0, 10.0));
+        let art = Element::panel(Element::icon(Icon::MusicNote).large_icon(art * 0.44).foreground(Color::rgba(255, 255, 255, 190)).centered())
+            .background(mix(tint, Color::rgb(255, 255, 255), 0.18)).radius(4.0).size(Some(art), Some(art))
+            .shadow(Color::rgba(0, 0, 0, 64), limn::Point::new(0.0, 0.0), 10.0, 0.0).translate(limn::Point::new(art * 0.22, art * 0.16));
         let corner = Element::column(vec![Element::spacer().flex(1.0), Element::row(vec![Element::spacer().flex(1.0), art])]);
-        let copy = Text::new(title, palette).font_size(16.0).render().font_family(FontFamily::SansBold).padding(12.0);
+        let copy = Text::new(title, palette).font_size(if height > 120.0 { 22.0 } else { 16.0 }).render().font_family(FontFamily::SansBold).padding(12.0);
         Element::clickable(format!("browse:{query}"), Element::panel(Element::stack(vec![corner, copy])).background(tint).radius(6.0).clip_children())
             .accessible(limn::Access::new(limn::Role::Button).name(format!("Buscar {query}")))
-            .size(Some((width - 12.0) / 2.0), Some(98.0))
+            .size(Some(side), Some(height))
     };
-    Element::column(vec![
-        Element::row(vec![tile("Rock", "Rock argentino", Color::rgb(104, 48, 63)), tile("Indie", "Indie latino", Color::rgb(49, 73, 108))]).gap(12.0),
-        Element::row(vec![tile("Para bajar\nun cambio", "Acústico relajado", Color::rgb(56, 89, 77)), tile("Subí el\nvolumen", "Electrónica", Color::rgb(95, 65, 111))]).gap(12.0),
-    ]).gap(12.0)
+    Element::column(GENRES[..count.min(GENRES.len())].chunks(columns).map(|row| Element::row(row.iter().map(tile).collect()).gap(12.0)).collect()).gap(12.0)
 }
 
 #[cfg(test)]

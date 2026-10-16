@@ -1,58 +1,107 @@
-//! The Windows frame. Native drag and resize commands leave snapping to the system.
+//! The window's own frame where the system's would take a row of its own: its buttons
+//! sit at the end of the app's top bar and the bar's empty stretches move the window.
+//! Native drag and resize commands leave snapping to the system.
 
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Rect, Sense, Stroke, ViewportCommand};
 use egui::viewport::ResizeDirection;
 
-const TITLE_HEIGHT: f32 = 32.0;
+const CONTROL_HEIGHT: f32 = 32.0;
 const CONTROL_WIDTH: f32 = 46.0;
 const EDGE: f32 = 5.0;
+/// Where macOS's three lights end, from the window's left.
+const LIGHTS: f32 = 72.0;
 
-pub fn show(ui: &mut egui::Ui, cinema: bool) -> Rect {
+/// Who draws the window's frame.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Chrome {
+    /// The system, in a frame of its own around the app.
+    System,
+    /// The app: its buttons at the top bar's right end, as Windows places them.
+    Drawn,
+    /// The system's buttons over the app's top bar, at its left end, as macOS places them.
+    Overlaid,
+}
+
+impl Chrome {
+    pub fn current(mobile: bool) -> Self {
+        if mobile { Self::System }
+        else if cfg!(target_os = "windows") { Self::Drawn }
+        else if cfg!(target_os = "macos") { Self::Overlaid }
+        // A Wayland compositor decorates the window as it likes; X11 gets the Windows frame.
+        else if cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_none() { Self::Drawn }
+        else { Self::System }
+    }
+
+    /// The room the window's buttons take at the top bar's left and right ends.
+    pub fn inset(self) -> (f32, f32) {
+        match self {
+            Self::System => (0.0, 0.0),
+            Self::Drawn => (0.0, 3.0 * CONTROL_WIDTH),
+            Self::Overlaid => (LIGHTS, 0.0),
+        }
+    }
+}
+
+/// Draws the frame and returns where the app goes. `bar` is the top bar's height, and
+/// `on_app` tells whether a point, from the app's corner, presses one of its controls.
+pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: impl Fn(egui::Vec2) -> bool) -> Rect {
     let bounds = ui.max_rect();
     let (fullscreen, maximized) = ui.input(|input| (input.viewport().fullscreen.unwrap_or(false), input.viewport().maximized.unwrap_or(false)));
-    if cinema || fullscreen {
+    if chrome == Chrome::System || cinema || fullscreen {
         return bounds;
     }
-    ui.painter().rect_filled(bounds, 0.0, Color32::BLACK);
-    let inner = if maximized { bounds } else { bounds.shrink(EDGE) };
-    let title = Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + TITLE_HEIGHT));
-    let drag = Rect::from_min_max(title.min, pos2(title.right() - 3.0 * CONTROL_WIDTH, title.bottom()));
-    let response = ui.interact(drag, ui.id().with("window-drag"), Sense::CLICK | Sense::DRAG);
-    if response.double_clicked() {
+    let drawn = chrome == Chrome::Drawn;
+    let inner = if drawn && !maximized {
+        ui.painter().rect_filled(bounds, 0.0, Color32::BLACK);
+        bounds.shrink(EDGE)
+    } else {
+        bounds
+    };
+    let (left, right) = chrome.inset();
+    let caption = Rect::from_min_max(pos2(inner.left() + left, inner.top()), pos2(inner.right() - right, inner.top() + bar));
+    let response = ui.interact(caption, ui.id().with("window-drag"), Sense::CLICK | Sense::DRAG);
+    // A press on one of the bar's own controls is the app's.
+    // A double click is told on its release, when the press has no origin left.
+    let free = ui.input(|input| input.pointer.press_origin()).or(response.interact_pointer_pos()).is_some_and(|origin| !on_app(origin - inner.min));
+    if free && response.double_clicked() {
         ui.ctx().send_viewport_cmd(ViewportCommand::Maximized(!maximized));
-    } else if response.drag_started_by(egui::PointerButton::Primary) {
+    } else if free && response.drag_started_by(egui::PointerButton::Primary) {
         ui.ctx().send_viewport_cmd(ViewportCommand::StartDrag);
     }
-    ui.painter().text(drag.left_center() + vec2(12.0, 0.0), egui::Align2::LEFT_CENTER, "Surco", egui::FontId::proportional(13.0), Color32::from_gray(179));
+    if !drawn {
+        return inner;
+    }
+    // Over the app's top bar, which is drawn after this.
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.id().with("window-controls")));
     for (index, label, command) in [
         (0, "Minimizar", ViewportCommand::Minimized(true)),
         (1, if maximized { "Restaurar" } else { "Maximizar" }, ViewportCommand::Maximized(!maximized)),
         (2, "Cerrar", ViewportCommand::Close),
     ] {
-        let rect = Rect::from_min_size(pos2(drag.right() + index as f32 * CONTROL_WIDTH, title.top()), vec2(CONTROL_WIDTH, TITLE_HEIGHT));
+        let rect = Rect::from_min_size(pos2(caption.right() + index as f32 * CONTROL_WIDTH, inner.top()), vec2(CONTROL_WIDTH, CONTROL_HEIGHT));
         // Like the native caption, leave Tab to the app and keyboard window commands to Alt+Space.
         let button = ui.interact(rect, ui.id().with(("window-control", index)), Sense::CLICK);
         button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         if button.hovered() || button.has_focus() || button.is_pointer_button_down_on() {
             let fill = if index == 2 { Color32::from_rgb(196, 43, 28) } else { Color32::from_gray(34) };
-            ui.painter().rect_filled(rect, 0.0, fill);
+            painter.rect_filled(rect, 0.0, fill);
         }
         let mark = Rect::from_center_size(rect.center(), vec2(10.0, 10.0));
         let stroke = Stroke::new(1.0, Color32::WHITE);
         match index {
-            0 => { ui.painter().line_segment([mark.left_center(), mark.right_center()], stroke); }
+            0 => { painter.line_segment([mark.left_center(), mark.right_center()], stroke); }
             1 => {
                 let square = if maximized { mark.translate(vec2(2.0, -2.0)) } else { mark };
-                ui.painter().rect_stroke(square, 0.0, stroke, egui::StrokeKind::Inside);
+                painter.rect_stroke(square, 0.0, stroke, egui::StrokeKind::Inside);
                 if maximized {
                     let front = mark.translate(vec2(-2.0, 2.0));
-                    ui.painter().rect_filled(front, 0.0, Color32::BLACK);
-                    ui.painter().rect_stroke(front, 0.0, stroke, egui::StrokeKind::Inside);
+                    painter.rect_filled(front, 0.0, Color32::BLACK);
+                    painter.rect_stroke(front, 0.0, stroke, egui::StrokeKind::Inside);
                 }
             }
             _ => {
-                ui.painter().line_segment([mark.left_top(), mark.right_bottom()], stroke);
-                ui.painter().line_segment([mark.right_top(), mark.left_bottom()], stroke);
+                painter.line_segment([mark.left_top(), mark.right_bottom()], stroke);
+                painter.line_segment([mark.right_top(), mark.left_bottom()], stroke);
             }
         }
         if button.clicked() {
@@ -75,7 +124,7 @@ pub fn show(ui: &mut egui::Ui, cinema: bool) -> Rect {
             }
         }
     }
-    Rect::from_min_max(pos2(inner.left(), title.bottom()), inner.max)
+    inner
 }
 
 fn resize_direction(bounds: Rect, point: egui::Pos2) -> Option<ResizeDirection> {
@@ -105,6 +154,7 @@ mod tests {
 
     const WIDTH: f32 = 800.0;
     const HEIGHT: f32 = 600.0;
+    const BAR: f32 = 56.0;
 
     fn frame(ctx: &egui::Context, events: Vec<egui::Event>, cinema: bool, maximized: bool, fullscreen: bool) -> (Rect, egui::FullOutput) {
         let mut input = egui::RawInput { screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(WIDTH, HEIGHT))), events, ..Default::default() };
@@ -112,7 +162,8 @@ mod tests {
         viewport.maximized = Some(maximized);
         viewport.fullscreen = Some(fullscreen);
         let mut content = Rect::NOTHING;
-        let mut output = ctx.run_ui(input, |ui| { content = show(ui, cinema); });
+        // A control of the app's sits at the bar's start, where a back button would be.
+        let mut output = ctx.run_ui(input, |ui| { content = show(ui, cinema, Chrome::Drawn, BAR, |point| point.x < 60.0); });
         // There is no renderer in these interaction tests to upload the font atlas.
         output.textures_delta.clear();
         output.viewport_output.get_mut(&egui::ViewportId::ROOT).unwrap().commands.retain(|command| !matches!(command, ViewportCommand::SetTheme(_)));
@@ -128,12 +179,12 @@ mod tests {
     }
 
     #[test]
-    fn content_keeps_room_for_the_title_and_resize_edges_except_in_fullscreen() {
+    fn content_shares_its_top_row_with_the_caption_and_keeps_room_for_resize_edges() {
         let ctx = egui::Context::default();
         let (content, _) = frame(&ctx, vec![], false, false, false);
-        assert_eq!(content, Rect::from_min_max(pos2(EDGE, EDGE + TITLE_HEIGHT), pos2(WIDTH - EDGE, HEIGHT - EDGE)));
+        assert_eq!(content, Rect::from_min_max(pos2(EDGE, EDGE), pos2(WIDTH - EDGE, HEIGHT - EDGE)));
         let (content, _) = frame(&ctx, vec![], false, true, false);
-        assert_eq!(content, Rect::from_min_max(pos2(0.0, TITLE_HEIGHT), pos2(WIDTH, HEIGHT)));
+        assert_eq!(content, Rect::from_min_max(pos2(0.0, 0.0), pos2(WIDTH, HEIGHT)));
         for (cinema, fullscreen) in [(true, false), (false, true)] {
             let (content, _) = frame(&ctx, vec![], cinema, false, fullscreen);
             assert_eq!(content, Rect::from_min_size(egui::Pos2::ZERO, vec2(WIDTH, HEIGHT)));
@@ -150,7 +201,7 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             let edge = if maximized { 0.0 } else { EDGE };
-            let point = pos2(WIDTH - edge - (2.5 - index as f32) * CONTROL_WIDTH, edge + TITLE_HEIGHT / 2.0);
+            let point = pos2(WIDTH - edge - (2.5 - index as f32) * CONTROL_WIDTH, edge + CONTROL_HEIGHT / 2.0);
             frame(&ctx, vec![], false, maximized, false);
             let (_, pressed) = frame(&ctx, vec![egui::Event::PointerMoved(point), button(point, true)], false, maximized, false);
             assert!(commands(&pressed).is_empty());
@@ -162,18 +213,30 @@ mod tests {
     #[test]
     fn dragging_the_caption_asks_the_system_to_move_the_window() {
         let ctx = egui::Context::default();
-        let point = pos2(120.0, EDGE + TITLE_HEIGHT / 2.0);
+        let point = pos2(120.0, EDGE + BAR / 2.0);
         frame(&ctx, vec![], false, false, false);
         frame(&ctx, vec![egui::Event::PointerMoved(point), button(point, true)], false, false, false);
         let (_, moved) = frame(&ctx, vec![egui::Event::PointerMoved(point + vec2(20.0, 0.0))], false, false, false);
         assert_eq!(commands(&moved), &[ViewportCommand::StartDrag]);
+        frame(&ctx, vec![button(point + vec2(20.0, 0.0), false)], false, false, false);
+        let control = pos2(30.0, EDGE + BAR / 2.0);
+        frame(&ctx, vec![egui::Event::PointerMoved(control), button(control, true)], false, false, false);
+        let (_, moved) = frame(&ctx, vec![egui::Event::PointerMoved(control + vec2(20.0, 0.0))], false, false, false);
+        assert!(commands(&moved).is_empty(), "a press on the app's own control does not move the window");
+    }
+
+    #[test]
+    fn the_window_buttons_take_the_side_each_system_puts_them_on() {
+        assert_eq!(Chrome::Drawn.inset(), (0.0, 3.0 * CONTROL_WIDTH));
+        assert_eq!(Chrome::Overlaid.inset(), (LIGHTS, 0.0));
+        assert_eq!(Chrome::current(true), Chrome::System, "a phone has no window frame");
     }
 
     #[test]
     fn double_clicking_the_caption_maximizes_and_restores_without_dragging() {
         for maximized in [false, true] {
             let ctx = egui::Context::default();
-            let point = pos2(120.0, EDGE + TITLE_HEIGHT / 2.0);
+            let point = pos2(120.0, EDGE + BAR / 2.0);
             frame(&ctx, vec![], false, maximized, false);
             frame(&ctx, vec![egui::Event::PointerMoved(point), button(point, true)], false, maximized, false);
             frame(&ctx, vec![button(point, false)], false, maximized, false);

@@ -27,7 +27,6 @@ mod player;
 mod state;
 mod update;
 mod view;
-#[cfg(any(target_os = "windows", test))]
 mod window;
 
 use std::path::PathBuf;
@@ -57,6 +56,8 @@ struct Host {
     clip: Option<clip::Screen>,
     /// Whether the window was last asked to take the whole screen.
     fullscreen: bool,
+    /// Who draws the window's frame.
+    chrome: window::Chrome,
     /// The shelf an arrow is carrying along, and where it is on its way.
     glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
@@ -191,7 +192,6 @@ fn native_surfaces_present(state: &State) -> bool {
     { let _ = state; false }
 }
 
-#[cfg(any(not(target_os = "windows"), test))]
 fn mobile_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
     // egui's root Ui covers the safe content rect. The phone background must
     // also paint behind the status bar and home indicator.
@@ -380,14 +380,12 @@ impl eframe::App for Host {
             self.state.mobile_ui.keyboard_visible = self.native_ui.as_ref().is_some_and(|native| native.keyboard_top(ctx.viewport_rect()).is_some())
                 && !(self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state));
         }
-        #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
             mobile_canvas(ui, self.script.mobile)
         } else {
-            ui.max_rect()
+            let frame = self.tree.frame();
+            window::show(ui, self.state.cinema, self.chrome, view::TOP_BAR_HEIGHT, |point| frame.press_region(limn::Point::new(point.x, point.y)).is_some())
         };
-        #[cfg(target_os = "windows")]
-        let area = window::show(ui, self.state.cinema);
         #[cfg(target_os = "ios")]
         let keyboard_inset = {
             let now = Instant::now();
@@ -764,9 +762,15 @@ pub fn run() -> eframe::Result {
     }
     let mobile = cfg!(target_os = "ios") || script.mobile;
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
+    let chrome = window::Chrome::current(mobile);
+    let overlaid = chrome == window::Chrome::Overlaid;
     let viewport = egui::ViewportBuilder::default()
         .with_title("Surco")
-        .with_decorations(!cfg!(target_os = "windows"))
+        .with_decorations(chrome != window::Chrome::Drawn)
+        // macOS keeps its lights, over the app's top bar instead of a title bar of their own.
+        .with_fullsize_content_view(overlaid)
+        .with_titlebar_shown(!overlaid)
+        .with_title_shown(!overlaid)
         .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
         .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
     // iOS shows the bundle's icon; decoding this one would only delay the first frame.
@@ -795,6 +799,7 @@ pub fn run() -> eframe::Result {
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
             let mut state = State::default();
             state.mobile = mobile;
+            state.caption = chrome.inset();
             if let Some(storage) = creation.storage {
                 let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());
                 state.volume = volume.filter(|volume| volume.is_finite()).map_or(state.volume, |volume| volume.clamp(0.0, 1.0));
@@ -828,6 +833,7 @@ pub fn run() -> eframe::Result {
                 started: false,
                 clip: None,
                 fullscreen: false,
+                chrome,
                 glide: None,
                 opened: Instant::now(),
                 stirred: Instant::now(),
