@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- An equaliser drawn as the response curve the audio actually applies, with a
+  vertical slider per band, ready-made curves and the preamp in its own card; on
+  iPhone it opens as a Settings page.
+- A native iPhone header and tab bar with a soft blurred scroll edge, Liquid Glass
+  buttons on iOS 26 and a system Paste control beside the import link.
+- Unsigned IPA builds and a configurable bundle ID, so a fork can build and
+  sideload Surco.
+
+### Changed
+
+- Phone Settings grouped in monochrome inset cards with capsule buttons and
+  shorter notes; red only for what cannot be undone.
+- Lyrics follow the sung line with a spring a third down the screen, dimming and
+  blurring by distance, with larger lines and previous/next beside Play.
+- The player sheet opens, closes and follows a released drag with a spring; a
+  fast flick dismisses it sooner than a slow pull.
+- A search page after the iPhone kit: recent searches that can be forgotten one by
+  one, bold section headings and genre cards.
+- Rounded artist cards, true capsule controls and a slightly larger sung lyric.
+
+### Fixed
+
+- The search bar keeps its size and position while the keyboard opens.
+- Covers are fetched at a size iPhones draw sharply.
+
 ## 0.5.0
 
 ### Added
