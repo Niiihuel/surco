@@ -43,6 +43,11 @@ keyboard shortcuts. Rust owns query debounce, recent searches, results and
 navigation. Session and revision checks discard stale text/focus callbacks;
 ordinary results and reflow retain the live editor, including marked IME text.
 Return submits and dismisses the keyboard; Cancel keeps the query and results.
+Opening the keyboard moves the bar only with the header's collapse: its slot keeps
+one size and 16pt margins in every state, UIKit crops the collapsing header
+instead of fading it over the field, the header's blur stays behind the field,
+and the white idle field cross-fades to the dark editing one (with Cancel) as
+editing begins rather than a render later.
 
 The playlist migration card uses a native `UIPasteControl` on iOS 16 and later.
 Its recipient accepts the representations supported by

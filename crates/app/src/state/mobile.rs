@@ -303,6 +303,10 @@ impl State {
                     self.menu = None;
                     return Some(commands);
                 }
+                if let Some(index) = id.strip_prefix("recent-search-remove:").and_then(|value| value.parse::<usize>().ok()) {
+                    if index < self.collection.searches.len() { self.collection.searches.remove(index); }
+                    return Some(Vec::new());
+                }
                 if let Some(index) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()) {
                     if let Some(query) = self.collection.searches.get(index).cloned() {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
@@ -487,6 +491,12 @@ mod tests {
         click(&mut state, "mobile-search-clear");
         assert!(state.query.is_empty() && state.submitted.is_none());
         assert!(state.mobile_ui.search_editing);
+        state.collection.searches = vec!["Spinetta".into(), "cerati".into()];
+        click(&mut state, "recent-search-remove:0");
+        assert_eq!(state.collection.searches, vec!["cerati"], "the x forgets only its own search");
+        assert!(state.query.is_empty(), "forgetting a search does not run it");
+        click(&mut state, "recent-search-remove:5");
+        assert_eq!(state.collection.searches, vec!["cerati"]);
     }
 
     #[test]

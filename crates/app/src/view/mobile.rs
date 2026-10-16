@@ -84,7 +84,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let mut top_height = insets.top + header_height;
     if searching {
         top.push(search::field(state, palette));
-        top_height += search::field_height(state);
+        top_height += search::FIELD_HEIGHT;
     }
     let mut content = if state.page == Page::Playing && state.queue_open {
         upcoming(state, palette)

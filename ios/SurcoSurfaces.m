@@ -8,6 +8,10 @@ static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class
 static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
 // The soft edge below the header, where the blur fades into the page.
 static const CGFloat SurcoEdgeFade = 28;
+// view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
+static const CGFloat SurcoHeaderHeight = 56;
+// mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
+static const NSTimeInterval SurcoSearchMotion = 0.22;
 static BOOL SurcoDeliverPaste(NSString *text, void (^receive)(NSString *)) {
     if (!text.length || text.length > 65536) return NO;
     dispatch_async(dispatch_get_main_queue(), ^{ if (receive) receive(text); });
@@ -108,6 +112,8 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     NSUInteger _searchRevision;
     BOOL _searchWantsEditing;
     BOOL _updatingSearch;
+    BOOL _searchStyled;
+    BOOL _searchCompact;
     NSDictionary *_desiredChrome;
     UIVisualEffectView *_backdrop;
     SurcoGradientView *_backdropMask;
@@ -326,12 +332,17 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         [NSLayoutConstraint activateConstraints:@[
             [_headerRow.leadingAnchor constraintEqualToAnchor:_header.leadingAnchor constant:16],
             [_headerRow.trailingAnchor constraintEqualToAnchor:_header.trailingAnchor constant:-12],
-            [_headerRow.topAnchor constraintEqualToAnchor:_header.topAnchor],
+            // Pinned to the bottom at full height: as Search collapses the slot the
+            // title slides up with the field and is cropped, never squeezed or
+            // left behind the rising field.
+            [_headerRow.heightAnchor constraintEqualToConstant:SurcoHeaderHeight],
             [_headerRow.bottomAnchor constraintEqualToAnchor:_header.bottomAnchor],
         ]];
     }
     if (_header.superview != _view) [_view addSubview:_header];
     _header.frame = rect;
+    // Only a collapsing header crops; at rest the glass buttons keep their glow.
+    _header.clipsToBounds = CGRectGetHeight(rect) < SurcoHeaderHeight;
     BOOL compact = [model[@"compact"] boolValue];
     UIFont *font = [UIFont systemFontOfSize:compact ? 17 : 24 weight:compact ? UIFontWeightSemibold : UIFontWeightBold];
     _title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2] scaledFontForFont:font maximumPointSize:compact ? 22 : 30];
@@ -467,6 +478,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         // queued pre-menu model cannot reopen the keyboard at menu completion.
         if (!model || !_menuVisible) _searchSession = nil;
         _searchWantsEditing = NO;
+        _searchStyled = NO; // Reappear in the current style without a fade.
         return;
     }
     // refresh can run between UIView rotation and the newly measured Rust Frame.
@@ -489,6 +501,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         _searchBar.searchTextField.accessibilityIdentifier = @"search";
         _searchBar.searchTextField.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
         _searchBar.searchTextField.adjustsFontForContentSizeCategory = YES;
+        _searchBar.tintColor = UIColor.whiteColor;
     }
     NSString *session = SurcoString(model[@"session"]);
     NSUInteger revision = [model[@"revision"] unsignedIntegerValue];
@@ -521,24 +534,46 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         _searchSentText = [text copy];
         _updatingSearch = NO;
     }
-    UIColor *ink = compact ? UIColor.whiteColor : UIColor.blackColor;
-    _searchBar.tintColor = UIColor.whiteColor;
-    _searchBar.searchTextField.backgroundColor = compact ? [UIColor colorWithWhite:0.2 alpha:1] : UIColor.whiteColor;
-    _searchBar.searchTextField.textColor = ink;
-    _searchBar.searchTextField.tintColor = ink;
-    _searchBar.searchTextField.leftView.tintColor = ink;
-    _searchBar.searchTextField.attributedPlaceholder = [[NSAttributedString alloc] initWithString:_searchBar.placeholder
-        attributes:@{NSForegroundColorAttributeName: compact ? UIColor.lightGrayColor : UIColor.darkGrayColor}];
-    if (_searchBar.showsCancelButton != editing) [_searchBar setShowsCancelButton:editing
-        animated:!_reduceMotion && !UIAccessibilityIsReduceMotionEnabled()];
+    // Restyle only on a change: resetting the placeholder every frame of the
+    // header's collapse re-laid the field under its Cancel animation.
+    if (!_searchStyled || _searchCompact != compact) [self styleSearch:compact];
+    if (_searchBar.showsCancelButton != editing) [_searchBar setShowsCancelButton:editing animated:[self searchAnimates]];
     if (_searchWantsEditing != editing) {
         _searchWantsEditing = editing;
         if (editing && !_searchBar.searchTextField.isFirstResponder) [_searchBar.searchTextField becomeFirstResponder];
         else if (!editing && _searchBar.searchTextField.isFirstResponder) [_searchBar.searchTextField resignFirstResponder];
     }
 }
+- (BOOL)searchAnimates {
+    return [self chromeAnimates] && _searchBar.window;
+}
+// The Figma kit's white idle field becomes the dark editing field. The colors
+// cross-fade over the header's collapse instead of flipping in one frame.
+- (void)styleSearch:(BOOL)compact {
+    UISearchTextField *field = _searchBar.searchTextField;
+    BOOL animated = _searchStyled && [self searchAnimates];
+    _searchStyled = YES;
+    _searchCompact = compact;
+    UIColor *ink = compact ? UIColor.whiteColor : UIColor.blackColor;
+    NSString *placeholder = _searchBar.placeholder ?: @"";
+    void (^change)(void) = ^{
+        field.backgroundColor = compact ? [UIColor colorWithWhite:49.0 / 255.0 alpha:1] : UIColor.whiteColor;
+        field.textColor = ink;
+        field.tintColor = ink;
+        field.leftView.tintColor = ink;
+        field.attributedPlaceholder = [[NSAttributedString alloc] initWithString:placeholder
+            attributes:@{NSForegroundColorAttributeName: compact ? [UIColor colorWithWhite:0.70 alpha:1] : UIColor.darkGrayColor}];
+    };
+    if (!animated) { change(); return; }
+    [UIView transitionWithView:field duration:SurcoSearchMotion options:UIViewAnimationOptionTransitionCrossDissolve |
+        UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:change completion:nil];
+}
 - (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
     if (![self searchIsLive]) return;
+    // Start the editing look with the keyboard rather than a render later;
+    // Rust's next payload confirms both (editing is always compact).
+    if (!_searchCompact) [self styleSearch:YES];
+    if (!searchBar.showsCancelButton) [searchBar setShowsCancelButton:YES animated:[self searchAnimates]];
     _searchWantsEditing = YES;
     _searchRevision++;
     [self emit:@{@"kind":@"search_focus", @"session":_searchSession, @"revision":@(_searchRevision), @"editing":@YES}];

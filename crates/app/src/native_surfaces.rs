@@ -187,12 +187,16 @@ impl Controller {
 
     fn chrome(&mut self, state: &State, frame: &Frame, origin: Pos2) -> Option<Chrome> {
         self.chrome.clear();
-        let slot = |id: &str| frame.access.iter().find(|node| node.id == id)
-            .and_then(|node| screen_rect(node.rect, origin)).filter(|rect| rect[3] >= 44.0);
+        let node = |id: &str| frame.access.iter().find(|node| node.id == id);
         let edge = frame.regions.iter().find(|region| region.id == "mobile-header-bar")?;
-        let header = slot("ios-header");
-        let tabs = slot("ios-tabs");
-        if header.is_none() && tabs.is_none() { return None; }
+        // Search collapses the header through every height down to nothing. UIKit
+        // clips it on the way, so it is sent at any height rather than hidden at
+        // 44pt and faded out over the rising field.
+        let header = node("ios-header").and_then(|node| screen_rect(node.rect, origin));
+        let tabs = node("ios-tabs").and_then(|node| screen_rect(node.rect, origin)).filter(|rect| rect[3] >= 44.0);
+        // A fully collapsed header still owns its backdrop: the search field keeps
+        // its blur while the keyboard is up instead of it fading away and back.
+        if header.is_none() && tabs.is_none() && node("ios-search").is_none() { return None; }
         let action = |(id, title, symbol): (&str, &str, &str)| Action::new(id, title, symbol);
         let (leading, trailing) = crate::view::header_buttons(state);
         let (leading, trailing): (Vec<_>, Vec<_>) = if header.is_some() {
@@ -785,6 +789,27 @@ mod tests {
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
         assert!(controller.payload(&state, &frame, Pos2::ZERO).chrome.is_none(), "the player keeps its own bars");
         assert!(controller.apply(&mut state, Event::Chrome { id: "home".into() }).is_empty() && state.page == state::Page::Playing);
+    }
+
+    #[test]
+    fn collapsing_search_header_is_cropped_by_uikit_and_keeps_the_backdrop_behind_the_field() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_search = true;
+        state.mobile_ui.search_editing = true;
+        let size = Size::new(390.0, 844.0);
+        let mut controller = Controller::default();
+        for (height, shown) in [(20.0, true), (0.0, false)] {
+            state.mobile_ui.search_header = Some(height);
+            let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+            let payload = controller.payload(&state, &frame, Pos2::ZERO);
+            let chrome = payload.chrome.expect("the field keeps its blurred header backdrop while the keyboard is up");
+            let field = payload.search.unwrap().rect;
+            assert_eq!(chrome.header.map(|header| header[3]), shown.then_some(height), "every collapsing height reaches UIKit");
+            assert!(chrome.tabs.is_none(), "the keyboard replaces the tab bar");
+            assert!(chrome.edge >= field[1] + field[3], "the backdrop still reaches below the field");
+            assert_eq!(chrome.trailing.is_empty(), !shown);
+        }
     }
 
     #[test]
