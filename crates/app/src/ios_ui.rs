@@ -100,6 +100,7 @@ mod native {
         fn surco_ui_copy_text(bytes: *const u8, length: usize) -> i32;
         fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
         fn surco_reduce_motion_enabled() -> i32;
+        fn surco_ui_on_screen() -> i32;
         fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
         fn surco_ui_take_surface_events(handle: *mut c_void) -> *mut c_char;
     }
@@ -108,6 +109,12 @@ mod native {
     /// https://developer.apple.com/documentation/uikit/uiaccessibility/isreducemotionenabled
     pub fn reduce_motion_enabled() -> bool {
         unsafe { surco_reduce_motion_enabled() != 0 }
+    }
+
+    /// Whether the app is on screen rather than in the background or behind the lock
+    /// screen, where audio plays on and nothing needs drawing. Safe from any thread.
+    pub fn on_screen() -> bool {
+        unsafe { surco_ui_on_screen() != 0 }
     }
 
     extern "C" fn wake(context: *mut c_void) {
@@ -307,7 +314,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi, reduce_motion_enabled};
+pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled};
 
 #[cfg(test)]
 mod tests {

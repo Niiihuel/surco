@@ -115,6 +115,10 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     BOOL _searchStyled;
     BOOL _searchCompact;
     NSDictionary *_desiredChrome;
+    // What the bars were last laid out from; refresh runs every frame and mostly finds it unchanged.
+    NSDictionary *_appliedChrome;
+    CGRect _appliedBounds;
+    BOOL _appliedLive;
     UIView *_backdrop;
     NSArray<SurcoGradientView *> *_backdropMasks;
     SurcoGradientView *_shade;
@@ -207,6 +211,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         _pasteGeneration++;
         [oldSheet dismissViewControllerAnimated:NO completion:nil];
         _view = view;
+        _appliedBounds = CGRectNull;
         _interaction = [[UIContextMenuInteraction alloc] initWithDelegate:self];
         [view addInteraction:_interaction];
     }
@@ -245,6 +250,11 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 }
 - (void)updateChrome:(NSDictionary *)model {
     BOOL live = model && _view.window;
+    if (live == _appliedLive && CGRectEqualToRect(_view.bounds, _appliedBounds)
+        && (_appliedChrome == model || [_appliedChrome isEqual:model])) return;
+    _appliedChrome = model;
+    _appliedBounds = _view.bounds;
+    _appliedLive = live;
     CGRect header = live ? [self rect:model[@"header"]] : CGRectNull;
     CGRect tabs = live ? [self rect:model[@"tabs"]] : CGRectNull;
     double edge = live && [model[@"edge"] isKindOfClass:NSNumber.class] ? [model[@"edge"] doubleValue] : 0;

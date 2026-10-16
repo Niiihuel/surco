@@ -270,7 +270,8 @@ impl Host {
 /// wakes the window for each of its own pictures: beside one, the bars only make sure
 /// of a frame now and then.
 const SETTLED_AFTER: Duration = Duration::from_millis(500);
-const SETTLED_FRAME: Duration = Duration::from_millis(33);
+// A phone's battery is worth more than its bars' smoothness: fifteen frames there.
+const SETTLED_FRAME: Duration = Duration::from_millis(if cfg!(target_os = "ios") { 66 } else { 33 });
 const SETTLED_FRAME_BESIDE_VIDEO: Duration = Duration::from_millis(100);
 
 /// Its own id, and with it its own settings folder.
@@ -406,9 +407,12 @@ impl eframe::App for Host {
             self.send(commands);
         }
         while let Ok(event) = self.events.try_recv() {
+            // A cover arriving is drawn once; it does not lift the settled frame rate,
+            // which a library's worth of them arriving at launch would keep lifted.
+            let quiet = matches!(event, backend::Event::Artwork { .. });
             let commands = self.state.apply(event);
             self.send(commands);
-            self.stirred = Instant::now();
+            if !quiet { self.stirred = Instant::now(); }
         }
         if self.player.has_changed().unwrap_or(false) {
             let view = self.player.borrow_and_update().clone();
@@ -426,7 +430,7 @@ impl eframe::App for Host {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
-        let sounding = self.state.player.playing && !still;
+        let sounding = self.state.player.playing && !still && on_screen();
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
         let commands = self.motion.advance(&mut self.state, window, Instant::now());
@@ -644,6 +648,8 @@ impl eframe::App for Host {
 
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
+        } else if !on_screen() {
+            // Behind the lock screen nothing animates; the next frame waits for the return.
         } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) {
             ctx.request_repaint();
         } else if let Some(after) = self.tree.animation_repaint_after() {
@@ -655,6 +661,14 @@ impl eframe::App for Host {
             ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
     }
+}
+
+/// Whether anyone can see the window: always on a desktop, not on a phone in the background.
+fn on_screen() -> bool {
+    #[cfg(target_os = "ios")]
+    return ios_ui::on_screen();
+    #[cfg(not(target_os = "ios"))]
+    true
 }
 
 /// The app's own mark, for the window and the task bar where the system takes it from the window.
@@ -826,7 +840,10 @@ fn ios_logging() {
     struct StderrLogger;
     impl log::Log for StderrLogger {
         fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            metadata.level() <= log::Level::Warn
+            // winit warns that iOS lacks window titles, visibility and themes each time
+            // eframe asks, several times a frame; only its errors are worth a line.
+            let limit = if metadata.target().starts_with("winit") { log::Level::Error } else { log::Level::Warn };
+            metadata.level() <= limit
         }
 
         fn log(&self, record: &log::Record<'_>) {

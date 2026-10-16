@@ -417,6 +417,15 @@ pub const SOON: Duration = Duration::from_millis(1);
 /// Starts the worker and returns its ends. The worker wakes the window whenever it has
 /// something to say, so the window can sleep.
 ///
+/// Draws the window again soon, unless a phone has it off screen: behind the lock screen the
+/// music plays on in this thread and nobody sees a frame. Events wait in their channel, and
+/// the window reads them and the player's latest view once it is back.
+fn wake(ctx: &egui::Context) {
+    #[cfg(target_os = "ios")]
+    if !crate::ios_ui::on_screen() { return; }
+    ctx.request_repaint_after(SOON);
+}
+
 /// The player is a value to read, not a stream of events: a hidden window stops repainting,
 /// and positions would pile up for as long as it stays hidden.
 pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>, Receiver<Event>, watch::Receiver<PlayerView>) {
@@ -427,7 +436,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
     let reply = move |event: Event| {
         // The window is gone when this fails, and the worker goes with its channel.
         let _ = outbox.send(event);
-        ctx.request_repaint_after(SOON);
+        wake(&ctx);
     };
     std::thread::Builder::new()
         .name("backend".into())
@@ -515,7 +524,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                         changed
                     });
                     if changed {
-                        window.request_repaint_after(SOON);
+                        wake(&window);
                     }
                 }
             });

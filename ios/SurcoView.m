@@ -7,6 +7,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdatomic.h>
+
+// Whether Surco is on screen. UIKit's notifications write it on the main thread; the
+// backend reads it from its own, to stop waking a window nobody can see.
+static atomic_int SurcoOnScreen = 1;
+static void SurcoWatchScreen(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSNotificationCenter *center = NSNotificationCenter.defaultCenter;
+        [center addObserverForName:UIApplicationDidEnterBackgroundNotification object:nil queue:nil
+            usingBlock:^(NSNotification *note) { atomic_store(&SurcoOnScreen, 0); }];
+        [center addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:nil
+            usingBlock:^(NSNotification *note) { atomic_store(&SurcoOnScreen, 1); }];
+    });
+}
+int surco_ui_on_screen(void) { return atomic_load(&SurcoOnScreen); }
 
 typedef void (*SurcoUiWake)(void *context);
 
@@ -75,7 +91,12 @@ typedef struct {
                                     queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
         [weakSelf requestRepaint];
     }];
-    [_observers addObjectsFromArray:@[frame, hide, motion]];
+    // Off screen the backend stops waking the window; coming back draws it at once.
+    id foreground = [center addObserverForName:UIApplicationWillEnterForegroundNotification object:nil
+                                        queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *note) {
+        [weakSelf requestRepaint];
+    }];
+    [_observers addObjectsFromArray:@[frame, hide, motion, foreground]];
     for (NSNotificationName name in @[AVAudioSessionRouteChangeNotification,
                                      AVAudioSessionMediaServicesWereResetNotification]) {
         id token = [center addObserverForName:name object:nil queue:NSOperationQueue.mainQueue
@@ -205,6 +226,7 @@ typedef struct {
 
 void *surco_ui_create(SurcoUiWake wake, void *context) {
     if (!NSThread.isMainThread || !wake || !context) return NULL;
+    SurcoWatchScreen();
     return (__bridge_retained void *)[[SurcoNativeView alloc] initWithWake:wake context:context];
 }
 
