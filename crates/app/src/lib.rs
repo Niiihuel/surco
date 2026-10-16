@@ -575,7 +575,7 @@ impl eframe::App for Host {
                     .and_then(|native| native.copy_text(&text));
                 if let Err(error) = result {
                     eprintln!("Surco clipboard: {error}");
-                    self.state.mobile_ui.notice = Some("No se pudo copiar el texto.".into());
+                    self.state.mobile_ui.notice = Some(crate::i18n::t!("state-copy-failed").into_owned());
                     self.state.copied = false;
                     self.state.list_copied = None;
                     self.state.list_exported = None;
@@ -630,7 +630,7 @@ impl eframe::App for Host {
                         }
                         Err(error) => {
                             eprintln!("Surco clipboard: {error}");
-                            self.state.mobile_ui.notice = Some("No se pudo pegar el texto.".into());
+                            self.state.mobile_ui.notice = Some(crate::i18n::t!("state-paste-failed").into_owned());
                             ctx.request_repaint();
                         }
                         _ => {}

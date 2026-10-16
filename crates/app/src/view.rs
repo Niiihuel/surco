@@ -91,7 +91,6 @@ const LYRIC_WASH: f32 = 520.0;
 /// How far down a page the colour of its cover reaches, from behind its header.
 const HEADER_WASH: f32 = 360.0;
 pub(crate) const MOBILE_HEADER_HEIGHT: f32 = 56.0;
-const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).radius(pill(ControlSize::Compact)).fill_width(width).render()
@@ -247,7 +246,7 @@ pub fn view(state: &State, window: Size) -> Element {
 fn update_toast(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let release = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory);
     let card = |release: &Release| {
-        Toast::new(format!("Surco {} está disponible", release.version), palette).description("Mirá qué trae y actualizá cuando quieras.").action("update-toast").dismissible("update-toast-close").render()
+        Toast::new(t!("desktop-update-toast", version = release.version.as_str()), palette).description(t!("desktop-update-toast-detail")).action("update-toast").dismissible("update-toast-close").render()
     };
     release.map(card).into_iter().collect()
 }
@@ -273,28 +272,28 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let mut fields = FormField::new("Título", name, palette)
+        let mut fields = FormField::new(t!("common-title"), name, palette)
             .sizing(DIALOG_FIELD)
             .rows();
         if let Some(track) = &draft.first {
             fields.push(
-                Text::new(format!("Empieza con «{}».", track.title), palette)
+                Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette)
                     .muted()
                     .render(),
             );
         }
-        let cancel = Button::new("playlist-cancel", "Cancelar", palette)
+        let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette)
             .variant(ButtonVariant::Outline)
             .render()
             .size(None, Some(44.0));
-        let create = Button::new("playlist-create", "Crear", palette)
+        let create = Button::new("playlist-create", t!("desktop-create"), palette)
             .render()
             .size(None, Some(44.0));
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "Nueva playlist",
-            "Juntá canciones bajo un nombre.",
+            t!("desktop-new-playlist"),
+            t!("desktop-new-playlist-detail"),
             "playlist-cancel",
             palette,
         )
@@ -313,21 +312,21 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
     let kinds = segments(
         "playlist-kind",
         form,
-        vec![kind("playlist-kind:normal", "Normal", !draft.collaborative), kind("playlist-kind:collaborative", "Colaborativa", draft.collaborative)],
+        vec![kind("playlist-kind:normal", &t!("desktop-playlist-normal"), !draft.collaborative), kind("playlist-kind:collaborative", &t!("desktop-playlist-collaborative"), draft.collaborative)],
     );
     let about = if draft.collaborative {
-        "Otras personas van a poder agregar canciones con un enlace. Por ahora queda marcada en este equipo: invitar llega con las cuentas."
+        t!("desktop-playlist-collaborative-detail")
     } else {
-        "Solo vos agregás y quitás canciones."
+        t!("desktop-playlist-normal-detail")
     };
-    let mut fields: Vec<Element> = FormField::new("Título", name, palette).sizing(DIALOG_FIELD).rows();
-    fields.extend(FormField::new("Tipo", kinds, palette).hint(about).sizing(DIALOG_FIELD).rows());
+    let mut fields: Vec<Element> = FormField::new(t!("common-title"), name, palette).sizing(DIALOG_FIELD).rows();
+    fields.extend(FormField::new(t!("desktop-playlist-kind"), kinds, palette).hint(about).sizing(DIALOG_FIELD).rows());
     if let Some(track) = &draft.first {
-        fields.push(Text::new(format!("Empieza con «{}».", track.title), palette).role(TextRole::Caption).muted().truncate().render());
+        fields.push(Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette).role(TextRole::Caption).muted().truncate().render());
     }
-    let cancel = Button::new("playlist-cancel", "Cancelar", palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
-    let create = Button::new("playlist-create", "Crear", palette).size(ControlSize::Regular).render();
-    Modal::new(window_tree, true, "Nueva playlist", "Juntá canciones bajo un nombre.", "playlist-cancel", palette)
+    let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let create = Button::new("playlist-create", t!("desktop-create"), palette).size(ControlSize::Regular).render();
+    Modal::new(window_tree, true, t!("desktop-new-playlist"), t!("desktop-new-playlist-detail"), "playlist-cancel", palette)
         .width(dialog)
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, create))
@@ -343,31 +342,31 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let field = TextField::new(
             "import-link",
             link,
-            "Enlace de playlist o álbum público",
+            t!("desktop-import-link-placeholder"),
             palette,
         )
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let mut fields = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD).rows();
+        let mut fields = FormField::new(t!("desktop-import-link"), field, palette).sizing(DIALOG_FIELD).rows();
         if cfg!(any(target_os = "ios", test)) {
-            fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
+            fields.push(Button::new("ios-paste:import-link", t!("desktop-paste-link"), palette)
                 .variant(ButtonVariant::Secondary).sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render());
         }
-        let cancel = Button::new("import-cancel", "Cancelar", palette)
+        let cancel = Button::new("import-cancel", t!("common-cancel"), palette)
             .variant(ButtonVariant::Outline)
             .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
-        let go = Button::new("import-go", "Importar", palette)
+        let go = Button::new("import-go", t!("common-import"), palette)
             .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "Importar música",
-            if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" },
+            t!("desktop-import-music"),
+            if state.import_unknown { t!("desktop-import-unknown") } else { "Spotify · Apple Music · YouTube Music".into() },
             "import-cancel",
             palette,
         )
@@ -379,16 +378,16 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     }
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
     let about = if state.import_unknown {
-        "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
+        t!("desktop-import-unknown-detail")
     } else {
-        "De Spotify (hasta 100 canciones), Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
+        t!("desktop-import-hint")
     };
-    let cancel = Button::new("import-cancel", "Cancelar", palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
-    let go = Button::new("import-go", "Importar", palette).size(ControlSize::Regular).render();
-    let out = Text::new("Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».", palette).role(TextRole::Caption).muted().render();
-    let mut fields: Vec<Element> = FormField::new("Enlace de la lista", field, palette).hint(about).sizing(DIALOG_FIELD).rows();
+    let cancel = Button::new("import-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let go = Button::new("import-go", t!("common-import"), palette).size(ControlSize::Regular).render();
+    let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
+    let mut fields: Vec<Element> = FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows();
     fields.push(out);
-    Modal::new(window_tree, true, "Importar de otras apps", "Queda como una playlist tuya, con las canciones que el catálogo tenga.", "import-cancel", palette)
+    Modal::new(window_tree, true, t!("desktop-import-title"), t!("desktop-import-detail"), "import-cancel", palette)
         .width(Modal::fit_width(width, 460.0).max(240.0))
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, go))
@@ -404,19 +403,19 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .iter()
             .map(|song| Text::new(song, palette).font_size(14.0).render())
             .collect();
-        let copy = Button::new("import-missed-copy", "Copiar la lista", palette)
+        let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette)
             .variant(ButtonVariant::Outline)
             .icon(Icon::Copy)
             .render()
             .size(None, Some(44.0));
-        let close = Button::new("import-missed-close", "Cerrar", palette)
+        let close = Button::new("import-missed-close", t!("common-close"), palette)
             .render()
             .size(None, Some(44.0));
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "No se encontraron",
-            "No están en el catálogo con ese nombre. Podés buscarlas a mano y agregarlas.",
+            t!("desktop-missed-title-short"),
+            t!("desktop-missed-detail"),
             "import-missed-close",
             palette,
         )
@@ -426,9 +425,9 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .render();
     }
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
-    let copy = Button::new("import-missed-copy", "Copiar la lista", palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Regular).render();
-    let close = Button::new("import-missed-close", "Cerrar", palette).size(ControlSize::Regular).render();
-    Modal::new(window_tree, true, "Canciones que no se encontraron", "No están en el catálogo con ese nombre. Podés buscarlas a mano y agregarlas.", "import-missed-close", palette)
+    let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Regular).render();
+    let close = Button::new("import-missed-close", t!("common-close"), palette).size(ControlSize::Regular).render();
+    Modal::new(window_tree, true, t!("desktop-missed-title"), t!("desktop-missed-detail"), "import-missed-close", palette)
         .width(Modal::fit_width(width, 460.0).max(240.0))
         .body(Element::column(rows).gap(6.0))
         .footer(dialog_footer(copy, close))
@@ -440,14 +439,15 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
 fn import_picture() -> Option<limn::RasterImage> {
     use base64::Engine as _;
     use sha2::Digest as _;
-    static PICTURE: std::sync::OnceLock<Option<limn::RasterImage>> = std::sync::OnceLock::new();
+    const BYTES: &[u8] = include_bytes!("../assets/import.png");
+    // Read once; its description is said in the language of the moment.
+    static PICTURE: std::sync::OnceLock<(String, std::sync::Arc<str>)> = std::sync::OnceLock::new();
     let read = || {
-        let bytes: &[u8] = include_bytes!("../assets/import.png");
-        let digest: String = sha2::Sha256::digest(bytes).iter().map(|byte| format!("{byte:02x}")).collect();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
-        limn::RasterImage::new(digest, limn::RasterImageFormat::Png, bytes.len() as u32, encoded.into(), "Música de otras apps que llega a Surco")
+        let digest: String = sha2::Sha256::digest(BYTES).iter().map(|byte| format!("{byte:02x}")).collect();
+        (digest, base64::engine::general_purpose::STANDARD.encode(BYTES).into())
     };
-    PICTURE.get_or_init(read).clone()
+    let (digest, encoded) = PICTURE.get_or_init(read);
+    limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, BYTES.len() as u32, encoded.clone(), t!("desktop-import-picture"))
 }
 
 /// The library's offer to bring music in from another app, until it is used or put away.
@@ -456,23 +456,23 @@ fn import_picture() -> Option<limn::RasterImage> {
 /// a bold title, a quiet line and white capsules.
 fn import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
     let raised = ComponentPalette { surface: PROMO, ..palette };
-    let close = mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(Color { a: 140, ..CANVAS }).radius(22.0);
+    let close = mobile::icon("import-dismiss", Icon::Close, &t!("desktop-import-dismiss"), palette).background(Color { a: 140, ..CANVAS }).radius(22.0);
     let away = Element::row(vec![Element::spacer().flex(1.0), close]).padding(4.0);
     let top = match import_picture() {
         Some(picture) => Element::stack(vec![
             Element::raster_image(picture.cover()).size(Some(width), Some(width * 130.0 / 460.0)), away]),
         None => away,
     };
-    let title = Text::new("Traé tu música de otras apps", raised).font_size(18.0).render().font_family(FontFamily::SansBold);
-    let about = Text::new("Pegá el enlace de una playlist de Spotify, Apple Music o YouTube Music.", raised).font_size(14.0).muted().render();
-    let go = Button::new("import-open", "Importar", raised)
+    let title = Text::new(t!("desktop-import-card-title"), raised).font_size(18.0).render().font_family(FontFamily::SansBold);
+    let about = Text::new(t!("desktop-import-card-detail"), raised).font_size(14.0).muted().render();
+    let go = Button::new("import-open", t!("common-import"), raised)
         .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render();
     let mut actions = vec![go];
     if native && cfg!(any(target_os = "ios", test)) {
         // UIKit draws and handles UIPasteControl in this slot. Pasting prepares
         // the import form; fetching a playlist still requires its explicit submit.
         actions.push(Element::panel(Element::spacer()).size(Some(112.0), Some(44.0))
-            .accessible(limn::Access::new(limn::Role::Group).id("ios-paste:import-card").name("Pegar enlace de playlist")));
+            .accessible(limn::Access::new(limn::Role::Group).id("ios-paste:import-card").name(t!("desktop-paste-playlist-link"))));
     }
     let actions = Element::row(actions).gap(8.0);
     let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(6.0)), actions]).gap(6.0).padding(16.0);
@@ -483,16 +483,16 @@ fn import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
 fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
     let (title, about, yes) = match &state.confirm {
         Some(Confirm::DeletePlaylist(id)) => {
-            let name = state.collection.playlist(*id).map_or("esta playlist", |playlist| playlist.name.as_str());
-            (format!("¿Eliminar «{name}»?"), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar")
+            let name = state.collection.playlist(*id).map_or_else(|| t!("desktop-this-playlist").into_owned(), |playlist| playlist.name.clone());
+            (t!("desktop-delete-playlist-title", name = name).into_owned(), t!("desktop-delete-playlist-detail"), t!("common-delete"))
         }
-        Some(Confirm::ClearDownloads) => ("¿Eliminar las descargas?".to_owned(), "Ya no vas a tener acceso a lo que descargaste en este equipo.", "Eliminar"),
-        Some(Confirm::ClearQueue) => ("¿Borrar la cola?".to_owned(), "Se quitan las canciones que agregaste a la cola. Lo que venía sonando sigue.", "Borrar"),
-        Some(Confirm::ClearRecent) => ("¿Borrar el historial de reproducciones?".to_owned(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
-        None => (String::new(), "", ""),
+        Some(Confirm::ClearDownloads) => (t!("desktop-clear-downloads-title").into_owned(), t!("desktop-clear-downloads-detail"), t!("common-delete")),
+        Some(Confirm::ClearQueue) => (t!("desktop-clear-queue-title").into_owned(), t!("desktop-clear-queue-detail"), t!("common-clear")),
+        Some(Confirm::ClearRecent) => (t!("desktop-clear-recent-title").into_owned(), t!("desktop-clear-recent-detail"), t!("common-clear")),
+        None => (String::new(), "".into(), "".into()),
     };
     if state.mobile {
-        let cancel = Button::new("confirm-cancel", "Cancelar", palette)
+        let cancel = Button::new("confirm-cancel", t!("common-cancel"), palette)
             .variant(ButtonVariant::Outline)
             .render()
             .size(None, Some(44.0));
@@ -502,7 +502,7 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         return limn::BottomSheet::new(
             window_tree,
             state.confirm.is_some(),
-            "Confirmar acción",
+            t!("desktop-confirm"),
             format!("{title}\n\n{about}"),
             "confirm-cancel",
             palette,
@@ -515,7 +515,7 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
     }
     AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", palette)
         .confirm_label(yes)
-        .cancel_label("Cancelar")
+        .cancel_label(t!("common-cancel"))
         .render()
 }
 
@@ -526,14 +526,14 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
     let version = &release.version;
     let (title, about, action) = match &state.updating {
         Updating::Idle => {
-            let about = format!("Surco {version} · tenés la {}", env!("CARGO_PKG_VERSION"));
-            ("Actualización disponible".to_owned(), about, Some(button("update-get", if release.program.is_some() { "Actualizar" } else { "Descargar" })))
+            let about = t!("desktop-update-current", version = version.as_str(), current = env!("CARGO_PKG_VERSION")).into_owned();
+            (t!("desktop-update-available").into_owned(), about, Some(button("update-get", &if release.program.is_some() { t!("desktop-update") } else { t!("desktop-download") })))
         }
         // The last of it is checked and put in place: a moment with nothing left to count.
-        Updating::Fetching(done) if *done >= 1.0 => (format!("Instalando Surco {version}"), "Un momento…".to_owned(), None),
-        Updating::Fetching(_) => (format!("Descargando Surco {version}"), "Podés seguir escuchando mientras tanto.".to_owned(), None),
-        Updating::Ready => (format!("Surco {version} está lista"), "Reiniciá para empezar a usarla.".to_owned(), Some(button("update-restart", "Reiniciar ahora"))),
-        Updating::Failed(why) => ("No se pudo actualizar".to_owned(), why.clone(), Some(button("update-get", "Reintentar"))),
+        Updating::Fetching(done) if *done >= 1.0 => (t!("desktop-update-installing", version = version.as_str()).into_owned(), t!("desktop-update-moment").into_owned(), None),
+        Updating::Fetching(_) => (t!("desktop-update-downloading", version = version.as_str()).into_owned(), t!("desktop-update-keep-listening").into_owned(), None),
+        Updating::Ready => (t!("desktop-update-ready", version = version.as_str()).into_owned(), t!("desktop-update-restart-detail").into_owned(), Some(button("update-restart", &t!("desktop-restart-now")))),
+        Updating::Failed(why) => (t!("desktop-update-failed").into_owned(), why.clone(), Some(button("update-get", &t!("common-retry")))),
     };
     let copy = Element::column(vec![Text::new(title, palette).font_size(15.0).render(), Text::new(about, palette).muted().render()]).gap(2.0).flex(1.0);
     let mut head = vec![copy];
@@ -576,11 +576,11 @@ const UPDATE_NOTES_ROOM: f32 = 240.0;
 fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| release.mandatory) else { return window_tree };
     let (about, action) = match &state.updating {
-        Updating::Idle if release.program.is_some() => (format!("Esta versión de Surco ya no se puede usar. Instalá la {} para seguir.", release.version), ("update-get", "Actualizar ahora")),
-        Updating::Idle => (format!("Esta versión de Surco ya no se puede usar. Descargá la {} para seguir.", release.version), ("update-get", "Descargar")),
-        Updating::Fetching(done) => (format!("Descargando la versión {}… {:.0} %", release.version, done * 100.0), ("update-wait", "Descargando…")),
-        Updating::Ready => (format!("La versión {} ya está instalada.", release.version), ("update-restart", "Reiniciar ahora")),
-        Updating::Failed(why) => (format!("No se pudo actualizar: {why}"), ("update-get", "Reintentar")),
+        Updating::Idle if release.program.is_some() => (t!("desktop-update-mandatory-install", version = release.version.as_str()), ("update-get", t!("desktop-update-now"))),
+        Updating::Idle => (t!("desktop-update-mandatory-download", version = release.version.as_str()), ("update-get", t!("desktop-download"))),
+        Updating::Fetching(done) => (t!("desktop-update-downloading-percent", version = release.version.as_str(), percent = format!("{:.0}", done * 100.0)), ("update-wait", t!("desktop-downloading"))),
+        Updating::Ready => (t!("desktop-update-installed", version = release.version.as_str()), ("update-restart", t!("desktop-restart-now"))),
+        Updating::Failed(why) => (t!("desktop-update-failed-why", why = why.as_str()), ("update-get", t!("common-retry"))),
     };
     let mut body = Vec::new();
     if let Updating::Fetching(done) = &state.updating {
@@ -591,7 +591,7 @@ fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette)
         body.push(ScrollArea::new("update-notes", Element::column(notes).gap(12.0)).render().size(None, Some(UPDATE_NOTES_ROOM)));
     }
     // No way around it: the other button leads to the release's own page.
-    let dialog = AlertDialog::new(window_tree, true, "Actualización obligatoria", about, action.0, "update-page", palette).confirm_label(action.1).cancel_label("Ver la versión").width(UPDATE_DIALOG);
+    let dialog = AlertDialog::new(window_tree, true, t!("desktop-update-mandatory"), about, action.0, "update-page", palette).confirm_label(action.1).cancel_label(t!("desktop-see-release")).width(UPDATE_DIALOG);
     if body.is_empty() { dialog } else { dialog.body(Element::column(body).gap(12.0)) }.render()
 }
 
@@ -603,8 +603,8 @@ const NEWS_ROW: ListRowSizing = ListRowSizing { height: Some(72.0), two_line_hei
 /// the notice of a later version of the app when there is one.
 fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut sections = vec![Element::column(vec![
-        Text::new("Novedades", palette).font_size(PAGE_TITLE).render(),
-        Text::new("Los últimos lanzamientos de los artistas que seguís.", palette).muted().render(),
+        Text::new(t!("desktop-news"), palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("desktop-news-detail"), palette).muted().render(),
     ])
     .gap(4.0)];
     if let Some(release) = &state.update {
@@ -624,14 +624,14 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let news = &state.collection.news;
     let fresh = state.news_fresh.min(news.len());
     if fresh > 0 {
-        sections.extend([heading("Nuevo", palette), Element::column(news[..fresh].iter().enumerate().map(row).collect()).gap(2.0)]);
+        sections.extend([heading(&t!("desktop-news-new"), palette), Element::column(news[..fresh].iter().enumerate().map(row).collect()).gap(2.0)]);
     }
     if news.len() > fresh {
         let earlier = news.iter().enumerate().skip(fresh).map(row).collect();
-        sections.extend([heading("Anterior", palette), Element::column(earlier).gap(2.0)]);
+        sections.extend([heading(&t!("desktop-news-earlier"), palette), Element::column(earlier).gap(2.0)]);
     }
     if news.is_empty() && state.update.is_none() {
-        let empty = Empty::new("Todavía no hay novedades", "Seguí a tus artistas favoritos y acá te avisamos cuando saquen algo.", palette).icon(Icon::Bell).render();
+        let empty = Empty::new(t!("desktop-news-empty"), t!("desktop-news-empty-detail"), palette).icon(Icon::Bell).render();
         return Element::column(vec![sections.remove(0), centered(empty)]).gap(16.0).padding(12.0).flex(1.0);
     }
     ScrollArea::new("news", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
@@ -686,16 +686,16 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         )
         .accessible(limn::Access::new(limn::Role::Button).name(format!(
             "{} {}",
-            if playing { "Pausar" } else { "Reproducir" },
+            if playing { t!("common-pause") } else { t!("common-play") },
             track.title
         )))
         .centered_x();
         let copy = Button::new(
             "share-copy",
             if state.copied {
-                "Enlace copiado"
+                t!("common-link-copied")
             } else {
-                "Copiar enlace"
+                t!("desktop-copy-link")
             },
             palette,
         )
@@ -720,8 +720,8 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "Compartir canción",
-            "El enlace la abre en YouTube Music; pegado en el buscador de Surco, se abre acá.",
+            t!("common-share-song"),
+            t!("desktop-share-detail"),
             "share-close",
             palette,
         )
@@ -734,8 +734,8 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         Some(track) => (media_card(state, "share-card", track, palette), share_link(track)),
         None => (Element::spacer(), String::new()),
     };
-    let copy = if state.copied { Button::new("share-copy", "Enlace copiado", palette).icon(Icon::Check) } else { Button::new("share-copy", "Copiar enlace", palette).icon(Icon::Copy) };
-    Modal::new(window_tree, state.sharing.is_some(), "Compartir canción", "El enlace la abre en YouTube Music; pegado en el buscador de Surco, se abre acá.", "share-close", palette)
+    let copy = if state.copied { Button::new("share-copy", t!("common-link-copied"), palette).icon(Icon::Check) } else { Button::new("share-copy", t!("desktop-copy-link"), palette).icon(Icon::Copy) };
+    Modal::new(window_tree, state.sharing.is_some(), t!("common-share-song"), t!("desktop-share-detail"), "share-close", palette)
         .width(Modal::fit_width(width, 420.0))
         .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
         .footer(ButtonGroup::new(vec![copy.size(ControlSize::Regular).render()]).align_end().render())
@@ -750,25 +750,25 @@ const BELL_CHIP: f32 = 14.0;
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     // The window's own buttons keep the end the system puts them at.
     let (left, right) = state.caption;
-    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0 - 2.0 * left.max(right)).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
+    let field = SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised()).width((width - 280.0 - 2.0 * left.max(right)).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
     // What was typed is taken back from a cross at the field's end, filled as the field is so it covers a long text.
     // An empty field keeps there the way to browse instead.
     let end = if state.query.is_empty() {
-        IconButton::new("browse", Icon::Grid, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().active(state.page == Page::Browse).tooltip("Explorar").render()
+        IconButton::new("browse", Icon::Grid, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().active(state.page == Page::Browse).tooltip(t!("desktop-browse")).render()
     } else {
-        IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip("Borrar").render()
+        IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip(t!("common-clear")).render()
     };
     let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]).centered_y();
     let room = |width: f32| (width > 0.0).then(|| Element::spacer().size(Some(width), None));
     let mut leading: Vec<Element> = room(left).into_iter().collect();
     if !state.library_open {
-        leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new("Mostrar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
+        leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new(t!("desktop-show-library")).shortcut("Ctrl+B"), palette).render().centered_y());
     }
-    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new("Volver"), palette).enabled(state.can_go_back()).render().centered_y());
+    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render().centered_y());
     let mut trailing = vec![Element::spacer().flex(1.0)];
     // The bell is full while it has something to say.
     let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
-    let bell = header_button("news", bell, TooltipSpec::new("Novedades"), palette).active(state.page == Page::News).render();
+    let bell = header_button("news", bell, TooltipSpec::new(t!("desktop-news")), palette).active(state.page == Page::News).render();
     // How many things it has to say, on its corner.
     let bell = match state.news_count() {
         0 => bell,
@@ -779,9 +779,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
         }
     };
     trailing.push(bell.centered_y());
-    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new("Configuración"), palette).active(state.page == Page::Settings).render().centered_y());
+    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(state.page == Page::Settings).render().centered_y());
     if !state.panel_open && width >= PANEL_FROM {
-        trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new("Mostrar lo que suena"), palette).render().centered_y());
+        trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new(t!("desktop-show-now-playing")), palette).render().centered_y());
     }
     trailing.extend(room(right));
     // Both ends take the same room, so the search stays in the middle of the window.
@@ -790,7 +790,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Element::row(vec![
             end(leading),
             Element::spacer().flex(1.0),
-            header_button("home", Icon::Home, TooltipSpec::new("Inicio"), palette).round().render().centered_y(),
+            header_button("home", Icon::Home, TooltipSpec::new(t!("desktop-home")), palette).round().render().centered_y(),
             search,
             Element::spacer().flex(1.0),
             end(trailing),
@@ -831,23 +831,21 @@ struct LibraryEntry<'a> {
 /// rail of pictures.
 fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> Element {
     let shows = |filter: Filter| state.filter == Filter::All || state.filter == filter;
+    let (downloads, liked) = (t!("common-downloads"), t!("common-liked-songs"));
     let mut entries: Vec<LibraryEntry> = Vec::new();
     if shows(Filter::Lists) {
-        let count = match state.saved.len() {
-            1 => "Playlist · 1 canción".to_owned(),
-            count => format!("Playlist · {count} canciones"),
-        };
-        entries.push(LibraryEntry { id: "downloads".into(), key: "downloads".into(), picture: library_tile(Icon::Custom(DOWNLOAD), palette), artwork: None, round: false, name: "Descargas", about: count, creator: "", here: state.page == Page::Downloads });
+        let count = format!("{} · {}", t!("common-playlist"), songs(state.saved.len()));
+        entries.push(LibraryEntry { id: "downloads".into(), key: "downloads".into(), picture: library_tile(Icon::Custom(DOWNLOAD), palette), artwork: None, round: false, name: &downloads, about: count, creator: "", here: state.page == Page::Downloads });
         if !state.collection.liked.is_empty() {
-            let count = format!("Playlist · {}", songs(state.collection.liked.len()));
-            entries.push(LibraryEntry { id: "liked".into(), key: "liked".into(), picture: library_tile(Icon::HeartFill, palette), artwork: None, round: false, name: "Tus me gusta", about: count, creator: "", here: state.page == Page::Liked });
+            let count = format!("{} · {}", t!("common-playlist"), songs(state.collection.liked.len()));
+            entries.push(LibraryEntry { id: "liked".into(), key: "liked".into(), picture: library_tile(Icon::HeartFill, palette), artwork: None, round: false, name: &liked, about: count, creator: "", here: state.page == Page::Liked });
         }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
             let picture = match playlist.tracks.first() {
                 Some(track) => cover(state, &track.artwork_url, LIBRARY_TILE, palette),
                 None => library_tile(Icon::Playlist, palette),
             };
-            let about = format!("{} · {}", if playlist.collaborative { "Playlist colaborativa" } else { "Playlist" }, songs(playlist.tracks.len()));
+            let about = format!("{} · {}", if playlist.collaborative { t!("desktop-collaborative-playlist") } else { t!("common-playlist") }, songs(playlist.tracks.len()));
             let artwork = playlist.tracks.first().and_then(|track| track.artwork_url.as_ref());
             entries.push(LibraryEntry { id: format!("playlist:{index}"), key: format!("playlist:{}", playlist.id), picture, artwork, round: false, name: &playlist.name, about, creator: "", here: state.page == Page::Playlist(playlist.id) });
         }
@@ -856,12 +854,12 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         for (index, artist) in state.collection.artists() {
             let picture = cover(state, &artist.artwork_url, LIBRARY_TILE, palette).radius(LIBRARY_TILE / 2.0);
             let here = matches!(&state.page, Page::Artist(page) if page.id == artist.id);
-            entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("artist:{}", artist.id), picture, artwork: artist.artwork_url.as_ref(), round: true, name: &artist.name, about: "Artista".into(), creator: &artist.name, here });
+            entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("artist:{}", artist.id), picture, artwork: artist.artwork_url.as_ref(), round: true, name: &artist.name, about: t!("common-artist").into_owned(), creator: &artist.name, here });
         }
     }
     if shows(Filter::Albums) {
         for (index, album) in state.collection.albums() {
-            let about = album.artist.as_ref().map_or_else(|| "Álbum".to_owned(), |artist| format!("Álbum · {artist}"));
+            let about = album.artist.as_ref().map_or_else(|| t!("common-album").into_owned(), |artist| format!("{} · {artist}", t!("common-album")));
             let here = matches!(&state.page, Page::Album(page) if page.id == album.id);
             let picture = cover(state, &album.artwork_url, LIBRARY_TILE, palette);
             entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("album:{}", album.id), picture, artwork: album.artwork_url.as_ref(), round: false, name: &album.title, about, creator: album.artist.as_deref().unwrap_or(""), here });
@@ -877,19 +875,19 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     entries.sort_by_key(|entry| pinned(&entry.key).unwrap_or(usize::MAX));
     if rail {
         let pictures = entries.into_iter().map(|entry| Element::clickable(entry.id, entry.picture));
-        let shut = header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette);
+        let shut = header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new(t!("desktop-hide-library")).shortcut("Ctrl+B"), palette);
         let head = Element::row(vec![Element::spacer().flex(1.0), shut.render().centered_y(), Element::spacer().flex(1.0)]).size(Some(LIBRARY_TILE), Some(40.0));
         return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
     }
     // A panel is shut from its own header.
     let mut header = vec![
-        Text::new(if state.mobile { "Guardado para vos" } else { "Tu biblioteca" }, palette).font_size(15.0).muted().render().centered_y(),
+        Text::new(if state.mobile { t!("desktop-saved-for-you") } else { t!("common-library") }, palette).font_size(15.0).muted().render().centered_y(),
         Element::spacer().flex(1.0),
     ];
     // A phone makes playlists from the page's own bar.
     if !state.mobile {
-        header.push(IconButton::new("playlist-new", Icon::Add, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y());
-        header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
+        header.push(IconButton::new("playlist-new", Icon::Add, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(t!("common-create-playlist")).accessibility_label(t!("common-create-playlist")).render().centered_y());
+        header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new(t!("desktop-hide-library")).shortcut("Ctrl+B"), palette).render().centered_y());
     }
     let header = Element::row(header)
     .gap(8.0)
@@ -900,28 +898,28 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         .round().render();
     let filters = if state.mobile {
         Element::row(vec![
-            chip("filter:all", "Todo", state.filter == Filter::All),
-            chip("filter:lists", "Playlists", state.filter == Filter::Lists),
-            chip("filter:artists", "Artistas", state.filter == Filter::Artists),
-            chip("filter:albums", "Álbumes", state.filter == Filter::Albums),
+            chip("filter:all", &t!("common-all"), state.filter == Filter::All),
+            chip("filter:lists", &t!("desktop-playlists"), state.filter == Filter::Lists),
+            chip("filter:artists", &t!("common-artists"), state.filter == Filter::Artists),
+            chip("filter:albums", &t!("common-albums"), state.filter == Filter::Albums),
         ]).gap(8.0)
     } else {
         // Settings' pill track across the panel; one too narrow for its names scrolls it sideways.
         let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
         mobile::settings::segmented("library-filter", (width - 16.0).max(LIBRARY_FILTERS_LEAST), vec![
-            filter("filter:all", "Todo", Filter::All),
-            filter("filter:lists", "Playlists", Filter::Lists),
-            filter("filter:artists", "Artistas", Filter::Artists),
-            filter("filter:albums", "Álbumes", Filter::Albums),
+            filter("filter:all", &t!("common-all"), Filter::All),
+            filter("filter:lists", &t!("desktop-playlists"), Filter::Lists),
+            filter("filter:artists", &t!("common-artists"), Filter::Artists),
+            filter("filter:albums", &t!("common-albums"), Filter::Albums),
         ])
     };
     let filters = Element::horizontal_scroll_2d("mobile-library-filters", filters).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
-        Filter::All => "Buscar en tu biblioteca",
-        Filter::Lists => "Buscar en Playlists",
-        Filter::Artists => "Buscar en Artistas",
-        Filter::Albums => "Buscar en Álbumes",
+        Filter::All => t!("desktop-search-library"),
+        Filter::Lists => t!("desktop-search-in", place = t!("desktop-playlists")),
+        Filter::Artists => t!("desktop-search-in", place = t!("common-artists")),
+        Filter::Albums => t!("desktop-search-in", place = t!("common-albums")),
     };
     let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
     let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).radius(22.0).centered_y() }
@@ -930,31 +928,31 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         // It grows out of where the magnifier was to all the row has left beside the order,
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
-        let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
+        let field = SearchField::new("library-query", &state.library_search, looking.clone(), SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
         if state.mobile {
-            vec![field.size(None, Some(44.0)).radius(22.0).centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
+            vec![field.size(None, Some(44.0)).radius(22.0).centered_y().flex(grown), search_button(Icon::Close, &t!("desktop-close-search")), Element::spacer().flex(1.0 - grown)]
         } else {
             // The cross closes it from inside its end, as the window's search clears.
             let close = IconButton::new("library-search", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Dense).round()
-                .tooltip("Cerrar la búsqueda").render().centered_y();
+                .tooltip(t!("desktop-close-search")).render().centered_y();
             let field = Element::stack(vec![field.radius(ControlSize::Compact.height() / 2.0), Element::row(vec![Element::spacer().flex(1.0), close]).padding(2.0)]);
             vec![field.centered_y().flex(grown), Element::spacer().flex(1.0 - grown)]
         }
     } else {
-        vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
+        vec![search_button(Icon::Search, &looking), Element::spacer().flex(1.0)]
     };
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
     let choice = |id: &str, label: &str, chosen: bool| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).selected(chosen));
     let choices = vec![
-        DropdownMenuEntry::Heading("Clasificar por".into()),
-        choice("library-sort:added", "Agregado recientemente", sort == Sort::Added),
-        choice("library-sort:alphabetical", "Alfabéticamente", sort == Sort::Alphabetical),
-        choice("library-sort:creator", "Creador", sort == Sort::Creator),
+        DropdownMenuEntry::Heading(t!("desktop-sort-by").into()),
+        choice("library-sort:added", &t!("desktop-sort-added"), sort == Sort::Added),
+        choice("library-sort:alphabetical", &t!("desktop-sort-alphabetical"), sort == Sort::Alphabetical),
+        choice("library-sort:creator", &t!("common-creator"), sort == Sort::Creator),
         DropdownMenuEntry::Separator,
-        DropdownMenuEntry::Heading("Ver como".into()),
-        choice("library-view:compact", "Compacta", view == LibraryView::Compact),
-        choice("library-view:list", "Lista", view == LibraryView::List),
-        choice("library-view:grid", "Cuadrícula", view == LibraryView::Grid),
+        DropdownMenuEntry::Heading(t!("desktop-view-as").into()),
+        choice("library-view:compact", &t!("desktop-view-compact"), view == LibraryView::Compact),
+        choice("library-view:list", &t!("desktop-view-list"), view == LibraryView::List),
+        choice("library-view:grid", &t!("desktop-view-grid"), view == LibraryView::Grid),
     ];
     let picker = Button::new("library-sort", sort.label(), palette).icon(Icon::Sort).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
     let picker = if state.mobile { picker.size(None, Some(44.0)).radius(22.0) } else { picker };
@@ -972,7 +970,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         .filter(|entry| entry.name.to_lowercase().contains(&wanted) || entry.about.to_lowercase().contains(&wanted))
         .map(|LibraryEntry { id, key, picture, artwork, round, name, about, here, .. }| {
             let held = pinned(&key).is_some();
-            let about = if held { format!("Fijado · {about}") } else { about };
+            let about = if held { format!("{} · {about}", t!("desktop-pinned")) } else { about };
             // The page being shown stands out by its fill.
             let palette = if here { ComponentPalette { surface: CHOSEN, ..palette } } else { palette };
             let entry = match view {
@@ -998,20 +996,20 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             };
             if state.mobile {
                 let more = format!("library-more:{key}");
-                let dots = mobile::icon(&more, Icon::More, &format!("Opciones de {name}"), palette);
+                let dots = mobile::icon(&more, Icon::More, &t!("desktop-options-of", name = name), palette);
                 let entry = if view == LibraryView::Grid {
                     Element::stack(vec![entry, Element::row(vec![Element::spacer().flex(1.0), dots.background(SCHEME.raised).radius(22.0)]).padding(4.0)])
                 } else { Element::row(vec![entry.flex(1.0), dots.centered_y()]).gap(4.0) };
                 return ContextMenu::new(format!("library-context:{key}"), entry, Vec::new(), SCHEME.menu()).open_action(more).render();
             }
-            let pin = ContextMenuItem::new(format!("pin:{key}"), if held { "Desfijar" } else { "Fijar arriba" });
+            let pin = ContextMenuItem::new(format!("pin:{key}"), if held { t!("desktop-unpin") } else { t!("desktop-pin") });
             ContextMenu::new(format!("library-context:{key}"), entry, vec![ContextMenuEntry::Item(pin)], SCHEME.menu()).render()
         })
         .collect();
     let list = if shown.is_empty() {
         let what = if !wanted.is_empty() {
-            format!("No encontramos «{}». Probá escribirlo de otra forma.", state.library_search.trim())
-        } else if state.filter == Filter::Artists { "Seguí a un artista desde su página y aparece acá.".to_owned() } else { "Guardá un álbum desde su página y aparece acá.".to_owned() };
+            t!("desktop-library-not-found", query = state.library_search.trim())
+        } else if state.filter == Filter::Artists { t!("desktop-library-no-artists") } else { t!("desktop-library-no-albums") };
         Element::panel(Text::new(what, palette).muted().render()).padding(8.0)
     } else if view == LibraryView::Grid {
         let mut tiles = shown.into_iter().peekable();
@@ -1045,7 +1043,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let collection = &state.collection;
     if collection.recent.is_empty() && collection.kept.is_empty() && state.saved.is_empty() && collection.heard.is_empty() {
         return centered(
-            Empty::new("Buscá algo para escuchar", "Escribí una canción o un artista arriba y apretá Enter.", palette).icon(Icon::Search).render(),
+            Empty::new(t!("desktop-home-empty"), t!("desktop-home-empty-detail"), palette).icon(Icon::Search).render(),
         );
     }
     let hour = chrono::Timelike::hour(&chrono::Local::now());
@@ -1062,7 +1060,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut tiles = Vec::new();
     if !state.saved.is_empty() {
         // The library lists the same entries: here they keep ids of their own and report the library's.
-        tiles.push(quick("home-downloads".into(), "Descargas", library_tile(Icon::Custom(DOWNLOAD), palette)).dispatch_as("downloads"));
+        tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette)).dispatch_as("downloads"));
     }
     for (index, entry) in collection.recent.iter().enumerate() {
         let picture = cover(state, entry.artwork(), LIBRARY_TILE, palette);
@@ -1081,30 +1079,30 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
     let heard: Vec<Element> = collection.heard.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("heard:{index}"), track)).collect();
     if !heard.is_empty() {
-        sections.push(shelf(state, "home-heard", "Volver a escuchar", heard, palette));
+        sections.push(shelf(state, "home-heard", &t!("desktop-listen-again"), heard, palette));
     }
     // The catalog's picks: a mix across what goes with everything played, then who and what
     // to open next, then what goes with each of the latest favourites.
     let mix: Vec<Element> = state.mix.iter().enumerate().map(|(index, track)| pick(format!("mix:{index}"), track)).collect();
     if !mix.is_empty() {
-        sections.push(shelf(state, "home-mix", "Hecho para vos", mix, palette));
+        sections.push(shelf(state, "home-mix", &t!("desktop-made-for-you"), mix, palette));
     }
     let artists: Vec<Element> = state
         .picked_artists
         .iter()
         .enumerate()
-        .map(|(index, artist)| tile(state, format!("pick-artist:{index}"), &artist.name, Some("Artista".into()), &artist.artwork_url, true, palette))
+        .map(|(index, artist)| tile(state, format!("pick-artist:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette))
         .collect();
     if !artists.is_empty() {
-        sections.push(shelf(state, "home-pick-artists", "Artistas para descubrir", artists, palette));
+        sections.push(shelf(state, "home-pick-artists", &t!("desktop-artists-to-discover"), artists, palette));
     }
     if !state.picked_albums.is_empty() {
-        sections.push(shelf(state, "home-pick-albums", "Discos para vos", release_tiles(state, "pick-album", &state.picked_albums, palette), palette));
+        sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), release_tiles(state, "pick-album", &state.picked_albums, palette), palette));
     }
     for (shelf_index, (seed, tracks)) in state.because.iter().enumerate() {
         let picks: Vec<Element> = tracks.iter().enumerate().map(|(index, track)| pick(format!("rec:{shelf_index}:{index}"), track)).collect();
         if !picks.is_empty() {
-            sections.push(shelf(state, &format!("home-rec:{shelf_index}"), &format!("Porque escuchaste «{}»", seed.title), picks, palette));
+            sections.push(shelf(state, &format!("home-rec:{shelf_index}"), &t!("desktop-because-you-played", title = seed.title.as_str()), picks, palette));
         }
     }
 
@@ -1115,16 +1113,16 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         })
         .collect();
     if !albums.is_empty() {
-        sections.push(shelf(state, "home-albums", "Tus álbumes", albums, palette));
+        sections.push(shelf(state, "home-albums", &t!("desktop-your-albums"), albums, palette));
     }
     let artists: Vec<Element> = collection
         .artists()
         .map(|(index, artist)| {
-            tile(state, format!("home-kept:{index}"), &artist.name, Some("Artista".into()), &artist.artwork_url, true, palette).dispatch_as(format!("kept:{index}"))
+            tile(state, format!("home-kept:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette).dispatch_as(format!("kept:{index}"))
         })
         .collect();
     if !artists.is_empty() {
-        sections.push(shelf(state, "home-artists", "Tus artistas", artists, palette));
+        sections.push(shelf(state, "home-artists", &t!("desktop-your-artists"), artists, palette));
     }
     ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
 }
@@ -1135,14 +1133,14 @@ fn browse_page(state: &State, width: f32, palette: ComponentPalette) -> Element 
     let mut sections = Vec::new();
     let recent: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
         let disc = Element::panel(Element::icon(Icon::Search).large_icon(TILE_WIDTH * 0.3).foreground(palette.muted).centered()).background(CHOSEN);
-        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(TILE_WIDTH).round(true).artwork(disc).subtitle("Búsqueda").render();
-        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round().tooltip(format!("Quitar «{query}»")).render();
+        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(TILE_WIDTH).round(true).artwork(disc).subtitle(t!("desktop-search-tile")).render();
+        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round().tooltip(t!("desktop-forget-search", query = query.as_str())).render();
         Element::stack(vec![tile, Element::row(vec![Element::spacer().flex(1.0), forget])])
     }).collect();
     if !recent.is_empty() {
-        sections.push(shelf(state, "browse-recent", "Búsquedas recientes", recent, palette));
+        sections.push(shelf(state, "browse-recent", &t!("desktop-recent-searches"), recent, palette));
     }
-    sections.push(heading("Explorar todo", palette));
+    sections.push(heading(&t!("desktop-browse-all"), palette));
     let width = width - 24.0;
     let columns = ((width / 200.0) as usize).clamp(2, 5);
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
@@ -1176,7 +1174,7 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
     let mut header = vec![heading(title, palette).flex(1.0)];
     // A shelf that fits has nowhere to go.
     if !state.mobile && tiles.len() > SHELF_FITS {
-        header.extend([arrow("back", Icon::ArrowLeft, "Anteriores"), arrow("on", Icon::ArrowRight, "Siguientes")]);
+        header.extend([arrow("back", Icon::ArrowLeft, &t!("desktop-shelf-back")), arrow("on", Icon::ArrowRight, &t!("desktop-shelf-on"))]);
     }
     // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
     let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
@@ -1209,7 +1207,7 @@ fn mobile_card_context(state: &State, row: &str, element: Element) -> Element {
     // tap target clear. UIKit supplies the iOS menu, with this retained target
     // also serving keyboard and non-iOS context requests.
     ContextMenu::new(target, element,
-        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, "Opciones"))], SCHEME.menu())
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, t!("common-options")))], SCHEME.menu())
         .open_action(action).render()
 }
 
@@ -1234,7 +1232,7 @@ fn middle(element: Element) -> Element {
 pub(crate) struct Action {
     /// What a click on it reports.
     pub(crate) id: String,
-    pub(crate) label: &'static str,
+    pub(crate) label: std::borrow::Cow<'static, str>,
     icon: Icon,
     /// A second line: what the action leads to.
     pub(crate) detail: Option<String>,
@@ -1242,41 +1240,41 @@ pub(crate) struct Action {
 
 /// What a row's menu offers for its track. `None` is a divider.
 pub(crate) fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Option<Action>> {
-    let item = |action: &str, label, icon, detail| Some(Action { id: format!("do:{action}:{row}"), label, icon: Icon::Custom(icon), detail });
+    let item = |action: &str, label: std::borrow::Cow<'static, str>, icon, detail| Some(Action { id: format!("do:{action}:{row}"), label, icon: Icon::Custom(icon), detail });
     let mut actions = vec![
-        item("queue", "Agregar a la cola", include_str!("../assets/icons/list-plus.svg"), None),
-        item("next", "Poner a continuación", include_str!("../assets/icons/list-start.svg"), None),
-        item("share", "Compartir", include_str!("../assets/icons/share-2.svg"), None),
+        item("queue", t!("desktop-add-to-queue"), include_str!("../assets/icons/list-plus.svg"), None),
+        item("next", t!("desktop-play-next"), include_str!("../assets/icons/list-start.svg"), None),
+        item("share", t!("desktop-share"), include_str!("../assets/icons/share-2.svg"), None),
         Some(if state.is_liked(&track.id) {
-            Action { id: format!("do:like:{row}"), label: "Quitar de Tus me gusta", icon: Icon::HeartFill, detail: None }
+            Action { id: format!("do:like:{row}"), label: t!("desktop-remove-like"), icon: Icon::HeartFill, detail: None }
         } else {
-            Action { id: format!("do:like:{row}"), label: "Me gusta", icon: Icon::Heart, detail: None }
+            Action { id: format!("do:like:{row}"), label: t!("common-like"), icon: Icon::Heart, detail: None }
         }),
         None,
-        item("add-new", "Agregar a una playlist nueva", include_str!("../assets/icons/list-plus.svg"), None),
+        item("add-new", t!("desktop-add-to-new-playlist"), include_str!("../assets/icons/list-plus.svg"), None),
     ];
     // Each of the user's playlists that does not hold the track yet.
     for playlist in state.collection.playlists.iter().filter(|playlist| !playlist.tracks.iter().any(|held| held.id == track.id)) {
         actions.push(Some(Action {
             id: format!("do:add-{}:{row}", playlist.id),
-            label: "Agregar a",
+            label: t!("desktop-add-to"),
             icon: Icon::Playlist,
             detail: Some(playlist.name.clone()),
         }));
     }
     if matches!(state.page, Page::Playlist(_)) && row.starts_with("page-track:") {
-        actions.push(item("remove", "Quitar de esta playlist", include_str!("../assets/icons/circle-minus.svg"), None));
+        actions.push(item("remove", t!("desktop-remove-from-playlist"), include_str!("../assets/icons/circle-minus.svg"), None));
     }
     actions.push(None);
     if track.album_id.is_some() {
-        actions.push(item("album", "Ir al álbum", include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
+        actions.push(item("album", t!("desktop-go-to-album"), include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
     }
-    actions.push(item("artist", "Ir al artista", include_str!("../assets/icons/user-round.svg"), Some(track.artist.clone())));
+    actions.push(item("artist", t!("desktop-go-to-artist"), include_str!("../assets/icons/user-round.svg"), Some(track.artist.clone())));
     actions.push(None);
     actions.push(if state.is_saved(&track.id) {
-        item("unsave", "Quitar descarga", include_str!("../assets/icons/trash-2.svg"), None)
+        item("unsave", t!("desktop-remove-download"), include_str!("../assets/icons/trash-2.svg"), None)
     } else {
-        item("save", "Descargar para escuchar sin conexión", DOWNLOAD, None)
+        item("save", t!("desktop-download-offline"), DOWNLOAD, None)
     });
     actions
 }
@@ -1316,7 +1314,7 @@ fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) 
     let actions = track_actions(state, row, track);
     let entries = actions.iter().map(|action| match action {
         Some(action) => {
-            let item = DropdownMenuItem::new(&action.id, action.label).icon(action.icon);
+            let item = DropdownMenuItem::new(&action.id, action.label.clone()).icon(action.icon);
             DropdownMenuEntry::Item(match &action.detail {
                 Some(detail) => item.description(detail),
                 None => item,
@@ -1327,7 +1325,7 @@ fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) 
     let dots = IconButton::new(format!("more:{row}"), Icon::More, palette).round()
         .variant(ButtonVariant::Ghost)
         .size(ControlSize::Compact)
-        .tooltip("Opciones")
+        .tooltip(t!("common-options"))
         .active(open)
         .render();
     let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", SCHEME.menu())
@@ -1439,11 +1437,11 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
     }
     let first = range.start;
     let rows = &rows[range.clone()];
-    let mut columns = vec![TableColumn::fixed("index", "#", NUMBER_WIDTH).align_end(), TableColumn::flexible("title", "Título", TITLE_MIN).sortable()];
+    let mut columns = vec![TableColumn::fixed("index", "#", NUMBER_WIDTH).align_end(), TableColumn::flexible("title", t!("common-title"), TITLE_MIN).sortable()];
     if album {
-        columns.push(TableColumn::fixed("album", "Álbum", state.album_width).sortable().resizable(ALBUM_FROM - TITLE_MIN - 280.0).optional(state.album_shown).hide_below(ALBUM_FROM));
+        columns.push(TableColumn::fixed("album", t!("common-album"), state.album_width).sortable().resizable(ALBUM_FROM - TITLE_MIN - 280.0).optional(state.album_shown).hide_below(ALBUM_FROM));
     }
-    columns.push(TableColumn::fixed("duration", "Duración", DURATION_WIDTH + 22.0).icon(Icon::Clock).sortable().align_end().optional(state.duration_shown));
+    columns.push(TableColumn::fixed("duration", t!("desktop-duration"), DURATION_WIDTH + 22.0).icon(Icon::Clock).sortable().align_end().optional(state.duration_shown));
     columns.push(TableColumn::fixed("more", "", MORE_WIDTH));
     let mut menus = Vec::new();
     let listed: Vec<TableRow> = rows
@@ -1537,18 +1535,18 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         // Each of its songs is looked for in the catalog, which takes a while.
         Page::Loading(Target::Import(_)) => {
             let (said, done) = match state.import_progress {
-                Some((done, of)) if of > 0 => (format!("Buscando las canciones en el catálogo: {done} de {of}."), done as f32 / of as f32),
-                _ => ("Leyendo la lista…".to_owned(), 0.0),
+                Some((done, of)) if of > 0 => (t!("desktop-import-searching", done = done, of = of), done as f32 / of as f32),
+                _ => (t!("desktop-import-reading"), 0.0),
             };
-            let about = Text::new("Podés seguir escuchando o ir a otra página: la playlist aparece en tu biblioteca cuando termina.", palette).role(TextRole::Caption).muted().render();
+            let about = Text::new(t!("desktop-import-wait"), palette).role(TextRole::Caption).muted().render();
             let progress = Element::column(vec![Text::new(said, palette).render(), Progress::new(done, palette).height(6.0).render(), about]).gap(8.0);
             Element::column(vec![Element::panel(progress).padding(12.0), loading("opening", palette)])
         }
         Page::Loading(_) => loading("opening", palette),
         Page::Failed(_, message) => centered(
-            Empty::new("No se pudo abrir", message, palette)
+            Empty::new(t!("desktop-open-failed"), message, palette)
                 .icon(Icon::WarningTriangle)
-                .action("retry", "Reintentar", ButtonVariant::Secondary)
+                .action("retry", t!("common-retry"), ButtonVariant::Secondary)
                 .render(),
         ),
         Page::Artist(artist) => artist_page(state, artist, width, palette),
@@ -1556,7 +1554,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Song(track) => centered(
             Element::column(vec![
                 media_card(state, "song-card", track, palette).centered_x(),
-                Text::new("Tocá la tapa para escucharla.", palette).muted().render().centered_x(),
+                Text::new(t!("desktop-song-tap"), palette).muted().render().centered_x(),
             ])
             .gap(12.0),
         ),
@@ -1569,7 +1567,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Browse => browse_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
-            None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
+            None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
         },
         Page::Settings => settings_page(state, width, palette),
         Page::Equalizer => mobile::settings::equalizer(state, width),
@@ -1578,14 +1576,18 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
 
 /// "1 canción", "12 canciones".
 fn songs(count: usize) -> String {
-    if count == 1 { "1 canción".to_owned() } else { format!("{count} canciones") }
+    t!("common-songs", count = count).into_owned()
+}
+
+/// "45 min", "1 h 5 min".
+fn length(minutes: u64) -> String {
+    if minutes >= 60 { t!("common-hours-minutes", hours = minutes / 60, minutes = minutes % 60) } else { t!("common-minutes", minutes = minutes) }.into_owned()
 }
 
 /// One of the user's playlists: what it is, what to do with it, and its tracks in order.
 fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Element {
     if state.mobile { return mobile::details::playlist(state, playlist, width, palette); }
-    let minutes = playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
-    let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
+    let length = length(playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000);
     let picture = match playlist.tracks.first() {
         Some(track) => cover(state, &track.artwork_url, ALBUM_COVER, palette),
         None => Element::panel(Element::icon(Icon::Playlist).large_icon(48.0).foreground(palette.muted).centered())
@@ -1594,12 +1596,12 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
     // Icons, as the play and the shuffle beside them: the row has to fit a narrow pane.
-    let own = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
+    let own = |id: &str, icon: Icon, hint: std::borrow::Cow<'static, str>| IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
     let copied = state.list_copied == Some(playlist.id);
-    let share = own("playlist-share", if copied { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/share-2.svg")) }, if copied { "Enlace copiado" } else { "Compartir" });
+    let share = own("playlist-share", if copied { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/share-2.svg")) }, if copied { t!("common-link-copied") } else { t!("desktop-share") });
     let exported = state.list_exported == Some(playlist.id);
-    let export = own("playlist-export", if exported { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/upload.svg")) }, if exported { "Canciones copiadas: pegalas en la otra app" } else { "Copiar canciones para otra app" });
-    let delete = own("playlist-delete", Icon::Trash, "Eliminar");
+    let export = own("playlist-export", if exported { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/upload.svg")) }, if exported { t!("desktop-songs-copied") } else { t!("desktop-copy-songs") });
+    let delete = own("playlist-delete", Icon::Trash, t!("common-delete"));
     let actions = if playlist.tracks.is_empty() {
         // Nothing to play, to share or to search yet.
         Element::row(vec![delete])
@@ -1607,11 +1609,11 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
         page_actions(state, vec![share, export, delete], palette)
     };
     let missed = state.imported.as_ref().filter(|(id, missed)| *id == playlist.id && !missed.is_empty()).map(|(_, missed)| {
-        let said = if missed.len() == 1 { "1 canción no se encontró".to_owned() } else { format!("{} canciones no se encontraron", missed.len()) };
+        let said = t!("desktop-missed-count", count = missed.len());
         Button::new("import-missed", said, palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render()
     });
     let mut about = vec![
-        Text::eyebrow(if playlist.collaborative { "PLAYLIST COLABORATIVA" } else { "PLAYLIST" }, palette).render(),
+        Text::eyebrow(if playlist.collaborative { t!("desktop-collaborative-playlist-eyebrow") } else { t!("desktop-playlist-eyebrow") }, palette).render(),
         Text::new(&playlist.name, palette).font_size(PAGE_TITLE).truncate().render(),
         Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
     ];
@@ -1620,7 +1622,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     let header = Element::row(vec![picture, Element::column(about).gap(10.0).flex(1.0).centered_y()]).gap(20.0);
     let list = if playlist.tracks.is_empty() {
         Element::panel(
-            Empty::new("Todavía no tiene canciones", "Buscá una canción y elegí «Agregar a» en su menú.", palette).icon(Icon::MusicNote).render().centered_x(),
+            Empty::new(t!("desktop-playlist-empty"), t!("desktop-playlist-empty-detail"), palette).icon(Icon::MusicNote).render().centered_x(),
         )
         .padding(24.0)
     } else {
@@ -1654,98 +1656,100 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         else { stacked(line(glyph, title, detail, None, white), control) };
 
     let seconds = state.settings.crossfade;
-    let fade = if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") };
+    let fade = if seconds == 0.0 { t!("desktop-crossfade-off").into_owned() } else { format!("{seconds:.0} s") };
     let slider = Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(span).render();
-    let mixes = Some("Mezcla el final de una canción con el comienzo de la siguiente.");
-    let crossfade = if wide { cell(line(Icon::Shuffle, "Crossfade", mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
-        else { stacked(line(Icon::Shuffle, "Crossfade", mixes, Some(value(&fade)), white), slider) };
-    let playback = group("Reproducción", vec![
-        switch(Icon::Infinity, "Reproducción automática", Some("Cuando termina lo que estás escuchando, sigue con algo similar."), "setting:autoplay", state.settings.autoplay),
+    let (mixes, crossfade) = (t!("desktop-crossfade-detail"), t!("desktop-crossfade"));
+    let mixes = Some(&*mixes);
+    let crossfade = if wide { cell(line(Icon::Shuffle, &crossfade, mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
+        else { stacked(line(Icon::Shuffle, &crossfade, mixes, Some(value(&fade)), white), slider) };
+    let playback = group(&t!("desktop-playback"), vec![
+        switch(Icon::Infinity, &t!("desktop-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay),
         crossfade,
     ], "");
 
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
     let system_output = state.outputs.iter().find(|output| output.is_default)
-        .map_or_else(|| SYSTEM_OUTPUT.to_owned(), |output| format!("Sistema: {}", output.name));
+        .map_or_else(|| t!("desktop-system-output").into_owned(), |output| t!("desktop-system-output-named", name = output.name.as_str()).into_owned());
     let devices = std::iter::once(device("", &system_output)).chain(state.outputs.iter().map(|output| {
-        let name = if output.is_default { format!("{} · predeterminado", output.name) } else { output.name.clone() };
+        let name = if output.is_default { t!("desktop-output-default", name = output.name.as_str()).into_owned() } else { output.name.clone() };
         device(&output.id, &name)
     }));
+    let missing = t!("desktop-output-missing");
     let playing_through = match &state.output {
-        Some(id) => state.outputs.iter().find(|output| output.id == *id).map_or("Salida guardada no disponible", |output| output.name.as_str()),
+        Some(id) => state.outputs.iter().find(|output| output.id == *id).map_or(&*missing, |output| output.name.as_str()),
         None => system_output.as_str(),
     };
     let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", SCHEME.on_raised())
         .menu_palette(SCHEME.menu())
-        .accessibility_label("Dispositivo de salida")
+        .accessibility_label(t!("desktop-output-device"))
         .size(ControlSize::Spacious)
         .width(span)
         .render();
     let output_status = if state.outputs_loading {
-        "Buscando salidas de audio…".to_owned()
+        t!("desktop-outputs-searching")
     } else if let Some(error) = &state.outputs_error {
-        format!("No pudimos consultar las salidas. {error}")
+        t!("desktop-outputs-error", error = error.as_str())
     } else if state.outputs.is_empty() {
-        "No se encontraron salidas adicionales. Podés seguir usando la predeterminada del sistema.".to_owned()
+        t!("desktop-outputs-none")
     } else {
-        format!("{} {} en este equipo.", state.outputs.len(), if state.outputs.len() == 1 { "salida disponible" } else { "salidas disponibles" })
+        t!("desktop-outputs-count", count = state.outputs.len())
     };
-    let mut connections = group("Conexiones y dispositivos", vec![
-        beside(Icon::Custom(AUDIO_ROUTE), "Dispositivo de salida", Some("Parlantes, auriculares o una salida Bluetooth."), output),
-        action("setting:outputs-refresh", Icon::Refresh, "Actualizar salidas", Some(&output_status), None, !state.outputs_loading, false),
-    ], "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.");
+    let mut connections = group(&t!("desktop-connections"), vec![
+        beside(Icon::Custom(AUDIO_ROUTE), &t!("desktop-output-device"), Some(&t!("desktop-output-device-detail")), output),
+        action("setting:outputs-refresh", Icon::Refresh, &t!("desktop-refresh-outputs"), Some(&output_status), None, !state.outputs_loading, false),
+    ], &t!("desktop-connections-footer"));
     if let Some(notice) = &state.output_notice {
-        connections = Element::column(vec![connections, Alert::new("Salida de audio", notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
+        connections = Element::column(vec![connections, Alert::new(t!("desktop-audio-output"), notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
     }
 
     let chosen = state.settings.quality;
-    let ceiling = match chosen { Quality::Low => "Hasta 50 kbps", Quality::Normal => "Hasta 70 kbps", Quality::High => "Hasta 140 kbps" };
-    let audio = group("Calidad de audio", vec![
-        beside(Icon::ChartBar, "Calidad", Some(ceiling), segmented("setting-quality", span, Quality::ALL.into_iter()
+    let ceiling = t!("desktop-quality-up-to", kbps = match chosen { Quality::Low => 50, Quality::Normal => 70, Quality::High => 140 });
+    let audio = group(&t!("desktop-audio-quality"), vec![
+        beside(Icon::ChartBar, &t!("desktop-quality"), Some(&ceiling), segmented("setting-quality", span, Quality::ALL.into_iter()
             .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect())),
-        switch(Icon::Volume, "Normalizar el volumen", Some("Baja las canciones más fuertes para que todas suenen al mismo nivel."), "setting:normalize", state.settings.normalize),
-        switch(Icon::Headphones, "Audio mono", Some("Los dos parlantes reproducen lo mismo."), "setting:mono", state.settings.mono),
-        action("equalizer", Icon::Sliders, "Ecualizador", None,
-            Some(Element::row(vec![value(equalizer::summary(state)).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
-    ], "La calidad cambia desde la próxima canción.");
+        switch(Icon::Volume, &t!("desktop-normalize"), Some(&t!("desktop-normalize-detail")), "setting:normalize", state.settings.normalize),
+        switch(Icon::Headphones, &t!("desktop-mono"), Some(&t!("desktop-mono-detail")), "setting:mono", state.settings.mono),
+        action("equalizer", Icon::Sliders, &t!("common-equalizer"), None,
+            Some(Element::row(vec![value(&equalizer::summary(state)).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
+    ], &t!("desktop-quality-footer"));
 
-    let display = group("Visualización", vec![
-        switch(Icon::PanelLeft, "Mostrar biblioteca", Some("Tus playlists, artistas y álbumes en el panel izquierdo."), "setting:library-panel", state.library_open),
-        switch(Icon::PanelRight, "Mostrar lo que suena", Some("La tapa, la letra y el artista en el panel derecho."), "setting:player-panel", state.panel_open),
-        switch(Icon::Video, "Videos en lo que suena", Some("Un tramo del video de la canción, sin sonido, donde va su tapa."), "setting:clips", state.settings.clips),
-        switch(Icon::Bolt, "Reducir movimiento", Some("Los cambios de una vez, sin animaciones."), "setting:motion", state.settings.reduce_motion),
+    let display = group(&t!("desktop-display"), vec![
+        switch(Icon::PanelLeft, &t!("desktop-show-library-setting"), Some(&t!("desktop-show-library-detail")), "setting:library-panel", state.library_open),
+        switch(Icon::PanelRight, &t!("desktop-show-now-playing"), Some(&t!("desktop-show-now-playing-detail")), "setting:player-panel", state.panel_open),
+        switch(Icon::Video, &t!("desktop-clips"), Some(&t!("desktop-clips-detail")), "setting:clips", state.settings.clips),
+        switch(Icon::Bolt, &t!("desktop-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
         beside(Icon::Globe, &t!("common-language"), Some(&t!("common-language-detail")), segmented("setting-language", span, Language::ALL.into_iter()
             .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
-    let library = group("Biblioteca", vec![
-        beside(Icon::Sort, "Orden", None, segmented("setting-library-sort", span, vec![
-            Tab::new("library-sort:added", "Recientes", 0.0).active(sort == Sort::Added),
+    let library = group(&t!("desktop-library"), vec![
+        beside(Icon::Sort, &t!("desktop-sort"), None, segmented("setting-library-sort", span, vec![
+            Tab::new("library-sort:added", t!("desktop-sort-recent"), 0.0).active(sort == Sort::Added),
             Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(sort == Sort::Alphabetical),
-            Tab::new("library-sort:creator", "Creador", 0.0).active(sort == Sort::Creator),
+            Tab::new("library-sort:creator", t!("common-creator"), 0.0).active(sort == Sort::Creator),
         ])),
-        beside(Icon::Grid, "Vista", None, segmented("setting-library-view", span, vec![
-            Tab::new("library-view:compact", "Compacta", 0.0).active(view == LibraryView::Compact),
-            Tab::new("library-view:list", "Lista", 0.0).active(view == LibraryView::List),
-            Tab::new("library-view:grid", "Cuadrícula", 0.0).active(view == LibraryView::Grid),
+        beside(Icon::Grid, &t!("desktop-view"), None, segmented("setting-library-view", span, vec![
+            Tab::new("library-view:compact", t!("desktop-view-compact"), 0.0).active(view == LibraryView::Compact),
+            Tab::new("library-view:list", t!("desktop-view-list"), 0.0).active(view == LibraryView::List),
+            Tab::new("library-view:grid", t!("desktop-view-grid"), 0.0).active(view == LibraryView::Grid),
         ])),
-        action("import-open", Icon::Playlist, "Importar música de otras apps", Some("Playlists de Spotify, Apple Music y YouTube Music con su enlace."), Some(chevron()), true, false),
+        action("import-open", Icon::Playlist, &t!("desktop-import-settings"), Some(&t!("desktop-import-settings-detail")), Some(chevron()), true, false),
     ], "");
 
-    let about = group("Acerca de", vec![
-        cell(line(Icon::InfoCircle, "Versión", None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
-        cell(line(Icon::Book, "Licencias de terceros", Some("Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT)."), None, white)),
+    let about = group(&t!("desktop-about"), vec![
+        cell(line(Icon::InfoCircle, &t!("desktop-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+        cell(line(Icon::Book, &t!("desktop-licenses"), Some(&t!("desktop-licenses-detail")), None, white)),
     ], "");
 
     // What cannot be undone sits last, each behind a confirmation.
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
-    let erase = group("Almacenamiento y privacidad", vec![
-        action("downloads-clear", Icon::Trash, "Eliminar todas las descargas", Some(&downloads), None, !state.saved.is_empty(), true),
-        action("recent-clear", Icon::History, "Borrar abiertos recientemente", Some("Álbumes y artistas de Inicio"), None, !state.collection.recent.is_empty(), true),
+    let erase = group(&t!("desktop-storage"), vec![
+        action("downloads-clear", Icon::Trash, &t!("desktop-delete-downloads"), Some(&downloads), None, !state.saved.is_empty(), true),
+        action("recent-clear", Icon::History, &t!("desktop-clear-recent"), Some(&t!("desktop-clear-recent-settings-detail")), None, !state.collection.recent.is_empty(), true),
     ], "");
 
-    let title = mobile::horizontal_inset(Text::new("Configuración", palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
+    let title = mobile::horizontal_inset(Text::new(t!("common-settings"), palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let groups = vec![title, playback, connections, audio, display, library, about, erase];
     let column = Element::column(groups).gap(28.0).padding(GUTTER).size(Some(across), None);
     ScrollArea::new("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)])).render().flex(1.0)
@@ -1757,38 +1761,38 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
     }
     if let Some(error) = &state.search_error {
         // Without a network there is still what was kept for it.
-        let empty = Empty::new("No se pudo buscar", error, palette).icon(Icon::WarningTriangle);
-        let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", "Ver descargas", ButtonVariant::Secondary) };
+        let empty = Empty::new(t!("desktop-search-failed"), error, palette).icon(Icon::WarningTriangle);
+        let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", t!("desktop-see-downloads"), ButtonVariant::Secondary) };
         return centered(empty.render());
     }
     let found = &state.found;
     if found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
-        return centered(Empty::new("Sin resultados", "Probá con otras palabras.", palette).icon(Icon::MusicNote).render());
+        return centered(Empty::new(t!("common-no-results"), t!("desktop-try-other-words"), palette).icon(Icon::MusicNote).render());
     }
     let mut sections = Vec::new();
     if !found.artists.is_empty() {
         let tiles = found.artists.iter().enumerate().map(|(index, artist)| {
-            tile(state, format!("artist:{index}"), &artist.name, Some("Artista".into()), &artist.artwork_url, true, palette)
+            tile(state, format!("artist:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette)
         });
-        sections.push(shelf(state, "found-artists", "Artistas", tiles.collect(), palette));
+        sections.push(shelf(state, "found-artists", &t!("common-artists"), tiles.collect(), palette));
     }
     if !found.albums.is_empty() {
-        sections.push(shelf(state, "found-albums", "Álbumes", release_tiles(state, "album", &found.albums, palette), palette));
+        sections.push(shelf(state, "found-albums", &t!("common-albums"), release_tiles(state, "album", &found.albums, palette), palette));
     }
     if !found.tracks.is_empty() {
         let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette));
-        sections.extend([heading("Canciones", palette), Element::column(rows.collect()).gap(2.0)]);
+        sections.extend([heading(&t!("common-songs-heading"), palette), Element::column(rows.collect()).gap(2.0)]);
     }
     ScrollArea::new("results", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
 }
 
 /// The shuffle's three steps as its button shows them: the icon of the one it is on, and
 /// what a press does next.
-fn shuffle_step(state: &State) -> (Icon, &'static str) {
+fn shuffle_step(state: &State) -> (Icon, std::borrow::Cow<'static, str>) {
     match (state.player.shuffle, state.player.smart) {
-        (false, _) => (Icon::Shuffle, "Activar aleatorio"),
-        (true, false) => (Icon::Shuffle, "Activar aleatorio con recomendaciones"),
-        (true, true) => (Icon::Custom(SMART_SHUFFLE), "Desactivar aleatorio"),
+        (false, _) => (Icon::Shuffle, t!("desktop-shuffle-on")),
+        (true, false) => (Icon::Shuffle, t!("desktop-smart-shuffle-on")),
+        (true, true) => (Icon::Custom(SMART_SHUFFLE), t!("desktop-shuffle-off")),
     }
 }
 
@@ -1800,11 +1804,11 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
     let play = if state.mobile {
         mobile::controls::playback("page-play", false, 56.0, 28.0, palette)
     } else {
-        IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip("Reproducir").render().center_content()
+        IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip(t!("common-play")).render().center_content()
     };
     let (icon, hint) = shuffle_step(state);
     let shuffle = if state.mobile {
-        let action = mobile::controls::action("page-shuffle", icon, hint, 22.0, palette);
+        let action = mobile::controls::action("page-shuffle", icon, &hint, 22.0, palette);
         if state.player.shuffle { action.background(palette.selected) } else { action }
     } else {
         IconButton::new("page-shuffle", icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
@@ -1839,7 +1843,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let mut parts = vec![Element::spacer().flex(1.0)];
     if open > 0.0 {
         let width = PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open;
-        let field = SearchField::new("page-query", &state.page_search, "Buscar en esta página", SCHEME.on_raised())
+        let field = SearchField::new("page-query", &state.page_search, t!("desktop-search-page"), SCHEME.on_raised())
             .size(ControlSize::Compact)
             .width(width)
             .render();
@@ -1847,16 +1851,16 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
         let field = field.centered_y()
             // In a narrow pane it makes do with what the row has left.
             .shrink_to_fit();
-        parts.extend([field, toggle(Icon::Close, "Cerrar la búsqueda")]);
+        parts.extend([field, toggle(Icon::Close, &t!("desktop-close-search"))]);
     } else {
-        parts.push(toggle(Icon::Search, "Buscar en esta página"));
+        parts.push(toggle(Icon::Search, &t!("desktop-search-page")));
     }
     // Beside it, the order the page's tracks are listed in.
     let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());
     let order = |key: &str, label: &str| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("page-sort:{key}"), label).selected(sorted == key));
-    let orders = vec![order("own", "Orden de la lista"), order("title", "Título"), order("album", "Álbum"), order("duration", "Duración")];
-    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, "Ordenar", palette).radius(22.0) }
-        else { header_button("page-sort", Icon::Sort, TooltipSpec::new("Ordenar"), palette).active(state.sort_open).render() };
+    let orders = vec![order("own", &t!("desktop-sort-list-order")), order("title", &t!("common-title")), order("album", &t!("common-album")), order("duration", &t!("desktop-duration"))];
+    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette).radius(22.0) }
+        else { header_button("page-sort", Icon::Sort, TooltipSpec::new(t!("desktop-sort-button")), palette).active(state.sort_open).render() };
     parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", SCHEME.menu()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
     parts
 }
@@ -1867,7 +1871,7 @@ fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPal
     if state.mobile { return mobile::details::artist(state, artist, width, palette); }
     let mut about = vec![Text::new(&artist.name, palette).font_size(PAGE_TITLE).truncate().render()];
     if let Some(subscribers) = &artist.subscribers {
-        about.push(Text::new(format!("{subscribers} suscriptores"), palette).muted().render());
+        about.push(Text::new(t!("desktop-subscribers", subscribers = subscribers.as_str()), palette).muted().render());
     }
     let header = Element::row(vec![
         cover(state, &artist.artwork_url, ARTIST_PICTURE, palette).radius(ARTIST_PICTURE / 2.0),
@@ -1875,35 +1879,34 @@ fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPal
         Element::column(about).gap(10.0).flex(1.0).centered_y(),
     ])
     .gap(20.0);
-    let mut sections = vec![header, play_buttons(state, Some(("Seguir", "Siguiendo")), palette)];
+    let mut sections = vec![header, play_buttons(state, Some((&t!("common-follow"), &t!("common-following"))), palette)];
     if !artist.songs.is_empty() {
-        sections.extend([heading("Canciones", palette), track_table(state, &state.page_rows(), true, None, table_width(width), palette)]);
+        sections.extend([heading(&t!("common-songs-heading"), palette), track_table(state, &state.page_rows(), true, None, table_width(width), palette)]);
     }
     if !artist.albums.is_empty() {
-        sections.push(shelf(state, "artist-albums", "Álbumes", release_tiles(state, "page-album", &artist.albums, palette), palette));
+        sections.push(shelf(state, "artist-albums", &t!("common-albums"), release_tiles(state, "page-album", &artist.albums, palette), palette));
     }
     if !artist.singles.is_empty() {
         let tiles = release_tiles(state, "page-single", &artist.singles, palette);
-        sections.push(shelf(state, "artist-singles", "Sencillos y EP", tiles, palette));
+        sections.push(shelf(state, "artist-singles", &t!("desktop-singles"), tiles, palette));
     }
     ScrollArea::new("artist", washed(state, &artist.artwork_url, Element::column(sections).gap(12.0).padding(12.0))).render().flex(1.0)
 }
 
 fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let failure = state.save_error.as_ref().map(|error| Alert::new("No se pudo descargar", error, palette).render());
+    let failure = state.save_error.as_ref().map(|error| Alert::new(t!("desktop-download-failed"), error, palette).render());
     if state.saved.is_empty() && state.saving.is_empty() {
-        let empty = Empty::new("Nada descargado", "Lo que descargues desde el menú de una canción queda acá, para escucharlo sin conexión.", palette)
+        let empty = Empty::new(t!("desktop-downloads-empty"), t!("desktop-downloads-empty-detail"), palette)
             .icon(Icon::Custom(DOWNLOAD))
             .render();
         return Element::column(failure.into_iter().chain([centered(empty)]).collect()).padding(12.0).flex(1.0);
     }
     let count = match (state.saved.len(), state.saving.len()) {
-        (1, 0) => "1 canción en este equipo".to_owned(),
-        (saved, 0) => format!("{saved} canciones en este equipo"),
-        (saved, saving) => format!("{saved} en este equipo, {saving} descargando"),
+        (saved, 0) => t!("desktop-downloads-count", count = saved),
+        (saved, saving) => t!("desktop-downloads-saving", saved = saved, saving = saving),
     };
     let mut sections = vec![Element::column(vec![
-        Text::new("Descargas", palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("common-downloads"), palette).font_size(PAGE_TITLE).render(),
         Text::new(count, palette).muted().render(),
         play_buttons(state, None, palette),
     ])
@@ -1918,10 +1921,10 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
 fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let liked = &state.collection.liked;
     if liked.is_empty() {
-        return centered(Empty::new("Todavía no marcaste nada", "El corazón de la barra de abajo guarda acá lo que te gusta.", palette).icon(Icon::Heart).render());
+        return centered(Empty::new(t!("desktop-liked-empty"), t!("desktop-liked-empty-detail"), palette).icon(Icon::Heart).render());
     }
     let header = Element::column(vec![
-        Text::new("Tus me gusta", palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("common-liked-songs"), palette).font_size(PAGE_TITLE).render(),
         Text::new(songs(liked.len()), palette).muted().render(),
         play_buttons(state, None, palette),
     ])
@@ -1933,12 +1936,8 @@ fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
 
 fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalette) -> Element {
     if state.mobile { return mobile::details::album(state, album, width, palette); }
-    let minutes = album.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
-    let length = if minutes >= 60 { format!("{} h {} min", minutes / 60, minutes % 60) } else { format!("{minutes} min") };
-    let count = match album.tracks.len() {
-        1 => "1 canción".to_owned(),
-        count => format!("{count} canciones"),
-    };
+    let length = length(album.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000);
+    let count = songs(album.tracks.len());
     let facts: Vec<&str> = [album.year.as_str(), count.as_str(), length.as_str()].into_iter().filter(|fact| !fact.is_empty()).collect();
     let header = Element::row(vec![
         cover(state, &album.artwork_url, ALBUM_COVER, palette),
@@ -1954,7 +1953,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
     .gap(20.0);
     // Every track is of this album: its table needs no column to say so.
     let tracks = track_table(state, &state.page_rows(), false, None, table_width(width), palette);
-    let sections = vec![header, play_buttons(state, Some(("Guardar", "En tu biblioteca")), palette), tracks];
+    let sections = vec![header, play_buttons(state, Some((&t!("desktop-save"), &t!("desktop-in-library"))), palette), tracks];
     ScrollArea::new("album", washed(state, &album.artwork_url, Element::column(sections).gap(16.0).padding(12.0))).render().flex(1.0)
 }
 
@@ -1962,7 +1961,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
 fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Element {
     let copy = Element::column(vec![Text::new(title, palette).font_size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
     // A panel is shut from its own header.
-    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new("Ocultar este panel"), palette).render();
+    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new(t!("desktop-hide-panel")), palette).render();
     inset(Element::row(vec![copy.flex(1.0), shut]))
 }
 
@@ -1983,7 +1982,7 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
     let lines = state.lines();
     let sung = state.active_line().map_or(-1, |index| index as i64);
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let mut parts = vec![Text::eyebrow("LETRA", raised).render()];
+    let mut parts = vec![Text::eyebrow(t!("desktop-lyrics-eyebrow"), raised).render()];
     let rows = lines.iter().enumerate().map(|(index, line)| {
         let ink = Color { a: (255.0 * lyric_focus(index as i64 - sung).0) as u8, ..raised.text };
         Text::new(if line.text.trim().is_empty() { "♪" } else { &line.text }, raised)
@@ -1995,7 +1994,7 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
     let height = LYRICS_SHOWN as f32 * LYRICS_LINE + (LYRICS_SHOWN - 1) as f32 * LYRICS_GAP;
     parts.push(Element::column(vec![Element::column(rows).gap(LYRICS_GAP).translate(slide)])
         .size(None, Some(height)).clip_children());
-    let all = Button::new("lyrics", "Mostrar la letra", raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
+    let all = Button::new("lyrics", t!("desktop-show-lyrics"), raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
     parts.push(Element::row(vec![all, Element::spacer().flex(1.0)]));
     (!lines.is_empty()).then(|| panel_card(parts, width))
 }
@@ -2004,8 +2003,8 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
 fn next_up(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
     let next = state.player.upcoming.first()?;
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let queue = Link::new("next-queue", "Abrir la cola", raised).font_size(12.0).render();
-    let head = Element::row(vec![Text::eyebrow("A CONTINUACIÓN", raised).render().centered_y(), Element::spacer().flex(1.0), queue.centered_y()]);
+    let queue = Link::new("next-queue", t!("desktop-open-queue"), raised).font_size(12.0).render();
+    let head = Element::row(vec![Text::eyebrow(t!("desktop-next-eyebrow"), raised).render().centered_y(), Element::spacer().flex(1.0), queue.centered_y()]);
     let row = ListRow::new("upcoming:0", &next.title, raised)
         .sizing(TRACK_ROW)
         .leading(middle(cover(state, &next.artwork_url, COVER, raised)))
@@ -2026,11 +2025,11 @@ fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<
     let (artist, words) = state.about_artist()?;
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let follows = state.is_followed(artist);
-    let follow = Button::new("about-follow", if follows { "Siguiendo" } else { "Seguir" }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
+    let follow = Button::new("about-follow", if follows { t!("common-following") } else { t!("common-follow") }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
     let name = Element::clickable("about-artist", Text::new(&artist.name, raised).font_size(16.0).truncate().render());
-    let mut copy = vec![Text::eyebrow("SOBRE EL ARTISTA", raised).render(), Element::row(vec![name.flex(1.0).centered_y(), follow.centered_y()]).gap(8.0)];
+    let mut copy = vec![Text::eyebrow(t!("desktop-about-artist-eyebrow"), raised).render(), Element::row(vec![name.flex(1.0).centered_y(), follow.centered_y()]).gap(8.0)];
     if let Some(subscribers) = &artist.subscribers {
-        copy.push(Text::new(format!("{subscribers} suscriptores"), raised).muted().render());
+        copy.push(Text::new(t!("desktop-subscribers", subscribers = subscribers.as_str()), raised).muted().render());
     }
     if let Some(words) = words.as_deref().map(str::trim).filter(|words| !words.is_empty()) {
         // The opening of it, cut at a word.
@@ -2049,14 +2048,14 @@ fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<
 }
 
 /// A round button that stands on a picture, over a scrim of its own.
-fn on_picture(id: &str, icon: Icon, hint: &str, palette: ComponentPalette) -> Element {
+fn on_picture(id: &str, icon: Icon, hint: std::borrow::Cow<'static, str>, palette: ComponentPalette) -> Element {
     let scrim = ComponentPalette { surface: COVER_SCRIM, hover: COVER_SCRIM, selected: COVER_SCRIM, ..palette };
     IconButton::new(id, icon, scrim).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip(hint).render()
 }
 
 /// Turns the videos of what plays off and on, from where they are seen.
 fn footage_switch(state: &State, palette: ComponentPalette) -> Element {
-    let (icon, hint) = if state.settings.clips { (Icon::Image, "Ver la tapa") } else { (Icon::Video, "Ver el video") };
+    let (icon, hint) = if state.settings.clips { (Icon::Image, t!("desktop-show-cover")) } else { (Icon::Video, t!("desktop-show-video")) };
     on_picture("cover-clips", icon, hint, palette)
 }
 
@@ -2080,14 +2079,14 @@ pub fn cinema_picture(film: &surco_video::Film, window: Size) -> Size {
 /// cover where not, and under it the bar that plays it.
 fn cinema(state: &State, window: Size, palette: ComponentPalette) -> Element {
     let room = cinema_room(window);
-    let leave = on_picture("cinema", Icon::Compact, "Salir de pantalla completa (Esc)", palette);
+    let leave = on_picture("cinema", Icon::Compact, t!("desktop-exit-fullscreen"), palette);
     let top = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette).centered_y(), leave.centered_y()]).gap(6.0).padding(GAP).size(None, Some(CINEMA_TOP));
     let over = |picture: Element| Element::column(vec![top, centered(picture)]);
     // Around a video, its own glow; around a cover, the cover's colour.
     let stage = match (state.screening(), state.current()) {
         (Some((_, footage, Showing::Large)), _) => {
             let size = cinema_picture(&footage.large.0, window);
-            let film = Element::surface(CLIP_SURFACE, "Video de la canción").size(Some(size.width), Some(size.height));
+            let film = Element::surface(CLIP_SURFACE, t!("desktop-song-video")).size(Some(size.width), Some(size.height));
             let glow = Element::surface(CLIP_BACKDROP, "").size(Some(room.width), Some(room.height));
             Element::stack(vec![glow, over(film)]).clip_children()
         }
@@ -2116,7 +2115,7 @@ fn inset(part: Element) -> Element {
 /// The right-hand column: what plays, or what comes after it while the queue is open.
 fn panel(state: &State, palette: ComponentPalette) -> Element {
     let content = if state.queue_open {
-        vec![panel_header("Lo que viene", "La cola, en su orden real", palette), upcoming(state, palette)]
+        vec![panel_header(&t!("desktop-up-next"), &t!("desktop-queue-detail"), palette), upcoming(state, palette)]
     } else {
         match state.current() {
             Some(track) => {
@@ -2129,9 +2128,9 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                         // under the pointer, what to see there and the way to see it large.
                         let mut layers = vec![cover];
                         if state.screening().is_some() {
-                            layers.push(Element::surface(CLIP_SURFACE, "Video de la canción"));
+                            layers.push(Element::surface(CLIP_SURFACE, t!("desktop-song-video")));
                         }
-                        let controls = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette), on_picture("cinema", Icon::Fullscreen, "Pantalla completa", palette)]).gap(6.0).padding(8.0);
+                        let controls = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette), on_picture("cinema", Icon::Fullscreen, t!("desktop-fullscreen"), palette)]).gap(6.0).padding(8.0);
                         layers.push(Element::column(vec![controls, Element::spacer().flex(1.0)]).reveal_on_hover("cover-controls"));
                         let cover = Element::stack(layers).size(Some(side), Some(side)).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).hover_region();
                         Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
@@ -2147,11 +2146,11 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                 // Under its header the panel scrolls: on a short window the artist is below the fold.
                 playing.push(Element::spacer().size(None, Some(PANEL_PAD - 12.0)));
                 let below = Element::column(playing).gap(12.0);
-                vec![panel_header("Sonando", track.album.as_deref().unwrap_or(&track.artist), palette), ScrollArea::new("playing", below).render().flex(1.0)]
+                vec![panel_header(&t!("desktop-now-playing"), track.album.as_deref().unwrap_or(&track.artist), palette), ScrollArea::new("playing", below).render().flex(1.0)]
             }
             None => vec![
-                panel_header("Sonando", "Nada por ahora", palette),
-                centered(Empty::new("Nada sonando", "Elegí una canción y acá aparece.", palette).icon(Icon::MusicNote).render()),
+                panel_header(&t!("desktop-now-playing"), &t!("desktop-nothing-yet"), palette),
+                centered(Empty::new(t!("desktop-nothing-playing"), t!("desktop-nothing-playing-detail"), palette).icon(Icon::MusicNote).render()),
             ],
         }
     };
@@ -2185,18 +2184,18 @@ pub(crate) fn lyric_anchor(body: f32) -> f32 {
 fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> Element {
     let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Custom(LYRICS)).render());
     let lines = match &state.lyrics {
-        _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
+        _ if state.current().is_none() => return note(&t!("desktop-nothing-playing"), &t!("desktop-lyrics-nothing-detail")),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
         Some((_, Lyrics::Missing)) => return centered(Element::column(vec![
-            Empty::new("Letra no disponible", "El servicio todavía no tiene la letra de esta canción.", palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", "Volver a buscar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
+            Empty::new(t!("desktop-lyrics-missing"), t!("desktop-lyrics-missing-detail"), palette).icon(Icon::Custom(LYRICS)).render(),
+            Button::new("retry-lyrics", t!("desktop-search-again"), palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
         ]).gap(20.0).padding(20.0)),
         Some((_, Lyrics::Failed { message, .. })) => return centered(Element::column(vec![
-            Empty::new("No se pudo cargar la letra", message, palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", "Reintentar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
+            Empty::new(t!("desktop-lyrics-failed"), message, palette).icon(Icon::Custom(LYRICS)).render(),
+            Button::new("retry-lyrics", t!("common-retry"), palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
         ]).gap(20.0).padding(20.0)),
         Some((_, Lyrics::Plain { source, .. })) => {
-            let words = std::iter::once(Text::new(format!("Letra sin sincronización · {source}"), palette).muted().render())
+            let words = std::iter::once(Text::new(t!("desktop-lyrics-unsynced", source = source.to_string()), palette).muted().render())
                 .chain(state.plain_lyrics().iter().map(|line| {
                     if line.is_empty() { Element::spacer().size(None, Some(20.0)) }
                     else { Text::new(line, palette).font_size(LYRIC_SIZE).render() }
@@ -2253,20 +2252,20 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
         .enumerate()
         .map(|(index, track)| {
             if state.mobile {
-                let subtitle = if state.player.picks.contains(&track.id) { format!("{} · Recomendada", track.artist) } else { track.artist.clone() };
+                let subtitle = if state.player.picks.contains(&track.id) { format!("{} · {}", track.artist, t!("desktop-recommended")) } else { track.artist.clone() };
                 return mobile::track_row(state, format!("upcoming:{index}"), track, &subtitle, palette);
             }
             let row = ListRow::new(format!("upcoming:{index}"), &track.title, palette)
                 .sizing(TRACK_ROW)
                 .leading(middle(cover(state, &track.artwork_url, COVER, palette)))
                 // A track the shuffle brought in from the catalog says so.
-                .subtitle(if state.player.picks.contains(&track.id) { format!("{} · Recomendada", track.artist) } else { track.artist.clone() })
+                .subtitle(if state.player.picks.contains(&track.id) { format!("{} · {}", track.artist, t!("desktop-recommended")) } else { track.artist.clone() })
                 .title_fade(true)
                 .radius(RadiusRole::Card)
                 .render();
             // A finger pans the queue; desktop pointers can reorder its rows.
             let row = if state.mobile { row } else { row.draggable().drop_target() };
-            let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), "Quitar de la cola").icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
+            let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), t!("desktop-remove-from-queue")).icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
             let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], SCHEME.menu()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.
             Element::column(vec![row]).animate_height(format!("upcoming-row:{}", track.id), false)
@@ -2277,14 +2276,14 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
     let queued = state.player.queued.min(rows.len());
     if queued > 0 {
         let title = |text: &str| Text::new(text, palette).muted().render().centered_y();
-        let clear = Button::new("queue-clear", "Borrar", palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
+        let clear = Button::new("queue-clear", t!("common-clear"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
         if queued < rows.len() {
-            rows.insert(queued, Element::panel(title("A continuación")).padding(PANEL_PAD / 2.0));
+            rows.insert(queued, Element::panel(title(&t!("desktop-next-up"))).padding(PANEL_PAD / 2.0));
         }
-        rows.insert(0, Element::panel(Element::row(vec![title("En la cola"), Element::spacer().flex(1.0), clear])).padding(PANEL_PAD / 2.0));
+        rows.insert(0, Element::panel(Element::row(vec![title(&t!("desktop-in-queue")), Element::spacer().flex(1.0), clear])).padding(PANEL_PAD / 2.0));
     }
     if rows.is_empty() {
-        return centered(Empty::new("Nada en la cola", "Elegí una canción y acá aparece lo que sigue.", palette).icon(Icon::Playlist).render());
+        return centered(Empty::new(t!("desktop-queue-empty"), t!("desktop-queue-empty-detail"), palette).icon(Icon::Playlist).render());
     }
     // The rows carry half the margin in themselves.
     let list = Element::column(rows).keep_leaving("upcoming-rows");
@@ -2366,7 +2365,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
                 IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette).round()
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Compact)
-                    .tooltip(if liked { "Quitar de Tus me gusta" } else { "Me gusta" })
+                    .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") })
                     .render()
                     .centered_y()
             },
@@ -2385,16 +2384,16 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .variant(ButtonVariant::Subtle)
         .size(ControlSize::Regular)
         .round()
-        .tooltip(if state.player.playing { "Pausar" } else { "Reproducir" })
+        .tooltip(if state.player.playing { t!("common-pause") } else { t!("common-play") })
         .enabled(has_track)
         .render()
         .center_content();
     let buttons = Element::row(vec![
-        transport("shuffle", shuffle_step(state).0, shuffle_step(state).1).active(state.player.shuffle).render(),
-        transport("previous", Icon::SkipBack, "Anterior").render(),
+        transport("shuffle", shuffle_step(state).0, &shuffle_step(state).1).active(state.player.shuffle).render(),
+        transport("previous", Icon::SkipBack, &t!("desktop-previous")).render(),
         play,
-        transport("next", Icon::SkipForward, "Siguiente").render(),
-        transport("repeat", repeat_icon, "Repetir").active(state.player.repeat != Repeat::Off).render(),
+        transport("next", Icon::SkipForward, &t!("desktop-next")).render(),
+        transport("repeat", repeat_icon, &t!("desktop-repeat")).active(state.player.repeat != Repeat::Off).render(),
     ])
     .gap(8.0)
     .centered_x();
@@ -2411,7 +2410,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact).tooltip(hint).active(active).render().centered_y()
     };
     let equalizer = Popover::new(
-        side("equalizer", Icon::Sliders, "Ecualizador", state.equalizer_open),
+        side("equalizer", Icon::Sliders, &t!("common-equalizer"), state.equalizer_open),
         equalizer::popover(state, SCHEME.menu()),
         state.equalizer_open,
         "equalizer-close",
@@ -2426,13 +2425,13 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         controls.push(Element::spacer().flex(1.0));
     }
     controls.extend([
-        side("lyrics", Icon::Custom(LYRICS), "Letra", state.lyrics_open()),
-        side("queue", Icon::Playlist, "Cola", state.queue_open),
+        side("lyrics", Icon::Custom(LYRICS), &t!("desktop-lyrics"), state.lyrics_open()),
+        side("queue", Icon::Playlist, &t!("desktop-queue"), state.queue_open),
         equalizer,
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette).round()
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Compact)
-            .tooltip(if state.volume > 0.0 { "Silenciar" } else { "Activar sonido" })
+            .tooltip(if state.volume > 0.0 { t!("desktop-mute") } else { t!("desktop-unmute") })
             .render()
             .centered_y(),
         Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).render().centered_y(),

@@ -13,24 +13,24 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let compact = state.mobile_search_compact();
     if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_surfaces {
         let slot = Element::panel(Element::spacer().size(None, Some(TAP))
-            .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name("Buscar música")))
+            .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name(t!("mobile-search-music"))))
             // Transparent: the native header's blur continues behind the field.
             .padding(8.0);
         return horizontal_inset(slot, 8.0, 8.0).size(None, Some(FIELD_HEIGHT));
     }
     let field = if editing {
-        SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
+        SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised())
             .size(ControlSize::Spacious).render().size(None, Some(TAP)).round().flex(1.0)
     } else {
-        Button::new("mobile-search-edit", if state.query.is_empty() { "¿Qué querés escuchar?" } else { &state.query }, palette)
+        Button::new("mobile-search-edit", if state.query.is_empty() { t!("common-search-placeholder") } else { state.query.as_str().into() }, palette)
             .icon(Icon::Search).variant(if compact { ButtonVariant::Secondary } else { ButtonVariant::Default })
             .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().flex(1.0)
     };
     let mut row = vec![field];
     if editing {
         // The explicit control is useful for pasted links as well as one-letter queries.
-        if !state.query.is_empty() { row.push(icon("mobile-search-clear", Icon::Close, "Borrar búsqueda", palette)); }
-        row.push(Button::new("mobile-search-cancel", "Cancelar", palette).variant(ButtonVariant::Ghost).size(ControlSize::Spacious).render().size(None, Some(TAP)));
+        if !state.query.is_empty() { row.push(icon("mobile-search-clear", Icon::Close, &t!("mobile-clear-search"), palette)); }
+        row.push(Button::new("mobile-search-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Spacious).render().size(None, Some(TAP)));
     }
     horizontal_inset(Element::row(row).gap(4.0).padding(8.0), 8.0, 8.0).size(None, Some(FIELD_HEIGHT))
 }
@@ -52,26 +52,26 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     // The chips start on the page's 16pt margin and scroll out past both edges.
     let filters = Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(vec![
-        tab("all", "Todo", SearchFilter::All), tab("tracks", "Canciones", SearchFilter::Tracks),
-        tab("artists", "Artistas", SearchFilter::Artists), tab("albums", "Álbumes", SearchFilter::Albums),
+        tab("all", &t!("common-all"), SearchFilter::All), tab("tracks", &t!("common-songs-heading"), SearchFilter::Tracks),
+        tab("artists", &t!("common-artists"), SearchFilter::Artists), tab("albums", &t!("common-albums"), SearchFilter::Albums),
     ]).gap(8.0), 8.0, 8.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR);
     let found = &state.found;
     let mut rows = Vec::new();
     if matches!(chosen, SearchFilter::All | SearchFilter::Tracks) && !found.tracks.is_empty() {
-        rows.push(section("Canciones", palette).padding(8.0));
+        rows.push(section(&t!("common-songs-heading"), palette).padding(8.0));
         rows.extend(found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette)));
     }
     if matches!(chosen, SearchFilter::All | SearchFilter::Artists) && !found.artists.is_empty() {
-        rows.push(section("Artistas", palette).padding(8.0));
-        rows.extend(found.artists.iter().enumerate().map(|(index, artist)| result(state, format!("artist:{index}"), &artist.name, "Artista", &artist.artwork_url, true, palette)));
+        rows.push(section(&t!("common-artists"), palette).padding(8.0));
+        rows.extend(found.artists.iter().enumerate().map(|(index, artist)| result(state, format!("artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)));
     }
     if matches!(chosen, SearchFilter::All | SearchFilter::Albums) && !found.albums.is_empty() {
-        rows.push(section("Álbumes", palette).padding(8.0));
-        rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, album.artist.as_deref().unwrap_or("Álbum"), &album.artwork_url, false, palette)));
+        rows.push(section(&t!("common-albums"), palette).padding(8.0));
+        rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, &album.artist.as_deref().map_or_else(|| t!("common-album"), Cow::Borrowed), &album.artwork_url, false, palette)));
     }
     if rows.is_empty() {
         rows.push(if pending || state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
-            else { Empty::new("Sin resultados", "Probá con otro nombre o cambiá el filtro.", palette).icon(Icon::Search).render().padding(20.0) });
+            else { Empty::new(t!("common-no-results"), t!("mobile-no-results-detail"), palette).icon(Icon::Search).render().padding(20.0) });
     }
     // This retained scroll and its parent stay mounted throughout debounce,
     // loading and failures; the previous result rows remain usable meanwhile.
@@ -80,16 +80,16 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     // results must offer Retry without asking the user to find the list's top.
     let status = if state.search_error.is_some() {
         Element::row(vec![Element::column(vec![
-            Text::new("No pudimos actualizar", palette).font_size(13.0).render(),
-            Text::new("Intentá de nuevo en un momento.", palette).font_size(12.0).muted().render(),
+            Text::new(t!("mobile-search-failed"), palette).font_size(13.0).render(),
+            Text::new(t!("mobile-search-failed-detail"), palette).font_size(12.0).muted().render(),
         ]).gap(4.0).flex(1.0),
-            Button::new("search-submit", "Reintentar", palette).variant(ButtonVariant::Secondary)
+            Button::new("search-submit", t!("common-retry"), palette).variant(ButtonVariant::Secondary)
                 .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         ]).gap(8.0).padding(8.0)
     } else {
-        let copy = if pending { Text::new("Buscando…", palette).font_size(12.0).muted().render() }
+        let copy = if pending { Text::new(t!("mobile-searching"), palette).font_size(12.0).muted().render() }
             else if state.submitted.is_none() && has_results {
-                Text::new(if state.query.contains("://") { "Tocá Buscar para abrir el enlace." } else { "Resultados anteriores" }, palette)
+                Text::new(if state.query.contains("://") { t!("mobile-search-open-link") } else { t!("mobile-previous-results") }, palette)
                     .font_size(12.0).muted().render()
             } else { Element::spacer() };
         copy.size(None, Some(20.0))
@@ -108,16 +108,16 @@ fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Opti
 fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut body = Vec::new();
     if !state.collection.searches.is_empty() {
-        body.push(Element::row(vec![section("Búsquedas recientes", palette).centered_y().flex(1.0),
-            icon("recent-search-clear", Icon::Trash, "Borrar búsquedas recientes", palette)]).gap(8.0));
+        body.push(Element::row(vec![section(&t!("mobile-recent-searches"), palette).centered_y().flex(1.0),
+            icon("recent-search-clear", Icon::Trash, &t!("mobile-clear-recent-searches"), palette)]).gap(8.0));
         body.push(Element::column(state.collection.searches.iter().enumerate().map(|(index, query)| recent(index, query, palette)).collect()));
     }
     if state.query.contains("://") {
-        body.push(Text::new("Pegaste un enlace. Tocá Buscar en el teclado para abrirlo.", palette).muted().render());
+        body.push(Text::new(t!("mobile-pasted-link"), palette).muted().render());
     }
     // Focusing the field keeps this page as it is: the keyboard rises over it
     // instead of the content being swapped while the header collapses.
-    body.push(section("Explorar todo", palette));
+    body.push(section(&t!("mobile-browse-all"), palette));
     body.push(browse(usize::MAX, width - 32.0, 2, 98.0, palette));
     ScrollArea::new("mobile-search-idle", Element::column(body).gap(16.0).padding(16.0)).render().flex(1.0)
 }
@@ -128,48 +128,50 @@ fn recent(index: usize, query: &str, palette: ComponentPalette) -> Element {
     let copy = Element::row(vec![Element::icon(Icon::Search).large_icon(24.0).foreground(palette.muted).centered_y(),
         Text::new(query, palette).font_size(15.0).truncate().render().centered_y().flex(1.0)]).gap(12.0);
     let main = Element::clickable(format!("recent-search:{index}"), copy)
-        .accessible(limn::Access::new(limn::Role::Button).name(format!("Buscar {query}"))).flex(1.0);
-    let forget = icon(&format!("recent-search-remove:{index}"), Icon::Close, &format!("Quitar {query} de las búsquedas recientes"), palette);
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-for", query = query))).flex(1.0);
+    let forget = icon(&format!("recent-search-remove:{index}"), Icon::Close, &t!("mobile-forget-search", query = query), palette);
     Element::row(vec![main, forget.centered_y()]).gap(8.0).size(None, Some(56.0))
 }
 
-/// The genres to browse: the title on the card, what it searches for, and its colour.
-const GENRES: [(&str, &str, Color); 35] = [
-    ("Rock", "Rock argentino", Color::rgb(230, 30, 50)),
-    ("Pop", "Pop latino", Color::rgb(71, 125, 149)),
-    ("Cumbia", "Cumbia", Color::rgb(39, 133, 106)),
-    ("Trap", "Trap argentino", Color::rgb(186, 93, 7)),
-    ("Reggaetón", "Reggaetón", Color::rgb(220, 20, 140)),
-    ("Indie", "Indie latino", Color::rgb(96, 129, 8)),
-    ("Electrónica", "Electrónica", Color::rgb(13, 115, 236)),
-    ("Hip hop", "Hip hop", Color::rgb(30, 50, 100)),
-    ("Para bajar\nun cambio", "Acústico relajado", Color::rgb(141, 103, 171)),
-    ("Subí el\nvolumen", "Música para entrenar", Color::rgb(119, 119, 119)),
-    ("Folklore", "Folklore argentino", Color::rgb(232, 17, 91)),
-    ("Tango", "Tango", Color::rgb(176, 40, 151)),
-    ("Cuarteto", "Cuarteto cordobés", Color::rgb(225, 51, 0)),
-    ("R&B", "R&B", Color::rgb(165, 103, 82)),
-    ("Salsa", "Salsa", Color::rgb(80, 155, 245)),
-    ("Bachata", "Bachata", Color::rgb(20, 138, 8)),
-    ("Jazz", "Jazz", Color::rgb(230, 30, 50)),
-    ("Clásica", "Música clásica", Color::rgb(71, 125, 149)),
-    ("Metal", "Metal", Color::rgb(39, 133, 106)),
-    ("Punk", "Punk rock", Color::rgb(186, 93, 7)),
-    ("Blues", "Blues", Color::rgb(220, 20, 140)),
-    ("Soul y funk", "Soul funk", Color::rgb(96, 129, 8)),
-    ("Reggae", "Reggae", Color::rgb(13, 115, 236)),
-    ("K-pop", "K-pop", Color::rgb(30, 50, 100)),
-    ("Música\nbrasileña", "Música popular brasileña", Color::rgb(141, 103, 171)),
-    ("Lo-fi", "Lo-fi", Color::rgb(119, 119, 119)),
-    ("Fiesta", "Música para fiesta", Color::rgb(232, 17, 91)),
-    ("Dormir", "Música para dormir", Color::rgb(176, 40, 151)),
-    ("Concentración", "Música para concentrarse", Color::rgb(225, 51, 0)),
-    ("Románticas", "Baladas románticas", Color::rgb(165, 103, 82)),
-    ("Los 80", "Éxitos de los 80", Color::rgb(80, 155, 245)),
-    ("Los 90", "Éxitos de los 90", Color::rgb(20, 138, 8)),
-    ("Videojuegos", "Música de videojuegos", Color::rgb(230, 30, 50)),
-    ("Anime", "Anime openings", Color::rgb(71, 125, 149)),
-    ("Bandas\nsonoras", "Bandas sonoras de películas", Color::rgb(39, 133, 106)),
+/// The genres to browse: the title on the card, what it searches for (the same in every
+/// language), and its colour.
+type Genre = (fn() -> Cow<'static, str>, &'static str, Color);
+const GENRES: [Genre; 35] = [
+    (|| t!("mobile-genre-rock"), "Rock argentino", Color::rgb(230, 30, 50)),
+    (|| t!("mobile-genre-pop"), "Pop latino", Color::rgb(71, 125, 149)),
+    (|| t!("mobile-genre-cumbia"), "Cumbia", Color::rgb(39, 133, 106)),
+    (|| t!("mobile-genre-trap"), "Trap argentino", Color::rgb(186, 93, 7)),
+    (|| t!("mobile-genre-reggaeton"), "Reggaetón", Color::rgb(220, 20, 140)),
+    (|| t!("mobile-genre-indie"), "Indie latino", Color::rgb(96, 129, 8)),
+    (|| t!("mobile-genre-electronic"), "Electrónica", Color::rgb(13, 115, 236)),
+    (|| t!("mobile-genre-hip-hop"), "Hip hop", Color::rgb(30, 50, 100)),
+    (|| t!("mobile-genre-chill"), "Acústico relajado", Color::rgb(141, 103, 171)),
+    (|| t!("mobile-genre-workout"), "Música para entrenar", Color::rgb(119, 119, 119)),
+    (|| t!("mobile-genre-folklore"), "Folklore argentino", Color::rgb(232, 17, 91)),
+    (|| t!("mobile-genre-tango"), "Tango", Color::rgb(176, 40, 151)),
+    (|| t!("mobile-genre-cuarteto"), "Cuarteto cordobés", Color::rgb(225, 51, 0)),
+    (|| t!("mobile-genre-rnb"), "R&B", Color::rgb(165, 103, 82)),
+    (|| t!("mobile-genre-salsa"), "Salsa", Color::rgb(80, 155, 245)),
+    (|| t!("mobile-genre-bachata"), "Bachata", Color::rgb(20, 138, 8)),
+    (|| t!("mobile-genre-jazz"), "Jazz", Color::rgb(230, 30, 50)),
+    (|| t!("mobile-genre-classical"), "Música clásica", Color::rgb(71, 125, 149)),
+    (|| t!("mobile-genre-metal"), "Metal", Color::rgb(39, 133, 106)),
+    (|| t!("mobile-genre-punk"), "Punk rock", Color::rgb(186, 93, 7)),
+    (|| t!("mobile-genre-blues"), "Blues", Color::rgb(220, 20, 140)),
+    (|| t!("mobile-genre-soul-funk"), "Soul funk", Color::rgb(96, 129, 8)),
+    (|| t!("mobile-genre-reggae"), "Reggae", Color::rgb(13, 115, 236)),
+    (|| t!("mobile-genre-k-pop"), "K-pop", Color::rgb(30, 50, 100)),
+    (|| t!("mobile-genre-brazilian"), "Música popular brasileña", Color::rgb(141, 103, 171)),
+    (|| t!("mobile-genre-lo-fi"), "Lo-fi", Color::rgb(119, 119, 119)),
+    (|| t!("mobile-genre-party"), "Música para fiesta", Color::rgb(232, 17, 91)),
+    (|| t!("mobile-genre-sleep"), "Música para dormir", Color::rgb(176, 40, 151)),
+    (|| t!("mobile-genre-focus"), "Música para concentrarse", Color::rgb(225, 51, 0)),
+    (|| t!("mobile-genre-romantic"), "Baladas románticas", Color::rgb(165, 103, 82)),
+    (|| t!("mobile-genre-80s"), "Éxitos de los 80", Color::rgb(80, 155, 245)),
+    (|| t!("mobile-genre-90s"), "Éxitos de los 90", Color::rgb(20, 138, 8)),
+    (|| t!("mobile-genre-video-games"), "Música de videojuegos", Color::rgb(230, 30, 50)),
+    (|| t!("mobile-genre-anime"), "Anime openings", Color::rgb(71, 125, 149)),
+    (|| t!("mobile-genre-soundtracks"), "Bandas sonoras de películas", Color::rgb(39, 133, 106)),
 ];
 
 /// Figma "Card Type - horizontal": a bold title over the genre's color, with an
@@ -179,16 +181,16 @@ const GENRES: [(&str, &str, Color); 35] = [
 pub(in crate::view) fn browse(count: usize, width: f32, columns: usize, height: f32, palette: ComponentPalette) -> Element {
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
     let art = (height * 0.65).round();
-    let tile = |&(title, query, tint): &(&str, &str, Color)| {
+    let tile = |&(title, query, tint): &Genre| {
         // shortcut: limn has no rotation, so the Figma kit's 25° tilt is set square;
         // tilt it once Element can rotate.
         let art = Element::panel(Element::icon(Icon::MusicNote).large_icon(art * 0.44).foreground(Color::rgba(255, 255, 255, 190)).centered())
             .background(mix(tint, Color::rgb(255, 255, 255), 0.18)).radius(4.0).size(Some(art), Some(art))
             .shadow(Color::rgba(0, 0, 0, 64), limn::Point::new(0.0, 0.0), 10.0, 0.0).translate(limn::Point::new(art * 0.22, art * 0.16));
         let corner = Element::column(vec![Element::spacer().flex(1.0), Element::row(vec![Element::spacer().flex(1.0), art])]);
-        let copy = Text::new(title, palette).font_size(if height > 120.0 { 22.0 } else { 16.0 }).render().font_family(FontFamily::SansBold).padding(12.0);
+        let copy = Text::new(title(), palette).font_size(if height > 120.0 { 22.0 } else { 16.0 }).render().font_family(FontFamily::SansBold).padding(12.0);
         Element::clickable(format!("browse:{query}"), Element::panel(Element::stack(vec![corner, copy])).background(tint).radius(6.0).clip_children())
-            .accessible(limn::Access::new(limn::Role::Button).name(format!("Buscar {query}")))
+            .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-for", query = query)))
             .size(Some(side), Some(height))
     };
     Element::column(GENRES[..count.min(GENRES.len())].chunks(columns).map(|row| Element::row(row.iter().map(tile).collect()).gap(12.0)).collect()).gap(12.0)
@@ -213,6 +215,15 @@ mod tests {
     fn text(frame: &Frame, expected: &str) -> bool {
         frame.commands.iter().any(|command| matches!(command,
             DrawCommand::Text { text, .. } if text == expected))
+    }
+
+    #[test]
+    fn genre_titles_follow_the_language_and_their_searches_do_not() {
+        let (title, query, _) = GENRES[8];
+        assert_eq!((title().as_ref(), query), ("Para bajar\nun cambio", "Acústico relajado"));
+        crate::i18n::set(Language::English);
+        assert_eq!((title().as_ref(), query), ("Chill\nout", "Acústico relajado"));
+        crate::i18n::set(Language::Spanish);
     }
 
     #[test]

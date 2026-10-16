@@ -11,7 +11,7 @@ const ARTWORK: f32 = 40.0;
 /// A compact row, as in a music app's lyrics: the way back, the song by its cover, and its
 /// options. The song names the page; there is no title competing with it.
 pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
-    let close = icon("mobile-lyrics-close", Icon::ChevronDown, "Cerrar letra", palette).dispatch_as("back");
+    let close = icon("mobile-lyrics-close", Icon::ChevronDown, &t!("mobile-close-lyrics"), palette).dispatch_as("back");
     let row = match state.current() {
         Some(track) => vec![
             close,
@@ -21,7 +21,7 @@ pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
                     .font_family(FontFamily::SansMedium),
                 Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
             ]).gap(1.0).centered_y().flex(1.0),
-            icon("mobile-lyrics-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"),
+            icon("mobile-lyrics-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"),
         ],
         None => vec![close, Element::spacer().flex(1.0)],
     };
@@ -33,15 +33,15 @@ pub(super) fn footer(state: &State, palette: ComponentPalette) -> Element {
     if state.current().is_none() { return Element::spacer().size(None, Some(FOOTER_HEIGHT)); }
     let skip = |id: &str, glyph, label: &str, action: &str| controls::action(id, glyph, label, 28.0, palette).dispatch_as(action).centered_y();
     let transport = Element::row(vec![
-        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette).centered_y(),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette).centered_y(),
         Element::spacer().flex(1.0),
-        skip("mobile-lyrics-previous", Icon::SkipBack, "Canción anterior", "previous"),
+        skip("mobile-lyrics-previous", Icon::SkipBack, &t!("mobile-previous-song"), "previous"),
         Element::spacer().size(Some(8.0), None),
         controls::playback("mobile-lyrics-play", state.player.playing, 64.0, 28.0, palette).dispatch_as("play-pause"),
         Element::spacer().size(Some(8.0), None),
-        skip("mobile-lyrics-next", Icon::SkipForward, "Siguiente canción", "next"),
+        skip("mobile-lyrics-next", Icon::SkipForward, &t!("common-next-song"), "next"),
         Element::spacer().flex(1.0),
-        icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), "Compartir canción", palette).centered_y(),
+        icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), &t!("common-share-song"), palette).centered_y(),
     ]);
     horizontal_inset(Element::column(vec![player::timeline(state, palette), transport]).gap(8.0).padding(8.0), 16.0, 16.0)
         .size(None, Some(FOOTER_HEIGHT))

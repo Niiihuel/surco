@@ -1,1 +1,29 @@
-# state
+# state: what the app's state, the import and the window frame say.
+
+state-sort-added = Recently added
+state-sort-alphabetical = A–Z
+state-quality-low = Low
+state-quality-normal = Normal
+state-quality-high = High
+state-default-playlist-name = My playlist #{ $number }
+state-greeting-morning = Good morning
+state-greeting-afternoon = Good afternoon
+state-greeting-evening = Good evening
+state-preset-flat = Flat
+state-preset-bass = Bass boost
+state-preset-voice = Vocal
+state-preset-treble = Treble boost
+state-preset-acoustic = Acoustic
+state-preset-electronic = Electronic
+state-queue-changed = The queue changed. Choose the song you want to remove again.
+state-output-lost = The chosen output is no longer available. We switched back to the system default.
+state-copy-failed = Couldn't copy the text.
+state-paste-failed = Couldn't paste the text.
+state-import-unknown-link = That link isn't a Spotify, Apple Music or YouTube Music playlist.
+state-import-unreadable-playlist = We couldn't read that playlist. It has to be public.
+state-import-empty-playlist = That playlist has no songs.
+state-import-unreadable-list = We couldn't read that list. It has to be public.
+state-import-nothing-found = We couldn't find any of the songs in that list.
+state-window-minimize = Minimize
+state-window-maximize = Maximize
+state-window-restore = Restore

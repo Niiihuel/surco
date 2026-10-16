@@ -13,7 +13,7 @@ pub(super) fn render(state: &State, base: Element, palette: ComponentPalette) ->
         let mut items = vec![track_header(state, &context.track, palette), Separator::horizontal(palette).render()];
         let mut actions = track_actions(state, &context.row, &context.track);
         if context.row.starts_with("upcoming:") {
-            actions.insert(0, Some(Action { id: format!("do:unqueue:{}", context.row), label: "Quitar de la cola", icon: Icon::Minus, detail: None }));
+            actions.insert(0, Some(Action { id: format!("do:unqueue:{}", context.row), label: t!("mobile-remove-from-queue"), icon: Icon::Minus, detail: None }));
         }
         items.extend(actions.into_iter().map(|action| match action {
             Some(action) => {
@@ -26,7 +26,7 @@ pub(super) fn render(state: &State, base: Element, palette: ComponentPalette) ->
         }));
         Element::column(items).gap(4.0)
     });
-    let base = BottomSheet::new(base, context.is_some(), "Opciones de la canción", "", "mobile-context-close", SCHEME.menu())
+    let base = BottomSheet::new(base, context.is_some(), t!("common-song-options"), "", "mobile-context-close", SCHEME.menu())
         .max_height(680.0).body(body).render();
     connections(state, library_sheet(state, base, palette), palette)
 }
@@ -41,14 +41,14 @@ fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Ele
         Text::new(&context.title, palette).font_size(18.0).truncate().render().centered_y().flex(1.0),
     ]).gap(16.0).padding(8.0);
     let kept = context.entry.as_ref().is_none_or(|entry| state.card_entry_kept(entry));
-    let mut body = vec![header, Separator::horizontal(palette).render(), row("open", "Abrir", Icon::ArrowRight)];
-    if kept { body.push(row("pin", if pinned { "Desfijar" } else { "Fijar arriba" }, Icon::Pin)); }
+    let mut body = vec![header, Separator::horizontal(palette).render(), row("open", &t!("mobile-open"), Icon::ArrowRight)];
+    if kept { body.push(row("pin", &if pinned { t!("mobile-unpin") } else { t!("mobile-pin") }, Icon::Pin)); }
     if context.entry.is_some() && !kept {
-        body.push(row("keep", if context.key.starts_with("artist:") { "Seguir artista" } else { "Guardar en tu biblioteca" }, Icon::Add));
+        body.push(row("keep", &if context.key.starts_with("artist:") { t!("mobile-follow-artist") } else { t!("mobile-save-to-library") }, Icon::Add));
     } else if context.key.starts_with("album:") || context.key.starts_with("artist:") {
-        body.push(row("remove", if context.key.starts_with("artist:") { "Dejar de seguir" } else { "Quitar de tu biblioteca" }, Icon::Minus));
+        body.push(row("remove", &if context.key.starts_with("artist:") { t!("mobile-unfollow") } else { t!("mobile-remove-from-library") }, Icon::Minus));
     }
-    BottomSheet::new(base, true, "Opciones de biblioteca", "", "mobile-library-close", SCHEME.menu())
+    BottomSheet::new(base, true, t!("mobile-library-options"), "", "mobile-library-close", SCHEME.menu())
         .max_height(480.0).body(Element::column(body).gap(8.0))
         .return_focus(format!("library-more:{}", context.key)).render()
 }
@@ -61,10 +61,10 @@ fn track_header(state: &State, track: &Track, palette: ComponentPalette) -> Elem
 }
 
 fn connections(state: &State, base: Element, palette: ComponentPalette) -> Element {
-    let name = state.mobile_ui.route.as_ref().map_or("Salida del sistema", |(name, _)| name.as_str());
+    let name = state.mobile_ui.route.as_ref().map_or_else(|| t!("mobile-system-output"), |(name, _)| name.as_str().into());
     let route = Element::panel(Element::row(vec![
         Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).size(Some(32.0), Some(32.0)).centered_y(),
-        Element::column(vec![Text::new("ESCUCHANDO EN", palette).role(TextRole::Caption).muted().render(),
+        Element::column(vec![Text::new(t!("mobile-listening-on"), palette).role(TextRole::Caption).muted().render(),
             Text::new(name, palette).font_size(22.0).truncate().render()]).gap(8.0).flex(1.0),
         Element::icon(Icon::Check).foreground(palette.text).centered_y(),
     ]).gap(16.0).padding(20.0)).background(SCHEME.raised).radius(12.0);
@@ -72,21 +72,21 @@ fn connections(state: &State, base: Element, palette: ComponentPalette) -> Eleme
     // geometry; no simulated click or private picker presentation is used.
     let picker = Element::panel(if cfg!(target_os = "ios") { Element::spacer() } else { Element::icon(Icon::Custom(AUDIO_ROUTE)).foreground(palette.text).centered() })
         .size(Some(TAP), Some(TAP))
-        .accessible(limn::Access::new(limn::Role::Group).id("ios-route-picker").name("Selector de destinos de audio"));
+        .accessible(limn::Access::new(limn::Role::Group).id("ios-route-picker").name(t!("mobile-route-picker")));
     let choose = Element::row(vec![Element::column(vec![
-        Text::new("AirPlay o Bluetooth", palette).font_size(17.0).render(),
-        Text::new(if state.mobile_ui.native_routes { "Abrí el selector de audio" } else { "Disponible en el iPhone" }, palette).muted().render(),
+        Text::new(t!("mobile-airplay-bluetooth"), palette).font_size(17.0).render(),
+        Text::new(if state.mobile_ui.native_routes { t!("mobile-open-route-picker") } else { t!("mobile-on-iphone") }, palette).muted().render(),
     ]).gap(6.0).centered_y().flex(1.0), picker]).gap(12.0).padding(12.0);
     let guide = Element::column(vec![
-        heading("¿Un dispositivo nuevo?", palette),
-        Text::new("Vinculá tus auriculares o parlantes en Ajustes > Bluetooth del iPhone. Después elegilos desde el selector de audio.", palette).muted().render(),
+        heading(&t!("mobile-new-device"), palette),
+        Text::new(t!("mobile-new-device-detail"), palette).muted().render(),
     ]).gap(12.0).padding(8.0);
-    let volume = Element::column(vec![Text::new("Volumen de Surco", palette).muted().render(),
+    let volume = Element::column(vec![Text::new(t!("mobile-surco-volume"), palette).muted().render(),
         Slider::new("volume", state.volume, palette).render().size(None, Some(TAP)),
     ]).gap(8.0).padding(8.0);
     let body = Element::column(vec![route, choose, Separator::horizontal(palette).render(), guide, volume]).gap(16.0);
-    let done = Button::new("mobile-connections-close", "Listo", palette).variant(ButtonVariant::Default)
+    let done = Button::new("mobile-connections-close", t!("mobile-done"), palette).variant(ButtonVariant::Default)
         .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
-    BottomSheet::new(base, state.mobile_ui.connections, "Escuchar en", "Elegí dónde sigue la música.", "mobile-connections-close", SCHEME.menu())
+    BottomSheet::new(base, state.mobile_ui.connections, t!("mobile-listen-on"), t!("mobile-listen-on-detail"), "mobile-connections-close", SCHEME.menu())
         .max_height(600.0).body(body).footer(done).return_focus("mobile-connections").render()
 }

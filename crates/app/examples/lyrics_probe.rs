@@ -4,6 +4,10 @@
 
 #[path = "../src/backend/lyrics.rs"]
 mod lyrics;
+// The provider tells its failures in the app's language.
+#[allow(dead_code)]
+#[path = "../src/i18n.rs"]
+mod i18n;
 
 #[tokio::main]
 async fn main() -> surco_youtube::Result<()> {

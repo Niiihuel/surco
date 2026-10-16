@@ -1,1 +1,284 @@
-# desktop
+# desktop: the window's views (view.rs, view/equalizer.rs).
+
+## Updates
+desktop-update-toast = Surco { $version } is available
+desktop-update-toast-detail = See what's new and update whenever you like.
+desktop-update-current = Surco { $version } · you have { $current }
+desktop-update-available = Update available
+desktop-update = Update
+desktop-download = Download
+desktop-update-installing = Installing Surco { $version }
+desktop-update-moment = One moment…
+desktop-update-downloading = Downloading Surco { $version }
+desktop-update-keep-listening = You can keep listening in the meantime.
+desktop-update-ready = Surco { $version } is ready
+desktop-update-restart-detail = Restart to start using it.
+desktop-restart-now = Restart now
+desktop-update-failed = Couldn't update
+desktop-update-mandatory-install = This version of Surco can no longer be used. Install { $version } to continue.
+desktop-update-mandatory-download = This version of Surco can no longer be used. Download { $version } to continue.
+desktop-update-now = Update now
+desktop-update-downloading-percent = Downloading version { $version }… { $percent }%
+desktop-downloading = Downloading…
+desktop-update-installed = Version { $version } is installed.
+desktop-update-failed-why = Couldn't update: { $why }
+desktop-update-mandatory = Required update
+desktop-see-release = View release
+
+## Playlists
+desktop-playlist-starts-with = Starts with “{ $title }”.
+desktop-create = Create
+desktop-new-playlist = New playlist
+desktop-new-playlist-detail = Gather songs under one name.
+desktop-playlist-kind = Type
+desktop-playlist-normal = Normal
+desktop-playlist-collaborative = Collaborative
+desktop-playlist-collaborative-detail = Others will be able to add songs with a link. For now it's only marked on this device: invites come with accounts.
+desktop-playlist-normal-detail = Only you add and remove songs.
+desktop-collaborative-playlist = Collaborative playlist
+desktop-playlist-eyebrow = PLAYLIST
+desktop-collaborative-playlist-eyebrow = COLLABORATIVE PLAYLIST
+desktop-songs-copied = Songs copied: paste them in the other app
+desktop-copy-songs = Copy songs for another app
+desktop-missed-count = { $count ->
+    [one] 1 song wasn't found
+   *[other] { $count } songs weren't found
+}
+desktop-playlist-empty = No songs yet
+desktop-playlist-empty-detail = Search for a song and choose “Add to” from its menu.
+desktop-playlist-gone = This playlist no longer exists
+desktop-playlist-gone-detail = It was deleted from your library.
+
+## Importing
+desktop-import-link-placeholder = Link to a public playlist or album
+desktop-import-link = Link
+desktop-paste-link = Paste link
+desktop-paste-playlist-link = Paste playlist link
+desktop-import-music = Import music
+desktop-import-unknown = We didn't recognize that link.
+desktop-import-unknown-detail = That link isn't a Spotify, Apple Music or YouTube Music playlist.
+desktop-import-hint = From Spotify (up to 100 songs), Apple Music or YouTube Music: a public playlist or album.
+desktop-import-export-hint = To take one of your playlists to another app, open it and choose “Copy songs”.
+desktop-import-list-link = Playlist link
+desktop-import-title = Import from other apps
+desktop-import-detail = It becomes one of your playlists, with the songs the catalog has.
+desktop-copy-list = Copy the list
+desktop-missed-title-short = Not found
+desktop-missed-title = Songs that weren't found
+desktop-missed-detail = They aren't in the catalog under that name. You can search for them and add them yourself.
+desktop-import-picture = Music from other apps arriving in Surco
+desktop-import-dismiss = Don't show again
+desktop-import-card-title = Bring your music from other apps
+desktop-import-card-detail = Paste a link to a Spotify, Apple Music or YouTube Music playlist.
+desktop-import-searching = Looking for the songs in the catalog: { $done } of { $of }.
+desktop-import-reading = Reading the list…
+desktop-import-wait = You can keep listening or go to another page: the playlist appears in your library when it's done.
+
+## Confirmations
+desktop-this-playlist = this playlist
+desktop-delete-playlist-title = Delete “{ $name }”?
+desktop-delete-playlist-detail = The playlist is removed from your library. The songs aren't touched.
+desktop-clear-downloads-title = Delete downloads?
+desktop-clear-downloads-detail = You'll no longer have access to what you downloaded on this device.
+desktop-clear-queue-title = Clear the queue?
+desktop-clear-queue-detail = The songs you added to the queue are removed. What was playing keeps going.
+desktop-clear-recent-title = Clear listening history?
+desktop-clear-recent-detail = The shortcuts on Home will be empty.
+desktop-confirm = Confirm
+
+## News
+desktop-news = What's new
+desktop-news-detail = The latest releases from the artists you follow.
+desktop-news-new = New
+desktop-news-earlier = Earlier
+desktop-news-empty = Nothing new yet
+desktop-news-empty-detail = Follow your favorite artists and we'll let you know here when they release something.
+
+## Sharing
+desktop-copy-link = Copy link
+desktop-share-detail = The link opens it in YouTube Music; pasted into Surco's search, it opens here.
+desktop-share = Share
+
+## Top bar
+desktop-browse = Browse
+desktop-show-library = Show Your Library
+desktop-hide-library = Hide Your Library
+desktop-show-now-playing = Show Now Playing
+desktop-home = Home
+
+## Library
+desktop-saved-for-you = Saved for you
+desktop-playlists = Playlists
+desktop-search-library = Search Your Library
+desktop-search-in = Search { $place }
+desktop-close-search = Close search
+desktop-sort-by = Sort by
+desktop-sort-added = Recently added
+desktop-sort-alphabetical = Alphabetical
+desktop-view-as = View as
+desktop-view-compact = Compact
+desktop-view-list = List
+desktop-view-grid = Grid
+desktop-pinned = Pinned
+desktop-options-of = Options for { $name }
+desktop-pin = Pin to top
+desktop-unpin = Unpin
+desktop-library-not-found = Couldn't find “{ $query }”. Try spelling it another way.
+desktop-library-no-artists = Follow an artist from their page and they'll show up here.
+desktop-library-no-albums = Save an album from its page and it'll show up here.
+
+## Home and browsing
+desktop-home-empty = Search for something to play
+desktop-home-empty-detail = Type a song or an artist above and press Enter.
+desktop-listen-again = Listen again
+desktop-made-for-you = Made for you
+desktop-artists-to-discover = Artists to discover
+desktop-albums-for-you = Albums for you
+desktop-because-you-played = Because you listened to “{ $title }”
+desktop-your-albums = Your albums
+desktop-your-artists = Your artists
+desktop-search-tile = Search
+desktop-forget-search = Remove “{ $query }”
+desktop-recent-searches = Recent searches
+desktop-browse-all = Browse all
+desktop-shelf-back = Previous
+desktop-shelf-on = Next
+
+## A track's menu
+desktop-add-to-queue = Add to queue
+desktop-play-next = Play next
+desktop-remove-like = Remove from Liked Songs
+desktop-add-to-new-playlist = Add to new playlist
+desktop-add-to = Add to
+desktop-remove-from-playlist = Remove from this playlist
+desktop-go-to-album = Go to album
+desktop-go-to-artist = Go to artist
+desktop-remove-download = Remove download
+desktop-download-offline = Download to listen offline
+
+## Pages
+desktop-open-failed = Couldn't open
+desktop-song-tap = Click the cover to play it.
+desktop-duration = Duration
+desktop-search-failed = Couldn't search
+desktop-see-downloads = See downloads
+desktop-try-other-words = Try different words.
+desktop-shuffle-on = Turn on shuffle
+desktop-smart-shuffle-on = Turn on smart shuffle
+desktop-shuffle-off = Turn off shuffle
+desktop-search-page = Search this page
+desktop-sort-list-order = List order
+desktop-sort-button = Sort
+desktop-subscribers = { $subscribers } subscribers
+desktop-singles = Singles and EPs
+desktop-save = Save
+desktop-in-library = In Your Library
+desktop-download-failed = Couldn't download
+desktop-downloads-empty = Nothing downloaded
+desktop-downloads-empty-detail = What you download from a song's menu stays here, to listen offline.
+desktop-downloads-count = { $count ->
+    [one] 1 song on this device
+   *[other] { $count } songs on this device
+}
+desktop-downloads-saving = { $saved } on this device, { $saving } downloading
+desktop-liked-empty = You haven't liked anything yet
+desktop-liked-empty-detail = The heart in the bottom bar keeps what you like here.
+
+## Settings
+desktop-crossfade = Crossfade
+desktop-crossfade-off = Off
+desktop-crossfade-detail = Blends the end of one song into the start of the next.
+desktop-playback = Playback
+desktop-autoplay = Autoplay
+desktop-autoplay-detail = When what you're listening to ends, keep playing something similar.
+desktop-system-output = System default
+desktop-system-output-named = System: { $name }
+desktop-output-default = { $name } · default
+desktop-output-missing = Saved output unavailable
+desktop-output-device = Output device
+desktop-output-device-detail = Speakers, headphones or a Bluetooth output.
+desktop-outputs-searching = Looking for audio outputs…
+desktop-outputs-error = Couldn't check the outputs. { $error }
+desktop-outputs-none = No other outputs found. You can keep using the system default.
+desktop-outputs-count = { $count ->
+    [one] { $count } output available on this device.
+   *[other] { $count } outputs available on this device.
+}
+desktop-refresh-outputs = Refresh outputs
+desktop-connections = Connections and devices
+desktop-connections-footer = Pair your headphones or speakers in the system's Bluetooth settings. Then refresh the outputs and choose them above.
+desktop-audio-output = Audio output
+desktop-quality-up-to = Up to { $kbps } kbps
+desktop-audio-quality = Audio quality
+desktop-quality = Quality
+desktop-normalize = Normalize volume
+desktop-normalize-detail = Turns louder songs down so they all play at the same level.
+desktop-mono = Mono audio
+desktop-mono-detail = Both speakers play the same thing.
+desktop-quality-footer = Quality changes from the next song.
+desktop-display = Display
+desktop-show-library-setting = Show library
+desktop-show-library-detail = Your playlists, artists and albums in the left panel.
+desktop-show-now-playing-detail = The cover, lyrics and artist in the right panel.
+desktop-clips = Videos in Now Playing
+desktop-clips-detail = A muted clip of the song's video, in place of its cover.
+desktop-reduce-motion = Reduce motion
+desktop-reduce-motion-detail = Changes happen at once, without animations.
+desktop-library = Library
+desktop-sort = Sort
+desktop-sort-recent = Recent
+desktop-view = View
+desktop-import-settings = Import music from other apps
+desktop-import-settings-detail = Spotify, Apple Music and YouTube Music playlists, from their link.
+desktop-about = About
+desktop-version = Version
+desktop-licenses = Third-party licenses
+desktop-licenses-detail = Audio engine adapted from zuno (Apache-2.0). Track card after Spell UI (MIT). Icons from Lucide (ISC) and Bootstrap Icons (MIT). Catalog via ytmapi-rs (MIT).
+desktop-storage = Storage and privacy
+desktop-delete-downloads = Delete all downloads
+desktop-clear-recent = Clear recently opened
+desktop-clear-recent-settings-detail = Albums and artists on Home
+
+## What plays
+desktop-hide-panel = Hide this panel
+desktop-lyrics-eyebrow = LYRICS
+desktop-show-lyrics = Show lyrics
+desktop-open-queue = Open queue
+desktop-next-eyebrow = NEXT UP
+desktop-about-artist-eyebrow = ABOUT THE ARTIST
+desktop-show-cover = Show cover
+desktop-show-video = Show video
+desktop-exit-fullscreen = Exit full screen (Esc)
+desktop-song-video = Song video
+desktop-fullscreen = Full screen
+desktop-up-next = Up next
+desktop-queue-detail = The queue, in its real order
+desktop-now-playing = Now playing
+desktop-nothing-yet = Nothing yet
+desktop-nothing-playing = Nothing playing
+desktop-nothing-playing-detail = Pick a song and it shows up here.
+desktop-lyrics-nothing-detail = Pick a song and its lyrics show up here.
+desktop-lyrics-missing = Lyrics unavailable
+desktop-lyrics-missing-detail = The service doesn't have this song's lyrics yet.
+desktop-search-again = Search again
+desktop-lyrics-failed = Couldn't load the lyrics
+desktop-lyrics-unsynced = Unsynced lyrics · { $source }
+desktop-recommended = Recommended
+desktop-remove-from-queue = Remove from queue
+desktop-next-up = Next up
+desktop-in-queue = In queue
+desktop-queue-empty = Nothing in the queue
+desktop-queue-empty-detail = Pick a song and what comes next shows up here.
+desktop-previous = Previous
+desktop-next = Next
+desktop-repeat = Repeat
+desktop-lyrics = Lyrics
+desktop-queue = Queue
+desktop-mute = Mute
+desktop-unmute = Unmute
+
+## Equalizer
+desktop-equalizer-custom = Custom
+desktop-equalizer-gain = Gain
+desktop-equalizer-preamp = Preamp
+desktop-equalizer-reset = Reset

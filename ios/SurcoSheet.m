@@ -114,7 +114,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     [close setImage:[UIImage systemImageNamed:@"xmark" withConfiguration:[UIImageSymbolConfiguration
         configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
     close.tintColor = SheetMuted();
-    close.accessibilityLabel = @"Cerrar";
+    close.accessibilityLabel = SheetString(_model[@"close_label"]);
     close.accessibilityIdentifier = @"sheet-close";
     [close addTarget:self action:@selector(closeSheet) forControlEvents:UIControlEventTouchUpInside];
     [NSLayoutConstraint activateConstraints:@[
@@ -281,7 +281,6 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         picker.prioritizesVideoDevices = NO;
         picker.tintColor = UIColor.whiteColor;
         picker.activeTintColor = UIColor.whiteColor;
-        picker.accessibilityLabel = @"Elegir dispositivo de audio";
         [NSLayoutConstraint activateConstraints:@[
             [picker.widthAnchor constraintEqualToConstant:44],
             [picker.heightAnchor constraintEqualToConstant:44],
@@ -325,7 +324,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
         configuration.baseBackgroundColor = UIColor.whiteColor;
         configuration.baseForegroundColor = UIColor.blackColor;
-        configuration.title = @"Pegar";
+        configuration.title = SheetString(row.model[@"paste_title"]);
         SurcoPasteTarget *target = row.pasteTarget;
         paste = [UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(UIAction *action) {
             UIPasteboard *pasteboard = UIPasteboard.generalPasteboard;
@@ -349,7 +348,10 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     row.title.text = SheetString(model[@"title"]);
     row.title.textColor = [kind isEqualToString:@"text"] && SheetBool(model[@"secondary"]) ? SheetMuted() : UIColor.whiteColor;
     row.secondary.text = SheetString(model[@"secondary"]);
-    if ([kind isEqualToString:@"route"]) row.secondary.text = SheetString(model[@"subtitle"]);
+    if ([kind isEqualToString:@"route"]) {
+        row.secondary.text = SheetString(model[@"subtitle"]);
+        row.control.accessibilityLabel = SheetString(model[@"label"]);
+    }
     row.title.hidden = !row.title.text.length;
     row.secondary.hidden = !row.secondary.text.length;
     row.control.accessibilityIdentifier = identifier.length ? identifier : [kind isEqualToString:@"route"] ? @"sheet-route-picker" : @"";

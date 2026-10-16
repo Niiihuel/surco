@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 use std::future::Future;
 use surco_core::{Track, lyrics::{Line, parse_lrc}};
 use surco_youtube::YouTube;
+use crate::i18n::t;
 
 const ENDPOINT: &str = "https://lrclib.net/api/search";
 const TIMEOUT: Duration = Duration::from_secs(12);
@@ -25,8 +26,7 @@ pub struct Failure {
 impl Failure {
     fn limited(wait: Duration) -> Self {
         let seconds = wait.as_secs().saturating_add(u64::from(wait.subsec_nanos() > 0)).max(1);
-        let unit = if seconds == 1 { "segundo" } else { "segundos" };
-        Self { message: format!("El servicio de letras alcanzó su límite. Esperá {seconds} {unit} y volvé a intentar."), retry_after: wait }
+        Self { message: t!("backend-lyrics-limited", seconds = seconds).into_owned(), retry_after: wait }
     }
 }
 
@@ -48,7 +48,7 @@ impl Provider {
                         let lines = plain_lines(&words);
                         Ok((!lines.is_empty()).then_some(Found::Plain { lines, source }))
                     }
-                    _ => Err(Failure { message: "No pudimos cargar la letra desde YouTube Music. Volvé a intentar.".into(), retry_after: Duration::ZERO }),
+                    _ => Err(Failure { message: t!("backend-lyrics-youtube-failed").into_owned(), retry_after: Duration::ZERO }),
                 }
             }).await
         }).await
@@ -105,8 +105,7 @@ fn plain_lines(text: &str) -> Vec<String> {
 
 async fn fetch_at(youtube: &YouTube, track: &Track, endpoint: &str, timeout: Duration) -> Result<Option<Found>, Failure> {
     let transport = |timed_out: bool| Failure {
-        message: if timed_out { "El servicio de letras tardó demasiado. Volvé a intentar." }
-            else { "No pudimos conectar con el servicio de letras. Revisá la conexión y volvé a intentar." }.into(),
+        message: if timed_out { t!("backend-lyrics-timeout") } else { t!("backend-lyrics-unreachable") }.into_owned(),
         retry_after: Duration::ZERO,
     };
     let response = youtube.http().get(endpoint)
@@ -118,12 +117,13 @@ async fn fetch_at(youtube: &YouTube, track: &Track, endpoint: &str, timeout: Dur
         let limited = response.status().as_u16() == 429;
         let seconds = response.headers().get("Retry-After").and_then(|value| value.to_str().ok()).and_then(|value| value.parse::<u64>().ok()).unwrap_or(30);
         return Err(if limited { Failure::limited(Duration::from_secs(seconds.max(1))) }
-            else { Failure { message: format!("El servicio de letras no está disponible (HTTP {}). Volvé a intentar.", response.status().as_u16()), retry_after: Duration::ZERO } });
+            else { Failure { message: t!("backend-lyrics-unavailable", status = response.status().as_u16()).into_owned(), retry_after: Duration::ZERO } });
     }
     // RequestBuilder's deadline includes the body, not just DNS/connection/headers.
     let body = response.bytes().await.map_err(|error| transport(error.is_timeout()))?;
     let found: Vec<serde_json::Value> = serde_json::from_slice(&body).map_err(|_| Failure {
-        message: "El servicio de letras envió una respuesta que no pudimos leer. Volvé a intentar.".into(), retry_after: Duration::ZERO,
+        message: t!("backend-lyrics-unreadable").into_owned(), retry_after: Duration::ZERO,
+
     })?;
     let seconds = track.duration_ms as f64 / 1000.0;
     let apart = |entry: &&serde_json::Value| (entry["duration"].as_f64().unwrap_or(f64::INFINITY) - seconds).abs();

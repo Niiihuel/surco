@@ -21,7 +21,7 @@ pub(in crate::view) fn playback(id: &str, playing: bool, diameter: f32, glyph_si
         .radius(diameter / 2.0).size(Some(diameter), Some(diameter));
     let hit = diameter.max(TAP);
     Element::clickable(id, circle.centered())
-        .accessible(limn::Access::new(limn::Role::Button).name(if playing { "Pausar" } else { "Reproducir" }))
+        .accessible(limn::Access::new(limn::Role::Button).name(if playing { t!("common-pause") } else { t!("common-play") }))
         .radius(hit / 2.0).size(Some(hit), Some(hit))
 }
 

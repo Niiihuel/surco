@@ -6,6 +6,8 @@ use surco_core::transfer::{self, Source, Wanted};
 use surco_core::Track;
 use surco_youtube::YouTube;
 
+use crate::i18n::t;
+
 /// The pages read here answer a browser, and nothing else, with the list.
 const BROWSER: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 /// How many songs are looked for at a time: each is a search, and the catalog counts them.
@@ -19,17 +21,17 @@ type Reader = fn(&str) -> Option<(String, Vec<Wanted>)>;
 /// many of its songs have been looked for, out of how many: a long list takes minutes.
 pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + Sync)) -> Result<(String, Vec<Track>, Vec<String>), String> {
     // The others name their songs; the catalog's own lists them as it has them.
-    let (address, read): (String, Reader) = match transfer::source(link).ok_or("Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music.")? {
+    let (address, read): (String, Reader) = match transfer::source(link).ok_or(t!("state-import-unknown-link"))? {
         Source::YouTube(id) => {
-            let (name, tracks) = youtube.playlist_named(&id).await.map_err(|_| "No pudimos leer esa playlist. Tiene que ser pública.")?;
-            return if tracks.is_empty() { Err("Esa playlist no tiene canciones.".to_owned()) } else { Ok((name, tracks, Vec::new())) };
+            let (name, tracks) = youtube.playlist_named(&id).await.map_err(|_| t!("state-import-unreadable-playlist"))?;
+            return if tracks.is_empty() { Err(t!("state-import-empty-playlist").into_owned()) } else { Ok((name, tracks, Vec::new())) };
         }
         Source::Spotify(kind, id) => (format!("https://open.spotify.com/embed/{kind}/{id}"), spotify),
         Source::Apple(address) => (address, apple),
     };
     let page = youtube.http().get(address).header("User-Agent", BROWSER);
     let page = page.send().await.map_err(|error| error.to_string())?.text().await.map_err(|error| error.to_string())?;
-    let (name, mut wanted) = read(&page).ok_or("No pudimos leer esa lista. Tiene que ser pública.")?;
+    let (name, mut wanted) = read(&page).ok_or(t!("state-import-unreadable-list"))?;
     // Spotify's page stops at a hundred songs: a playlist that fills it may go on.
     if let (Some(Source::Spotify("playlist", id)), true) = (transfer::source(link), wanted.len() >= SPOTIFY_PAGE) {
         if let Some(whole) = spotify_whole(youtube, &id).await.filter(|whole| whole.len() > wanted.len()) {
@@ -50,7 +52,7 @@ pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + 
         }
     }
     if tracks.is_empty() {
-        return Err("No encontramos ninguna de las canciones de esa lista.".to_owned());
+        return Err(t!("state-import-nothing-found").into_owned());
     }
     Ok((name, tracks, missed))
 }

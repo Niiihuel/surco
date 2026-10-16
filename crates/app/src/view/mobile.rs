@@ -1,6 +1,7 @@
 //! Phone layout over Surco's existing pages, actions and playback state.
 
 use super::*;
+use std::borrow::Cow;
 
 pub(super) mod search;
 mod home;
@@ -39,34 +40,34 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let title = title(state);
     let mut header = Vec::new();
     if state.can_go_back() || state.page == Page::Playing {
-        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
+        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette));
     }
     let compact_player = state.page == Page::Playing && !state.queue_open && state.mobile_ui.compact_header;
     let copy = if compact_player {
-        state.current().map_or_else(|| Text::new(title, palette).render(), |track| {
+        state.current().map_or_else(|| Text::new(title.as_ref(), palette).render(), |track| {
             Element::column(vec![Text::new(&track.title, palette).font_size(17.0).truncate().render(),
                 Text::new(&track.artist, palette).font_size(12.0).muted().truncate().render()]).gap(4.0)
         })
-    } else { Text::new(title, palette).font_size(if state.page == Page::Playing { 14.0 } else if state.mobile_ui.compact_header { 18.0 } else { 24.0 }).truncate().render() };
+    } else { Text::new(title.as_ref(), palette).font_size(if state.page == Page::Playing { 14.0 } else if state.mobile_ui.compact_header { 18.0 } else { 24.0 }).truncate().render() };
     header.push(if state.page == Page::Playing && !compact_player { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
     if compact_player {
         if let Some(track) = state.current() {
-            header.push(icon("mobile-player-header-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart }, if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"));
+            header.push(icon("mobile-player-header-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart }, &if state.is_liked(&track.id) { t!("mobile-unlike") } else { t!("common-like") }, palette).dispatch_as("like"));
         }
         header.push(controls::playback("mobile-player-header-play", state.player.playing, 44.0, 22.0, palette).dispatch_as("play-pause"));
     } else if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
         header.push(controls::playback("mobile-detail-header-play", false, 44.0, 22.0, palette).dispatch_as("page-play"));
     }
     if state.page == Page::Playing && state.queue_open {
-        header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
+        header.push(icon("queue", Icon::Playlist, &if state.queue_open { t!("mobile-back-to-song") } else { t!("mobile-show-queue") }, palette));
     } else if state.page == Page::Playing && !compact_player && state.current().is_some() {
-        header.push(icon("mobile-player-header-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"));
+        header.push(icon("mobile-player-header-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"));
     }
     if state.page == Page::Library {
-        header.push(icon("playlist-new", Icon::Add, "Crear playlist", palette));
+        header.push(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette));
     }
     if !matches!(state.page, Page::Settings | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
-        header.push(icon("settings", Icon::Settings, "Configuración", palette));
+        header.push(icon("settings", Icon::Settings, &t!("common-settings"), palette));
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
@@ -74,7 +75,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // UIKit draws the header and tabs over these slots outside the song pages.
     let native_chrome = state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
-        Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title))
+        Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title.as_ref()))
     } else if state.page == Page::Lyrics { lyrics::header(state, palette) }
         else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
@@ -120,7 +121,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard {
         bottom.push(if native_chrome {
             Element::spacer().size(None, Some(NAV_HEIGHT))
-                .accessible(limn::Access::new(limn::Role::Group).id("ios-tabs").name("Pestañas"))
+                .accessible(limn::Access::new(limn::Role::Group).id("ios-tabs").name(t!("mobile-tabs")))
                 .block_pointer("mobile-nav-bar")
         } else { navigation(state, palette) });
         bottom_height += NAV_HEIGHT;
@@ -161,29 +162,29 @@ pub(super) fn view(state: &State, window: Size) -> Element {
 }
 
 /// The page title, shared by the limn header and the native iOS header.
-pub(crate) fn title(state: &State) -> &str {
+pub(crate) fn title(state: &State) -> Cow<'_, str> {
     let searching = state.page == Page::Search && state.mobile_search;
     match &state.page {
-        Page::Library => "Tu biblioteca",
-        Page::Settings => "Configuración",
-        Page::Equalizer => "Ecualizador",
-        Page::Playing => if state.queue_open { "Cola de reproducción" } else { "Ahora suena" },
-        Page::Lyrics => "Letra",
-        Page::Search if searching => "Buscar",
-        Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())),
-        Page::Downloads => "Descargas",
-        Page::Liked => "Tus me gusta",
-        Page::Album(album) if state.mobile_ui.compact_header => &album.title,
-        Page::Artist(artist) if state.mobile_ui.compact_header => &artist.name,
-        Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or("Playlist", |playlist| playlist.name.as_str()),
-        _ => "Tu música",
+        Page::Library => t!("common-library"),
+        Page::Settings => t!("common-settings"),
+        Page::Equalizer => t!("common-equalizer"),
+        Page::Playing => if state.queue_open { t!("mobile-queue") } else { t!("mobile-now-playing") },
+        Page::Lyrics => t!("mobile-lyrics"),
+        Page::Search if searching => t!("common-search"),
+        Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())).into(),
+        Page::Downloads => t!("common-downloads"),
+        Page::Liked => t!("common-liked-songs"),
+        Page::Album(album) if state.mobile_ui.compact_header => Cow::Borrowed(&album.title),
+        Page::Artist(artist) if state.mobile_ui.compact_header => Cow::Borrowed(&artist.name),
+        Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),
+        _ => t!("mobile-your-music"),
     }
 }
 
 fn with_notice(mut content: Element, state: &State, palette: ComponentPalette) -> Element {
     let Some(message) = &state.mobile_ui.notice else { return content; };
     let notice = Element::panel(Element::row(vec![Text::new(message, palette).render().flex(1.0),
-        icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0))
+        icon("mobile-notice-close", Icon::Close, &t!("mobile-close-notice"), palette)]).gap(8.0).padding(12.0))
         .background(SCHEME.raised);
     let mut notice = Some(notice);
     if prepend_notice(&mut content, &mut notice) { return content; }
@@ -274,9 +275,9 @@ pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'stati
     let home = state.page == Page::Search && !state.mobile_search;
     let library = matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
     [
-        ("home", Icon::Home, if home { "house.fill" } else { "house" }, "Inicio", home),
-        ("mobile-search", Icon::Search, "magnifyingglass", "Buscar", state.page == Page::Search && state.mobile_search),
-        ("mobile-library", Icon::Library, if library { "books.vertical.fill" } else { "books.vertical" }, "Tu biblioteca", library),
+        ("home", Icon::Home, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
+        ("mobile-search", Icon::Search, "magnifyingglass", crate::i18n::fixed(t!("common-search")), state.page == Page::Search && state.mobile_search),
+        ("mobile-library", Icon::Library, if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("common-library")), library),
     ]
 }
 
@@ -289,12 +290,12 @@ pub(crate) type HeaderButton = (&'static str, &'static str, &'static str);
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderButton>) {
     let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_));
-    let leading = if state.can_go_back() { vec![("back", "Volver", "chevron.left")] } else { Vec::new() };
+    let leading = if state.can_go_back() { vec![("back", crate::i18n::fixed(t!("common-back")), "chevron.left")] } else { Vec::new() };
     let mut trailing = Vec::new();
-    if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", "Reproducir", "play.fill")); }
+    if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", crate::i18n::fixed(t!("common-play")), "play.fill")); }
     // A new playlist is made from the library's bar, a glass button beside Settings.
-    if state.page == Page::Library { trailing.push(("playlist-new", "Crear playlist", "plus")); }
-    if !matches!(state.page, Page::Settings | Page::Equalizer) && !detail { trailing.push(("settings", "Configuración", "gearshape")); }
+    if state.page == Page::Library { trailing.push(("playlist-new", crate::i18n::fixed(t!("common-create-playlist")), "plus")); }
+    if !matches!(state.page, Page::Settings | Page::Equalizer) && !detail { trailing.push(("settings", crate::i18n::fixed(t!("common-settings")), "gearshape")); }
     (leading, trailing)
 }
 
@@ -312,12 +313,12 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
         ]).gap(3.0).centered_y().flex(1.0),
     ]).gap(10.0).size(None, Some(TAP));
     let open = Element::clickable("mobile-playing", label)
-        .accessible(limn::Access::new(limn::Role::Button).name(format!("Abrir reproductor: {}", track.title))).flex(1.0);
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-open-player", title = track.title.as_str()))).flex(1.0);
     let controls = Element::row(vec![
         open,
-        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette),
         icon("mobile-mini-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart },
-            if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"),
+            &if state.is_liked(&track.id) { t!("mobile-unlike") } else { t!("common-like") }, palette).dispatch_as("like"),
         controls::playback("play-pause", state.player.playing, 32.0, 18.0, palette),
     ]).gap(0.0).padding(4.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();
@@ -329,7 +330,7 @@ fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
 /// Overflow stays visible on touch screens, independently of pointer hover.
 pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &str, palette: ComponentPalette) -> Element {
     let more = format!("more:{row}");
-    let dots = icon(&more, Icon::More, &format!("Opciones de {}", track.title), palette);
+    let dots = icon(&more, Icon::More, &t!("mobile-options-for", title = track.title.as_str()), palette);
     let copy = Element::column(vec![
         Text::new(&track.title, palette).font_size(16.0).truncate().render(),
         Text::new(subtitle, palette).font_size(13.0).muted().truncate().render(),
@@ -338,7 +339,7 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
     let main = Element::clickable(&row, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {subtitle}", track.title))).flex(1.0);
     let row_element = Element::row(vec![main, dots.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0));
     ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,
-        vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, "Opciones de la canción"))], SCHEME.menu())
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, t!("common-song-options")))], SCHEME.menu())
         .open_action(more).render()
 }
 

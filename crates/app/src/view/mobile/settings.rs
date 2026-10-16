@@ -100,69 +100,70 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     let white = Color::WHITE;
     let seconds = state.settings.crossfade;
     let crossfade = stacked(
-        line(Icon::Shuffle, "Crossfade", None, Some(value(&if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") })), white),
+        line(Icon::Shuffle, "Crossfade", None, Some(value(&if seconds == 0.0 { t!("mobile-crossfade-off").into_owned() } else { format!("{seconds:.0} s") })), white),
         Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(inner).render(),
     );
-    let playback = group("Reproducción", vec![
-        switch(Icon::Infinity, "Reproducción automática", None, "setting:autoplay", state.settings.autoplay),
+    let playback = group(&t!("mobile-settings-playback"), vec![
+        switch(Icon::Infinity, &t!("mobile-autoplay"), None, "setting:autoplay", state.settings.autoplay),
         crossfade,
     ], "");
 
-    let mut connections = group("Conexiones y dispositivos", vec![
-        action("setting:connections", Icon::Custom(AUDIO_ROUTE), "Escuchar en otro dispositivo", None, Some(chevron()), true, false),
+    let mut connections = group(&t!("mobile-connections"), vec![
+        action("setting:connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-listen-elsewhere"), None, Some(chevron()), true, false),
     ], "");
     if let Some(notice) = &state.output_notice {
-        connections = Element::column(vec![connections, Alert::new("Salida de audio", notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
+        connections = Element::column(vec![connections, Alert::new(t!("mobile-audio-output"), notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
     }
 
     let chosen = state.settings.quality;
-    let ceiling = match chosen { Quality::Low => "Hasta 50 kbps", Quality::Normal => "Hasta 70 kbps", Quality::High => "Hasta 140 kbps" };
+    let kbps: u32 = match chosen { Quality::Low => 50, Quality::Normal => 70, Quality::High => 140 };
+    let ceiling = t!("mobile-quality-ceiling", kbps = kbps);
     let quality = stacked(
-        line(Icon::ChartBar, "Calidad", None, Some(value(ceiling)), white),
+        line(Icon::ChartBar, &t!("mobile-quality"), None, Some(value(&ceiling)), white),
         segmented("setting-quality", inner, Quality::ALL.into_iter()
             .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect()),
     );
     let equalizer = super::super::equalizer::summary(state);
-    let audio = group("Calidad de audio", vec![
+    let audio = group(&t!("mobile-audio-quality"), vec![
         quality,
-        switch(Icon::Volume, "Normalizar el volumen", None, "setting:normalize", state.settings.normalize),
-        switch(Icon::Headphones, "Audio mono", None, "setting:mono", state.settings.mono),
-        action("equalizer", Icon::Sliders, "Ecualizador", None,
-            Some(Element::row(vec![value(equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
-    ], "La calidad cambia desde la próxima canción.");
+        switch(Icon::Volume, &t!("mobile-normalize"), None, "setting:normalize", state.settings.normalize),
+        switch(Icon::Headphones, &t!("mobile-mono"), None, "setting:mono", state.settings.mono),
+        action("equalizer", Icon::Sliders, &t!("common-equalizer"), None,
+            Some(Element::row(vec![value(&equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
+    ], &t!("mobile-quality-note"));
 
-    let display = group("Visualización", vec![
-        switch(Icon::Bolt, "Reducir movimiento", None, "setting:motion", state.settings.reduce_motion),
+    let display = group(&t!("mobile-display"), vec![
+        switch(Icon::Bolt, &t!("mobile-reduce-motion"), None, "setting:motion", state.settings.reduce_motion),
         stacked(line(Icon::Globe, &t!("common-language"), None, None, white), segmented("setting-language", inner, Language::ALL.into_iter()
             .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
     let sort = state.settings.library_sort;
     let view = state.settings.library_view;
-    let library = group("Biblioteca", vec![
-        stacked(line(Icon::Sort, "Orden", None, None, white), segmented("setting-library-sort", inner, vec![
-            Tab::new("library-sort:added", "Recientes", 0.0).active(sort == Sort::Added),
+    let library = group(&t!("mobile-settings-library"), vec![
+        stacked(line(Icon::Sort, &t!("mobile-sort"), None, None, white), segmented("setting-library-sort", inner, vec![
+            Tab::new("library-sort:added", t!("mobile-sort-recent"), 0.0).active(sort == Sort::Added),
             Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(sort == Sort::Alphabetical),
-            Tab::new("library-sort:creator", "Creador", 0.0).active(sort == Sort::Creator),
+            Tab::new("library-sort:creator", t!("common-creator"), 0.0).active(sort == Sort::Creator),
         ])),
-        stacked(line(Icon::Grid, "Vista", None, None, white), segmented("setting-library-view", inner, vec![
-            Tab::new("library-view:compact", "Compacta", 0.0).active(view == LibraryView::Compact),
-            Tab::new("library-view:list", "Lista", 0.0).active(view == LibraryView::List),
-            Tab::new("library-view:grid", "Cuadrícula", 0.0).active(view == LibraryView::Grid),
+        stacked(line(Icon::Grid, &t!("mobile-view"), None, None, white), segmented("setting-library-view", inner, vec![
+            Tab::new("library-view:compact", t!("mobile-view-compact"), 0.0).active(view == LibraryView::Compact),
+            Tab::new("library-view:list", t!("mobile-view-list"), 0.0).active(view == LibraryView::List),
+            Tab::new("library-view:grid", t!("mobile-view-grid"), 0.0).active(view == LibraryView::Grid),
         ])),
-        action("import-open", Icon::Playlist, "Importar música de otras apps", None, Some(chevron()), true, false),
+        action("import-open", Icon::Playlist, &t!("mobile-import-music"), None, Some(chevron()), true, false),
     ], "");
 
-    let about = group("Acerca de", vec![
-        cell(line(Icon::InfoCircle, "Versión", None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
-        cell(line(Icon::Book, "Licencias de terceros", Some("zuno, Spell UI, Lucide, Bootstrap Icons y ytmapi-rs"), None, white)),
+    let about = group(&t!("mobile-about"), vec![
+        cell(line(Icon::InfoCircle, &t!("mobile-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+        cell(line(Icon::Book, &t!("mobile-licenses"), Some(&t!("mobile-licenses-detail")), None, white)),
     ], "");
 
     // What cannot be undone sits last, each behind a confirmation.
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
-    let erase = group("Almacenamiento y privacidad", vec![
-        action("downloads-clear", Icon::Trash, "Eliminar todas las descargas", Some(&downloads), None, !state.saved.is_empty(), true),
-        action("recent-clear", Icon::History, "Borrar abiertos recientemente", Some("Álbumes y artistas de Inicio"), None, !state.collection.recent.is_empty(), true),
+    let erase = group(&t!("mobile-storage"), vec![
+        action("downloads-clear", Icon::Trash, &t!("mobile-delete-downloads"), Some(&downloads), None, !state.saved.is_empty(), true),
+        action("recent-clear", Icon::History, &t!("mobile-clear-recent"), Some(&t!("mobile-clear-recent-detail")), None, !state.collection.recent.is_empty(), true),
     ], "");
 
     let groups = vec![playback, connections, audio, display, library, about, erase];
@@ -176,17 +177,17 @@ pub(in crate::view) fn equalizer(state: &State, width: f32) -> Element {
     let palette = SCHEME.palette();
     let inner = (width - GUTTER * 4.0).max(0.0);
     let heading = |title: &str| horizontal_inset(Text::new(title, palette).role(TextRole::Heading).font_size(17.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
-    let presets = Element::column(vec![heading("Ajustes"), parts::presets(state, 44.0)]).gap(8.0);
+    let presets = Element::column(vec![heading(&t!("mobile-eq-presets")), parts::presets(state, 44.0)]).gap(8.0);
     // Columns as wide as the card allows: about 34 points each on a 390-point phone.
     let response = Element::column(vec![parts::curve(state, 150.0, CARD), parts::bands(state, 170.0)]).gap(12.0).padding(6.0);
-    let response = group("Bandas", vec![response.padding(4.0)], "");
+    let response = group(&t!("mobile-eq-bands"), vec![response.padding(4.0)], "");
     let preamp = stacked(
-        line(Icon::Volume, "Previo", None, Some(value(&parts::decibels(state.equalizer.preamp_db))), Color::WHITE),
+        line(Icon::Volume, &t!("mobile-eq-preamp"), None, Some(value(&parts::decibels(state.equalizer.preamp_db))), Color::WHITE),
         parts::preamp(state, Some(inner)).size(None, Some(44.0)),
     );
     let flat = state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT;
-    let reset = action("equalizer-reset", Icon::Refresh, "Restablecer", Some("Bandas y previo a 0 dB"), None, !flat, false);
-    let preamp = group("Previo", vec![preamp, reset], "El previo sube o baja todo antes de las bandas.");
+    let reset = action("equalizer-reset", Icon::Refresh, &t!("mobile-eq-reset"), Some(&t!("mobile-eq-reset-detail")), None, !flat, false);
+    let preamp = group(&t!("mobile-eq-preamp"), vec![preamp, reset], &t!("mobile-eq-preamp-note"));
     ScrollArea::new("equalizer", Element::column(vec![presets, response, preamp]).gap(28.0).padding(GUTTER)).render().flex(1.0)
 }
 

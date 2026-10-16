@@ -5,6 +5,8 @@
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Rect, Sense, Stroke, ViewportCommand};
 use egui::viewport::ResizeDirection;
 
+use crate::i18n::t;
+
 const CONTROL_HEIGHT: f32 = 32.0;
 const CONTROL_WIDTH: f32 = 46.0;
 const EDGE: f32 = 5.0;
@@ -74,14 +76,14 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
     // Over the app's top bar, which is drawn after this.
     let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.id().with("window-controls")));
     for (index, label, command) in [
-        (0, "Minimizar", ViewportCommand::Minimized(true)),
-        (1, if maximized { "Restaurar" } else { "Maximizar" }, ViewportCommand::Maximized(!maximized)),
-        (2, "Cerrar", ViewportCommand::Close),
+        (0, t!("state-window-minimize"), ViewportCommand::Minimized(true)),
+        (1, if maximized { t!("state-window-restore") } else { t!("state-window-maximize") }, ViewportCommand::Maximized(!maximized)),
+        (2, t!("common-close"), ViewportCommand::Close),
     ] {
         let rect = Rect::from_min_size(pos2(caption.right() + index as f32 * CONTROL_WIDTH, inner.top()), vec2(CONTROL_WIDTH, CONTROL_HEIGHT));
         // Like the native caption, leave Tab to the app and keyboard window commands to Alt+Space.
         let button = ui.interact(rect, ui.id().with(("window-control", index)), Sense::CLICK);
-        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
         if button.hovered() || button.has_focus() || button.is_pointer_button_down_on() {
             let fill = if index == 2 { Color32::from_rgb(196, 43, 28) } else { Color32::from_gray(34) };
             painter.rect_filled(rect, 0.0, fill);

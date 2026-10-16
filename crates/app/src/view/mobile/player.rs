@@ -4,7 +4,7 @@ use super::*;
 
 pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let Some(track) = state.current() else {
-        return centered(Empty::new("Todavía no hay música", "Elegí una canción para empezar a escuchar.", palette)
+        return centered(Empty::new(t!("mobile-no-music"), t!("mobile-no-music-detail"), palette)
             .icon(Icon::MusicNote).render());
     };
     let side = (width - 48.0).clamp(160.0, 380.0);
@@ -15,11 +15,11 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
             Text::new(&track.artist, palette).font_size(16.0).muted().truncate().render(),
         ]).gap(6.0).flex(1.0).centered_y(),
         icon("like", if liked { Icon::HeartFill } else { Icon::Heart },
-            if liked { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).centered_y(),
+            &if liked { t!("mobile-unlike") } else { t!("common-like") }, palette).centered_y(),
     ]).gap(12.0).anchor("mobile-player-title");
     let mut controls = vec![details];
     if let Some(error) = &state.player.error {
-        controls.push(Alert::new("No se pudo reproducir", error, palette).id("mobile-player-error").render());
+        controls.push(Alert::new(t!("mobile-play-failed"), error, palette).id("mobile-player-error").render());
     }
     controls.extend([timeline(state, palette), transport(state, palette), tools(palette)]);
     let main = Element::column(vec![
@@ -46,7 +46,7 @@ pub(super) fn timeline(state: &State, palette: ComponentPalette) -> Element {
     let time = |value: String| Text::new(value, palette).mono().font_size(12.0).muted().render();
     Element::column(vec![
         Slider::new("seek", progress, palette).enabled(duration > 0.0)
-            .accessibility_label("Posición de reproducción").render().size(None, Some(TAP)),
+            .accessibility_label(t!("mobile-playback-position")).render().size(None, Some(TAP)),
         Element::row(vec![time(clock(elapsed)), Element::spacer().flex(1.0), time(remaining)]),
     ])
 }
@@ -58,23 +58,23 @@ fn transport(state: &State, palette: ComponentPalette) -> Element {
     };
     let play = controls::playback("play-pause", state.player.playing, 72.0, 32.0, palette);
     Element::row(vec![
-        control("shuffle", shuffle_step(state).0, shuffle_step(state).1, 24.0, state.player.shuffle),
+        control("shuffle", shuffle_step(state).0, &shuffle_step(state).1, 24.0, state.player.shuffle),
         Element::spacer().flex(1.0),
-        control("previous", Icon::SkipBack, "Canción anterior", 28.0, false),
+        control("previous", Icon::SkipBack, &t!("mobile-previous-song"), 28.0, false),
         Element::spacer().flex(1.0), play, Element::spacer().flex(1.0),
-        control("next", Icon::SkipForward, "Siguiente canción", 28.0, false),
+        control("next", Icon::SkipForward, &t!("common-next-song"), 28.0, false),
         Element::spacer().flex(1.0),
-        control("repeat", if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, "Repetir", 24.0, state.player.repeat != Repeat::Off),
+        control("repeat", if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, &t!("mobile-repeat"), 24.0, state.player.repeat != Repeat::Off),
     ])
 }
 
 fn tools(palette: ComponentPalette) -> Element {
     Element::row(vec![
-        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
+        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette),
         Element::spacer().flex(1.0),
-        icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), "Compartir canción", palette),
-        icon("queue", Icon::Playlist, "Ver cola", palette),
-        icon("more:current", Icon::More, "Opciones de la canción", palette),
+        icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), &t!("common-share-song"), palette),
+        icon("queue", Icon::Playlist, &t!("mobile-show-queue"), palette),
+        icon("more:current", Icon::More, &t!("common-song-options"), palette),
     ]).gap(8.0)
 }
 
@@ -83,7 +83,7 @@ const LYRIC_CARD_GAP: f32 = 18.0;
 
 fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
     let card = ComponentPalette { surface: SCHEME.raised, ..palette };
-    let mut parts = vec![Text::new("Vista previa de la letra", card).font_size(16.0).render()];
+    let mut parts = vec![Text::new(t!("mobile-lyrics-preview"), card).font_size(16.0).render()];
     let lines = state.lines();
     if !lines.is_empty() {
         // Every line, in a window four lines tall that slides them up so the one being sung
@@ -105,24 +105,24 @@ fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
         parts.extend(state.plain_lyrics().iter().filter(|line| !line.is_empty()).take(4)
             .map(|line| Text::new(line, card).font_size(22.0).line_height(30.0).render()));
         let source = match &state.lyrics { Some((_, Lyrics::Plain { source, .. })) => source.as_str(), _ => "" };
-        parts.push(Text::new(format!("Letra sin sincronización · {source}"), card).font_size(14.0).muted().render());
+        parts.push(Text::new(t!("mobile-unsynced-lyrics", source = source), card).font_size(14.0).muted().render());
     } else {
         let current = state.current().map(|track| track.id.as_str());
         let known = state.lyrics.as_ref().filter(|(id, _)| Some(id.as_str()) == current);
         let message = match known {
-            Some((_, Lyrics::Loading)) => "Buscando la letra…",
-            Some((_, Lyrics::Missing | Lyrics::Lines(_) | Lyrics::Plain { .. })) => "No hay letra disponible.",
-            Some((_, Lyrics::Failed { message, .. })) => message,
-            None => "Abrí la letra para buscarla.",
+            Some((_, Lyrics::Loading)) => t!("mobile-lyrics-loading"),
+            Some((_, Lyrics::Missing | Lyrics::Lines(_) | Lyrics::Plain { .. })) => t!("mobile-lyrics-missing"),
+            Some((_, Lyrics::Failed { message, .. })) => message.as_str().into(),
+            None => t!("mobile-lyrics-open"),
         };
         parts.push(Text::new(message, card).font_size(16.0).muted().render());
         if matches!(known, Some((_, Lyrics::Failed { .. } | Lyrics::Missing))) {
-            parts.push(Button::new("retry-lyrics", "Reintentar", card).variant(ButtonVariant::Outline)
+            parts.push(Button::new("retry-lyrics", t!("common-retry"), card).variant(ButtonVariant::Outline)
                 .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render());
         }
     }
     parts.push(Element::row(vec![
-        Button::new("lyrics", "Mostrar la letra", card).variant(ButtonVariant::Outline)
+        Button::new("lyrics", t!("mobile-show-lyrics"), card).variant(ButtonVariant::Outline)
             .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         Element::spacer().flex(1.0),
     ]));
@@ -134,16 +134,16 @@ fn artist_card(state: &State, width: f32, palette: ComponentPalette) -> Option<E
     let card = ComponentPalette { surface: SCHEME.raised, ..palette };
     let followed = state.is_followed(artist);
     let name = Element::clickable("about-artist", Text::new(&artist.name, card).font_size(20.0).truncate().render().centered_y())
-        .accessible(limn::Access::new(limn::Role::Button).name(format!("Ver artista: {}", artist.name)))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-view-artist", name = artist.name.as_str())))
         .size(None, Some(TAP)).flex(1.0);
-    let follow = Button::new("about-follow", if followed { "Siguiendo" } else { "Seguir" }, card)
+    let follow = Button::new("about-follow", if followed { t!("common-following") } else { t!("common-follow") }, card)
         .variant(ButtonVariant::Outline).sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     let mut copy = vec![
-        Text::new("Acerca del artista", card).font_size(16.0).render(),
+        Text::new(t!("mobile-about-artist"), card).font_size(16.0).render(),
         Element::row(vec![name, follow]).gap(12.0),
     ];
     if let Some(subscribers) = &artist.subscribers {
-        copy.push(Text::new(format!("{subscribers} suscriptores"), card).muted().render());
+        copy.push(Text::new(t!("mobile-subscribers", subscribers = subscribers.as_str()), card).muted().render());
     }
     if let Some(biography) = biography.as_deref().map(str::trim).filter(|text| !text.is_empty()) {
         let excerpt = match biography.char_indices().nth(ABOUT_WORDS) {

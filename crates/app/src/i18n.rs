@@ -115,6 +115,26 @@ pub fn text(language: Language, id: &str, args: Option<&FluentArgs>) -> Cow<'sta
     bundle.format_pattern(pattern, args, &mut errors)
 }
 
+/// A text as the `&'static str` some tables keep. A plain one is the catalog's own; one
+/// written out is kept once, so asking for it again does not grow the program.
+pub fn fixed(text: Cow<'static, str>) -> &'static str {
+    match text {
+        Cow::Borrowed(text) => text,
+        Cow::Owned(text) => {
+            static KEPT: std::sync::Mutex<std::collections::BTreeSet<&'static str>> = std::sync::Mutex::new(std::collections::BTreeSet::new());
+            let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            match kept.get(text.as_str()) {
+                Some(kept) => kept,
+                None => {
+                    let text = text.leak();
+                    kept.insert(text);
+                    text
+                }
+            }
+        }
+    }
+}
+
 /// The text an id names in the current language, with its variables by name.
 macro_rules! t {
     ($id:literal) => {
@@ -188,6 +208,8 @@ mod tests {
         assert_eq!((count(Language::Spanish, 1), count(Language::Spanish, 3)), ("1 canción".into(), "3 canciones".into()));
         assert_eq!((count(Language::English, 1), count(Language::English, 3)), ("1 song".into(), "3 songs".into()));
         assert_eq!(text(Language::English, "no-such-text", None), "no-such-text");
+        let written = || fixed(Cow::Owned("1 song".into()));
+        assert!(std::ptr::eq(written(), written()), "a written-out text is kept once");
     }
 
     #[test]

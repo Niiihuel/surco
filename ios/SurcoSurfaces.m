@@ -523,12 +523,17 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         _searchBar.returnKeyType = UIReturnKeySearch;
         _searchBar.autocapitalizationType = UITextAutocapitalizationTypeNone;
         _searchBar.autocorrectionType = UITextAutocorrectionTypeNo;
-        _searchBar.placeholder = @"Canciones, artistas o álbumes";
         _searchBar.accessibilityIdentifier = @"surco.native.search";
         _searchBar.searchTextField.accessibilityIdentifier = @"search";
         _searchBar.searchTextField.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody];
         _searchBar.searchTextField.adjustsFontForContentSizeCategory = YES;
         _searchBar.tintColor = UIColor.whiteColor;
+    }
+    NSString *placeholder = SurcoString(model[@"placeholder"]);
+    if (![_searchBar.placeholder isEqualToString:placeholder]) {
+        // A new language: setting it drops the styled placeholder, so restyle once.
+        _searchBar.placeholder = placeholder;
+        _searchStyled = NO;
     }
     NSString *session = SurcoString(model[@"session"]);
     NSUInteger revision = [model[@"revision"] unsignedIntegerValue];
@@ -665,11 +670,11 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
             _paste = control;
         } else {
             UIButton *button = [UIButton buttonWithType:UIButtonTypeSystem];
-            [button setTitle:@"Pegar" forState:UIControlStateNormal];
             [button addTarget:self action:@selector(legacyPaste) forControlEvents:UIControlEventTouchUpInside];
             _paste = button;
         }
     }
+    if ([_paste isKindOfClass:UIButton.class]) [(UIButton *)_paste setTitle:SurcoString(slot[@"title"]) forState:UIControlStateNormal];
     NSUInteger generation = _pasteGeneration;
     __weak SurcoSurfaces *weakSelf = self;
     _pasteTarget.receive = ^(NSString *text) {
@@ -793,11 +798,14 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     void (^emit)(NSDictionary *) = ^(NSDictionary *event) { [weakSelf emit:event]; };
     if ([model[@"confirmation"] boolValue]) {
         UIAlertController *alert = [UIAlertController alertControllerWithTitle:model[@"title"] message:model[@"description"] preferredStyle:UIAlertControllerStyleAlert];
-        [alert addAction:[UIAlertAction actionWithTitle:@"Cancelar" style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
-            emit(@{@"kind": @"sheet_close", @"sheet": desired});
-        }]];
         for (NSDictionary *item in model[@"actions"]) {
-            if ([item[@"id"] isEqual:model[@"dismiss"]]) continue;
+            // The dismiss action is the alert's cancel, under the title Rust gave it.
+            if ([item[@"id"] isEqual:model[@"dismiss"]]) {
+                [alert addAction:[UIAlertAction actionWithTitle:SurcoString(item[@"title"]) style:UIAlertActionStyleCancel handler:^(UIAlertAction *action) {
+                    emit(@{@"kind": @"sheet_close", @"sheet": desired});
+                }]];
+                continue;
+            }
             [alert addAction:[UIAlertAction actionWithTitle:item[@"title"] style:[item[@"destructive"] boolValue] ? UIAlertActionStyleDestructive : UIAlertActionStyleDefault handler:^(UIAlertAction *action) {
                 emit(@{@"kind": @"sheet_action", @"sheet": desired, @"action": item[@"id"]});
             }]];

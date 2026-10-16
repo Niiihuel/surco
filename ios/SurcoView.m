@@ -194,7 +194,6 @@ typedef struct {
     _picker.prioritizesVideoDevices = NO;
     _picker.tintColor = UIColor.whiteColor;
     _picker.activeTintColor = UIColor.whiteColor;
-    _picker.accessibilityLabel = @"Salida de audio";
     _picker.hidden = YES;
     _picker.userInteractionEnabled = NO;
 }
@@ -224,6 +223,9 @@ typedef struct {
     _picker.activeTintColor = active;
 }
 - (void)updateSurfaces:(NSDictionary *)payload scale:(CGFloat)scale {
+    [self ensurePicker];
+    id label = payload[@"route_label"];
+    _picker.accessibilityLabel = [label isKindOfClass:NSString.class] ? label : @"";
     [_surfaces updatePayload:payload view:_view scale:scale];
 }
 - (NSArray<NSDictionary *> *)takeSurfaceEvents { return [_surfaces takeEvents]; }

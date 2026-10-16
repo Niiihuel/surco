@@ -15,6 +15,8 @@ use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 
 pub use crate::i18n::Language;
+use crate::i18n::t;
+use std::borrow::Cow;
 use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
@@ -197,11 +199,11 @@ pub enum LibraryView {
 
 impl Sort {
     pub fn label(self) -> &'static str {
-        match self {
-            Sort::Added => "Agregados",
-            Sort::Alphabetical => "A–Z",
-            Sort::Creator => "Creador",
-        }
+        crate::i18n::fixed(match self {
+            Sort::Added => t!("state-sort-added"),
+            Sort::Alphabetical => t!("state-sort-alphabetical"),
+            Sort::Creator => t!("common-creator"),
+        })
     }
 }
 
@@ -215,7 +217,7 @@ pub enum Quality {
 }
 
 impl Quality {
-    pub const ALL: [(Quality, &'static str, &'static str); 3] = [(Quality::Low, "low", "Baja"), (Quality::Normal, "normal", "Normal"), (Quality::High, "high", "Alta")];
+    pub const ALL: [(Quality, &'static str, Label); 3] = [(Quality::Low, "low", Label("state-quality-low")), (Quality::Normal, "normal", Label("state-quality-normal")), (Quality::High, "high", Label("state-quality-high"))];
 
     /// The most bits per second it takes. YouTube offers about 50, 70 and 140 thousand.
     pub fn bps(self) -> u64 {
@@ -323,7 +325,7 @@ impl Collection {
 
     /// The name a playlist takes when it is given none.
     pub fn default_name(&self) -> String {
-        format!("Mi playlist n.º {}", self.playlists.len() + 1)
+        t!("state-default-playlist-name", number = self.playlists.len() + 1).into_owned()
     }
 
     /// Makes a playlist, newest first, and returns its id.
@@ -410,10 +412,26 @@ pub enum Filter {
 
 /// "Buenos días", "Buenas tardes" or "Buenas noches" for an hour of the day.
 pub fn greeting(hour: u32) -> &'static str {
-    match hour {
-        6..=11 => "Buenos días",
-        12..=19 => "Buenas tardes",
-        _ => "Buenas noches",
+    crate::i18n::fixed(match hour {
+        6..=11 => t!("state-greeting-morning"),
+        12..=19 => t!("state-greeting-afternoon"),
+        _ => t!("state-greeting-evening"),
+    })
+}
+
+/// A catalog text a constant names by its id, said in the language of the moment it is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Label(&'static str);
+
+impl Label {
+    pub fn text(self) -> &'static str {
+        crate::i18n::fixed(crate::i18n::text(crate::i18n::current(), self.0, None))
+    }
+}
+
+impl From<Label> for String {
+    fn from(label: Label) -> String {
+        label.text().to_owned()
     }
 }
 
@@ -734,18 +752,18 @@ pub const EQUALIZER_DB: f32 = 12.0;
 
 /// The equaliser's ready-made curves: the id after `equalizer-preset:`, the name, and the bands.
 /// Each leaves the preamp as it is.
-pub const EQUALIZER_PRESETS: [(&str, &str, [f32; 10]); 6] = [
-    ("flat", "Plano", [0.0; 10]),
-    ("bass", "Más graves", [6.0, 5.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-    ("voice", "Voz", [-3.0, -2.0, -1.0, 1.0, 3.0, 4.0, 4.0, 2.0, 0.0, -1.0]),
-    ("treble", "Agudos", [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 4.0, 5.0, 6.0]),
-    ("acoustic", "Acústico", [4.0, 3.0, 2.0, 1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 2.0]),
-    ("electronic", "Electrónica", [5.0, 4.0, 1.0, 0.0, -2.0, 1.0, 0.0, 2.0, 4.0, 5.0]),
+pub const EQUALIZER_PRESETS: [(&str, Label, [f32; 10]); 6] = [
+    ("flat", Label("state-preset-flat"), [0.0; 10]),
+    ("bass", Label("state-preset-bass"), [6.0, 5.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    ("voice", Label("state-preset-voice"), [-3.0, -2.0, -1.0, 1.0, 3.0, 4.0, 4.0, 2.0, 0.0, -1.0]),
+    ("treble", Label("state-preset-treble"), [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 4.0, 5.0, 6.0]),
+    ("acoustic", Label("state-preset-acoustic"), [4.0, 3.0, 2.0, 1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 2.0]),
+    ("electronic", Label("state-preset-electronic"), [5.0, 4.0, 1.0, 0.0, -2.0, 1.0, 0.0, 2.0, 4.0, 5.0]),
 ];
 
 /// The ready-made curve the bands are set to, by its id and name, if they are one.
 pub fn equalizer_preset(values: EqualizerValues) -> Option<(&'static str, &'static str)> {
-    EQUALIZER_PRESETS.iter().find(|(_, _, bands)| *bands == values.bands_db).map(|(key, name, _)| (*key, *name))
+    EQUALIZER_PRESETS.iter().find(|(_, _, bands)| *bands == values.bands_db).map(|(key, name, _)| (*key, name.text()))
 }
 
 /// The equaliser as it is kept between runs: the preamp and then each band.
@@ -1098,7 +1116,7 @@ impl State {
             "unsave" => vec![Command::Unsave(track.id)],
             "unqueue" => {
                 if self.mobile_ui.context.as_ref().and_then(|context| context.upcoming.as_ref()).is_some_and(|held| held != &self.player.upcoming) {
-                    self.mobile_ui.notice = Some("La cola cambió. Volvé a elegir la canción que querés quitar.".into());
+                    self.mobile_ui.notice = Some(t!("state-queue-changed").into_owned());
                     return Vec::new();
                 }
                 // Queue entries may contain the same song more than once. Keep
@@ -2035,7 +2053,7 @@ impl State {
             }
             Event::OutputLost => {
                 self.output = None;
-                self.output_notice = Some("La salida elegida ya no está disponible. Volvimos a la predeterminada del sistema.".into());
+                self.output_notice = Some(t!("state-output-lost").into_owned());
                 Vec::new()
             }
             Event::OutputFailed(message) => {
@@ -3430,5 +3448,18 @@ mod tests {
         state.motion = false;
         state.glide_lyrics(80.0, later);
         assert_eq!(state.lyric_lag(10, later), 0.0, "without motion the rows are in place at once");
+    }
+
+    #[test]
+    fn labels_named_in_constants_are_in_every_catalog() {
+        let labels = EQUALIZER_PRESETS.iter().map(|preset| preset.1).chain(Quality::ALL.iter().map(|quality| quality.2));
+        for label in labels {
+            for language in Language::ALL {
+                assert_ne!(crate::i18n::text(language, label.0, None), label.0, "{} lacks {}", language.tag(), label.0);
+            }
+        }
+        crate::i18n::set(Language::English);
+        assert_eq!((greeting(7), String::from(Quality::ALL[0].2)), ("Good morning", "Low".to_owned()));
+        crate::i18n::set(Language::Spanish);
     }
 }

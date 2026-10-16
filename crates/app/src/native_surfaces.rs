@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use eframe::egui::Pos2;
 use limn::{Frame, Point, UiAction};
 use serde::{Deserialize, Serialize};
-use crate::{backend::Command, state::{self, mobile::{CardContext, LibraryContext}, Confirm, State}};
+use crate::{backend::Command, i18n::t, state::{self, mobile::{CardContext, LibraryContext}, Confirm, State}};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub(crate) struct Payload {
@@ -14,6 +14,8 @@ pub(crate) struct Payload {
     pub search: Option<SearchSlot>,
     pub chrome: Option<Chrome>,
     pub reduce_motion: bool,
+    /// The spoken name of the player's system audio-route button.
+    pub route_label: String,
 }
 
 /// The phone's header and tab bar. Rects are screen points; `edge` is the
@@ -57,6 +59,7 @@ impl Action {
 pub(crate) struct Sheet {
     pub id: String, pub title: String, pub description: String, pub dismiss: String,
     pub rows: Vec<Row>, pub actions: Vec<Action>, pub large: bool, pub confirmation: bool,
+    pub close_label: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -64,19 +67,19 @@ pub(crate) struct Sheet {
 pub(crate) enum Row {
     Text { title: String, secondary: bool },
     Action(Action),
-    Field { id: String, value: String, placeholder: String, keyboard: String, paste: bool },
+    Field { id: String, value: String, placeholder: String, keyboard: String, paste: bool, paste_title: String },
     Slider { id: String, title: String, value: f32, min: f32, max: f32 },
     Segments { id: String, items: Vec<Action>, selected: usize },
-    Route { title: String, subtitle: String },
+    Route { title: String, subtitle: String, label: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub(crate) struct PasteSlot { pub target: String, pub rect: [f32; 4] }
+pub(crate) struct PasteSlot { pub target: String, pub rect: [f32; 4], pub title: String }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct SearchSlot {
     pub session: String, pub rect: [f32; 4], pub text: String,
-    pub editing: bool, pub compact: bool, pub revision: u64,
+    pub editing: bool, pub compact: bool, pub revision: u64, pub placeholder: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -118,7 +121,8 @@ pub(crate) struct Controller {
 
 impl Controller {
     pub fn payload(&mut self, state: &State, frame: &Frame, origin: Pos2) -> Payload {
-        let mut payload = Payload { reduce_motion: state.settings.reduce_motion || !state.motion, ..Payload::default() };
+        let mut payload = Payload { reduce_motion: state.settings.reduce_motion || !state.motion,
+            route_label: t!("native-audio-output").into_owned(), ..Payload::default() };
         self.menus.clear();
         self.paste = None;
         if !state.mobile { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
@@ -149,7 +153,8 @@ impl Controller {
             let binding = self.search.as_ref().unwrap();
             payload.search = Some(SearchSlot { session: binding.session.clone(), rect,
                 text: state.query.clone(), editing: state.mobile_ui.search_editing,
-                compact: state.mobile_search_compact(), revision: binding.revision });
+                compact: state.mobile_search_compact(), revision: binding.revision,
+                placeholder: t!("native-search-placeholder").into_owned() });
         } else { self.search = None; }
         for (index, region) in frame.regions.iter().enumerate() {
             if region.kind != limn::HitKind::Button { continue; }
@@ -178,7 +183,7 @@ impl Controller {
             }) { continue; }
             if let Some(rect) = screen_rect(visible, origin).filter(touch_sized) {
                 self.paste = Some(target.into());
-                payload.paste = Some(PasteSlot { target: target.into(), rect });
+                payload.paste = Some(PasteSlot { target: target.into(), rect, title: t!("native-paste").into_owned() });
                 break;
             }
         }
@@ -363,29 +368,29 @@ fn context_actions(state: &State, context: &CardContext) -> Vec<Action> {
             subtitle: action.detail, ..Action::new(action.id, action.label, symbol) }
     }).collect();
     if context.upcoming.is_some() {
-        items.insert(0, Action::new(format!("do:unqueue:{}", context.row), "Quitar de la cola", "minus.circle").destructive());
+        items.insert(0, Action::new(format!("do:unqueue:{}", context.row), t!("native-unqueue"), "minus.circle").destructive());
     }
     // Playlist membership belongs to the captured row, even if its page has changed.
     let remove = format!("do:remove:{}", context.row);
     if context.playlist.is_some() && !items.iter().any(|item| item.id == remove) {
-        items.push(Action::new(remove, "Quitar de esta playlist", "minus.circle").destructive());
+        items.push(Action::new(remove, t!("native-remove-from-playlist"), "minus.circle").destructive());
     }
     items
 }
 
 fn library_actions(state: &State, context: &LibraryContext) -> Vec<Action> {
-    let mut items = vec![Action::new("library-action:open", "Abrir", "chevron.right")];
+    let mut items = vec![Action::new("library-action:open", t!("native-open"), "chevron.right")];
     let kept = context.entry.as_ref().is_none_or(|entry| state.card_entry_kept(entry));
     if kept {
         let pinned = state.collection.pinned.contains(&context.key);
-        items.push(Action { selected: pinned, ..Action::new("library-action:pin", if pinned { "Desfijar" } else { "Fijar arriba" }, if pinned { "pin.slash" } else { "pin" }) });
+        items.push(Action { selected: pinned, ..Action::new("library-action:pin", if pinned { t!("native-unpin") } else { t!("native-pin") }, if pinned { "pin.slash" } else { "pin" }) });
     }
     if context.entry.is_some() {
         let artist = context.key.starts_with("artist:");
         if kept {
-            items.push(Action::new("library-action:remove", if artist { "Dejar de seguir" } else { "Quitar de tu biblioteca" }, "minus.circle").destructive());
+            items.push(Action::new("library-action:remove", if artist { t!("native-unfollow") } else { t!("native-remove-from-library") }, "minus.circle").destructive());
         } else {
-            items.push(Action::new("library-action:keep", if artist { "Seguir artista" } else { "Guardar en tu biblioteca" }, if artist { "person.badge.plus" } else { "plus.circle" }));
+            items.push(Action::new("library-action:keep", if artist { t!("native-follow-artist") } else { t!("native-save-to-library") }, if artist { "person.badge.plus" } else { "plus.circle" }));
         }
     }
     items
@@ -395,59 +400,63 @@ fn text(title: impl Into<String>, secondary: bool) -> Row { Row::Text { title: t
 
 fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
     let shell = |title: &str, description: &str, dismiss: &str| Sheet { id: String::new(), title: title.into(), description: description.into(),
-        dismiss: dismiss.into(), rows: Vec::new(), actions: Vec::new(), large: false, confirmation: false };
+        dismiss: dismiss.into(), rows: Vec::new(), actions: Vec::new(), large: false, confirmation: false,
+        close_label: t!("common-close").into_owned() };
     // Match limn's overlay order. UIKit receives precisely the top surface.
     if let Some(confirm) = &state.confirm {
         let (title, description, yes) = match confirm {
-            Confirm::DeletePlaylist(id) => (format!("¿Eliminar «{}»?", state.collection.playlist(*id).map_or("esta playlist", |list| list.name.as_str())), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar"),
-            Confirm::ClearDownloads => ("¿Eliminar las descargas?".into(), "Ya no vas a tener acceso a lo que descargaste en este equipo.", "Eliminar"),
-            Confirm::ClearQueue => ("¿Borrar la cola?".into(), "Se quitan las canciones que agregaste. Lo que venía sonando sigue.", "Borrar"),
-            Confirm::ClearRecent => ("¿Borrar el historial?".into(), "Los accesos rápidos de Inicio quedan vacíos.", "Borrar"),
+            Confirm::DeletePlaylist(id) => (t!("native-delete-playlist-title", name = state.collection.playlist(*id)
+                .map_or(t!("native-this-playlist"), |list| list.name.as_str().into())), t!("native-delete-playlist-description"), t!("common-delete")),
+            Confirm::ClearDownloads => (t!("native-clear-downloads-title"), t!("native-clear-downloads-description"), t!("common-delete")),
+            Confirm::ClearQueue => (t!("native-clear-queue-title"), t!("native-clear-queue-description"), t!("common-clear")),
+            Confirm::ClearRecent => (t!("native-clear-recent-title"), t!("native-clear-recent-description"), t!("common-clear")),
         };
-        let mut sheet = shell(&title, description, "confirm-cancel");
+        let mut sheet = shell(&title, &description, "confirm-cancel");
         sheet.confirmation = true;
-        sheet.actions = vec![Action::new("confirm-cancel", "Cancelar", "xmark"), Action::new("confirm-yes", yes, "trash").destructive()];
+        sheet.actions = vec![Action::new("confirm-cancel", t!("common-cancel"), "xmark"), Action::new("confirm-yes", yes, "trash").destructive()];
         return Some((format!("confirm:{confirm:?}"), sheet));
     }
     if let Some((id, missed)) = state.imported.as_ref().filter(|_| state.missed_open) {
-        let mut sheet = shell("No se encontraron", "No están en el catálogo con ese nombre. Podés buscarlas a mano y agregarlas.", "import-missed-close");
+        let mut sheet = shell(&t!("native-missed-title"), &t!("native-missed-description"), "import-missed-close");
         sheet.large = true;
         sheet.rows = missed.iter().map(|song| text(song, false)).collect();
-        sheet.actions = vec![Action::new("import-missed-copy", "Copiar la lista", "doc.on.doc"), Action::new("import-missed-close", "Cerrar", "xmark")];
+        sheet.actions = vec![Action::new("import-missed-copy", t!("native-missed-copy"), "doc.on.doc"), Action::new("import-missed-close", t!("common-close"), "xmark")];
         return Some((format!("missed:{id}"), sheet));
     }
     if let Some(link) = &state.importing {
-        let description = if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" };
-        let mut sheet = shell("Importar música", description, "import-cancel");
+        let description = if state.import_unknown { t!("native-import-unknown") } else { "Spotify · Apple Music · YouTube Music".into() };
+        let mut sheet = shell(&t!("native-import-title"), &description, "import-cancel");
         sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
-            placeholder: "Enlace de playlist o álbum público".into(), keyboard: "url".into(), paste: true }];
-        sheet.actions = vec![Action::new("import-cancel", "Cancelar", "xmark"), Action::new("import-go", "Importar", "square.and.arrow.down")];
+            placeholder: t!("native-import-placeholder").into_owned(), keyboard: "url".into(), paste: true, paste_title: t!("native-paste").into_owned() }];
+        sheet.actions = vec![Action::new("import-cancel", t!("common-cancel"), "xmark"), Action::new("import-go", t!("common-import"), "square.and.arrow.down")];
         return Some(("import".into(), sheet));
     }
     if let Some(draft) = &state.creating {
-        let mut sheet = shell("Nueva playlist", "Juntá canciones bajo un nombre.", "playlist-cancel");
-        sheet.rows = vec![text("Título", false), Row::Field { id: "playlist-name".into(), value: draft.name.clone(), placeholder: state.collection.default_name(), keyboard: "default".into(), paste: false },
-            Row::Segments { id: "playlist-kind".into(), items: vec![Action::new("playlist-kind:normal", "Normal", "music.note.list"), Action::new("playlist-kind:collaborative", "Colaborativa", "person.2")], selected: usize::from(draft.collaborative) }];
-        if let Some(track) = &draft.first { sheet.rows.push(text(format!("Empieza con «{}».", track.title), true)); }
-        sheet.actions = vec![Action::new("playlist-cancel", "Cancelar", "xmark"), Action::new("playlist-create", "Crear", "plus")];
+        let mut sheet = shell(&t!("native-new-playlist-title"), &t!("native-new-playlist-description"), "playlist-cancel");
+        sheet.rows = vec![text(t!("common-title"), false), Row::Field { id: "playlist-name".into(), value: draft.name.clone(), placeholder: state.collection.default_name(), keyboard: "default".into(), paste: false, paste_title: String::new() },
+            Row::Segments { id: "playlist-kind".into(), items: vec![Action::new("playlist-kind:normal", t!("native-playlist-normal"), "music.note.list"), Action::new("playlist-kind:collaborative", t!("native-playlist-collaborative"), "person.2")], selected: usize::from(draft.collaborative) }];
+        if let Some(track) = &draft.first { sheet.rows.push(text(t!("native-playlist-starts-with", title = track.title.as_str()), true)); }
+        sheet.actions = vec![Action::new("playlist-cancel", t!("common-cancel"), "xmark"), Action::new("playlist-create", t!("native-create"), "plus")];
         return Some((format!("playlist:{}", draft.first.as_ref().map_or("", |track| track.id.as_str())), sheet));
     }
     if let Some(track) = &state.sharing {
-        let mut sheet = shell("Compartir canción", "El enlace la abre en YouTube Music; pegado en el buscador de Surco, se abre acá.", "share-close");
-        sheet.rows = vec![text(&track.title, false), text(&track.artist, true), text(state::share_link(track), true), Row::Action(Action::new("share-card", "Reproducir o pausar", "playpause"))];
-        sheet.actions = vec![Action::new("share-copy", if state.copied { "Enlace copiado" } else { "Copiar enlace" }, "doc.on.doc"), Action::new("share-close", "Listo", "checkmark")];
+        let mut sheet = shell(&t!("common-share-song"), &t!("native-share-description"), "share-close");
+        sheet.rows = vec![text(&track.title, false), text(&track.artist, true), text(state::share_link(track), true), Row::Action(Action::new("share-card", t!("native-play-or-pause"), "playpause"))];
+        sheet.actions = vec![Action::new("share-copy", if state.copied { t!("common-link-copied") } else { t!("native-copy-link") }, "doc.on.doc"), Action::new("share-close", t!("native-done"), "checkmark")];
         return Some((format!("share:{}", track.id), sheet));
     }
     if state.mobile_ui.connections {
-        let mut sheet = shell("Escuchar en", "Elegí dónde sigue la música.", "mobile-connections-close");
-        sheet.rows = vec![Row::Route { title: "AirPlay o Bluetooth".into(), subtitle: state.mobile_ui.route.as_ref().map_or("Salida del sistema", |(name, _)| name.as_str()).into() },
-            text("¿Un dispositivo nuevo?", false), text("Vinculá tus auriculares o parlantes en Ajustes > Bluetooth del iPhone. Después elegilos desde el selector de audio.", true),
-            Row::Slider { id: "volume".into(), title: "Volumen de Surco".into(), value: state.volume, min: 0.0, max: 1.0 }];
-        sheet.actions.push(Action::new("mobile-connections-close", "Listo", "checkmark"));
+        let mut sheet = shell(&t!("native-listen-on"), &t!("native-listen-on-description"), "mobile-connections-close");
+        sheet.rows = vec![Row::Route { title: t!("native-route-title").into_owned(), label: t!("native-choose-audio-device").into_owned(),
+                subtitle: state.mobile_ui.route.as_ref().map_or(t!("native-system-output"), |(name, _)| name.as_str().into()).into_owned() },
+            text(t!("native-new-device"), false), text(t!("native-new-device-help"), true),
+            Row::Slider { id: "volume".into(), title: t!("native-volume").into_owned(), value: state.volume, min: 0.0, max: 1.0 }];
+        sheet.actions.push(Action::new("mobile-connections-close", t!("native-done"), "checkmark"));
         return Some(("connections".into(), sheet));
     }
     if let Some(context) = &state.mobile_ui.library {
-        let mut sheet = shell(&context.title, "Opciones de biblioteca", "mobile-library-close");
+        let mut sheet = shell(&context.title, &t!("native-library-options"), "mobile-library-close");
+
         sheet.rows = library_actions(state, context).into_iter().map(Row::Action).collect();
         return Some((format!("library:{}", context.key), sheet));
     }
@@ -652,6 +661,15 @@ mod tests {
         assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
         assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
         assert_eq!(json["sheet"]["rows"][0]["paste"], true);
+        // UIKit keeps no words of its own: Rust sends each label it shows or speaks.
+        assert_eq!(json["sheet"]["rows"][0]["paste_title"], "Pegar");
+        assert_eq!(json["sheet"]["close_label"], "Cerrar");
+        assert_eq!(json["route_label"], "Salida de audio");
+        crate::i18n::set(crate::i18n::Language::English);
+        let english = serde_json::to_value(Controller::default().payload(&state, &Frame::default(), Pos2::ZERO)).unwrap();
+        crate::i18n::set(crate::i18n::Language::Spanish);
+        assert_eq!((&english["sheet"]["title"], &english["sheet"]["close_label"], &english["route_label"]),
+            (&"Import music".into(), &"Close".into(), &"Audio output".into()));
         state.import_unknown = true;
         let error = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
         assert_eq!(serde_json::to_value(error).unwrap()["sheet"]["rows"], json["sheet"]["rows"],
@@ -692,6 +710,8 @@ mod tests {
         assert!(payload.paste.is_none());
         let search = payload.search.unwrap();
         assert_eq!(search.rect[1], slot.rect.y + 59.0);
+        assert_eq!(search.placeholder, "Canciones, artistas o álbumes");
+
         assert!(!search.compact && !search.editing, "empty Search starts with its idle heading and no keyboard intention");
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
         assert!(controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2,

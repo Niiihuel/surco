@@ -53,8 +53,8 @@ pub(super) fn decibels(gain: f32) -> String {
 }
 
 /// What the bands are set to, as Settings names it.
-pub(super) fn summary(state: &State) -> &'static str {
-    equalizer_preset(state.equalizer).map_or("Personalizado", |(_, name)| name)
+pub(super) fn summary(state: &State) -> std::borrow::Cow<'static, str> {
+    equalizer_preset(state.equalizer).map_or_else(|| t!("desktop-equalizer-custom"), |(_, name)| name.into())
 }
 
 fn fraction(gain: f32) -> f32 {
@@ -68,7 +68,7 @@ pub(super) fn curve(state: &State, height: f32, ground: Color) -> Element {
     let points = frequencies();
     let limit = f64::from(EQUALIZER_DB);
     let gains = points.iter().map(|hz| f64::from(response_db(&state.equalizer, *hz, SAMPLE_RATE)).clamp(-limit, limit));
-    let mut chart = LineChart::new("equalizer-curve", points.iter().map(|hz| hertz(*hz)), vec![ChartSeries::new("Ganancia", gains).color(Color::WHITE)], palette)
+    let mut chart = LineChart::new("equalizer-curve", points.iter().map(|hz| hertz(*hz)), vec![ChartSeries::new(t!("desktop-equalizer-gain"), gains).color(Color::WHITE)], palette)
         .height(height)
         .area(true)
         .grid(false)
@@ -125,7 +125,7 @@ pub(super) fn presets(state: &State, height: f32) -> Element {
         })
         .collect();
     if chosen.is_none() {
-        let words = Text::new("Personalizado", palette).font_size(14.0).ink(SCHEME.canvas).render().centered_y();
+        let words = Text::new(t!("desktop-equalizer-custom"), palette).font_size(14.0).ink(SCHEME.canvas).render().centered_y();
         let pad = || Element::spacer().size(Some(16.0), None);
         pills.insert(
             0,
@@ -133,7 +133,7 @@ pub(super) fn presets(state: &State, height: f32) -> Element {
                 .background(Color::WHITE)
                 .radius(height / 2.0)
                 .size(None, Some(height))
-                .accessible(limn::Access::new(limn::Role::Group).id("equalizer-preset:custom").name("Personalizado")),
+                .accessible(limn::Access::new(limn::Role::Group).id("equalizer-preset:custom").name(t!("desktop-equalizer-custom"))),
         );
     }
     Element::horizontal_scroll_2d("equalizer-presets", Element::row(pills).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR)
@@ -145,7 +145,7 @@ pub(super) fn preamp(state: &State, width: Option<f32>) -> Element {
         .origin(0.5)
         .steps(STOPS)
         .ink(Color::WHITE)
-        .accessibility_label("Previo");
+        .accessibility_label(t!("desktop-equalizer-preamp"));
     match width {
         Some(width) => slider.width(width),
         None => slider,
@@ -157,13 +157,13 @@ pub(super) fn preamp(state: &State, width: Option<f32>) -> Element {
 /// its bands, and the preamp under them.
 pub(super) fn popover(state: &State, palette: ComponentPalette) -> Element {
     let heading = Element::row(vec![
-        Text::new("Ecualizador", palette).font_size(13.0).render().centered_y(),
+        Text::new(t!("common-equalizer"), palette).font_size(13.0).render().centered_y(),
         Element::spacer().flex(1.0),
-        Button::new("equalizer-reset", "Restablecer", palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render(),
+        Button::new("equalizer-reset", t!("desktop-equalizer-reset"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render(),
     ]);
     let muted = |text: String| Text::new(text, palette).font_size(11.0).muted().render().centered_y();
     let preamp = Element::row(vec![
-        muted("Previo".into()).size(Some(40.0), None),
+        muted(t!("desktop-equalizer-preamp").into_owned()).size(Some(40.0), None),
         preamp(state, None).flex(1.0).centered_y(),
         muted(decibels(state.equalizer.preamp_db)).size(Some(40.0), None),
     ])

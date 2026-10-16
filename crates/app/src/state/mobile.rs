@@ -100,15 +100,15 @@ impl State {
     }
 
     pub(crate) fn mobile_library_context(&self, key: &str) -> Option<LibraryContext> {
-        let (title, artwork_url) = if let Some(id) = key.strip_prefix("playlist:") {
+        let (title, artwork_url): (Cow<str>, _) = if let Some(id) = key.strip_prefix("playlist:") {
             let playlist = self.collection.playlist(id.parse().ok()?)?;
-            (playlist.name.as_str(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
-        } else if key == "downloads" { ("Descargas", None) }
-        else if key == "liked" { ("Tus me gusta", None) }
+            (playlist.name.as_str().into(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
+        } else if key == "downloads" { (t!("common-downloads"), None) }
+        else if key == "liked" { (t!("common-liked-songs"), None) }
         else {
             let target = library_target(key)?;
             let entry = self.collection.kept.iter().find(|entry| entry.target() == target)?;
-            (entry.title(), entry.artwork().clone())
+            (entry.title().into(), entry.artwork().clone())
         };
         let entry = library_target(key).and_then(|target| self.collection.kept.iter().find(|entry| entry.target() == target)).cloned();
         Some(LibraryContext { key: key.into(), title: title.into(), artwork_url, entry })

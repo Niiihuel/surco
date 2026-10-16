@@ -20,9 +20,9 @@ fn title(value: &str, palette: ComponentPalette) -> Element {
 fn duration(tracks: &[Track]) -> String {
     let minutes = tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000;
     if minutes >= 60 {
-        format!("{} h {} min", minutes / 60, minutes % 60)
+        t!("common-hours-minutes", hours = minutes / 60, minutes = minutes % 60).into_owned()
     } else {
-        format!("{minutes} min")
+        t!("common-minutes", minutes = minutes).into_owned()
     }
 }
 
@@ -40,11 +40,11 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
     let rows = state.page_rows();
     if rows.is_empty() {
         return Empty::new(
-            "No hay canciones para mostrar",
+            t!("mobile-no-songs"),
             if state.page_search.trim().is_empty() {
-                "El catálogo no devolvió canciones para esta página."
+                t!("mobile-no-songs-catalog")
             } else {
-                "Probá con otro título o nombre de artista."
+                t!("mobile-no-songs-filter")
             },
             palette,
         )
@@ -94,7 +94,7 @@ pub(in crate::view) fn album(
             .render()
             .centered_y(),
     )
-    .accessible(limn::Access::new(limn::Role::Button).name(format!("Ver a {}", album.artist)))
+    .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-view-album-artist", artist = album.artist.as_str())))
     .size(None, Some(TAP));
     let about = Element::column(vec![
         title(&album.title, palette),
@@ -107,8 +107,8 @@ pub(in crate::view) fn album(
     .gap(4.0);
     let kept = keep(
         state,
-        "Guardar álbum",
-        "Quitar álbum de tu biblioteca",
+        &t!("mobile-save-album"),
+        &t!("mobile-remove-album"),
         palette,
     );
     let actions = if album.tracks.is_empty() {
@@ -149,7 +149,7 @@ pub(in crate::view) fn artist(
                 .render(),
         );
     }
-    let followed = keep(state, "Seguir artista", "Dejar de seguir artista", palette);
+    let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
     let actions = if artist.songs.is_empty() {
         Element::row(vec![followed])
     } else {
@@ -164,14 +164,14 @@ pub(in crate::view) fn artist(
     ];
     if !artist.songs.is_empty() {
         sections.push(
-            Element::column(vec![heading("Canciones", palette), tracks(state, palette)]).gap(12.0),
+            Element::column(vec![heading(&t!("common-songs-heading"), palette), tracks(state, palette)]).gap(12.0),
         );
     }
     if !artist.albums.is_empty() {
         sections.push(shelf(
             state,
             "artist-albums",
-            "Álbumes",
+            &t!("common-albums"),
             release_tiles(state, "page-album", &artist.albums, palette),
             palette,
         ));
@@ -180,7 +180,7 @@ pub(in crate::view) fn artist(
         sections.push(shelf(
             state,
             "artist-singles",
-            "Sencillos y EP",
+            &t!("mobile-singles-eps"),
             release_tiles(state, "page-single", &artist.singles, palette),
             palette,
         ));
@@ -215,9 +215,9 @@ pub(in crate::view) fn playlist(
     let mut about = vec![
         Text::eyebrow(
             if playlist.collaborative {
-                "PLAYLIST COLABORATIVA"
+                t!("mobile-collaborative-playlist-eyebrow")
             } else {
-                "PLAYLIST"
+                t!("mobile-playlist-eyebrow")
             },
             palette,
         )
@@ -240,11 +240,7 @@ pub(in crate::view) fn playlist(
         .as_ref()
         .filter(|(id, missed)| *id == playlist.id && !missed.is_empty())
     {
-        let label = if missed.len() == 1 {
-            "1 canción no se encontró".to_owned()
-        } else {
-            format!("{} canciones no se encontraron", missed.len())
-        };
+        let label = t!("mobile-songs-not-found", count = missed.len());
         about.push(
             Button::new("import-missed", label, palette)
                 .variant(ButtonVariant::Ghost)
@@ -254,13 +250,13 @@ pub(in crate::view) fn playlist(
         );
     }
     let mut sections = vec![picture.centered_x(), Element::column(about).gap(8.0)];
-    let delete = icon("playlist-delete", Icon::Trash, "Eliminar playlist", palette);
+    let delete = icon("playlist-delete", Icon::Trash, &t!("mobile-delete-playlist"), palette);
     if playlist.tracks.is_empty() {
         sections.push(Element::row(vec![delete]));
         sections.push(
             Empty::new(
-                "Todavía no tiene canciones",
-                "Buscá una canción y elegí «Agregar a» en su menú.",
+                t!("mobile-playlist-empty"),
+                t!("mobile-playlist-empty-detail"),
                 palette,
             )
             .icon(Icon::MusicNote)
@@ -278,10 +274,10 @@ pub(in crate::view) fn playlist(
             } else {
                 Icon::Custom(include_str!("../../../assets/icons/share-2.svg"))
             },
-            if copied {
-                "Enlace copiado"
+            &if copied {
+                t!("common-link-copied")
             } else {
-                "Compartir playlist"
+                t!("mobile-share-playlist")
             },
             palette,
         );
@@ -292,17 +288,17 @@ pub(in crate::view) fn playlist(
             } else {
                 Icon::Custom(include_str!("../../../assets/icons/upload.svg"))
             },
-            if exported {
-                "Canciones copiadas: pegalas en la otra app"
+            &if exported {
+                t!("mobile-songs-copied")
             } else {
-                "Copiar canciones para otra app"
+                t!("mobile-copy-songs")
             },
             palette,
         );
         let mut tools = vec![Element::row(vec![share, export, delete]).gap(8.0)];
         if copied {
             tools.push(
-                Text::new("Enlace copiado", palette)
+                Text::new(t!("common-link-copied"), palette)
                     .font_size(13.0)
                     .muted()
                     .render(),
@@ -310,7 +306,7 @@ pub(in crate::view) fn playlist(
         }
         if exported {
             tools.push(
-                Text::new("Canciones copiadas: pegalas en la otra app", palette)
+                Text::new(t!("mobile-songs-copied"), palette)
                     .font_size(13.0)
                     .muted()
                     .render(),

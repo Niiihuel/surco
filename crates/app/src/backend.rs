@@ -26,6 +26,7 @@ use tokio::sync::mpsc::{unbounded_channel, UnboundedSender};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::i18n::t;
 use crate::library::Library;
 use crate::state::{cover_at, COVER_SIDE};
 use crate::update;
@@ -394,7 +395,7 @@ impl IosSession {
         };
         if matches!(effect, Effect::Play(_) | Effect::Fade(_, _) | Effect::Restore(_, _, true) | Effect::Resume | Effect::Handover(_, _)) {
             let activated = if !self.lifecycle.can_activate(explicit) {
-                Err("La reproducción está interrumpida por otra sesión de audio.".to_owned())
+                Err(t!("backend-playback-interrupted").into_owned())
             } else if self.active { Ok(()) } else { crate::ios_media::activate() };
             if let Err(message) = activated {
                 self.release(shared, true);
@@ -540,7 +541,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
     let youtube = YouTube::new().map_err(|error| error.to_string())?;
     let events = inputs.clone();
     let audio = NativeAudio::start(None, move |event| drop(events.send(Input::Engine(event))))
-        .map_err(|error| format!("No se pudo abrir la salida de audio: {error}"))?;
+        .map_err(|error| t!("backend-output-open-failed", error = error.to_string()).into_owned())?;
     Ok(Shared {
         reply: Box::new(reply),
         youtube,
@@ -618,10 +619,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 if id.is_some() {
                     match shared.audio.set_output_device(None) {
                         Ok(()) => reply(Event::OutputLost),
-                        Err(fallback) => reply(Event::OutputFailed(format!("No se pudo usar la salida elegida ({error}) ni la predeterminada ({fallback}). Revisá la conexión del dispositivo y volvé a elegir una salida."))),
+                        Err(fallback) => reply(Event::OutputFailed(t!("backend-output-both-failed", error = error.to_string(), fallback = fallback.to_string()).into_owned())),
                     }
                 } else {
-                    reply(Event::OutputFailed(format!("No se pudo usar la salida predeterminada: {error}. Revisá la configuración de sonido del sistema y volvé a elegir una salida.")));
+                    reply(Event::OutputFailed(t!("backend-output-default-failed", error = error.to_string()).into_owned()));
                 }
             }
             return player.reload();
@@ -638,7 +639,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Outputs, Err(message)) => reply(Event::OutputsFailed(message.clone())),
-        (Command::Output(_), Err(message)) => reply(Event::OutputFailed(format!("El motor de audio no está disponible: {message}"))),
+        (Command::Output(_), Err(message)) => reply(Event::OutputFailed(t!("backend-engine-unavailable", message = message.as_str()).into_owned())),
         (Command::Lyrics(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -655,7 +656,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 (shared.reply)(event);
             });
         }
-        (Command::Lyrics(track), Err(_)) => reply(Event::LyricsFailed { track_id: track.id, message: "No se pudo iniciar el servicio de letras. Volvé a abrir Surco.".into(), retry_after: Duration::ZERO }),
+        (Command::Lyrics(track), Err(_)) => reply(Event::LyricsFailed { track_id: track.id, message: t!("backend-lyrics-start-failed").into_owned(), retry_after: Duration::ZERO }),
         (Command::Discover(taste), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move { discover(&shared, taste).await });
@@ -759,7 +760,7 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
         Target::Artist(id) => youtube.artist(id).await.map(Content::Artist),
         Target::ArtistNamed(name) => match youtube.find_artist(name).await {
             Ok(Some(id)) => youtube.artist(&id).await.map(Content::Artist),
-            Ok(None) => return Err(format!("No encontramos a {name} en el catálogo.")),
+            Ok(None) => return Err(t!("backend-artist-not-found", name = name.as_str()).into_owned()),
             Err(error) => Err(error),
         },
         Target::Album(id) => youtube.album(id).await.map(Content::Album),
@@ -771,7 +772,7 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
                 tracks.extend(join_all(some.iter().map(|id| youtube.song(id))).await.into_iter().flatten());
             }
             if tracks.is_empty() {
-                return Err("No pudimos traer ninguna de las canciones de esa playlist.".to_owned());
+                return Err(t!("backend-playlist-empty").into_owned());
             }
             let missed = ids.iter().filter(|id| tracks.iter().all(|track| track.id != **id)).cloned().collect();
             Ok(Content::List { name: name.clone(), tracks, missed })
@@ -922,8 +923,8 @@ fn announce_update(version: &str) {
     // Nobody to tell is no failure: a desktop without a notification daemon still has the toast.
     let _ = notify_rust::Notification::new()
         .appname("Surco")
-        .summary("Hay una versión nueva de Surco")
-        .body(&format!("La {version} está lista. Abrí Surco para actualizar."))
+        .summary(&t!("backend-update-title"))
+        .body(&t!("backend-update-body", version = version))
         .show();
 }
 
@@ -955,12 +956,12 @@ async fn latest_release(shared: &Shared) -> Option<Release> {
 /// lists, and puts it where the program that runs is.
 async fn install_update(shared: &Shared, release: &Release) -> Result<(), String> {
     let said = |error: &dyn std::fmt::Display| error.to_string();
-    let (program, sums) = release.program.as_ref().ok_or("Esta versión no trae un programa para este sistema.")?;
+    let (program, sums) = release.program.as_ref().ok_or_else(|| t!("backend-update-no-program"))?;
     let http = shared.youtube.http();
     let listed = http.get(sums).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
     let listed = listed.error_for_status().map_err(|error| said(&error))?.text().await.map_err(|error| said(&error))?;
     let name = program.rsplit('/').next().unwrap_or_default();
-    let sum = update::sum_for(&listed, name).ok_or("La versión no dice cómo comprobar su programa.")?.to_owned();
+    let sum = update::sum_for(&listed, name).ok_or_else(|| t!("backend-update-no-sum"))?.to_owned();
 
     let fetched = http.get(program).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
     let mut fetched = fetched.error_for_status().map_err(|error| said(&error))?;
@@ -976,10 +977,10 @@ async fn install_update(shared: &Shared, release: &Release) -> Result<(), String
         }
     }
     if !update::matches(&bytes, &sum) {
-        return Err("Lo que se bajó no es el programa que la versión publicó.".into());
+        return Err(t!("backend-update-mismatch").into_owned());
     }
-    let running = update::running().ok_or("No se sabe dónde está instalado el programa.")?;
-    tokio::task::spawn_blocking(move || update::install(&bytes, running)).await.map_err(|error| said(&error))?.map_err(|error| format!("No se pudo reemplazar el programa: {error}"))
+    let running = update::running().ok_or_else(|| t!("backend-update-no-location"))?;
+    tokio::task::spawn_blocking(move || update::install(&bytes, running)).await.map_err(|error| said(&error))?.map_err(|error| t!("backend-update-replace-failed", error = error.to_string()).into_owned())
 }
 
 /// How far ahead of where the song is its other rendition is made ready, and how long the
@@ -1132,15 +1133,13 @@ async fn discover(shared: &Shared, taste: Taste) {
 }
 
 
-const NO_AUDIO: &str = "YouTube no ofreció audio para este tema.";
-
 /// Downloads a track whole and keeps it, with its cover, in the library.
 async fn save(shared: &Arc<Shared>, track: &Track) -> Result<(), String> {
     let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
-    let best = stream.best().ok_or(NO_AUDIO)?.clone();
+    let best = stream.best().ok_or_else(|| t!("backend-no-audio"))?.clone();
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     download(shared.clone(), best.clone(), buffer.clone()).await;
-    let audio = buffer.bytes().ok_or("La descarga se cortó antes de terminar.")?;
+    let audio = buffer.bytes().ok_or_else(|| t!("backend-download-cut"))?;
     let cover = match &track.artwork_url {
         Some(url) => cover_bytes(shared, url).await,
         None => None,
@@ -1148,7 +1147,7 @@ async fn save(shared: &Arc<Shared>, track: &Track) -> Result<(), String> {
     let (shared, track) = (shared.clone(), track.clone());
     blocking(move || {
         let mut library = shared.library.lock().unwrap();
-        library.add(track, best.mime, best.loudness_db, &audio, cover.as_deref()).map_err(|error| format!("No se pudo guardar en el disco: {error}"))
+        library.add(track, best.mime, best.loudness_db, &audio, cover.as_deref()).map_err(|error| t!("backend-save-failed", error = error.to_string()).into_owned())
     })
     .await
 }
@@ -1186,7 +1185,7 @@ async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Lo
         return Ok(ready);
     }
     let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
-    let best = stream.at_most(shared.quality.load(Ordering::SeqCst)).ok_or(NO_AUDIO)?.clone();
+    let best = stream.at_most(shared.quality.load(Ordering::SeqCst)).ok_or_else(|| t!("backend-no-audio"))?.clone();
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     let load = Load {
         track_id: track.id.clone(),
@@ -1264,7 +1263,8 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
     tokio::task::block_in_place(|| {
         let digest: String = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-        let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), "Portada")?;
+        let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), t!("backend-cover"))?;
+
         Some((image, tint_of(&bytes)))
     })
 }
