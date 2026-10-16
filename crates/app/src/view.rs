@@ -926,8 +926,15 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
         let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
-        let field = if state.mobile { field.size(None, Some(44.0)).radius(22.0) } else { field.radius(ControlSize::Compact.height() / 2.0) };
-        vec![field.centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
+        if state.mobile {
+            vec![field.size(None, Some(44.0)).radius(22.0).centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
+        } else {
+            // The cross closes it from inside its end, as the window's search clears.
+            let close = IconButton::new("library-search", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Dense).round()
+                .tooltip("Cerrar la búsqueda").render().centered_y();
+            let field = Element::stack(vec![field.radius(ControlSize::Compact.height() / 2.0), Element::row(vec![Element::spacer().flex(1.0), close]).padding(2.0)]);
+            vec![field.centered_y().flex(grown), Element::spacer().flex(1.0 - grown)]
+        }
     } else {
         vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
     };
