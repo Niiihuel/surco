@@ -342,7 +342,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let mut fields = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD).rows();
         if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
-                .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
+                .variant(ButtonVariant::Secondary).sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render());
         }
         let cancel = Button::new("import-cancel", "Cancelar", palette)
             .variant(ButtonVariant::Outline)
@@ -459,8 +459,8 @@ fn import_card(width: f32, palette: ComponentPalette, phone: bool, native: bool)
     let title = if phone { title.font_size(16.0) } else { title }.render();
     let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted();
     let about = if phone { about.font_size(14.0) } else { about }.render();
-    let go = Button::new("import-open", "Importar", raised).size(if phone { ControlSize::Spacious } else { ControlSize::Compact }).render();
-    let go = if phone { go.size(None, Some(44.0)) } else { go };
+    let go = Button::new("import-open", "Importar", raised);
+    let go = if phone { go.sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round() } else { go.size(ControlSize::Compact) }.render();
     let mut actions = vec![go];
     if phone && native && cfg!(any(target_os = "ios", test)) {
         // UIKit draws and handles UIPasteControl in this slot. Pasting prepares
@@ -1982,7 +1982,7 @@ fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<
         parts.push(Element::raster_image(image.clone().cover()).size(Some(width), Some(ABOUT_PICTURE)));
     }
     parts.push(Element::column(copy).gap(6.0).padding(12.0));
-    Some(Element::panel(Element::column(parts)).background(CHOSEN).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).size(Some(width), None))
+    Some(Element::panel(Element::column(parts)).background(CHOSEN).radius(RadiusRole::Panel.px()).clip_children().size(Some(width), None))
 }
 
 /// A round button that stands on a picture, over a scrim of its own.
@@ -2126,11 +2126,11 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
         Some((_, Lyrics::Missing)) => return centered(Element::column(vec![
             Empty::new("Letra no disponible", "El servicio todavía no tiene la letra de esta canción.", palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", "Volver a buscar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render(),
+            Button::new("retry-lyrics", "Volver a buscar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
         ]).gap(20.0).padding(20.0)),
         Some((_, Lyrics::Failed { message, .. })) => return centered(Element::column(vec![
             Empty::new("No se pudo cargar la letra", message, palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", "Reintentar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).render(),
+            Button::new("retry-lyrics", "Reintentar", palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
         ]).gap(20.0).padding(20.0)),
         Some((_, Lyrics::Plain { source, .. })) => {
             let words = std::iter::once(Text::new(format!("Letra sin sincronización · {source}"), palette).muted().render())
@@ -2158,7 +2158,9 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
             .line_height(line_height)
             .foreground(ink)
             .animate_foreground(format!("lyric-ink:{index}"))
-            .soft_focus(format!("lyric:{index}"), blur);
+            .soft_focus(format!("lyric:{index}"), blur)
+            // The line being sung grows a little from its leading edge; paint only, no re-wrap.
+            .animate_scale(format!("lyric-scale:{index}"), if index as i64 == sung { 1.05 } else { 1.0 });
         let row = Element::clickable(format!("lyric:{index}"), text);
         // Still catching up with the list's jump to the line being sung.
         let lag = state.lyric_lag(index, now);

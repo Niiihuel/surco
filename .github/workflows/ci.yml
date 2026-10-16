@@ -16,7 +16,7 @@ env:
   CARGO_TERM_COLOR: always
   # The commit of limn the app is built against: limn moves on its own, and a build of
   # the app must not change under it. This commit includes the reviewed mobile primitives.
-  LIMN_REF: bfdee5546999a657fa29c852756ca6b75da3d925
+  LIMN_REF: b09093127c6c75520bf78d666abf666dab78244e
 
 jobs:
   build:

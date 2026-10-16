@@ -20,7 +20,7 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     }
     let field = if editing {
         SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().radius(TAP / 2.0).size(None, Some(TAP)).flex(1.0)
+            .size(ControlSize::Spacious).render().size(None, Some(TAP)).round().flex(1.0)
     } else {
         Button::new("mobile-search-edit", if state.query.is_empty() { "¿Qué querés escuchar?" } else { &state.query }, palette)
             .icon(Icon::Search).variant(if compact { ButtonVariant::Secondary } else { ButtonVariant::Default })

@@ -151,7 +151,7 @@ fn artist_card(state: &State, width: f32, palette: ComponentPalette) -> Option<E
     }
     parts.push(Element::column(copy).gap(12.0).padding(20.0));
     Some(Element::panel(Element::column(parts)).background(card.surface).radius(16.0)
-        .corner_mask(palette.surface).size(Some(width), None))
+        .clip_children().size(Some(width), None))
 }
 
 #[cfg(test)]

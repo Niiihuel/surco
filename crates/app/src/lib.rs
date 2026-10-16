@@ -640,7 +640,8 @@ impl eframe::App for Host {
             let frame = if self.clip.is_some() && self.state.player.playing { SETTLED_FRAME_BESIDE_VIDEO } else { SETTLED_FRAME };
             // egui draws a frame's length ahead of the time it is asked for.
             let ahead = Duration::try_from_secs_f32(ctx.input(|input| input.predicted_dt)).unwrap_or_default();
-            ctx.request_repaint_after(if settled { after.max(frame + ahead) } else { after });
+            // A running animation asks for the very next frame: never throttle it.
+            ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
     }
 }
