@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import zipfile
 import time
 import tomllib
 
@@ -167,6 +168,14 @@ def smoke_simulator(app, sdk_version, env, artifacts):
             quiet=True, check=False, timeout=30)
 
 
+def sideload_ipa(app, path):
+    """An unsigned IPA: a sideloading tool re-signs it with the installer's own Apple ID."""
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as package:
+        for file in sorted(app.rglob("*")):
+            # ZipFile.write keeps each file's mode, so the executable stays runnable.
+            package.write(file, Path("Payload") / app.name / file.relative_to(app))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("platform", choices=PLATFORMS)
@@ -228,6 +237,8 @@ def main():
     # Tar preserves executable modes and symlinks when GitHub stores the artifact.
     with tarfile.open(artifacts / f"surco-ios-{args.platform}-arm64.tar.gz", "w:gz") as package:
         package.add(app, arcname="Surco.app")
+    if args.platform == "device-unsigned":
+        sideload_ipa(app, artifacts / "Surco-unsigned.ipa")
     if args.platform == "simulator":
         smoke_simulator(app, sdk_version, env, artifacts)
 

@@ -25,7 +25,8 @@ import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BUNDLE_ID = "io.github.niiihuel.surco"
+# A fork distributes under its own App Store Connect record by setting this repository variable.
+BUNDLE_ID = os.environ.get("SURCO_BUNDLE_ID", "").strip() or "io.github.niiihuel.surco"
 SECRET_NAMES = (
     "IOS_DISTRIBUTION_P12_BASE64", "IOS_DISTRIBUTION_P12_PASSWORD", "IOS_APP_STORE_PROFILE_BASE64",
     "APPLE_TEAM_ID", "APP_STORE_CONNECT_KEY_ID", "APP_STORE_CONNECT_ISSUER_ID",

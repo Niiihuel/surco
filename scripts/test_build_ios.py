@@ -18,6 +18,23 @@ script = runpy.run_path(str(Path(__file__).with_name("build-ios.py")))
 
 
 class IOSBuildTests(unittest.TestCase):
+    def test_sideload_ipa_wraps_the_app_in_payload_and_keeps_it_executable(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as directory:
+            app = Path(directory) / "Surco.app"
+            (app / "Base.lproj").mkdir(parents=True)
+            (app / "Surco").write_bytes(b"binary")
+            (app / "Surco").chmod(0o755)
+            (app / "Base.lproj" / "LaunchScreen.storyboardc").write_bytes(b"nib")
+            ipa = Path(directory) / "Surco-unsigned.ipa"
+            script["sideload_ipa"](app, ipa)
+            with zipfile.ZipFile(ipa) as package:
+                names = package.namelist()
+                self.assertIn("Payload/Surco.app/Surco", names)
+                self.assertIn("Payload/Surco.app/Base.lproj/LaunchScreen.storyboardc", names)
+                self.assertTrue(all(name.startswith("Payload/Surco.app/") for name in names))
+                self.assertEqual(package.getinfo("Payload/Surco.app/Surco").external_attr >> 16 & 0o111, 0o111)
+
     def test_launch_background_resolves_to_opaque_app_canvas_in_every_appearance(self):
         root = script["ROOT"]
         with (root / "ios/Info.plist").open("rb") as source:
