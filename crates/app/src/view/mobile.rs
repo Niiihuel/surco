@@ -92,6 +92,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         search::content(state, width, palette)
     } else if state.page == Page::Search {
         home::content(state, width, palette)
+    } else if state.page == Page::Lyrics {
+        // What the lines are seen through, between the header and the transport.
+        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::FOOTER_HEIGHT, palette)
     } else {
         page(state, width, palette)
     };

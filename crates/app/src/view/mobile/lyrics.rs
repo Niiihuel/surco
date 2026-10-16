@@ -5,28 +5,41 @@ use super::*;
 /// The shell adds the device's bottom safe-area inset after this footer.
 pub(super) const FOOTER_HEIGHT: f32 = 156.0;
 
+/// The cover beside the song's name in the header.
+const ARTWORK: f32 = 40.0;
+
+/// A compact row, as in a music app's lyrics: the way back, the song by its cover, and its
+/// options. The song names the page; there is no title competing with it.
 pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
-    let copy = match state.current() {
-        Some(track) => Element::column(vec![
-            Text::new(&track.title, palette).font_size(17.0).line_height(20.0).truncate().render().centered_x(),
-            Text::new(&track.artist, palette).font_size(12.0).line_height(16.0).muted().truncate().render().centered_x(),
-        ]).gap(2.0),
-        None => Text::new("Letra", palette).font_size(17.0).line_height(20.0).render().centered_x(),
+    let close = icon("mobile-lyrics-close", Icon::ChevronDown, "Cerrar letra", palette).dispatch_as("back");
+    let row = match state.current() {
+        Some(track) => vec![
+            close,
+            cover(state, &track.artwork_url, ARTWORK, palette).radius(6.0).centered_y(),
+            Element::column(vec![
+                Text::new(&track.title, palette).font_size(15.0).line_height(19.0).truncate().render()
+                    .font_family(FontFamily::SansMedium),
+                Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
+            ]).gap(1.0).centered_y().flex(1.0),
+            icon("mobile-lyrics-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"),
+        ],
+        None => vec![close, Element::spacer().flex(1.0)],
     };
-    horizontal_inset(Element::row(vec![
-        icon("mobile-lyrics-close", Icon::ChevronDown, "Cerrar letra", palette).dispatch_as("back"),
-        copy.centered_y().flex(1.0),
-        Element::spacer().size(Some(TAP), None),
-    ]).gap(8.0).padding(6.0), 10.0, 10.0)
+    horizontal_inset(Element::row(row).gap(10.0).padding(6.0), 6.0, 6.0)
         .size(None, Some(HEADER_HEIGHT)).clip_children()
 }
 
 pub(super) fn footer(state: &State, palette: ComponentPalette) -> Element {
     if state.current().is_none() { return Element::spacer().size(None, Some(FOOTER_HEIGHT)); }
+    let skip = |id: &str, glyph, label: &str, action: &str| controls::action(id, glyph, label, 28.0, palette).dispatch_as(action).centered_y();
     let transport = Element::row(vec![
         icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette).centered_y(),
         Element::spacer().flex(1.0),
+        skip("mobile-lyrics-previous", Icon::SkipBack, "Canción anterior", "previous"),
+        Element::spacer().size(Some(8.0), None),
         controls::playback("mobile-lyrics-play", state.player.playing, 64.0, 28.0, palette).dispatch_as("play-pause"),
+        Element::spacer().size(Some(8.0), None),
+        skip("mobile-lyrics-next", Icon::SkipForward, "Siguiente canción", "next"),
         Element::spacer().flex(1.0),
         icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), "Compartir canción", palette).centered_y(),
     ]);
@@ -81,7 +94,8 @@ mod tests {
         for width in [320.0, 390.0, 430.0] {
             let tree = tree(&state, width);
             let frame = tree.frame();
-            for id in ["mobile-lyrics-close", "seek", "mobile-lyrics-play", "mobile-connections", "do:share:current"] {
+            for id in ["mobile-lyrics-close", "mobile-lyrics-more", "seek", "mobile-lyrics-previous", "mobile-lyrics-play",
+                "mobile-lyrics-next", "mobile-connections", "do:share:current"] {
                 let rect = target(frame, id);
                 assert!(rect.width >= TAP && rect.height >= TAP, "{id}: {rect:?}");
                 assert!(rect.x >= 0.0 && rect.x + rect.width <= width);
@@ -115,6 +129,9 @@ mod tests {
             UiAction::SliderChanged { id, committed: true, .. } if id == "seek")).unwrap();
         assert_eq!(state.update(committed), vec![Command::Seek(90.0)]);
 
+        for (id, action) in [("mobile-lyrics-previous", "previous"), ("mobile-lyrics-next", "next"), ("mobile-lyrics-more", "more:current")] {
+            assert_eq!(click(&mut tree, id), vec![UiAction::Clicked { id: action.into() }]);
+        }
         let close = click(&mut tree, "mobile-lyrics-close");
         assert_eq!(close, vec![UiAction::Clicked { id: "back".into() }]);
         state.update(&close[0]);
@@ -133,6 +150,38 @@ mod tests {
         assert_eq!(share, vec![UiAction::Clicked { id: "do:share:current".into() }]);
         state.update(&share[0]);
         assert_eq!(state.sharing.as_ref(), state.current());
+    }
+
+    #[test]
+    fn lines_dim_and_blur_progressively_on_both_sides_of_the_line_being_sung() {
+        assert_eq!(lyric_focus(0), (1.0, 0.0));
+        for side in [1, -1] {
+            let steps: Vec<_> = (1..12).map(|distance| lyric_focus(side * distance)).collect();
+            for pair in steps.windows(2) {
+                assert!(pair[1].0 <= pair[0].0 && pair[1].1 >= pair[0].1, "{side}: {pair:?}");
+            }
+            assert!(steps[0].0 < 1.0 && steps[0].0 > steps[10].0 && steps[10].0 > 0.1, "{steps:?}");
+        }
+        assert!(lyric_focus(1).0 > lyric_focus(-1).0, "what is coming reads ahead of what was sung");
+    }
+
+    #[test]
+    fn lyrics_header_is_a_compact_song_row_beside_its_cover() {
+        let state = state();
+        let frame = tree(&state, 390.0);
+        let frame = frame.frame();
+        let close = target(frame, "mobile-lyrics-close");
+        let more = target(frame, "mobile-lyrics-more");
+        let title = frame.commands.iter().find_map(|command| match command {
+            DrawCommand::Text { text, position, font_family, .. } if text == "La canción actual" => Some((*position, *font_family)),
+            _ => None,
+        }).unwrap();
+        let (title, face) = title;
+        assert_eq!(face, FontFamily::SansMedium);
+        assert!(title.x > close.x + close.width + 40.0, "the cover sits between the way back and the song");
+        assert!(title.x < 390.0 / 3.0, "the song reads from the leading side, not centered: {title:?}");
+        assert!(more.x + more.width > 390.0 - 16.0 && (more.y - close.y).abs() < 0.5);
+        assert!(!frame.commands.iter().any(|command| matches!(command, DrawCommand::Text { text, .. } if text == "Letra")));
     }
 
     #[test]

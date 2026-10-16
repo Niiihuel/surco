@@ -80,6 +80,8 @@ const LYRIC_SIZE: f32 = 24.0;
 /// In a pane this wide or wider the lines grow to this.
 const LYRIC_WIDE_FROM: f32 = 640.0;
 const LYRIC_SIZE_WIDE: f32 = 32.0;
+/// A phone holds the lyrics close: fewer, larger lines.
+const LYRIC_SIZE_PHONE: f32 = 28.0;
 const LYRIC_GAP: f32 = 18.0;
 const LYRIC_BLUR: f32 = 2.2;
 /// How far up the panel the cover's colour reaches behind the lyrics.
@@ -1474,7 +1476,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Library => library(state, false, width, palette),
         Page::Playing => mobile::playing(state, width, palette),
         Page::Liked => liked_page(state, width, palette),
-        Page::Lyrics => lyrics(state, width, palette),
+        Page::Lyrics => lyrics(state, width, 0.0, palette),
         Page::News => news_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
@@ -2096,9 +2098,28 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
     Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face)
 }
 
+/// How bright and how out of focus a line is `distance` lines after the one being sung,
+/// negative before it. The line being sung is sharp and in full ink; what is coming fades
+/// and blurs the further off it is, and what was sung steps back a little faster.
+pub(crate) fn lyric_focus(distance: i64) -> (f32, f32) {
+    match distance {
+        0 => (1.0, 0.0),
+        ahead @ 1.. => ((0.55 - 0.07 * (ahead - 1) as f32).max(0.18), (0.3 + 0.5 * (ahead - 1) as f32).min(LYRIC_BLUR)),
+        behind => ((0.42 - 0.08 * (-behind - 1) as f32).max(0.16), (0.6 + 0.5 * (-behind - 1) as f32).min(LYRIC_BLUR)),
+    }
+}
+
+/// Where the line being sung rests on a phone, below the top of the lyrics' visible `body`:
+/// a third of the way down, with what was sung above it and what is coming below.
+pub(crate) fn lyric_anchor(body: f32) -> f32 {
+    (body / 3.0).max(20.0)
+}
+
 /// The lines of what plays down the middle of the window, the one being sung in full ink,
 /// over a wash of the cover's own colour. A line that is clicked is sung from its start.
-fn lyrics(state: &State, width: f32, palette: ComponentPalette) -> Element {
+/// Given the height of the `body` they are seen through, as on a phone, the first and the
+/// last line can both reach the anchor the list follows the song at.
+fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> Element {
     let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Custom(LYRICS)).render());
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note("Nada sonando", "Elegí una canción y acá aparece su letra."),
@@ -2122,29 +2143,36 @@ fn lyrics(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
     // With room, the lines stand larger and further in from the edge.
-    let (size, margin) = if width >= LYRIC_WIDE_FROM { (LYRIC_SIZE_WIDE, (width * 0.08).min(96.0)) } else { (LYRIC_SIZE, PANEL_PAD) };
+    let (size, margin) = if width >= LYRIC_WIDE_FROM { (LYRIC_SIZE_WIDE, (width * 0.08).min(96.0)) }
+        else if state.mobile { (LYRIC_SIZE_PHONE, PANEL_PAD + 8.0) } else { (LYRIC_SIZE, PANEL_PAD) };
+    let (gap, line_height) = (LYRIC_GAP * size / LYRIC_SIZE, size * 1.2);
     // Before the first line everything is still to come.
     let sung = state.active_line().map_or(-1, |index| index as i64);
+    let now = std::time::Instant::now();
     let rows = lines.iter().enumerate().map(|(index, line)| {
-        // The line being sung is sharp and in full ink. What was sung stays back, a little
-        // out of focus; what is coming fades and blurs the further off it is.
-        let (ink, blur) = match index as i64 - sung {
-            0 => (1.0, 0.0),
-            ahead @ 1.. => ((0.5 - 0.07 * (ahead - 1) as f32).max(0.18), (0.3 + 0.6 * (ahead - 1) as f32).min(LYRIC_BLUR)),
-            _ => (0.3, 0.8),
-        };
+        let (ink, blur) = lyric_focus(index as i64 - sung);
         let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
         let text = Element::text(&line.text)
             .font_family(FontFamily::SansBold)
             .font_size(size)
+            .line_height(line_height)
             .foreground(ink)
             .animate_foreground(format!("lyric-ink:{index}"))
             .soft_focus(format!("lyric:{index}"), blur);
-        Element::clickable(format!("lyric:{index}"), text)
+        let row = Element::clickable(format!("lyric:{index}"), text);
+        // Still catching up with the list's jump to the line being sung.
+        let lag = state.lyric_lag(index, now);
+        if lag == 0.0 { row } else { row.translate(limn::Point::new(0.0, lag)) }
     });
+    let mut rows: Vec<Element> = rows.collect();
+    if body > 0.0 {
+        let anchor = lyric_anchor(body);
+        rows.insert(0, Element::spacer().size(None, Some((anchor - margin - gap).max(0.0))));
+        rows.push(Element::spacer().size(None, Some((body - anchor - margin - gap - line_height).max(0.0))));
+    }
     // The list glides to each new line rather than stepping to it.
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
-    let list = ScrollArea::new("lyrics-list", Element::column(rows.collect()).gap(LYRIC_GAP * size / LYRIC_SIZE).padding(margin)).motion(glide).render().flex(1.0);
+    let list = ScrollArea::new("lyrics-list", Element::column(rows).gap(gap).padding(margin)).motion(glide).render().flex(1.0);
     let page = Element::column(vec![list]).flex(1.0);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
         Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),

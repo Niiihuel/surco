@@ -83,12 +83,16 @@ fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
     let mut parts = vec![Text::new("Vista previa de la letra", card).font_size(16.0).render()];
     let lines = state.lines();
     if !lines.is_empty() {
-        let active = state.active_line();
-        let from = active.unwrap_or(0).saturating_sub(1).min(lines.len().saturating_sub(4));
+        // The line being sung stays second, with the one before it above; each line keeps
+        // its own ink as the window moves on, so it brightens and dims instead of switching.
+        let sung = state.active_line().map_or(-1, |index| index as i64);
+        let from = sung.max(1) as usize - 1;
+        let from = from.min(lines.len().saturating_sub(4));
         parts.extend(lines.iter().enumerate().skip(from).take(4).map(|(index, line)| {
-            let text = Text::new(if line.text.trim().is_empty() { "♪" } else { &line.text }, card)
-                .font_size(22.0).line_height(30.0);
-            if active == Some(index) { text } else { text.muted() }.render()
+            let ink = Color { a: (255.0 * lyric_focus(index as i64 - sung).0) as u8, ..card.text };
+            Text::new(if line.text.trim().is_empty() { "♪" } else { &line.text }, card)
+                .font_size(22.0).line_height(30.0).ink(ink).render()
+                .font_family(FontFamily::SansBold).animate_foreground(format!("lyric-card-ink:{index}"))
         }));
     } else if !state.plain_lyrics().is_empty() {
         parts.extend(state.plain_lyrics().iter().filter(|line| !line.is_empty()).take(4)

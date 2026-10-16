@@ -15,7 +15,7 @@ use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
-use limn::{RasterImage, ScalarTransition, TableSort, UiAction};
+use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
 
 use crate::backend::{Command, Content, Event, Footage, Known, Picks, Release, Target, Taste};
 use crate::update::Note;
@@ -274,6 +274,11 @@ const SEEDS: usize = 5;
 
 /// How many recent entries the home page offers.
 const RECENT_KEPT: usize = 8;
+/// How long the rows of the lyrics take to settle after the list jumps to a new line.
+const LYRIC_GLIDE: Duration = Duration::from_millis(560);
+/// How much later each row sets off than the one nearer the line being sung, up to this many rows out.
+const LYRIC_RIPPLE: Duration = Duration::from_millis(34);
+const LYRIC_RIPPLE_ROWS: usize = 6;
 
 impl Collection {
     pub fn albums(&self) -> impl Iterator<Item = (usize, &AlbumRef)> {
@@ -588,6 +593,8 @@ pub struct State {
     pub lyrics: Option<(String, Lyrics)>,
     /// The line the list was last scrolled to.
     lyric_shown: Option<usize>,
+    /// How far the rows of the lyrics still trail the list's last jump to the line being sung.
+    lyric_glide: ScalarSpring,
     /// Consumed by the Host before following the new track's first timed line.
     pub(crate) lyrics_scroll_reset: bool,
     pub outputs: Vec<AudioOutputDevice>,
@@ -795,6 +802,7 @@ impl Default for State {
             column_drag: None,
             lyrics: None,
             lyric_shown: None,
+            lyric_glide: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
             lyrics_scroll_reset: false,
             outputs: Vec::new(),
             outputs_loading: false,
@@ -912,6 +920,7 @@ impl State {
     /// Whether a side panel, or the page's search, is on its way open or shut.
     pub fn is_sliding(&self, now: Instant) -> bool {
         self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now) || self.library_search_slide.is_active(now)
+            || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
     }
 
     /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
@@ -1957,6 +1966,7 @@ impl State {
         if before != now {
             self.lyrics_scroll_reset = true;
             self.lyric_shown = None;
+            self.lyric_glide.snap_to(0.0, Instant::now());
         }
         // The video's sound in a song's place is that song still: until the song is back
         // with the window, or something else plays.
@@ -2177,6 +2187,26 @@ impl State {
         }
         self.lyric_shown = line;
         line.map(|index| format!("lyric:{index}"))
+    }
+
+    /// Holds the rows of the lyrics where they were before the list jumped `by` to the line
+    /// being sung, and lets them spring after it from where, and as fast as, they still moved.
+    /// Without motion they are in place at once.
+    pub(crate) fn glide_lyrics(&mut self, by: f32, now: Instant) {
+        let from = self.lyric_glide.value(now) + by;
+        if self.motion {
+            self.lyric_glide.release(from, self.lyric_glide.velocity(now), 0.0, now);
+        } else {
+            self.lyric_glide.snap_to(0.0, now);
+        }
+    }
+
+    /// How far below its place the row of line `index` is painted at `now`. A row sets off a
+    /// little after the one before it, counting out from the line being sung, so the list
+    /// ripples into place instead of moving as one slab.
+    pub fn lyric_lag(&self, index: usize, now: Instant) -> f32 {
+        let distance = self.active_line().map_or(index, |line| line.abs_diff(index)).min(LYRIC_RIPPLE_ROWS);
+        self.lyric_glide.value(now.checked_sub(LYRIC_RIPPLE * distance as u32).unwrap_or(now))
     }
 
     /// The queue's covers are only fetched while the queue is on screen.
@@ -3174,5 +3204,32 @@ mod tests {
         assert_eq!(clock(291.0), "4:51");
         assert_eq!(clock(-3.0), "0:00");
         assert_eq!(clock(f64::NAN), "0:00");
+    }
+
+    #[test]
+    fn lyric_rows_ripple_out_from_the_line_being_sung_and_settle_in_place() {
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), position: 10.5, ..PlayerView::default() });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..20)
+            .map(|index| Line { at_ms: index * 1_000, text: format!("Verse {index}") }).collect()) });
+        assert_eq!(state.active_line(), Some(10));
+        state.motion = true;
+        let now = Instant::now();
+        state.glide_lyrics(80.0, now);
+        assert_eq!(state.lyric_lag(10, now), 80.0, "every row starts where it was painted");
+        let soon = now + Duration::from_millis(200);
+        let (sung, near, far) = (state.lyric_lag(10, soon), state.lyric_lag(12, soon), state.lyric_lag(15, soon));
+        assert!(sung < near && near < far && far < 80.0, "the sung line leads: {sung} {near} {far}");
+        assert_eq!(state.lyric_lag(8, soon), near, "the ripple spreads both ways");
+        assert_eq!(state.lyric_lag(19, soon), state.lyric_lag(16, soon), "and stops spreading a few rows out");
+        // A second jump keeps the way still to go and the speed it has.
+        state.glide_lyrics(80.0, soon);
+        assert!((state.lyric_lag(10, soon) - (sung + 80.0)).abs() < 0.01);
+        let later = soon + Duration::from_secs(2);
+        assert!(!state.is_sliding(later));
+        assert!((0..20).all(|index| state.lyric_lag(index, later) == 0.0));
+        state.motion = false;
+        state.glide_lyrics(80.0, later);
+        assert_eq!(state.lyric_lag(10, later), 0.0, "without motion the rows are in place at once");
     }
 }

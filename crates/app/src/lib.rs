@@ -102,10 +102,12 @@ fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
                 .map_or(0.0, |region| region.rect.y + region.rect.height);
             let scroll_top = frame.regions.iter().find(|region| region.id == "lyrics-list")
                 .map_or(0.0, |region| region.rect.y);
+            let body = frame.regions.iter().find(|region| region.id == "mobile-footer-bar")
+                .map_or(0.0, |region| region.rect.y - top);
             // Centering the full viewport puts wrapped lines behind the fixed
-            // lyrics transport in landscape. Reveal below the real header fade
-            // instead, within the unobscured body above the transport.
-            tree.reveal_at_start(&line, (top - scroll_top).max(0.0) + 20.0);
+            // lyrics transport in landscape. Rest the line at the anchor of the
+            // unobscured body between the header and the transport instead.
+            tree.reveal_at_start(&line, (top - scroll_top).max(0.0) + view::lyric_anchor(body));
         } else {
             tree.center(&line);
         }
@@ -113,6 +115,18 @@ fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
     } else {
         reset
     }
+}
+
+/// Follow the active lyric, laying out the page it moved, and on a phone let the rows glide
+/// after that jump. A new track's reset only starts the list over.
+fn follow_lyrics(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    let (from, reset) = (tree.scroll_offset("lyrics-list"), state.lyrics_scroll_reset);
+    if !update_lyrics_viewport(state, tree) { return None; }
+    let frame = layout_with_notice(state, tree, window, seen);
+    if state.mobile && !reset {
+        state.glide_lyrics(tree.scroll_offset("lyrics-list") - from, Instant::now());
+    }
+    Some(frame)
 }
 
 fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Frame {
@@ -476,9 +490,9 @@ impl eframe::App for Host {
         }
         // Measure this page before using its bars to follow the active lyric.
         let mut input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
-        if update_lyrics_viewport(&mut self.state, &mut self.tree) {
+        if let Some(frame) = follow_lyrics(&mut self.state, &mut self.tree, window, &mut self.notice) {
             self.stirred = Instant::now();
-            input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
+            input_frame = frame;
         }
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
@@ -857,6 +871,78 @@ mod lyrics_viewport_tests {
         }
     }
 
+    /// Where the row of `id` rests below the header, and where the anchor of the body is.
+    fn anchor_of(frame: &limn::Frame, id: &str) -> (f32, f32) {
+        let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).unwrap().rect;
+        let (header, footer) = (rect("mobile-header-bar"), rect("mobile-footer-bar"));
+        let top = header.y + header.height;
+        (rect(id).y - top, view::lyric_anchor(footer.y - top))
+    }
+
+    fn phone(lines: impl Iterator<Item = Line>, position: f64) -> (State, UiTree, Size) {
+        let size = Size::new(402.0, 874.0);
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = state::Page::Lyrics;
+        state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0,
+            ..state::mobile::ContentInsets::default() };
+        state.show(song("a", position));
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines.collect()) });
+        let mut tree = UiTree::new(Element::spacer());
+        tree.set_reduced_motion(true);
+        tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+        layout_view(&mut state, &mut tree, size);
+        (state, tree, size)
+    }
+
+    fn verses(count: u64) -> impl Iterator<Item = Line> {
+        (0..count).map(|index| Line { at_ms: index * 1_000, text: format!("Verse {index}") })
+    }
+
+    #[test]
+    fn the_first_and_the_last_line_both_rest_at_the_anchor_with_lines_on_either_side() {
+        for (position, line) in [(0.5, 0), (19.5, 19), (39.5, 39)] {
+            let (mut state, mut tree, size) = phone(verses(40), position);
+            let mut seen = None;
+            assert!(follow_lyrics(&mut state, &mut tree, size, &mut seen).is_some());
+            let frame = layout_view(&mut state, &mut tree, size);
+            let (at, anchor) = anchor_of(&frame, &format!("lyric:{line}"));
+            assert!((at - anchor).abs() < 1.0, "line {line} rests at the anchor: {at} vs {anchor}");
+            assert!(anchor > 150.0, "a third down a portrait body, not at its top");
+            if line > 0 {
+                let (above, _) = anchor_of(&frame, &format!("lyric:{}", line - 1));
+                assert!(above > 0.0, "the line just sung stays visible above");
+            }
+        }
+    }
+
+    #[test]
+    fn a_new_line_glides_the_rows_after_the_jump_and_a_new_track_or_reduced_motion_does_not() {
+        let (mut state, mut tree, size) = phone(verses(40), 10.5);
+        state.motion = true;
+        let mut seen = None;
+        follow_lyrics(&mut state, &mut tree, size, &mut seen);
+        layout_view(&mut state, &mut tree, size);
+        let before = tree.scroll_offset("lyrics-list");
+        state.show(song("a", 11.5));
+        follow_lyrics(&mut state, &mut tree, size, &mut seen);
+        let jump = tree.scroll_offset("lyrics-list") - before;
+        let now = std::time::Instant::now();
+        assert!(jump > 20.0, "the list moved on by a row: {jump}");
+        assert!((state.lyric_lag(11, now) - jump).abs() < 2.0, "the row is painted where it was");
+        assert!(state.is_sliding(now));
+
+        state.show(song("b", 0.0));
+        assert_eq!(state.lyric_lag(11, now), 0.0, "a new track starts still");
+        state.apply(Event::Lyrics { track_id: "b".into(), lines: Some(verses(40).collect()) });
+        state.show(song("b", 5.5));
+        follow_lyrics(&mut state, &mut tree, size, &mut seen);
+        state.show(song("b", 6.5));
+        state.motion = false;
+        follow_lyrics(&mut state, &mut tree, size, &mut seen);
+        assert_eq!(state.lyric_lag(6, std::time::Instant::now()), 0.0, "reduced motion follows at once");
+    }
+
     #[test]
     fn mobile_follow_keeps_wrapped_active_lyrics_inside_the_real_portrait_and_landscape_body() {
         use state::mobile::ContentInsets;
@@ -880,6 +966,8 @@ mod lyrics_viewport_tests {
             let frame = layout_view(&mut state, &mut tree, size);
             assert_eq!(state.active_line(), Some(10));
             assert_active_clear_of_chrome(&frame, "lyric:10");
+            let (at, anchor) = anchor_of(&frame, "lyric:10");
+            assert!((at - anchor).abs() < 1.0, "the line rests at the body's anchor: {at} vs {anchor}");
         }
     }
 
