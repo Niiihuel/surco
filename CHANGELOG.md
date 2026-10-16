@@ -11,6 +11,7 @@
   buttons on iOS 26 and a system Paste control beside the import link.
 - Unsigned IPA builds and a configurable bundle ID, so a fork can build and
   sideload Surco.
+- The desktop announces a new version through the system's notifications.
 
 ### Changed
 
@@ -23,11 +24,16 @@
 - A search page after the iPhone kit: recent searches that can be forgotten one by
   one, bold section headings and genre cards.
 - Rounded artist cards, true capsule controls and a slightly larger sung lyric.
+- On the desktop: library filters as pills, round search fields, Settings in the
+  phone's grouped cards, the phone's import card, and the lyrics card in the
+  playing panel springing its lines as the phone's does.
+- Long lists build only the rows around the view, and covers and sessions are
+  reused, so scrolling and starting a song are quicker.
 
 ### Fixed
 
 - The search bar keeps its size and position while the keyboard opens.
-- Covers are fetched at a size iPhones draw sharply.
+- Covers are fetched at a size iPhones and high-density screens draw sharply.
 
 ## 0.5.0
 
