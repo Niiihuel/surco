@@ -303,17 +303,25 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _searchRevision++;
     [self emit:@{@"kind":@"search_focus", @"session":_searchSession, @"revision":@(_searchRevision), @"editing":@NO}];
 }
+- (void)endSearchEditing {
+    [_searchBar.searchTextField resignFirstResponder];
+    // The editor lives inside the UIKeyInput canvas. Simulator traces show that
+    // resigning only the child can leave that ancestor keyboard-focused.
+    // Return/Cancel end editing for this hierarchy, once per explicit gesture.
+    // https://developer.apple.com/documentation/uikit/uiview/endediting(_:)
+    [_view endEditing:YES];
+}
 - (void)searchBarSearchButtonClicked:(UISearchBar *)searchBar {
     if (![self searchIsLive]) return;
     [searchBar.searchTextField unmarkText];
     [self sendSearchText];
     [self emit:@{@"kind":@"search_submit", @"session":_searchSession}];
-    [searchBar.searchTextField resignFirstResponder];
+    [self endSearchEditing];
 }
 - (void)searchBarCancelButtonClicked:(UISearchBar *)searchBar {
     if (![self searchIsLive]) return;
     NSString *session = _searchSession;
-    [searchBar.searchTextField resignFirstResponder];
+    [self endSearchEditing];
     [self emit:@{@"kind":@"search_cancel", @"session":session}];
 }
 - (void)updatePaste:(NSDictionary *)slot {
