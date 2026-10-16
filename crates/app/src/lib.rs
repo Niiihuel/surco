@@ -533,7 +533,10 @@ impl eframe::App for Host {
             self.touch = mobile_input::TouchInput::default();
             Vec::new()
         } else { input };
+        // Whether this frame changed anything after it was measured for input.
+        let mut acted = false;
         for event in input {
+            acted = true;
             self.stirred = Instant::now();
             #[cfg(target_os = "ios")]
             if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { .. }) { continue; }
@@ -553,6 +556,7 @@ impl eframe::App for Host {
         // has to be handed to it.
         if self.tree.input_value("search").is_some_and(|shown| shown != self.state.query) {
             self.tree.set_input_value("search", self.state.query.clone());
+            acted = true;
         }
         if let Some(text) = self.state.copy.take() {
             #[cfg(target_os = "ios")]
@@ -580,10 +584,15 @@ impl eframe::App for Host {
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
-        let commands = self.motion.advance(&mut self.state, window, Instant::now());
+        if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); acted = true; }
+        let now = Instant::now();
+        let moving = self.motion.active(now) || self.state.is_sliding(now);
+        let commands = self.motion.advance(&mut self.state, window, now);
+        acted |= !commands.is_empty();
         self.send(commands);
-        let frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
+        // Untouched since it was measured for input, that frame is this one too: building and
+        // laying out a long list again costs a frame's worth of time for nothing.
+        let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;

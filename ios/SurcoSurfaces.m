@@ -306,7 +306,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     UIColor *color = [UIColor colorWithRed:channel[0] / 255 green:channel[1] / 255 blue:channel[2] / 255 alpha:1];
     _shade.frame = frame;
     // Darkest over the status bar, still holding the header, gone just below it.
-    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.78].CGColor, (id)[color colorWithAlphaComponent:0.45].CGColor,
+    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.86].CGColor, (id)[color colorWithAlphaComponent:0.62].CGColor,
                                (id)[color colorWithAlphaComponent:0].CGColor];
     _shade.gradient.locations = @[@0, @(MAX(0, MIN(1, edge / frame.size.height))), @1];
     [self setChrome:_backdrop shown:YES];
