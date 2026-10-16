@@ -13,6 +13,10 @@ const RETURN: Duration = Duration::from_millis(220);
 /// The sheet's pace: critically damped, so it never bounces past the top, and
 /// 99% of the way after this, close to the timed open it replaces.
 const SHEET: Duration = Duration::from_millis(300);
+/// A released dismissal aims past the edge by the distance its speed would
+/// coast in this long, as a scroll view projects a fling: a flick crosses the
+/// screen at once, a slow pull glides away.
+const COAST: f32 = 0.03;
 /// A closing sheet aims this far past the bottom edge and is gone on reaching it,
 /// so it leaves at a gentle speed instead of creeping over the last pixels.
 const PAST: f32 = 20.0;
@@ -78,7 +82,8 @@ impl Motion {
             self.launch(size.height + PAST, now, reduced);
         }
         if reduced && !self.drag.is_dragging() { self.player.snap_to(self.player.target(), now); }
-        if self.closing && self.player.target() != size.height + PAST {
+        // After a resize the old target may fall short of the new edge; a projected fling past it stands.
+        if self.closing && self.player.target() < size.height + PAST {
             self.launch(size.height + PAST, now, reduced);
         }
         if self.closing && (self.offset(now) >= size.height || !self.player.is_active(now)) {
@@ -143,10 +148,11 @@ impl Motion {
                             self.drag.cancel();
                             if touch.claimed || touch.eligible {
                                 self.closing = dismiss;
-                                let target = if dismiss { size.height + PAST } else { 0.0 };
+                                let target = if dismiss { size.height + PAST + velocity.max(0.0) * COAST } else { 0.0 };
                                 if self.reduced || state.settings.reduce_motion {
                                     self.player.snap_to(target, now);
                                 } else {
+                                    self.player = self.player.motion(SpringMotion::settling_in(SHEET));
                                     self.player.release(self.player.value(now), velocity, target, now);
                                 }
                             }
@@ -846,7 +852,9 @@ mod tests {
         let (pull, slow) = dismiss(&[(500, 160.0), (1000, 160.0)], 1010);
         assert!(flick > pull + 10.0, "the flick's first frame is already further down: {flick} vs {pull}");
         assert!(fast < slow, "the flick reaches the bottom sooner: {fast:?} vs {slow:?}");
-        assert!(slow < Duration::from_millis(300), "a slow pull past the threshold still closes promptly: {slow:?}");
+        eprintln!("SURCO_DISMISS flick={fast:?} pull={slow:?}");
+        assert!(fast + Duration::from_millis(60) < slow, "the finger's speed decides how fast it leaves: {fast:?} vs {slow:?}");
+        assert!(slow < Duration::from_millis(450), "a slow pull past the threshold still closes promptly: {slow:?}");
     }
 
     #[test]
