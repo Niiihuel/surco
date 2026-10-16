@@ -4,17 +4,21 @@ use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 
 use eframe::egui::{self, Pos2};
-use limn::{DismissDrag, Frame, HitKind, Point, Role, ScalarTransition, Size, UiAction, UiEvent, UiTree};
+use limn::{DismissDrag, Frame, HitKind, Point, Role, ScalarSpring, ScalarTransition, Size, SpringMotion, UiAction, UiEvent, UiTree};
 
 use crate::{backend::Command, state::{Page, State}};
 
 const HEADER: f32 = crate::view::MOBILE_HEADER_HEIGHT;
-const OPEN: Duration = Duration::from_millis(320);
 const RETURN: Duration = Duration::from_millis(220);
-const CLOSE: Duration = Duration::from_millis(240);
+/// The sheet's pace: critically damped, so it never bounces past the top, and
+/// 99% of the way after this, close to the timed open it replaces.
+const SHEET: Duration = Duration::from_millis(300);
+/// A closing sheet aims this far past the bottom edge and is gone on reaching it,
+/// so it leaves at a gentle speed instead of creeping over the last pixels.
+const PAST: f32 = 20.0;
 
 pub struct Motion {
-    player: ScalarTransition,
+    player: ScalarSpring,
     search: ScalarTransition,
     showing: bool,
     closing: bool,
@@ -47,7 +51,7 @@ pub struct DragArea<'a> {
 
 impl Motion {
     pub fn new(now: Instant) -> Self {
-        Self { player: ScalarTransition::new(0.0, now), search: ScalarTransition::new(HEADER, now),
+        Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), search: ScalarTransition::new(HEADER, now),
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
             primary: None, underlay: None }
     }
@@ -59,7 +63,7 @@ impl Motion {
         let showing = state.mobile && state.page == Page::Playing;
         if showing && !self.showing {
             self.player.snap_to(if reduced || state.queue_open { 0.0 } else { size.height }, now);
-            self.player.retarget_with_motion(0.0, now, OPEN, reduced);
+            self.launch(0.0, now, reduced);
         } else if !showing || state.queue_open {
             self.drag.cancel();
             self.primary = None;
@@ -71,13 +75,13 @@ impl Motion {
             self.drag.cancel();
             self.primary = None;
             self.closing = true;
-            self.player.retarget_with_motion(size.height, now, CLOSE, reduced);
+            self.launch(size.height + PAST, now, reduced);
         }
         if reduced && !self.drag.is_dragging() { self.player.snap_to(self.player.target(), now); }
-        if self.closing && self.player.target() != size.height {
-            self.player.retarget_with_motion(size.height, now, CLOSE, reduced);
+        if self.closing && self.player.target() != size.height + PAST {
+            self.launch(size.height + PAST, now, reduced);
         }
-        if self.closing && !self.player.is_active(now) {
+        if self.closing && (self.offset(now) >= size.height || !self.player.is_active(now)) {
             self.closing = false;
             self.showing = false;
             self.player.snap_to(0.0, now);
@@ -87,7 +91,7 @@ impl Motion {
             state.mobile_ui.revealed = Some(crate::view::mobile_route_key(state));
             return commands;
         }
-        state.mobile_ui.player_offset = self.player.value(now);
+        state.mobile_ui.player_offset = self.offset(now);
         let search = state.mobile && state.page == Page::Search && state.mobile_search;
         if search {
             self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { HEADER }, now, RETURN, reduced);
@@ -110,7 +114,7 @@ impl Motion {
                 egui::Event::Touch { device_id, id, phase, pos, .. } => {
                     let point = Point::new(pos.x - origin.x, pos.y - origin.y);
                     if *phase == egui::TouchPhase::Start && self.primary.is_none() {
-                        let base = self.player.value(now);
+                        let base = self.offset(now);
                         let eligible = eligible(state, frame, point, size, scroll, base);
                         self.drag.begin(point, now, eligible);
                         if eligible {
@@ -133,12 +137,18 @@ impl Motion {
                             }
                         }
                         if matches!(phase, egui::TouchPhase::End | egui::TouchPhase::Cancel) {
+                            // The finger's speed carries into the spring: a flick leaves fast, a pull bounces back.
+                            let velocity = self.drag.velocity(now);
                             let dismiss = *phase == egui::TouchPhase::End && self.drag.release(now);
                             self.drag.cancel();
                             if touch.claimed || touch.eligible {
                                 self.closing = dismiss;
-                                self.player.retarget_with_motion(if dismiss { size.height } else { 0.0 }, now,
-                                    if dismiss { CLOSE } else { RETURN }, self.reduced || state.settings.reduce_motion);
+                                let target = if dismiss { size.height + PAST } else { 0.0 };
+                                if self.reduced || state.settings.reduce_motion {
+                                    self.player.snap_to(target, now);
+                                } else {
+                                    self.player.release(self.player.value(now), velocity, target, now);
+                                }
                             }
                             touch.finished = true;
                         }
@@ -149,7 +159,7 @@ impl Motion {
                     self.drag.cancel();
                     self.primary = None;
                     self.closing = false;
-                    self.player.retarget_with_motion(0.0, now, RETURN, self.reduced || state.settings.reduce_motion);
+                    self.launch(0.0, now, self.reduced || state.settings.reduce_motion);
                 }
                 _ => {}
             }
@@ -202,6 +212,14 @@ impl Motion {
     }
 
     pub fn active(&self, now: Instant) -> bool { self.player.is_active(now) || self.search.is_active(now) }
+
+    /// An upward release can carry the spring past the top; the sheet stops at the screen's edge.
+    fn offset(&self, now: Instant) -> f32 { self.player.value(now).max(0.0) }
+
+    /// A discrete open or close: start at an ease-out's speed, or keep a faster one in flight.
+    fn launch(&mut self, target: f32, now: Instant, reduced: bool) {
+        if reduced { self.player.snap_to(target, now) } else { self.player.launch(target, SpringMotion::settling_in(SHEET), now) }
+    }
 
     pub fn remember(&mut self, frame: &Frame, state: &State, size: Size) {
         if state.mobile && state.page != Page::Playing {
@@ -294,7 +312,8 @@ mod tests {
         let mut motion = Motion::new(now);
         let mut state = phone();
         motion.advance(&mut state, Size::new(390.0, 844.0), now);
-        motion.advance(&mut state, Size::new(390.0, 844.0), now + Duration::from_millis(320));
+        motion.advance(&mut state, Size::new(390.0, 844.0), now + Duration::from_secs(1));
+        assert!(!motion.active(now + Duration::from_secs(1)), "the opening spring settles");
         (motion, state)
     }
 
@@ -554,8 +573,10 @@ mod tests {
         assert!(middle > 0.0 && middle < size.height);
         state.update(&limn::UiAction::Clicked { id: "mobile-player-dismiss".into() });
         motion.advance(&mut state, size, now + Duration::from_millis(80));
-        assert_eq!(state.mobile_ui.player_offset, middle, "closing starts from the displayed position");
-        let commands = motion.advance(&mut state, size, now + Duration::from_millis(320));
+        assert!((state.mobile_ui.player_offset - middle).abs() < 0.01, "closing starts from the displayed position");
+        motion.advance(&mut state, size, now + Duration::from_millis(96));
+        assert_eq!(state.page, Page::Playing);
+        let commands = motion.advance(&mut state, size, now + Duration::from_secs(1));
         assert_eq!(state.page, Page::Library);
         assert_eq!(state.mobile_ui.revealed.as_deref(), Some("mobile:Library"), "the uncovered page does not fade in again");
         assert!(state.player.playing && commands.iter().all(|command| !matches!(command, Command::PlayPause)));
@@ -579,7 +600,7 @@ mod tests {
         assert_eq!(state.mobile_ui.player_offset, 60.0);
         let released = motion.filter(&raw(egui::TouchPhase::End, 20.0, 260.0), vec![UiEvent::PointerUp(Point::new(20.0, 260.0)), UiEvent::PointerLeave], &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1510));
         assert!(!released.iter().any(|event| matches!(event, UiEvent::PointerUp(_) | UiEvent::Scroll2D { .. })));
-        motion.advance(&mut state, size, at + Duration::from_millis(1730));
+        motion.advance(&mut state, size, at + Duration::from_millis(2510));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         assert_eq!(state.page, Page::Playing, "a short slow pull returns instead of navigating");
     }
@@ -712,7 +733,7 @@ mod tests {
             let end = if cancel { vec![egui::Event::WindowFocused(false)] } else { raw(egui::TouchPhase::End, 20.0, 80.0) };
             let output = motion.filter(&end, Vec::new(), &state, area(), at + Duration::from_millis(50));
             if cancel { assert_eq!(output, vec![UiEvent::PointerLeave]); }
-            motion.advance(&mut state, size, at + Duration::from_millis(300));
+            motion.advance(&mut state, size, at + Duration::from_secs(1));
             assert_eq!(state.page, if cancel { Page::Playing } else { Page::Library });
             assert!(state.player.playing);
             assert_eq!(state.mobile_ui.player_offset, 0.0);
@@ -783,8 +804,88 @@ mod tests {
         motion.advance(&mut state, size, at + Duration::from_millis(50));
         assert_eq!(state.mobile_ui.player_offset, base + 60.0);
         motion.filter(&raw(egui::TouchPhase::Cancel, 20.0, base + 80.0), Vec::new(), &state, area(), at + Duration::from_millis(60));
-        motion.advance(&mut state, size, at + Duration::from_millis(280));
+        motion.advance(&mut state, size, at + Duration::from_millis(1060));
         assert_eq!(state.mobile_ui.player_offset, 0.0);
         assert_eq!(state.page, Page::Playing);
+    }
+
+    /// Pull from the header to y = 160, release at `release` after the start, then
+    /// advance every millisecond until the player navigates away. Returns the
+    /// offset one 60 Hz frame after release and the time from release to navigation.
+    fn dismiss(moves: &[(u64, f32)], release: u64) -> (f32, Duration) {
+        let now = Instant::now();
+        let (mut motion, mut state) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let frame = surface();
+        let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
+        let at = now + Duration::from_secs(1);
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 20.0), Vec::new(), &state, area(), at);
+        for &(ms, y) in moves {
+            motion.filter(&raw(egui::TouchPhase::Move, 20.0, y), Vec::new(), &state, area(), at + Duration::from_millis(ms));
+        }
+        let released = at + Duration::from_millis(release);
+        motion.filter(&raw(egui::TouchPhase::End, 20.0, 160.0), Vec::new(), &state, area(), released);
+        let mut first = 0.0;
+        for ms in 1..1000 {
+            let elapsed = Duration::from_millis(ms);
+            motion.advance(&mut state, size, released + elapsed);
+            if ms == 17 { first = state.mobile_ui.player_offset; }
+            if state.page != Page::Playing {
+                assert_eq!(state.mobile_ui.player_offset, 0.0);
+                assert!(!motion.active(released + elapsed), "the closed sheet stops repainting");
+                return (first, elapsed);
+            }
+            assert!(motion.active(released + elapsed), "the host repaints while the sheet moves");
+        }
+        panic!("the released player never finished closing");
+    }
+
+    #[test]
+    fn a_flick_carries_its_speed_and_leaves_sooner_than_a_slow_pull_past_the_threshold() {
+        let (flick, fast) = dismiss(&[(40, 160.0)], 50);
+        let (pull, slow) = dismiss(&[(500, 160.0), (1000, 160.0)], 1010);
+        assert!(flick > pull + 10.0, "the flick's first frame is already further down: {flick} vs {pull}");
+        assert!(fast < slow, "the flick reaches the bottom sooner: {fast:?} vs {slow:?}");
+        assert!(slow < Duration::from_millis(300), "a slow pull past the threshold still closes promptly: {slow:?}");
+    }
+
+    #[test]
+    fn a_short_pull_bounces_back_to_rest_without_navigation() {
+        let now = Instant::now();
+        let (mut motion, mut state) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let frame = surface();
+        let area = || DragArea { frame: &frame, origin: Pos2::ZERO, size, scroll: 0.0 };
+        let at = now + Duration::from_secs(1);
+        motion.filter(&raw(egui::TouchPhase::Start, 20.0, 20.0), Vec::new(), &state, area(), at);
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, 70.0), Vec::new(), &state, area(), at + Duration::from_millis(150));
+        motion.filter(&raw(egui::TouchPhase::Move, 20.0, 80.0), Vec::new(), &state, area(), at + Duration::from_millis(200));
+        motion.filter(&raw(egui::TouchPhase::End, 20.0, 80.0), Vec::new(), &state, area(), at + Duration::from_millis(210));
+        let mut previous = 60.0;
+        for frame in 1..60 {
+            let time = at + Duration::from_millis(210) + Duration::from_micros(16_667 * frame);
+            motion.advance(&mut state, size, time);
+            assert!(state.mobile_ui.player_offset <= previous + 1.0 && state.mobile_ui.player_offset >= 0.0);
+            previous = state.mobile_ui.player_offset;
+            assert_eq!(state.page, Page::Playing);
+        }
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        assert!(!motion.active(at + Duration::from_secs(2)), "the returned sheet settles and stops repainting");
+    }
+
+    #[test]
+    fn reduced_motion_opens_and_closes_the_sheet_without_a_spring() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        motion.set_reduced_motion(true);
+        let mut state = phone();
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, size, now);
+        assert_eq!(state.mobile_ui.player_offset, 0.0);
+        assert!(!motion.active(now));
+        state.update(&limn::UiAction::Clicked { id: "mobile-player-dismiss".into() });
+        motion.advance(&mut state, size, now);
+        assert_eq!(state.page, Page::Library, "an instant close still navigates back");
+        assert!(!motion.active(now));
     }
 }
