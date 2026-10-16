@@ -3,7 +3,7 @@
 
 pub(crate) mod mobile;
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use surco_audio::equalizer::EqualizerValues;
 use surco_audio::AudioOutputDevice;
@@ -534,6 +534,8 @@ pub struct State {
     /// The band last moved: its name is lit and its point marked on the curve.
     pub equalizer_band: Option<usize>,
     pub artwork: HashMap<String, RasterImage>,
+    /// The covers held, oldest first, so a long session lets the ones it saw first go.
+    artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
     pub tints: HashMap<String, limn::Color>,
     /// The track whose share card is open, and whether its link was just copied.
@@ -613,9 +615,12 @@ pub struct State {
     pub output_open: bool,
 }
 
+/// How many covers a session holds, a few tens of megabytes of them.
+const ARTWORK_KEPT: usize = 400;
+
 /// One request per cover, however many rows show it and however often it comes up.
-// shortcut: covers come at `COVER_SIDE` whatever their place and stay for the whole run; ask for
-// the size on screen and evict when a long session's memory matters.
+// shortcut: covers come at `COVER_SIDE` whatever their place; ask for the size on screen
+// when the bytes matter.
 fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item = &'a Option<String>>) -> Vec<Command> {
     let urls = urls.into_iter().flatten();
     urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
@@ -791,6 +796,7 @@ impl Default for State {
             equalizer: EqualizerValues::FLAT,
             equalizer_band: None,
             artwork: HashMap::new(),
+            artwork_order: VecDeque::new(),
             tints: HashMap::new(),
             sharing: None,
             copied: false,
@@ -1994,7 +2000,8 @@ impl State {
                 if let Some([red, green, blue]) = tint {
                     self.tints.insert(url.clone(), limn::Color::rgb(red, green, blue));
                 }
-                self.artwork.insert(url, image);
+                if self.artwork.insert(url.clone(), image).is_none() { self.artwork_order.push_back(url); }
+                self.forget_old_covers();
                 Vec::new()
             }
             _ => Vec::new(),
@@ -2194,6 +2201,22 @@ impl State {
         self.lyrics = Some((track.id.clone(), Lyrics::Loading));
         self.lyric_shown = None;
         vec![Command::Lyrics(track.clone())]
+    }
+
+    /// Lets the covers seen longest ago go once there are more than `ARTWORK_KEPT`, and
+    /// forgets they were asked for, so a page that shows one again asks again. The cover of
+    /// what plays stays.
+    fn forget_old_covers(&mut self) {
+        let playing = self.player.current.as_ref().and_then(|track| track.artwork_url.clone());
+        for _ in 0..self.artwork_order.len().saturating_sub(ARTWORK_KEPT) {
+            let Some(url) = self.artwork_order.pop_front() else { break };
+            if Some(&url) == playing.as_ref() {
+                self.artwork_order.push_back(url);
+                continue;
+            }
+            self.artwork.remove(&url);
+            self.covers.remove(&url);
+        }
     }
 
     /// The lines of what plays, when they are known.
@@ -3295,6 +3318,23 @@ mod tests {
         assert_eq!(clock(291.0), "4:51");
         assert_eq!(clock(-3.0), "0:00");
         assert_eq!(clock(f64::NAN), "0:00");
+    }
+
+    #[test]
+    fn a_long_session_lets_its_oldest_covers_go_but_keeps_what_plays() {
+        let mut state = State::default();
+        let cover = |index: usize| format!("https://covers/{index}");
+        state.show(PlayerView { current: Some(Track { artwork_url: Some(cover(0)), ..track("a") }), ..PlayerView::default() });
+        for index in 0..ARTWORK_KEPT + 2 {
+            state.covers.insert(cover(index));
+            let image = RasterImage::new(format!("{index:064x}"), limn::RasterImageFormat::Png, 1, "AA==".into(), "Portada").unwrap();
+            state.apply(Event::Artwork { url: cover(index), image, tint: None });
+        }
+        assert_eq!(state.artwork.len(), ARTWORK_KEPT);
+        assert!(state.artwork.contains_key(&cover(0)), "the cover of what plays stays");
+        assert!(!state.artwork.contains_key(&cover(1)) && !state.artwork.contains_key(&cover(2)));
+        assert!(!state.covers.contains(&cover(1)), "and may be asked for again");
+        assert!(state.artwork.contains_key(&cover(ARTWORK_KEPT + 1)));
     }
 
     #[test]

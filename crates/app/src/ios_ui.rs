@@ -101,6 +101,7 @@ mod native {
         fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
         fn surco_reduce_motion_enabled() -> i32;
         fn surco_ui_on_screen() -> i32;
+        fn surco_ui_take_memory_warning() -> i32;
         fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
         fn surco_ui_take_surface_events(handle: *mut c_void) -> *mut c_char;
     }
@@ -115,6 +116,11 @@ mod native {
     /// screen, where audio plays on and nothing needs drawing. Safe from any thread.
     pub fn on_screen() -> bool {
         unsafe { surco_ui_on_screen() != 0 }
+    }
+
+    /// Whether iOS warned of low memory since the last time this was asked.
+    pub fn take_memory_warning() -> bool {
+        unsafe { surco_ui_take_memory_warning() != 0 }
     }
 
     extern "C" fn wake(context: *mut c_void) {
@@ -314,7 +320,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled};
+pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled, take_memory_warning};
 
 #[cfg(test)]
 mod tests {

@@ -12,6 +12,8 @@
 // Whether Surco is on screen. UIKit's notifications write it on the main thread; the
 // backend reads it from its own, to stop waking a window nobody can see.
 static atomic_int SurcoOnScreen = 1;
+// Set when iOS runs short of memory; the next frame lets the decoded covers go.
+static atomic_int SurcoMemoryWarned = 0;
 static void SurcoWatchScreen(void) {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
@@ -20,9 +22,12 @@ static void SurcoWatchScreen(void) {
             usingBlock:^(NSNotification *note) { atomic_store(&SurcoOnScreen, 0); }];
         [center addObserverForName:UIApplicationWillEnterForegroundNotification object:nil queue:nil
             usingBlock:^(NSNotification *note) { atomic_store(&SurcoOnScreen, 1); }];
+        [center addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:nil
+            usingBlock:^(NSNotification *note) { atomic_store(&SurcoMemoryWarned, 1); }];
     });
 }
 int surco_ui_on_screen(void) { return atomic_load(&SurcoOnScreen); }
+int surco_ui_take_memory_warning(void) { return atomic_exchange(&SurcoMemoryWarned, 0); }
 
 typedef void (*SurcoUiWake)(void *context);
 

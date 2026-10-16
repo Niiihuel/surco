@@ -332,6 +332,9 @@ impl eframe::App for Host {
         let still = self.state.settings.reduce_motion;
         #[cfg(target_os = "ios")]
         let still = still || ios_ui::reduce_motion_enabled();
+        // Decoded covers are only a cache: short of memory, they are decoded again when seen.
+        #[cfg(target_os = "ios")]
+        if ios_ui::take_memory_warning() { limn_egui::clear_image_cache(); }
         self.tree.set_reduced_motion(still);
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
@@ -741,17 +744,19 @@ pub fn run() -> eframe::Result {
     }
     let mobile = cfg!(target_os = "ios") || script.mobile;
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
+    let viewport = egui::ViewportBuilder::default()
+        .with_title("Surco")
+        .with_decorations(!cfg!(target_os = "windows"))
+        .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
+        .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
+    // iOS shows the bundle's icon; decoding this one would only delay the first frame.
+    let viewport = if cfg!(target_os = "ios") { viewport } else { viewport.with_icon(icon()) };
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: graphics_configuration(),
         persist_window: !mobile,
         persistence_path: paths::persistence_path(&data),
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Surco")
-            .with_decorations(!cfg!(target_os = "windows"))
-            .with_icon(icon())
-            .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
-            .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] }),
+        viewport,
         run_and_return: !cfg!(target_os = "ios"),
         ..Default::default()
     };
@@ -763,7 +768,8 @@ pub fn run() -> eframe::Result {
             #[cfg(target_os = "ios")]
             ios_symbols::install();
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
-            limn_egui::set_image_cache_entries(256);
+            // A phone's covers are drawn at three pixels a point, a megabyte each: it keeps fewer.
+            limn_egui::set_image_cache_entries(if cfg!(target_os = "ios") { 96 } else { 256 });
             // Beside the settings; without a place of its own the library lasts the session.
             let data = data.join("offline");
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);

@@ -264,6 +264,9 @@ struct Shared {
     inputs: UnboundedSender<Input>,
     library: Mutex<Library>,
     saving: Mutex<HashSet<String>>,
+    /// How many covers are fetched at once: a library opening asks for all of its own, and
+    /// the stream of a song asked for meanwhile should not queue behind them.
+    covers: tokio::sync::Semaphore,
     #[cfg(target_os = "ios")]
     cached_loads: Mutex<Vec<CachedLoad>>,
 }
@@ -551,6 +554,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         inputs,
         library: Mutex::new(Library::open(library)),
         saving: Mutex::default(),
+        covers: tokio::sync::Semaphore::new(COVERS_AT_ONCE),
         #[cfg(target_os = "ios")]
         cached_loads: Mutex::default(),
     })
@@ -581,6 +585,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
+                let Ok(_turn) = shared.covers.acquire().await else { return };
                 // A cover that does not arrive leaves its placeholder; nothing to report.
                 if let Some((image, tint)) = artwork(&shared, &url).await {
                     (shared.reply)(Event::Artwork { url, image, tint });
@@ -1199,10 +1204,13 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
     buffer.fail();
 }
 
+const COVERS_AT_ONCE: usize = 6;
+
 /// A cover from the library when it is there, from the network otherwise, where the catalog's
 /// own size would show blurred.
 async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
-    let kept = shared.library.lock().unwrap().cover(url);
+    // Reading the disk holds the library: off the runtime's two workers.
+    let kept = tokio::task::block_in_place(|| shared.library.lock().unwrap().cover(url));
     match kept {
         Some(bytes) => Some(bytes),
         None => Some(shared.youtube.http().get(cover_at(url, COVER_SIDE)).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec()),
@@ -1232,10 +1240,14 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
         [b'G', b'I', b'F', ..] => RasterImageFormat::Gif,
         _ => return None,
     };
-    let digest: String = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
-    let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), "Portada")?;
-    Some((image, tint_of(&bytes)))
+    // Hashing, encoding and decoding for the tint are the CPU's, not the network's: they
+    // leave the runtime's workers free for playback meanwhile.
+    tokio::task::block_in_place(|| {
+        let digest: String = Sha256::digest(&bytes).iter().map(|byte| format!("{byte:02x}")).collect();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+        let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), "Portada")?;
+        Some((image, tint_of(&bytes)))
+    })
 }
 
 #[cfg(test)]
