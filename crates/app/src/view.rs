@@ -106,6 +106,8 @@ fn menu_sizing(state: &State) -> SelectorSizing {
 /// beside the middle panel are the handles that resize the other two.
 const CANVAS: Color = Color::rgb(0, 0, 0);
 const CHOSEN: Color = Color::rgb(31, 31, 31);
+/// The lifted surface of a phone promotion card, as Spotify's.
+const PROMO: Color = Color::rgb(36, 36, 36);
 const GAP: f32 = 8.0;
 const PANEL_RADIUS: f32 = 8.0;
 const TOP_BAR_HEIGHT: f32 = 56.0;
@@ -444,10 +446,11 @@ fn import_picture() -> Option<limn::RasterImage> {
 
 /// The library's offer to bring music in from another app, until it is used or put away.
 fn import_card(width: f32, palette: ComponentPalette, phone: bool, native: bool) -> Element {
+    if phone {
+        return phone_import_card(width, palette, native);
+    }
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let close = if phone { mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(CANVAS).radius(22.0) }
-        else { on_picture("import-dismiss", Icon::Close, "No mostrar más", palette) };
-    let away = Element::row(vec![Element::spacer().flex(1.0), close]);
+    let away = Element::row(vec![Element::spacer().flex(1.0), on_picture("import-dismiss", Icon::Close, "No mostrar más", palette)]);
     // As wide as the card's own room, at the proportions it was drawn at.
     let across = width - 24.0;
     let top = match import_picture() {
@@ -457,20 +460,37 @@ fn import_card(width: f32, palette: ComponentPalette, phone: bool, native: bool)
         }
         None => away,
     };
-    let title = Text::new("Traé tu música de otras apps", raised);
-    let title = if phone { title.font_size(16.0) } else { title }.render();
-    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted();
-    let about = if phone { about.font_size(14.0) } else { about }.render();
-    let go = Button::new("import-open", "Importar", raised);
-    let go = if phone { go.sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round() } else { go.size(ControlSize::Compact) }.render();
+    let title = Text::new("Traé tu música de otras apps", raised).render();
+    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
+    let go = Button::new("import-open", "Importar", raised).size(ControlSize::Compact).render();
+    Element::panel(Element::column(vec![top, title, about, Element::row(vec![go]).gap(8.0)]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
+}
+
+/// The phone's offer, after the Spotify kit's promotion cards: the picture edge to edge
+/// over a lifted surface, a bold title, a quiet line and white capsules.
+fn phone_import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
+    let raised = ComponentPalette { surface: PROMO, ..palette };
+    let close = mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(Color { a: 140, ..CANVAS }).radius(22.0);
+    let away = Element::row(vec![Element::spacer().flex(1.0), close]).padding(4.0);
+    let top = match import_picture() {
+        Some(picture) => Element::stack(vec![
+            Element::raster_image(picture.cover()).size(Some(width), Some(width * 130.0 / 460.0)), away]),
+        None => away,
+    };
+    let title = Text::new("Traé tu música de otras apps", raised).font_size(18.0).render().font_family(FontFamily::SansBold);
+    let about = Text::new("Pegá el enlace de una playlist de Spotify, Apple Music o YouTube Music.", raised).font_size(14.0).muted().render();
+    let go = Button::new("import-open", "Importar", raised)
+        .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render();
     let mut actions = vec![go];
-    if phone && native && cfg!(any(target_os = "ios", test)) {
+    if native && cfg!(any(target_os = "ios", test)) {
         // UIKit draws and handles UIPasteControl in this slot. Pasting prepares
         // the import form; fetching a playlist still requires its explicit submit.
         actions.push(Element::panel(Element::spacer()).size(Some(112.0), Some(44.0))
             .accessible(limn::Access::new(limn::Role::Group).id("ios-paste:import-card").name("Pegar enlace de playlist")));
     }
-    Element::panel(Element::column(vec![top, title, about, Element::row(actions).gap(8.0)]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
+    let actions = Element::row(actions).gap(8.0);
+    let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(6.0)), actions]).gap(6.0).padding(16.0);
+    Element::panel(Element::column(vec![top, copy])).background(PROMO).radius(8.0).clip_children()
 }
 
 /// What cannot be undone asks before it is done.
