@@ -139,7 +139,7 @@ impl Controller {
             node.id == "ios-search" && !node.disabled)).flatten()
             .and_then(|node| visible_rect(frame, 0, node.rect, true))
             .and_then(|rect| screen_rect(rect, origin))
-            .filter(|rect| rect[2] >= 44.0 && rect[3] >= 44.0);
+            .filter(touch_sized);
         if let Some(rect) = search_rect {
             if self.search.as_ref().is_none_or(|binding| binding.intent != state.mobile_ui.search_intent) {
                 self.next_search += 1;
@@ -176,7 +176,7 @@ impl Controller {
                 limn::HitKind::Button => region.id != id,
                 _ => false,
             }) { continue; }
-            if let Some(rect) = screen_rect(visible, origin).filter(|rect| rect[2] >= 44.0 && rect[3] >= 44.0) {
+            if let Some(rect) = screen_rect(visible, origin).filter(touch_sized) {
                 self.paste = Some(target.into());
                 payload.paste = Some(PasteSlot { target: target.into(), rect });
                 break;
@@ -327,6 +327,11 @@ fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect, in_header: bool) 
         }
     }
     (bottom > top).then(|| limn::Rect::new(rect.x, top, rect.width, bottom - top))
+}
+
+/// Large enough to tap; layout sums can land a hair under the 44 pt a slot was given.
+fn touch_sized(rect: &[f32; 4]) -> bool {
+    rect[2] >= 43.99 && rect[3] >= 43.99
 }
 
 fn screen_rect(rect: limn::Rect, origin: Pos2) -> Option<[f32; 4]> {

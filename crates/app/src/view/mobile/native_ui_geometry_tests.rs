@@ -63,6 +63,10 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
         limn_egui::attach_fonts(&mut tree, &context);
         tree.set_reduced_motion(true);
         let frame = tree.layout(size);
+        if key == "library" {
+            let slot = crate::native_surfaces::Controller::default().payload(&state, &frame, eframe::egui::Pos2::ZERO).paste;
+            assert_eq!(slot.map(|slot| slot.target).as_deref(), Some("import-card"), "UIKit is handed the card's paste slot");
+        }
         let mut entries = serde_json::Map::new();
         for id in ids {
             let node = frame

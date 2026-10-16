@@ -456,6 +456,9 @@ mod tests {
             assert!(paste.rect.x >= import.rect.x + import.rect.width);
             assert!(paste.rect.x + paste.rect.width <= width);
             assert!(paste.rect.y + paste.rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
+            let mut native = crate::native_surfaces::Controller::default();
+            assert_eq!(native.payload(&state, &frame, eframe::egui::Pos2::ZERO).paste.map(|slot| slot.target).as_deref(),
+                Some("import-card"), "UIKit is handed the slot at {width}");
         }
     }
 

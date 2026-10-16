@@ -299,6 +299,8 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     if (!_edgeHost) {
         _edgeHost = [UIScrollView new];
         _edgeHost.userInteractionEnabled = NO;
+        // Only paint: VoiceOver reads the canvas's rows, not this stand-in's scroll bars.
+        _edgeHost.accessibilityElementsHidden = YES;
         _edgeHost.scrollsToTop = NO;
         _edgeHost.showsVerticalScrollIndicator = NO;
         _edgeHost.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
