@@ -1550,6 +1550,7 @@ const SETTINGS_ROW: ActionRowSizing = ActionRowSizing { gap: 24.0, copy_gap: 8.0
 /// What the user can set: one page of groups, each row its name and what it does beside
 /// its control. A narrow page stacks the control under the copy.
 fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    if state.mobile { return mobile::settings::page(state, width); }
     let column = PageColumn::new("settings", width, palette).max_width(900.0).gutter(24.0, 32.0, 720.0).gap(32.0).reserve_rail(true);
     // A switch or a short button fits beside its row's copy in less room than a field would.
     let compact = column.content_width() < 600.0;
@@ -1558,11 +1559,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let row = |title: &str, about: &str| ActionRow::new(title, card).subtitle(about).wrap_title(true).sizing(SETTINGS_ROW);
     let switch = |title: &str, about: &str, id: &str, on: bool| row(title, about)
         .trailing(Switch::new(id, on, control).size(ControlSize::Spacious).accessibility_label(title).render())
-        .stacked(compact && !state.mobile).render();
-    let action = |id: &str, label: &str, enabled: bool| {
-        let button = Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Spacious).enabled(enabled).render();
-        if state.mobile { button.size(None, Some(44.0)) } else { button }
-    };
+        .stacked(compact).render();
+    let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Spacious).enabled(enabled).render();
     let group = |title: &str, rows: Vec<Element>| Element::column(vec![
         Text::new(title, card).role(TextRole::Heading).render(),
         Element::column(rows).gap(8.0),
@@ -1613,17 +1611,14 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     } else {
         format!("{} {} en este equipo.", state.outputs.len(), if state.outputs.len() == 1 { "salida disponible" } else { "salidas disponibles" })
     };
-    let mut connections = if state.mobile { vec![
-        row("Escuchar en otro dispositivo", "Elegí el iPhone, auriculares, parlantes o un destino AirPlay disponible.")
-            .trailing(action("setting:connections", "Conectar", true)).stacked(compact).render(),
-    ] } else { vec![
+    let mut connections = vec![
         row("Dispositivo de salida", "Elegí por dónde escuchar: parlantes, auriculares o una salida Bluetooth conectada al sistema.")
             .trailing(output).stacked(compact).render(),
         row("Salidas disponibles", &output_status)
             .trailing(action("setting:outputs-refresh", if state.outputs_loading { "Buscando…" } else { "Actualizar" }, !state.outputs_loading))
             .stacked(compact).render(),
         row("Conectar por Bluetooth", "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.").render(),
-    ] };
+    ];
     if let Some(notice) = &state.output_notice {
         connections.push(Alert::new("Salida de audio", notice, card).id("setting:output-notice").compact(compact).render());
     }
@@ -1637,20 +1632,14 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         Tab::new("library-view:list", "Lista", 0.0).active(state.settings.library_view == LibraryView::List),
         Tab::new("library-view:grid", "Cuadrícula", 0.0).active(state.settings.library_view == LibraryView::Grid),
     ]);
-    let mut visualization = vec![switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion)];
-    if !state.mobile {
-        visualization.splice(0..0, [
-            switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
-            switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
-            switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
-        ]);
-    }
+    let visualization = vec![
+        switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
+        switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
+        switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
+        switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
+    ];
     let body = vec![
-        if state.mobile {
-            Text::new("Los cambios se guardan en este equipo.", card).muted().render()
-        } else {
-            PageHeader::new("Configuración", card).description("Los cambios se guardan en este equipo.").stacked(compact).render()
-        },
+        PageHeader::new("Configuración", card).description("Los cambios se guardan en este equipo.").stacked(compact).render(),
         group(
             "Reproducción",
             vec![
@@ -1698,7 +1687,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         group(
             "Acerca de",
             vec![
-                row("Versión", if state.mobile { "Surco para iOS." } else { "Surco para escritorio." }).value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
+                row("Versión", "Surco para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
                 row("Licencias de terceros", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
             ],
         ),

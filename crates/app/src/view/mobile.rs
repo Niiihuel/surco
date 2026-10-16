@@ -10,6 +10,7 @@ mod chrome;
 pub(super) mod controls;
 mod sheets;
 pub(super) mod details;
+pub(super) mod settings;
 #[cfg(test)]
 mod dialog_tests;
 #[cfg(test)]
