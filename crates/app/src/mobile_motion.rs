@@ -10,6 +10,9 @@ use crate::{backend::Command, state::{Page, State}};
 
 const HEADER: f32 = crate::view::MOBILE_HEADER_HEIGHT;
 const RETURN: Duration = Duration::from_millis(220);
+/// A wait between frames longer than this is a stall, not a slow frame: iOS holds the main
+/// thread while it raises the keyboard, the first time above all.
+const STALL: Duration = Duration::from_millis(100);
 /// The sheet's pace: critically damped, so it never bounces past the top, and
 /// 99% of the way after this, close to the timed open it replaces.
 const SHEET: Duration = Duration::from_millis(300);
@@ -24,6 +27,8 @@ const PAST: f32 = 20.0;
 pub struct Motion {
     player: ScalarSpring,
     search: ScalarTransition,
+    /// The search header's height as last drawn, and when.
+    search_drawn: Option<(f32, Instant)>,
     showing: bool,
     closing: bool,
     reduced: bool,
@@ -55,7 +60,7 @@ pub struct DragArea<'a> {
 
 impl Motion {
     pub fn new(now: Instant) -> Self {
-        Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), search: ScalarTransition::new(HEADER, now),
+        Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), search: ScalarTransition::new(HEADER, now), search_drawn: None,
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
             primary: None, underlay: None }
     }
@@ -99,10 +104,17 @@ impl Motion {
         state.mobile_ui.player_offset = self.offset(now);
         let search = state.mobile && state.page == Page::Search && state.mobile_search;
         if search {
+            // A collapse the stall would have run unseen picks up again from where it was drawn.
+            if let Some((drawn, at)) = self.search_drawn {
+                if now.saturating_duration_since(at) > STALL && self.search.is_active(at) { self.search.snap_to(drawn, now); }
+            }
             self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { HEADER }, now, RETURN, reduced);
-            state.mobile_ui.search_header = Some(self.search.value(now));
+            let height = self.search.value(now);
+            self.search_drawn = Some((height, now));
+            state.mobile_ui.search_header = Some(height);
         } else {
             self.search.snap_to(HEADER, now);
+            self.search_drawn = None;
             state.mobile_ui.search_header = None;
         }
         Vec::new()
@@ -673,8 +685,39 @@ mod tests {
         state.mobile_ui.search_editing = false;
         motion.advance(&mut state, size, now + Duration::from_millis(2080));
         assert_eq!(state.mobile_ui.search_header, Some(middle));
-        motion.advance(&mut state, size, now + Duration::from_millis(2300));
+        frames(&mut motion, &mut state, size, now + Duration::from_millis(2080), now + Duration::from_millis(2300));
         assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+    }
+
+    #[test]
+    fn a_stall_as_the_keyboard_rises_does_not_skip_the_search_headers_collapse() {
+        let now = Instant::now();
+        let (mut motion, mut state) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        state.page = Page::Search;
+        state.mobile_search = true;
+        motion.advance(&mut state, size, now + Duration::from_secs(1));
+        state.mobile_ui.search_editing = true;
+        motion.advance(&mut state, size, now + Duration::from_secs(1));
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+        // The keyboard holds the main thread longer than the whole collapse.
+        let resumed = now + Duration::from_millis(1400);
+        motion.advance(&mut state, size, resumed);
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER), "it starts from where it was last drawn");
+        motion.advance(&mut state, size, resumed + Duration::from_millis(80));
+        let middle = state.mobile_ui.search_header.unwrap();
+        assert!(middle > 0.0 && middle < HEADER, "and is seen on its way");
+        frames(&mut motion, &mut state, size, resumed + Duration::from_millis(80), resumed + RETURN);
+        assert_eq!(state.mobile_ui.search_header, Some(0.0));
+    }
+
+    /// Advances as the host does, a frame at a time, up to `to`.
+    fn frames(motion: &mut Motion, state: &mut State, size: Size, from: Instant, to: Instant) {
+        let mut at = from;
+        while at < to {
+            at = (at + Duration::from_millis(16)).min(to);
+            motion.advance(state, size, at);
+        }
     }
 
     #[test]
