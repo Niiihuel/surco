@@ -15,7 +15,7 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_surfaces {
         return Element::panel(Element::spacer().size(None, Some(TAP))
             .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name("Buscar música")))
-            .padding(padding).background(if compact { Color::rgb(33, 33, 33) } else { SCHEME.canvas })
+            .padding(padding).background(SCHEME.canvas)
             .size(None, Some(field_height(state)));
     }
     let field = if editing {
