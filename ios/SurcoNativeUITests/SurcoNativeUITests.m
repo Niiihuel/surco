@@ -293,6 +293,7 @@
     NSLog(@"SURCO_NATIVE_SLIDER_AX_FRAME=%@", NSStringFromCGRect(volume.frame));
     NSString *before = [volume.value copy];
     XCTAssertNotNil(before);
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0, @"The fixture begins at the native slider's exact minimum");
     [volume adjustToNormalizedSliderPosition:0.5];
     NSString *adjusted = [volume.value copy];
     XCTAssertNotNil(adjusted);
@@ -302,9 +303,27 @@
     [self waitFor:volume predicate:@"exists == NO"];
     [self canvasTap:@"setting:connections" page:@"settings"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
+    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
     XCTAssertEqualObjects(volume.value, adjusted, @"Reopening restores the volume received by Rust");
-    [volume adjustToNormalizedSliderPosition:0];
+    // adjustToNormalizedSliderPosition is best effort. To require the exact
+    // endpoint, drag the current thumb to the slider's left edge, inside the app.
+    // https://developer.apple.com/documentation/xcuiautomation/xcuielement/adjust(tonormalizedsliderposition:)
+    CGFloat position = volume.normalizedSliderPosition;
+    XCTAssertTrue(position > 0.0 && position <= 1.0, @"The changed volume has a valid nonzero thumb position");
+    XCUICoordinate *thumb = [volume coordinateWithNormalizedOffset:CGVectorMake(position, 0.5)];
+    XCUICoordinate *minimum = [volume coordinateWithNormalizedOffset:CGVectorMake(0, 0.5)];
+    [thumb pressForDuration:0.2 thenDragToCoordinate:minimum];
+    [self waitFor:volume predicate:[NSString stringWithFormat:@"value == '%@'", before]];
     XCTAssertEqualObjects(volume.value, before, @"Restore the fixture's silent volume");
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
+    [self attachScreenshot:@"native-connections-restored-to-zero"];
+    [[self element:@"sheet-close"] tap];
+    [self waitFor:volume predicate:@"exists == NO"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
+    XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
+    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
+    XCTAssertEqualObjects(volume.value, before, @"The exact minimum persists after closing and reopening");
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
     [[self element:@"sheet-close"] tap];
     [self waitFor:volume predicate:@"exists == NO"];
 }
