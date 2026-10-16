@@ -118,6 +118,9 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     UIVisualEffectView *_backdrop;
     SurcoGradientView *_backdropMask;
     SurcoGradientView *_shade;
+    // iOS 26: a scroll view that never takes touches, only drawing the system's soft edge.
+    UIScrollView *_edgeHost;
+    BOOL _edgeLinked;
     SurcoChromeView *_header;
     UIStackView *_headerRow;
     UILabel *_title;
@@ -172,7 +175,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
     _sheet = nil;
-    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
+    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _edgeHost ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
         if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
     }
     _view = nil;
@@ -234,7 +237,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 }
 // Chrome fades instead of popping while the canvas slides the player over it.
 - (void)setChrome:(UIView *)view shown:(BOOL)shown {
-    BOOL interactive = shown && view != _backdrop && view != _shade;
+    BOOL interactive = shown && view != _backdrop && view != _shade && view != _edgeHost;
     if (!view || (view.alpha == (shown ? 1 : 0) && view.userInteractionEnabled == interactive)) return;
     view.userInteractionEnabled = interactive;
     if (shown) view.hidden = NO;
@@ -254,7 +257,11 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
 }
 - (void)updateBackdrop:(CGFloat)edge tint:(NSArray *)tint {
-    if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
+    if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; [self setChrome:_edgeHost shown:NO]; return; }
+    if (@available(iOS 26.0, *)) {
+        [self updateSystemEdge:edge];
+        return;
+    }
     if (!_backdrop) {
         // iOS 26's scroll edge convention: rows blur and darken softly as they
         // pass beneath the header, instead of meeting an opaque bar.
@@ -284,6 +291,44 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _shade.gradient.locations = @[@0, solid, @1];
     [self setChrome:_backdrop shown:YES];
     [self setChrome:_shade shown:YES];
+}
+// iOS 26's own scroll edge, as under a navigation bar: a blur that deepens toward the
+// top of the screen over the canvas's rows, fitted to the header registered with it.
+// https://developer.apple.com/documentation/uikit/uiscrolledgeeffect
+- (void)updateSystemEdge:(CGFloat)edge API_AVAILABLE(ios(26.0)) {
+    if (!_edgeHost) {
+        _edgeHost = [UIScrollView new];
+        _edgeHost.userInteractionEnabled = NO;
+        _edgeHost.scrollsToTop = NO;
+        _edgeHost.showsVerticalScrollIndicator = NO;
+        _edgeHost.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+        _edgeHost.topEdgeEffect.style = UIScrollEdgeEffectStyle.softStyle;
+        _edgeHost.bottomEdgeEffect.hidden = YES;
+        _edgeHost.leftEdgeEffect.hidden = YES;
+        _edgeHost.rightEdgeEffect.hidden = YES;
+        _edgeHost.alpha = 0;
+    }
+    if (_edgeHost.superview != _view) [_view insertSubview:_edgeHost atIndex:0];
+    CGRect bounds = _view.bounds;
+    _edgeHost.frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
+    // Like the blur it replaces, the edge stands whenever the header does: the
+    // stand-in is kept scrolled so the system draws it.
+    _edgeHost.contentSize = CGSizeMake(bounds.size.width, MAX(bounds.size.height, 1) * 4);
+    _edgeHost.contentOffset = CGPointMake(0, MAX(bounds.size.height, 1));
+    [self linkSystemEdge];
+    [self setChrome:_edgeHost shown:YES];
+    [self setChrome:_backdrop shown:NO];
+    [self setChrome:_shade shown:NO];
+}
+- (void)linkSystemEdge {
+    if (@available(iOS 26.0, *)) {
+        if (_edgeLinked || !_edgeHost || !_header) return;
+        UIScrollEdgeElementContainerInteraction *interaction = [UIScrollEdgeElementContainerInteraction new];
+        interaction.scrollView = _edgeHost;
+        interaction.edge = UIRectEdgeTop;
+        [_header addInteraction:interaction];
+        _edgeLinked = YES;
+    }
 }
 - (UIButton *)chromeButton:(id)value {
     NSDictionary *item = SurcoDictionary(value);
@@ -341,6 +386,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     }
     if (_header.superview != _view) [_view addSubview:_header];
     _header.frame = rect;
+    [self linkSystemEdge];
     // Only a collapsing header crops; at rest the glass buttons keep their glow.
     _header.clipsToBounds = CGRectGetHeight(rect) < SurcoHeaderHeight;
     BOOL compact = [model[@"compact"] boolValue];
@@ -790,7 +836,8 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         _sheet = sheet;
     }
     _sheet.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-    _sheet.view.backgroundColor = SurcoSurfaceColor();
+    // SurcoSheet paints its own lifted surface.
+    if (![_sheet isKindOfClass:SurcoSheet.class]) _sheet.view.backgroundColor = SurcoSurfaceColor();
     _sheet.view.tintColor = UIColor.whiteColor;
     _sheetId = desired;
     _transitioning = YES;
