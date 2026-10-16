@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- A native iPhone search field with the system editing menu, clear and Cancel
+  controls, stable keyboard focus and improved recent searches and result filters.
+- Full-screen lyrics with the song's title, artist, seek, playback, sharing and
+  audio-route controls, without the library tabs or mini player.
+
+### Changed
+
+- Continuous cover-colored iPhone backgrounds through the status bar, player and
+  lyrics, with shorter header/tab fades and controls inside the system safe area.
+- Lower compact navigation and a tinted floating mini player with independent
+  route, like and playback actions.
+- Home keeps quick access to eight recent items so listening shelves appear sooner.
+- Larger system symbols and white circular Play/Pause controls across the mobile
+  player, compact headers, mini player and detail pages.
+- Rounded search fields and filter capsules using limn's existing round controls.
+- A shorter import form with the link, supported services and explicit actions.
+
+### Fixed
+
+- Import uses the native text field editing menu for Paste; its card also accepts
+  URL and Unicode text representations from other apps.
+- The home-indicator inset masks scrolling content and blocks touches to hidden
+  rows without covering the real transport and navigation controls.
+- Search retains its results and scroll position while updating, and preserves
+  native editing through rotation without reopening a dismissed keyboard.
+- Song search keeps tracks whose album has no link, including collaborations,
+  instead of rejecting the entire result list.
+- Mixed song searches accept the provider's video rows while preserving their
+  view counts, duration and artist credits.
+- Search recovery shows a concise message and Retry without provider internals.
+
 ## 0.4.0
 
 ### Added

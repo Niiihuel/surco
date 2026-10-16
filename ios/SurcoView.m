@@ -12,6 +12,7 @@ typedef void (*SurcoUiWake)(void *context);
 
 typedef struct {
     double width, height, scale;
+    double safe_top, safe_right, safe_bottom, safe_left;
     double keyboard_x, keyboard_y, keyboard_width, keyboard_height;
     uint64_t route_revision;
 } SurcoUiGeometry;
@@ -126,6 +127,11 @@ typedef struct {
     geometry->width = bounds.size.width;
     geometry->height = bounds.size.height;
     geometry->scale = view.contentScaleFactor;
+    UIEdgeInsets safe = view.safeAreaInsets;
+    geometry->safe_top = safe.top;
+    geometry->safe_right = safe.right;
+    geometry->safe_bottom = safe.bottom;
+    geometry->safe_left = safe.left;
     UIScreen *screen = _keyboardScreen ?: view.window.screen;
     if (CGRectIsNull(_keyboardFrame) || !screen || screen != view.window.screen) return;
     // Keyboard notification frames belong to the screen, which may differ from this

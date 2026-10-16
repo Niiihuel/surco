@@ -83,6 +83,7 @@ const LYRIC_BLUR: f32 = 2.2;
 const LYRIC_WASH: f32 = 520.0;
 /// How far down a page the colour of its cover reaches, from behind its header.
 const HEADER_WASH: f32 = 360.0;
+pub(crate) const MOBILE_HEADER_HEIGHT: f32 = 56.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
@@ -327,45 +328,31 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let field = TextField::new(
             "import-link",
             link,
-            "https://open.spotify.com/playlist/…",
+            "Enlace de playlist o álbum público",
             palette,
         )
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let about = if state.import_unknown {
-            "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music."
-        } else {
-            "De Spotify, Apple Music o YouTube Music: una playlist o un álbum, que sean públicos."
-        };
-        let mut fields = FormField::new("Enlace de la lista", field, palette)
-            .hint(about)
-            .sizing(DIALOG_FIELD)
-            .rows();
+        let mut fields = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD).rows();
         if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
                 .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
         }
-        fields.push(
-            Text::new(
-                "Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».",
-                palette,
-            )
-            .muted()
-            .render(),
-        );
         let cancel = Button::new("import-cancel", "Cancelar", palette)
             .variant(ButtonVariant::Outline)
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
         let go = Button::new("import-go", "Importar", palette)
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
             .render()
             .size(None, Some(44.0));
         return limn::BottomSheet::new(
             window_tree,
             true,
-            "Importar de otras apps",
-            "Queda como una playlist tuya, con las canciones que el catálogo tenga.",
+            "Importar música",
+            if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" },
             "import-cancel",
             palette,
         )
@@ -902,7 +889,8 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let filters = if state.mobile {
         let pill = |id: &str, label: &str, selected| Button::new(id, label, palette)
             .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
-            .render().size(None, Some(44.0));
+            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() })
+            .round().render();
         Element::horizontal_scroll_2d("mobile-library-filters", Element::row(vec![
             pill("filter:all", "Todo", state.filter == Filter::All),
             pill("filter:lists", "Playlists", state.filter == Filter::Lists),
@@ -918,14 +906,14 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         Filter::Albums => "Buscar en Álbumes",
     };
     let open = state.library_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
-    let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).centered_y() }
+    let search_button = |glyph, hint| if state.mobile { mobile::icon("library-search", glyph, hint, palette).radius(22.0).centered_y() }
         else { header_button("library-search", glyph, TooltipSpec::new(hint), palette).render().centered_y() };
     let mut tools = if open > 0.0 {
         // It grows out of where the magnifier was to all the row has left beside the order,
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
         let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
-        let field = if state.mobile { field.size(None, Some(44.0)) } else { field };
+        let field = if state.mobile { field.size(None, Some(44.0)).radius(22.0) } else { field };
         vec![field.centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
     } else {
         vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
@@ -944,7 +932,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         choice("library-view:grid", "Cuadrícula", view == LibraryView::Grid),
     ];
     let picker = Button::new("library-sort", sort.label(), palette).icon(Icon::Sort).variant(ButtonVariant::Ghost).size(ControlSize::Compact).render();
-    let picker = if state.mobile { picker.size(None, Some(44.0)) } else { picker };
+    let picker = if state.mobile { picker.size(None, Some(44.0)).radius(22.0) } else { picker };
     // All of its choices at once: past eight a menu becomes a list that scrolls, with a rail's room beside it.
     let all = choices.len();
     tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", SCHEME.menu()).sizing(menu_sizing(state)).width(LIBRARY_MENU_WIDTH).max_visible_items(all).placement(PopoverPlacement::BottomEnd).render().centered_y());
@@ -1056,6 +1044,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         let picture = if matches!(entry, Entry::Artist(_)) { picture.radius(LIBRARY_TILE / 2.0) } else { picture };
         tiles.push(quick(format!("recent:{index}"), entry.title(), picture));
     }
+    if state.mobile { tiles.truncate(8); }
     let mut tiles = tiles.into_iter().peekable();
     let mut grid = Vec::new();
     while tiles.peek().is_some() {
@@ -1761,14 +1750,17 @@ fn shuffle_step(state: &State) -> (Icon, &'static str) {
 fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> Element {
     let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
     let play = if state.mobile {
-        IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).round().accessibility_label("Reproducir")
-            .render().size(Some(56.0), Some(56.0))
+        mobile::controls::playback("page-play", false, 56.0, 28.0, palette)
     } else {
         IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip("Reproducir").render().center_content()
     };
     let (icon, hint) = shuffle_step(state);
-    let shuffle = IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render();
-    let shuffle = if state.mobile { shuffle.size(Some(44.0), Some(44.0)) } else { shuffle };
+    let shuffle = if state.mobile {
+        let action = mobile::controls::action("page-shuffle", icon, hint, 22.0, palette);
+        if state.player.shuffle { action.background(palette.selected) } else { action }
+    } else {
+        IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
+    };
     let mut actions = vec![play, shuffle.centered_y()];
     actions.extend(own.into_iter().map(Element::centered_y));
     if state.mobile {
@@ -1793,16 +1785,18 @@ fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPal
 fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let open = state.page_search_slide.value(std::time::Instant::now()).clamp(0.0, 1.0);
     let toggle = |icon: Icon, hint: &str| {
-        if state.mobile { mobile::icon("page-search", icon, hint, palette).centered_y() }
+        if state.mobile { mobile::icon("page-search", icon, hint, palette).radius(22.0).centered_y() }
         else { header_button("page-search", icon, TooltipSpec::new(hint), palette).render().centered_y() }
     };
     let mut parts = vec![Element::spacer().flex(1.0)];
     if open > 0.0 {
+        let width = PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open;
         let field = SearchField::new("page-query", &state.page_search, "Buscar en esta página", SCHEME.on_raised())
             .size(ControlSize::Compact)
-            .width(PAGE_SEARCH_SHUT + (PAGE_SEARCH_WIDTH - PAGE_SEARCH_SHUT) * open)
-            .render()
-            .centered_y()
+            .width(width)
+            .render();
+        let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field };
+        let field = field.centered_y()
             // In a narrow pane it makes do with what the row has left.
             .shrink_to_fit();
         parts.extend([field, toggle(Icon::Close, "Cerrar la búsqueda")]);
@@ -1813,7 +1807,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());
     let order = |key: &str, label: &str| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("page-sort:{key}"), label).selected(sorted == key));
     let orders = vec![order("own", "Orden de la lista"), order("title", "Título"), order("album", "Álbum"), order("duration", "Duración")];
-    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, "Ordenar", palette) }
+    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, "Ordenar", palette).radius(22.0) }
         else { header_button("page-sort", Icon::Sort, TooltipSpec::new("Ordenar"), palette).active(state.sort_open).render() };
     parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", SCHEME.menu()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
     parts

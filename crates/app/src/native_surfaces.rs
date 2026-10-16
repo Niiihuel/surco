@@ -11,6 +11,7 @@ pub(crate) struct Payload {
     pub menus: Vec<Menu>,
     pub sheet: Option<Sheet>,
     pub paste: Option<PasteSlot>,
+    pub search: Option<SearchSlot>,
     pub reduce_motion: bool,
 }
 
@@ -54,6 +55,12 @@ pub(crate) enum Row {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct PasteSlot { pub target: String, pub rect: [f32; 4] }
 
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct SearchSlot {
+    pub session: String, pub rect: [f32; 4], pub text: String,
+    pub editing: bool, pub compact: bool, pub revision: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Event {
@@ -65,12 +72,18 @@ pub(crate) enum Event {
     SheetSlider { sheet: String, id: String, value: f32 },
     SheetClose { sheet: String },
     Paste { target: String, text: String },
+    SearchEdit { session: String, revision: u64, text: String },
+    SearchFocus { session: String, revision: u64, editing: bool },
+    SearchSubmit { session: String },
+    SearchCancel { session: String },
 }
 
 #[derive(Clone)]
 struct MenuBinding { target: CardContext, actions: HashSet<String> }
 
 struct SheetBinding { key: String, sheet: Sheet }
+
+struct SearchBinding { session: String, revision: u64, intent: u64 }
 
 #[derive(Default)]
 pub(crate) struct Controller {
@@ -79,6 +92,8 @@ pub(crate) struct Controller {
     sheet: Option<SheetBinding>,
     paste: Option<String>,
     next_sheet: u64,
+    search: Option<SearchBinding>,
+    next_search: u64,
 }
 
 impl Controller {
@@ -86,8 +101,9 @@ impl Controller {
         let mut payload = Payload { reduce_motion: state.settings.reduce_motion || !state.motion, ..Payload::default() };
         self.menus.clear();
         self.paste = None;
-        if !state.mobile { self.sheet = None; self.active_menu = None; return payload; }
+        if !state.mobile { self.sheet = None; self.search = None; self.active_menu = None; return payload; }
         if let Some((key, mut sheet)) = sheet_spec(state) {
+            self.search = None;
             sheet.id = match self.sheet.as_ref().filter(|held| held.key == key) {
                 Some(held) => held.sheet.id.clone(),
                 None => { self.next_sheet += 1; format!("surco-sheet:{}", self.next_sheet) }
@@ -98,6 +114,22 @@ impl Controller {
             return payload;
         }
         self.sheet = None;
+        let search_rect = search_visible(state).then(|| frame.access.iter().find(|node|
+            node.id == "ios-search" && !node.disabled)).flatten()
+            .and_then(|node| visible_rect(frame, 0, node.rect, true))
+            .and_then(|rect| screen_rect(rect, origin))
+            .filter(|rect| rect[2] >= 44.0 && rect[3] >= 44.0);
+        if let Some(rect) = search_rect {
+            if self.search.as_ref().is_none_or(|binding| binding.intent != state.mobile_ui.search_intent) {
+                self.next_search += 1;
+                self.search = Some(SearchBinding { session: format!("surco-search:{}", self.next_search), revision: 0,
+                    intent: state.mobile_ui.search_intent });
+            }
+            let binding = self.search.as_ref().unwrap();
+            payload.search = Some(SearchSlot { session: binding.session.clone(), rect,
+                text: state.query.clone(), editing: state.mobile_ui.search_editing,
+                compact: state.mobile_search_compact(), revision: binding.revision });
+        } else { self.search = None; }
         for (index, region) in frame.regions.iter().enumerate() {
             if region.kind != limn::HitKind::Button { continue; }
             let Some(visible) = visible_rect(frame, index + 1, region.rect, false) else { continue };
@@ -112,15 +144,14 @@ impl Controller {
             payload.menus.push(Menu { id: id.clone(), title: title.into(), rect, items: items.clone() });
             self.menus.insert(id, MenuBinding { target, actions: items.into_iter().map(|item| item.id).collect() });
         }
-        for target in ["import-card", "search"] {
+        for target in ["import-card"] {
             if !paste_valid(state, target) { continue; }
             let id = format!("ios-paste:{target}");
             let Some(node) = frame.access.iter().find(|node| node.id == id && !node.disabled) else { continue };
-            let in_header = target == "search";
-            let Some(visible) = visible_rect(frame, 0, node.rect, in_header) else { continue };
+            let Some(visible) = visible_rect(frame, 0, node.rect, false) else { continue };
             let center = Point::new(visible.x + visible.width / 2.0, visible.y + visible.height / 2.0);
             if frame.press_region(center).is_some_and(|region| match region.kind {
-                limn::HitKind::Surface => !(in_header && region.id == "mobile-header-bar"),
+                limn::HitKind::Surface => true,
                 limn::HitKind::Button => region.id != id,
                 _ => false,
             }) { continue; }
@@ -136,6 +167,28 @@ impl Controller {
     pub fn apply(&mut self, state: &mut State, event: Event) -> Vec<Command> {
         if !state.mobile { return Vec::new(); }
         match event {
+            Event::SearchEdit { session, revision, text } if self.current_search(state, &session) => {
+                let binding = self.search.as_mut().unwrap();
+                if revision > binding.revision {
+                    binding.revision = revision;
+                    return state.update(&UiAction::InputChanged { id: "search".into(), value: text });
+                }
+            }
+            Event::SearchFocus { session, revision, editing } if self.current_search(state, &session) => {
+                let binding = self.search.as_mut().unwrap();
+                if revision > binding.revision {
+                    binding.revision = revision;
+                    state.mobile_ui.search_editing = editing;
+                    state.mobile_ui.blur = !editing;
+                    state.focus = None;
+                }
+            }
+            Event::SearchSubmit { session } if self.current_search(state, &session) => {
+                return state.update(&UiAction::Submitted { id: "search".into(), value: state.query.clone() });
+            }
+            Event::SearchCancel { session } if self.current_search(state, &session) => {
+                return state.update(&UiAction::Clicked { id: "mobile-search-cancel".into() });
+            }
             Event::MenuOpen { id } if sheet_spec(state).is_none() => {
                 self.active_menu = self.menus.get(&id).cloned().map(|menu| (id, menu));
             }
@@ -182,7 +235,6 @@ impl Controller {
                         state.import_unknown = false;
                         state.mobile_ui.blur = true;
                     } else {
-                        if target == "search" { state.focus = Some(target.clone()); state.mobile_ui.blur = false; }
                         return state.update(&UiAction::InputChanged { id: target, value: text });
                     }
                 }
@@ -190,6 +242,11 @@ impl Controller {
             _ => {}
         }
         Vec::new()
+    }
+
+    fn current_search(&self, state: &State, session: &str) -> bool {
+        search_visible(state) && self.search.as_ref().is_some_and(|binding|
+            binding.session == session && binding.intent == state.mobile_ui.search_intent)
     }
 
     fn current_sheet(&self, state: &State, id: &str) -> Option<Sheet> {
@@ -315,11 +372,10 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         return Some((format!("missed:{id}"), sheet));
     }
     if let Some(link) = &state.importing {
-        let mut sheet = shell("Importar de otras apps", "Queda como una playlist tuya, con las canciones que el catálogo tenga.", "import-cancel");
-        sheet.rows = vec![text("Enlace de la lista", false), Row::Field { id: "import-link".into(), value: link.clone(),
-            placeholder: "https://open.spotify.com/playlist/…".into(), keyboard: "url".into(), paste: true },
-            text(if state.import_unknown { "Ese enlace no es de una playlist de Spotify, Apple Music ni YouTube Music." } else { "De Spotify, Apple Music o YouTube Music: una playlist o un álbum, que sean públicos." }, true),
-            text("Para llevar una playlist tuya a otra app, abrila y elegí «Copiar canciones».", true)];
+        let description = if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" };
+        let mut sheet = shell("Importar música", description, "import-cancel");
+        sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
+            placeholder: "Enlace de playlist o álbum público".into(), keyboard: "url".into(), paste: true }];
         sheet.actions = vec![Action::new("import-cancel", "Cancelar", "xmark"), Action::new("import-go", "Importar", "square.and.arrow.down")];
         return Some(("import".into(), sheet));
     }
@@ -376,9 +432,13 @@ fn paste_valid(state: &State, target: &str) -> bool {
     match target {
         "import-link" => state.importing.is_some() && sheet_spec(state).is_some_and(|(key, _)| key == "import"),
         "import-card" => state.page == state::Page::Library && !state.settings.import_dismissed && !has_sheet(state),
-        "search" => state.page == state::Page::Search && state.mobile_search && !has_sheet(state),
         _ => false,
     }
+}
+
+fn search_visible(state: &State) -> bool {
+    state.mobile && state.mobile_ui.native_surfaces && state.page == state::Page::Search
+        && state.mobile_search && !has_sheet(state)
 }
 
 #[cfg(test)]
@@ -543,8 +603,13 @@ mod tests {
         state.importing = Some("https://example.com/ñ".into());
         let payload = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
         let json = serde_json::to_value(payload).unwrap();
-        assert_eq!(json["sheet"]["rows"][1]["kind"], "field");
-        assert_eq!(json["sheet"]["rows"][1]["paste"], true);
+        assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
+        assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
+        assert_eq!(json["sheet"]["rows"][0]["paste"], true);
+        state.import_unknown = true;
+        let error = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
+        assert_eq!(serde_json::to_value(error).unwrap()["sheet"]["rows"], json["sheet"]["rows"],
+            "validation changes the description without rebuilding the live editor");
         assert!(json["menus"].as_array().unwrap().is_empty());
         let action = serde_json::to_value(Row::Action(Action::new("test", "Title", "heart"))).unwrap();
         assert_eq!(action["kind"], "action");
@@ -567,23 +632,66 @@ mod tests {
     }
 
     #[test]
-    fn native_search_paste_has_one_system_slot_inside_its_header_and_focuses_without_submitting() {
+    fn native_search_owns_one_editor_and_never_a_second_paste_button() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
         state.mobile_search = true;
         let size = Size::new(390.0, 844.0);
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
-        let slot = frame.access.iter().find(|node| node.id == "ios-paste:search").unwrap();
-        assert_eq!(slot.role, limn::Role::Group, "UIKit supplies the only visible paste button");
-        assert!(!frame.regions.iter().any(|region| region.id == "ios-paste:search" && region.kind == limn::HitKind::Button));
+        let slot = frame.access.iter().find(|node| node.id == "ios-search").unwrap();
+        assert_eq!(slot.role, limn::Role::Group, "UIKit supplies the real search editor");
+        assert!(!frame.access.iter().any(|node| node.id == "ios-paste:search"));
         let mut controller = Controller::default();
         let payload = controller.payload(&state, &frame, Pos2::new(0.0, 59.0));
-        assert_eq!(payload.paste.as_ref().unwrap().target, "search");
-        assert_eq!(payload.paste.as_ref().unwrap().rect[1], slot.rect.y + 59.0);
-        assert!(controller.apply(&mut state, Event::Paste { target: "search".into(), text: "https://youtu.be/a-song".into() }).is_empty());
+        assert!(payload.paste.is_none());
+        let search = payload.search.unwrap();
+        assert_eq!(search.rect[1], slot.rect.y + 59.0);
+        assert!(!search.compact && !search.editing, "empty Search starts with its idle heading and no keyboard intention");
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
+        assert!(controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2,
+            text: "https://youtu.be/a-song".into() }).is_empty());
         assert_eq!(state.query, "https://youtu.be/a-song");
         assert!(state.mobile_ui.search_editing && state.mobile_ui.pending.is_none());
-        assert_eq!(state.focus.as_deref(), Some("search"));
+        assert!(state.focus.is_none(), "the limn editor must not compete for the native keyboard");
+        controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 1, text: "old".into() });
+        assert_eq!(state.query, "https://youtu.be/a-song", "older native input cannot overwrite the editor");
+        let refreshed = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
+        assert_eq!(refreshed.session, search.session);
+        assert_eq!(refreshed.revision, 2);
+        assert!(refreshed.compact && refreshed.editing);
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 3, editing: false });
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
+        assert!(!state.mobile_ui.search_editing, "an old focus callback must not reopen the keyboard");
+        let unfocused = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
+        assert!(unfocused.compact && !unfocused.editing, "a query keeps the compact visual state after keyboard dismissal");
+        controller.apply(&mut state, Event::SearchSubmit { session: search.session });
+        assert!(matches!(&state.page, state::Page::Loading(crate::backend::Target::Song(id)) if id == "a-song"),
+            "the explicit Return gesture opens the pasted link");
+    }
+
+    #[test]
+    fn search_callbacks_do_not_cross_navigation_or_an_explicit_recent_selection() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_search = true;
+        let frame = UiTree::new(crate::view::view(&state, Size::new(390.0, 844.0))).layout(Size::new(390.0, 844.0));
+        let mut controller = Controller::default();
+        let first = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap().session;
+        controller.apply(&mut state, Event::SearchEdit { session: first.clone(), revision: 1, text: "niñez".into() });
+        controller.apply(&mut state, Event::SearchCancel { session: first.clone() });
+        assert_eq!(state.query, "niñez");
+        assert!(!state.mobile_ui.search_editing && state.mobile_ui.pending.is_none());
+        state.page = state::Page::Library;
+        controller.payload(&state, &frame, Pos2::ZERO);
+        controller.apply(&mut state, Event::SearchEdit { session: first.clone(), revision: 3, text: "late".into() });
+        assert_eq!(state.query, "niñez");
+        state.page = state::Page::Search;
+        let second = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap().session;
+        assert_ne!(first, second);
+        state.collection.searches = vec!["Elegida explícitamente".into()];
+        state.update(&UiAction::Clicked { id: "recent-search:0".into() });
+        controller.apply(&mut state, Event::SearchEdit { session: second, revision: 9, text: "old composition".into() });
+        assert_eq!(state.query, "Elegida explícitamente", "explicit selection invalidates callbacks before the next paint");
     }
 
     #[test]

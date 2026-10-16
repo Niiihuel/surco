@@ -68,14 +68,10 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
     .gap(4.0)
 }
 
-fn scroll(state: &State, id: &str, artwork: &Option<String>, sections: Vec<Element>) -> Element {
+fn scroll(id: &str, sections: Vec<Element>) -> Element {
     ScrollArea::new(
         id,
-        washed(
-            state,
-            artwork,
-            Element::column(sections).gap(24.0).padding(GUTTER),
-        ),
+        Element::column(sections).gap(24.0).padding(GUTTER),
     )
     .render()
     .flex(1.0)
@@ -128,9 +124,7 @@ pub(in crate::view) fn album(
         page_actions(state, vec![kept], palette)
     };
     scroll(
-        state,
         "mobile-album",
-        &album.artwork_url,
         vec![
             cover(state, &album.artwork_url, side, palette)
                 .radius(8.0)
@@ -198,7 +192,7 @@ pub(in crate::view) fn artist(
             palette,
         ));
     }
-    scroll(state, "mobile-artist", &artist.artwork_url, sections)
+    scroll("mobile-artist", sections)
 }
 
 pub(in crate::view) fn playlist(
@@ -332,7 +326,7 @@ pub(in crate::view) fn playlist(
         sections.push(Element::column(tools).gap(8.0));
         sections.push(tracks(state, palette));
     }
-    scroll(state, "mobile-playlist", &artwork, sections)
+    scroll("mobile-playlist", sections)
 }
 
 #[cfg(test)]

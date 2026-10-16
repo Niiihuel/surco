@@ -82,7 +82,7 @@ fn importing_has_a_touch_field_and_fixed_actions_in_a_short_viewport() {
         tree.scroll_to_end("modal_body:import-cancel");
         let frame = tree.layout(size);
         if size.height == 240.0 {
-            assert!(!crate::mobile_input::can_paste(&tree, &frame, "import-link"), "the focused field scrolled out of view");
+            assert!(crate::mobile_input::can_paste(&tree, &frame, "import-link"), "the shorter form keeps its editor visible even at the end");
         }
         assert!(tree.focus("import-link"));
         tree.reveal("import-link");

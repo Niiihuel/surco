@@ -4,6 +4,7 @@
 //! (see [`stream`]): no crate tried on 2026-10-12 returned URLs that play past the first minute.
 
 mod stream;
+mod search;
 
 use futures_util::TryStreamExt;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
@@ -12,7 +13,7 @@ use ytmapi_rs::auth::noauth::NoAuthToken;
 use ytmapi_rs::common::{AlbumID, ArtistChannelID, PlaylistID, Thumbnail, VideoID, YoutubeID};
 use ytmapi_rs::parse::{ParsedSongArtist, PlaylistItem};
 use ytmapi_rs::query::GetPlaylistTracksQuery;
-use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, SongsFilter, SpellingMode};
+use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, SpellingMode};
 
 pub use stream::{Audio, Stream, Video};
 
@@ -80,7 +81,7 @@ impl YouTube {
         // As the service itself searches: a misspelt title still finds its song. The library's
         // own default is an exact match, which answers a typo with nothing.
         let (songs, artists, albums) = tokio::join!(
-            music.search_songs(SearchQuery::new_filtered(query, SongsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
+            search::songs(music, query),
             music.search_artists(SearchQuery::new_filtered(query, ArtistsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
             music.search_albums(SearchQuery::new_filtered(query, AlbumsFilter).with_spelling_mode(SpellingMode::WithSuggestions)),
         );
@@ -111,7 +112,7 @@ impl YouTube {
 
     /// The songs alone for one query: a song another app names, looked for by that name.
     pub async fn songs(&self, query: &str) -> Result<Vec<Track>> {
-        let songs = self.music().await?.search_songs(SearchQuery::new_filtered(query, SongsFilter).with_spelling_mode(SpellingMode::WithSuggestions)).await?;
+        let songs = search::songs(self.music().await?, query).await?;
         Ok(songs.into_iter().map(found_song).collect())
     }
 

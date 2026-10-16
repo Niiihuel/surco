@@ -67,9 +67,8 @@
 - (CGPoint)entryPoint:(NSString *)identifier page:(NSString *)page {
     NSArray *rect = self.entryGeometry[@"targets"][page][identifier];
     XCTAssertEqual(rect.count, 4u, @"Missing verified Frame target %@:%@", page, identifier);
-    CGFloat top = [self.entryGeometry[@"safe_insets"][0] doubleValue];
     return CGPointMake([rect[0] doubleValue] + [rect[2] doubleValue] / 2.0,
-        top + [rect[1] doubleValue] + [rect[3] doubleValue] / 2.0);
+        [rect[1] doubleValue] + [rect[3] doubleValue] / 2.0);
 }
 - (XCUICoordinate *)entryCoordinate:(NSString *)identifier page:(NSString *)page {
     CGPoint point = [self entryPoint:identifier page:page];
@@ -103,10 +102,19 @@
     attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
     [self addAttachment:attachment];
 }
+- (void)pasteThroughEditingMenu:(XCUIElement *)field {
+    [field pressForDuration:1.1];
+    // UIKit owns the edit menu. Match its localized action, not an app button.
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"The native editor must offer Paste: %@", self.app.debugDescription);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+}
 
 - (void)testPlaylistCardUsesNativePasteWithoutStartingAnImport {
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-card";
-    UIPasteboard.generalPasteboard.string = link;
+    UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
     [self launch];
     [self openLibrary];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
@@ -123,16 +131,94 @@
     [self waitFor:field predicate:@"exists == NO"];
 }
 
+- (void)testPlaylistCardAcceptsCopiedUTF16TextWithoutImporting {
+    NSString *text = @"Lista para el viaje — niñez 東京";
+    UIPasteboard.generalPasteboard.items = @[@{@"public.utf16-external-plain-text": [text dataUsingEncoding:NSUTF16StringEncoding]}];
+    [self launch];
+    [self openLibrary];
+    XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    XCTAssertTrue([self element:@"import-go"].exists, @"Copied text is an editable draft, not an automatic import");
+    XCTAssertEqual(self.app.alerts.count, 0u);
+    [self attachScreenshot:@"native-playlist-card-utf16-text"];
+    [[self element:@"import-go"] tap];
+    XCUIElement *error = self.app.staticTexts[@"No reconocimos ese enlace."];
+    XCTAssertTrue([error waitForExistenceWithTimeout:12]);
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    NSString *correction = @"-corregido";
+    [field typeText:correction];
+    NSString *edited = [field.value copy];
+    NSArray<NSString *> *parts = [edited componentsSeparatedByString:correction];
+    XCTAssertEqual(parts.count, 2u, @"Validation must not replace the live field after the first correction character");
+    XCTAssertEqualObjects([parts componentsJoinedByString:@""], text);
+    [self waitFor:error predicate:@"exists == NO"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Correcting an invalid link preserves keyboard and caret");
+    [self attachScreenshot:@"native-import-invalid-text-correction"];
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
+- (void)testPlaylistCardFallsBackToTextWhenTheCopiedURLRepresentationFails {
+    NSString *text = @"https://open.spotify.com/playlist/surco-ui-url-fallback";
+    const unsigned char malformedURL[] = {0xFF, 0xFE, 0xFF};
+    UIPasteboard.generalPasteboard.items = @[@{
+        @"public.url": [NSData dataWithBytes:malformedURL length:sizeof(malformedURL)],
+        @"public.utf8-plain-text": [text dataUsingEncoding:NSUTF8StringEncoding],
+    }];
+    [self launch];
+    [self openLibrary];
+    XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    XCTAssertTrue([self element:@"import-go"].exists);
+    XCTAssertEqual(self.app.alerts.count, 0u);
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
+- (void)testImportUsesTheNativeEditingMenuToPasteAndReplaceSelectedText {
+    NSString *text = @"niñez";
+    UIPasteboard.generalPasteboard.string = text;
+    [self launch];
+    [self openImport];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCTAssertFalse([self element:@"sheet-paste:import-link"].exists, @"The editor uses UIKit's menu without a redundant Paste button");
+    [self pasteThroughEditingMenu:field];
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
+    // Double-tapping this one-word value selects it through UITextField itself.
+    NSString *replacement = @"https://open.spotify.com/playlist/surco-ui-selection";
+    UIPasteboard.generalPasteboard.string = replacement;
+    [field doubleTap];
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    [paste tap];
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", replacement]];
+    XCTAssertTrue([self element:@"import-go"].exists, @"Native paste replaces the selection once and leaves import explicit");
+    [field typeText:@"\n"];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    [self attachScreenshot:@"native-import-edit-menu-selection-replacement"];
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
 - (void)testNativeImportPasteAndTypingSurviveKeyboardAndReflow {
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-field";
     UIPasteboard.generalPasteboard.string = link;
     [self launch];
     [self openImport];
-    XCUIElement *paste = [self element:@"sheet-paste:import-link"];
-    XCTAssertTrue([paste waitForExistenceWithTimeout:10]);
-    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
-    [paste tap];
     XCUIElement *field = self.app.textFields[@"import-link"];
+    [self pasteThroughEditingMenu:field];
     [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
     [field tap];
     NSString *marker = @"?prueba=niñez";
@@ -207,6 +293,7 @@
     NSLog(@"SURCO_NATIVE_SLIDER_AX_FRAME=%@", NSStringFromCGRect(volume.frame));
     NSString *before = [volume.value copy];
     XCTAssertNotNil(before);
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0, @"The fixture begins at the native slider's exact minimum");
     [volume adjustToNormalizedSliderPosition:0.5];
     NSString *adjusted = [volume.value copy];
     XCTAssertNotNil(adjusted);
@@ -216,9 +303,27 @@
     [self waitFor:volume predicate:@"exists == NO"];
     [self canvasTap:@"setting:connections" page:@"settings"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
+    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
     XCTAssertEqualObjects(volume.value, adjusted, @"Reopening restores the volume received by Rust");
-    [volume adjustToNormalizedSliderPosition:0];
+    // adjustToNormalizedSliderPosition is best effort. To require the exact
+    // endpoint, drag the current thumb to the slider's left edge, inside the app.
+    // https://developer.apple.com/documentation/xcuiautomation/xcuielement/adjust(tonormalizedsliderposition:)
+    CGFloat position = volume.normalizedSliderPosition;
+    XCTAssertTrue(position > 0.0 && position <= 1.0, @"The changed volume has a valid nonzero thumb position");
+    XCUICoordinate *thumb = [volume coordinateWithNormalizedOffset:CGVectorMake(position, 0.5)];
+    XCUICoordinate *minimum = [volume coordinateWithNormalizedOffset:CGVectorMake(0, 0.5)];
+    [thumb pressForDuration:0.2 thenDragToCoordinate:minimum];
+    [self waitFor:volume predicate:[NSString stringWithFormat:@"value == '%@'", before]];
     XCTAssertEqualObjects(volume.value, before, @"Restore the fixture's silent volume");
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
+    [self attachScreenshot:@"native-connections-restored-to-zero"];
+    [[self element:@"sheet-close"] tap];
+    [self waitFor:volume predicate:@"exists == NO"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
+    XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
+    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
+    XCTAssertEqualObjects(volume.value, before, @"The exact minimum persists after closing and reopening");
+    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
     [[self element:@"sheet-close"] tap];
     [self waitFor:volume predicate:@"exists == NO"];
 }
@@ -244,6 +349,83 @@
     [unlike tap];
     [self waitFor:unlike predicate:@"exists == NO"];
     XCTAssertFalse([self element:@"sheet-close"].exists);
+}
+
+- (void)testNativeSearchEditingMenuClearAndReturnKeepTheEditor {
+    NSString *original = @"niñez";
+    UIPasteboard.generalPasteboard.string = original;
+    [self launch];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    XCUIElement *field = [self element:@"search"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    XCTAssertTrue([self element:@"surco.native.search"].exists);
+    XCTAssertFalse([self element:@"ios-paste:search"].exists, @"Search uses the native editor's editing menu");
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    [self pasteThroughEditingMenu:field];
+    [self waitFor:field predicate:@"value == 'niñez'"];
+    NSString *marker = @"-surco";
+    [field typeText:marker];
+    NSString *edited = [field.value copy];
+    NSArray<NSString *> *parts = [edited componentsSeparatedByString:marker];
+    XCTAssertEqual(parts.count, 2u, @"The native editor inserts the Unicode edit exactly once");
+    XCTAssertEqualObjects([parts componentsJoinedByString:@""], original);
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
+    [self waitForLandscape:YES];
+    [self waitFor:field predicate:@"hittable == YES"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Rotation must not resign Search");
+    XCTAssertEqualObjects(field.value, edited);
+    [field typeText:@"-horizontal"];
+    NSString *landscapeEdited = [edited stringByReplacingOccurrencesOfString:marker withString:[marker stringByAppendingString:@"-horizontal"]];
+    XCTAssertEqualObjects(field.value, landscapeEdited, @"The retained editor keeps its native caret");
+    [self attachScreenshot:@"native-search-keyboard-landscape"];
+    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
+    [self waitForLandscape:NO];
+    [self waitFor:field predicate:@"hittable == YES"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists);
+    [field typeText:@"-vertical"];
+    NSString *finalText = [landscapeEdited stringByReplacingOccurrencesOfString:@"-horizontal" withString:@"-horizontal-vertical"];
+    XCTAssertEqualObjects(field.value, finalText, @"Rotation back must keep composition and selection ownership");
+    [field typeText:@"\n"];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    XCTAssertEqualObjects(field.value, finalText, @"Return preserves the submitted query without reopening the keyboard");
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    NSPredicate *clearLabel = [NSPredicate predicateWithFormat:@"label == 'Clear text' OR label == 'Borrar texto' OR label == 'Clear' OR label == 'Borrar'"];
+    XCUIElement *clear = [field.buttons matchingPredicate:clearLabel].firstMatch;
+    XCTAssertTrue([clear waitForExistenceWithTimeout:12], @"UIKit must own Search's clear control: %@", self.app.debugDescription);
+    [clear tap];
+    [self waitFor:field predicate:@"value == '' OR value == 'Canciones, artistas o álbumes'"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Clear keeps the active editor and keyboard");
+    [self attachScreenshot:@"native-search-editor-cleared"];
+}
+
+- (void)testNativeSearchCancelAndTabNavigationKeepTheQuery {
+    [self launch];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    XCUIElement *field = [self element:@"search"];
+    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
+    [field tap];
+    [field typeText:@"consulta retenida"];
+    [self waitFor:field predicate:@"value == 'consulta retenida'"];
+    // iOS 26 names UISearchBar's trailing cancel action Close/Cerrar. Scope
+    // the localized control to the real bar rather than any screen button.
+    NSPredicate *cancelLabel = [NSPredicate predicateWithFormat:@"label == 'Cancel' OR label == 'Cancelar' OR label == 'Close' OR label == 'Cerrar'"];
+    XCUIElement *cancel = [[self element:@"surco.native.search"].buttons matchingPredicate:cancelLabel].firstMatch;
+    XCTAssertTrue([cancel waitForExistenceWithTimeout:12]);
+    [self waitFor:cancel predicate:@"hittable == YES"];
+    XCTAssertGreaterThanOrEqual(cancel.frame.size.width, 44.0);
+    XCTAssertGreaterThanOrEqual(cancel.frame.size.height, 44.0);
+    [cancel tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
+    XCTAssertEqualObjects(field.value, @"consulta retenida", @"Cancel leaves the user's query intact");
+    [self canvasTap:@"mobile-library" page:@"home"];
+    [self waitFor:field predicate:@"hittable == NO"];
+    [self canvasTap:@"mobile-search" page:@"home"];
+    [self waitFor:field predicate:@"exists == YES AND hittable == YES"];
+    XCTAssertEqualObjects(field.value, @"consulta retenida");
+    XCTAssertFalse(self.app.keyboards.firstMatch.exists, @"Returning to Search does not request keyboard focus");
+    [self attachScreenshot:@"native-search-query-after-cancel-and-navigation"];
 }
 
 - (void)testSystemSymbolsUsedBySurcoExistInUIKit {

@@ -65,6 +65,8 @@ struct Host {
     script: Script,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
+    /// The notice already revealed; ordinary repaints preserve manual scrolling.
+    notice: Option<String>,
     #[cfg(target_os = "ios")]
     native_ui: Option<ios_ui::NativeUi>,
     #[cfg(target_os = "ios")]
@@ -86,11 +88,27 @@ struct Script {
     requested: bool,
 }
 
+/// Follow against the current page's measured viewport and overlaid bars.
 fn update_lyrics_viewport(state: &mut State, tree: &mut UiTree) -> bool {
     let reset = std::mem::take(&mut state.lyrics_scroll_reset);
     if reset { tree.scroll_to_start("lyrics-list"); }
+    // Keep the notice readable until dismissal or a deliberate manual scroll.
+    // Do not consume the new active line: closing the notice should reveal it.
+    if state.mobile && state.mobile_ui.notice.is_some() { return reset; }
     if let Some(line) = state.line_to_reveal() {
-        tree.center(&line);
+        if state.mobile {
+            let frame = tree.frame();
+            let top = frame.regions.iter().find(|region| region.id == "mobile-header-bar")
+                .map_or(0.0, |region| region.rect.y + region.rect.height);
+            let scroll_top = frame.regions.iter().find(|region| region.id == "lyrics-list")
+                .map_or(0.0, |region| region.rect.y);
+            // Centering the full viewport puts wrapped lines behind the fixed
+            // lyrics transport in landscape. Reveal below the real header fade
+            // instead, within the unobscured body above the transport.
+            tree.reveal_at_start(&line, (top - scroll_top).max(0.0) + 20.0);
+        } else {
+            tree.center(&line);
+        }
         true
     } else {
         reset
@@ -110,11 +128,63 @@ fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Fram
     }
 }
 
+fn layout_with_notice(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> limn::Frame {
+    let mut frame = layout_view(state, tree, window);
+    let notice = state.mobile.then_some(state.mobile_ui.notice.as_deref()).flatten();
+    if seen.as_deref() == notice { return frame; }
+    *seen = notice.map(str::to_owned);
+    if seen.is_none() { return frame; }
+    // A first reveal locates a newly inserted notice even in a culled branch.
+    if !frame.access.iter().any(|node| node.id == "mobile-notice-close") {
+        tree.reveal("mobile-notice-close");
+        frame = layout_view(state, tree, window);
+    }
+    let Some(close) = frame.access.iter().find(|node| node.id == "mobile-notice-close") else { return frame; };
+    let center = limn::Point::new(close.rect.x + close.rect.width / 2.0, close.rect.y + close.rect.height / 2.0);
+    let Some(scroll) = frame.regions.iter().rev().find(|region|
+        region.kind == limn::HitKind::Scroll && region.rect.contains(center)) else { return frame; };
+    let header_bottom = frame.regions.iter().find(|region| region.id == "mobile-header-bar")
+        .map_or(0.0, |region| region.rect.y + region.rect.height);
+    // Fixed filters can already put this viewport below the header. Reserve
+    // only the remaining overlap plus room for the short decorative fade.
+    let margin = (header_bottom - scroll.rect.y).max(0.0) + 20.0;
+    tree.reveal_at_start("mobile-notice-close", margin);
+    layout_view(state, tree, window)
+}
+
 fn native_surfaces_present(state: &State) -> bool {
     #[cfg(any(target_os = "ios", test))]
     { native_surfaces::has_sheet(state) }
     #[cfg(not(any(target_os = "ios", test)))]
     { let _ = state; false }
+}
+
+#[cfg(any(not(target_os = "windows"), test))]
+fn mobile_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
+    // egui's root Ui covers the safe content rect. The phone background must
+    // also paint behind the status bar and home indicator.
+    let full = ui.ctx().viewport_rect();
+    let canvas = if preview {
+        // A tiling compositor can ignore the preview window's requested size.
+        egui::Rect::from_center_size(full.center(), egui::vec2(full.width().min(390.0), full.height().min(844.0)))
+    } else { full };
+    ui.set_clip_rect(canvas);
+    canvas
+}
+
+fn mobile_content_insets(canvas: egui::Rect, content: egui::Rect, keyboard: f32) -> state::mobile::ContentInsets {
+    // Validate the platform boundary once; consumers can use these as padding.
+    let bounded = |value: f32, limit: f32| {
+        if value.is_finite() { value.clamp(0.0, limit) } else { 0.0 }
+    };
+    let width = if canvas.width().is_finite() { canvas.width().max(0.0) } else { 0.0 };
+    let height = if canvas.height().is_finite() { canvas.height().max(0.0) } else { 0.0 };
+    let top = bounded(content.top() - canvas.top(), height);
+    let left = bounded(content.left() - canvas.left(), width);
+    let right = bounded(canvas.right() - content.right(), width - left);
+    let safe_bottom = bounded(canvas.bottom() - content.bottom(), height - top);
+    let bottom = safe_bottom.max(bounded(keyboard, height - top));
+    state::mobile::ContentInsets { top, right, bottom, left }
 }
 
 impl Host {
@@ -276,20 +346,14 @@ impl eframe::App for Host {
         }
         #[cfg(not(target_os = "windows"))]
         let area = if self.state.mobile {
-            // Keep phone controls inside the platform's notch and home-indicator insets.
-            let safe = ui.max_rect().intersect(ctx.content_rect());
-            if self.script.mobile {
-                // A tiling desktop compositor can ignore the preview window's requested size.
-                // Keep the phone canvas at phone dimensions inside that larger surface.
-                egui::Rect::from_center_size(safe.center(), egui::vec2(safe.width().min(390.0), safe.height().min(844.0)))
-            } else { safe }
+            mobile_canvas(ui, self.script.mobile)
         } else {
             ui.max_rect()
         };
         #[cfg(target_os = "windows")]
         let area = window::show(ui, self.state.cinema);
         #[cfg(target_os = "ios")]
-        let area = {
+        let keyboard_inset = {
             let now = Instant::now();
             let native_sheet = self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state);
             let covered = if native_sheet { 0.0 } else { self.native_ui.as_ref().map_or(0.0, |native| native.keyboard_occlusion(ctx.viewport_rect(), area)) };
@@ -300,8 +364,18 @@ impl eframe::App for Host {
                 self.keyboard_inset.retarget_with_motion(covered, now, Duration::from_millis(220), still);
             }
             if self.keyboard_inset.is_active(now) { ctx.request_repaint(); }
-            egui::Rect::from_min_max(area.min, egui::pos2(area.max.x, (area.max.y - self.keyboard_inset.value(now)).max(area.min.y + 44.0)))
+            self.keyboard_inset.value(now)
         };
+        #[cfg(not(target_os = "ios"))]
+        let keyboard_inset = 0.0;
+        let safe_content = ctx.content_rect();
+        #[cfg(target_os = "ios")]
+        let safe_content = self.native_ui.as_ref()
+            .and_then(|native| native.safe_content_rect(area))
+            .unwrap_or(safe_content);
+        self.state.mobile_ui.content_insets = if self.state.mobile {
+            mobile_content_insets(area, safe_content, keyboard_inset)
+        } else { Default::default() };
         let window = Size::new(area.width(), area.height());
 
         // Ctrl+B folds the library, as it folds a sidebar anywhere.
@@ -400,11 +474,12 @@ impl eframe::App for Host {
                 self.glide = None;
             }
         }
-        // The line being sung is kept in the middle of its list.
+        // Measure this page before using its bars to follow the active lyric.
+        let mut input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         if update_lyrics_viewport(&mut self.state, &mut self.tree) {
             self.stirred = Instant::now();
+            input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         }
-        let input_frame = layout_view(&mut self.state, &mut self.tree, window);
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
             self.tree.focus(&field);
@@ -476,7 +551,7 @@ impl eframe::App for Host {
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); }
         let commands = self.motion.advance(&mut self.state, window, Instant::now());
         self.send(commands);
-        let frame = layout_view(&mut self.state, &mut self.tree, window);
+        let frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -500,7 +575,7 @@ impl eframe::App for Host {
                             }
                             let commands = self.motion.advance(&mut self.state, window, Instant::now());
                             self.send(commands);
-                            frame = layout_view(&mut self.state, &mut self.tree, window);
+                            frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
                         }
                         Err(error) => {
                             eprintln!("Surco clipboard: {error}");
@@ -693,6 +768,7 @@ pub fn run() -> eframe::Result {
                 script,
                 touch: mobile_input::TouchInput::default(),
                 motion: mobile_motion::Motion::new(Instant::now()),
+                notice: None,
                 #[cfg(target_os = "ios")]
                 native_ui,
                 #[cfg(target_os = "ios")]
@@ -761,6 +837,91 @@ mod lyrics_viewport_tests {
             .collect()) });
     }
 
+    fn long_lyrics(state: &mut State) {
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..21)
+            .map(|index| Line { at_ms: index * 1_000,
+                text: "La canción continúa en dos renglones mientras atravesamos la ciudad.".into() })
+            .collect()) });
+    }
+
+    fn assert_active_clear_of_chrome(frame: &limn::Frame, id: &str) {
+        let header = frame.regions.iter().find(|region| region.id == "mobile-header-bar").unwrap().rect;
+        let footer = frame.regions.iter().find(|region| region.id == "mobile-footer-bar").unwrap().rect;
+        let row = frame.regions.iter().find(|region| region.id == id).unwrap().rect;
+        assert!(row.height > 50.0, "fixture really wraps: {row:?}");
+        assert!(row.y >= header.y + header.height + 20.0 - 0.1, "line clears header and fade: {row:?}");
+        assert!(row.y + row.height <= footer.y - 24.0 + 0.1, "whole line clears transport and fade: {row:?}; {footer:?}");
+        for y in [row.y + 1.0, row.y + row.height - 1.0] {
+            let point = limn::Point::new(row.x + row.width / 2.0, y);
+            assert_eq!(frame.press_region(point).unwrap().id, id, "the lyric remains hittable, including its last line");
+        }
+    }
+
+    #[test]
+    fn mobile_follow_keeps_wrapped_active_lyrics_inside_the_real_portrait_and_landscape_body() {
+        use state::mobile::ContentInsets;
+        for (size, insets) in [
+            (Size::new(402.0, 874.0), ContentInsets { top: 62.0, bottom: 34.0, ..ContentInsets::default() }),
+            (Size::new(874.0, 402.0), ContentInsets { left: 62.0, right: 34.0, bottom: 21.0, top: 0.0 }),
+        ] {
+            let mut state = State::default();
+            state.mobile = true;
+            state.page = state::Page::Lyrics;
+            state.mobile_ui.content_insets = insets;
+            state.show(song("a", 10.0));
+            long_lyrics(&mut state);
+            let mut tree = UiTree::new(Element::spacer());
+            tree.set_reduced_motion(true);
+            tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+            layout_view(&mut state, &mut tree, size);
+            assert!(update_lyrics_viewport(&mut state, &mut tree));
+            // Host runs its input layout and then the final paint layout.
+            layout_view(&mut state, &mut tree, size);
+            let frame = layout_view(&mut state, &mut tree, size);
+            assert_eq!(state.active_line(), Some(10));
+            assert_active_clear_of_chrome(&frame, "lyric:10");
+        }
+    }
+
+    #[test]
+    fn mobile_notice_pauses_follow_without_consuming_the_line_to_reveal_after_close() {
+        for next_position in [10.0, 11.0] {
+            let size = Size::new(402.0, 874.0);
+            let mut state = State::default();
+            state.mobile = true;
+            state.page = state::Page::Lyrics;
+            state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0,
+                ..state::mobile::ContentInsets::default() };
+            state.show(song("a", 10.0));
+            long_lyrics(&mut state);
+            let mut tree = UiTree::new(Element::spacer());
+            tree.set_reduced_motion(true);
+            tree.set_text_measurer(|text, size, _| text.chars().count() as f32 * size * 0.5);
+            layout_view(&mut state, &mut tree, size);
+            update_lyrics_viewport(&mut state, &mut tree);
+            layout_view(&mut state, &mut tree, size);
+            layout_view(&mut state, &mut tree, size);
+            state.mobile_ui.notice = Some("No pudimos completar esta acción.".into());
+            let mut seen = None;
+            layout_with_notice(&mut state, &mut tree, size, &mut seen);
+            let notice_offset = tree.scroll_offset("lyrics-list");
+            state.show(song("a", next_position));
+            assert!(!update_lyrics_viewport(&mut state, &mut tree));
+            let visible = layout_with_notice(&mut state, &mut tree, size, &mut seen);
+            assert_eq!(tree.scroll_offset("lyrics-list"), notice_offset);
+            let close = visible.access.iter().find(|node| node.id == "mobile-notice-close").unwrap().rect;
+            let point = limn::Point::new(close.x + close.width / 2.0, close.y + close.height / 2.0);
+            assert_eq!(visible.press_region(point).unwrap().id, "mobile-notice-close");
+            tree.handle_event(limn::UiEvent::PointerDown(point));
+            for action in tree.handle_event(limn::UiEvent::PointerUp(point)) { state.update(&action); }
+            assert!(state.mobile_ui.notice.is_none());
+            assert!(update_lyrics_viewport(&mut state, &mut tree), "closing resumes the current verse even when its position did not change");
+            layout_view(&mut state, &mut tree, size);
+            let frame = layout_view(&mut state, &mut tree, size);
+            assert_active_clear_of_chrome(&frame, &format!("lyric:{}", next_position as usize));
+        }
+    }
+
     #[test]
     fn changing_tracks_resets_scrolled_lyrics_before_the_first_line_including_returning_tracks() {
         let size = Size::new(390.0, 500.0);
@@ -798,11 +959,77 @@ mod lyrics_viewport_tests {
         tree.set_root(view::view(&state, size));
         assert!(update_lyrics_viewport(&mut state, &mut tree));
         tree.layout(size);
-        // Center requests set the scroll target after measuring the row; the
+        // Reveal requests set the scroll target after measuring the row; the
         // following paint uses that target, just like Host's input/paint passes.
         let frame = tree.layout(size);
         assert!(frame.regions.iter().any(|region| region.id == "lyric:15"),
             "following the active line still reveals its real row");
+    }
+}
+
+#[cfg(test)]
+mod mobile_geometry_tests {
+    use super::*;
+    use egui::{Color32, RawInput, Rect, SafeAreaInsets, epaint::MarginF32, pos2, vec2};
+    use state::mobile::ContentInsets;
+
+    #[test]
+    fn phone_canvas_and_painter_cover_the_real_safe_edges() {
+        let ctx = egui::Context::default();
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(402.0, 874.0));
+        let mut output = ctx.run_ui(RawInput {
+            screen_rect: Some(full),
+            safe_area_insets: Some(SafeAreaInsets(MarginF32 { top: 62.0, bottom: 34.0, left: 0.0, right: 0.0 })),
+            events: vec![egui::Event::PointerMoved(pos2(20.0, 100.0))],
+            ..Default::default()
+        }, |ui| {
+            let safe = Rect::from_min_max(pos2(0.0, 62.0), pos2(402.0, 840.0));
+            assert_eq!(ctx.content_rect(), safe);
+            // A panel can restrict its painter even though the root Ui spans the viewport.
+            ui.set_clip_rect(safe);
+            let canvas = mobile_canvas(ui, false);
+            assert_eq!(canvas, full);
+            assert_eq!(ui.clip_rect(), full);
+            assert_eq!(mobile_content_insets(canvas, ctx.content_rect(), 0.0),
+                ContentInsets { top: 62.0, bottom: 34.0, left: 0.0, right: 0.0 });
+            assert!(limn_egui::events(&ctx, canvas.min).iter().any(|event|
+                matches!(event, limn::UiEvent::PointerMove(point) if point.x == 20.0 && point.y == 100.0)),
+                "input uses full-canvas coordinates without subtracting the safe top again");
+            ui.painter().rect_filled(canvas, 0.0, Color32::BLUE);
+        });
+        output.textures_delta.clear();
+        assert!(output.shapes.iter().any(|shape|
+            shape.clip_rect == full && matches!(&shape.shape,
+                egui::Shape::Rect(rect) if rect.rect == full && rect.fill == Color32::BLUE)),
+            "the background must reach the status bar and home indicator with a full clip");
+    }
+
+    #[test]
+    fn safe_edges_follow_rotation_and_merge_keyboard_without_adding_it_twice() {
+        let full = Rect::from_min_size(pos2(10.0, 20.0), vec2(402.0, 874.0));
+        let safe = Rect::from_min_max(pos2(10.0, 82.0), pos2(412.0, 860.0));
+        let insets = mobile_content_insets(full, safe, 374.0);
+        assert_eq!(insets, ContentInsets { top: 62.0, bottom: 374.0, left: 0.0, right: 0.0 });
+        assert_eq!(full.bottom() - insets.bottom, 520.0, "controls end at the keyboard top");
+        assert_eq!(mobile_content_insets(full, safe, 0.0).bottom, 34.0,
+            "a native sheet owns its keyboard; the canvas keeps only its physical safe edge");
+
+        let landscape = Rect::from_min_size(pos2(0.0, 0.0), vec2(874.0, 402.0));
+        let safe = Rect::from_min_max(pos2(62.0, 0.0), pos2(812.0, 381.0));
+        assert_eq!(mobile_content_insets(landscape, safe, 0.0),
+            ContentInsets { top: 0.0, bottom: 21.0, left: 62.0, right: 62.0 });
+        assert_eq!(mobile_content_insets(landscape, safe, 180.0).bottom, 180.0);
+    }
+
+    #[test]
+    fn malformed_platform_insets_cannot_make_content_dimensions_negative_or_nonfinite() {
+        let full = Rect::from_min_size(pos2(0.0, 0.0), vec2(402.0, 874.0));
+        let insets = mobile_content_insets(full,
+            Rect::from_min_max(pos2(600.0, 900.0), pos2(-20.0, -40.0)), f32::INFINITY);
+        assert_eq!(insets, ContentInsets { top: 874.0, bottom: 0.0, left: 402.0, right: 0.0 });
+        assert_eq!(mobile_content_insets(full,
+            Rect::from_min_max(pos2(f32::NAN, f32::NAN), pos2(f32::NAN, f32::NAN)), f32::NAN),
+            ContentInsets::default());
     }
 }
 

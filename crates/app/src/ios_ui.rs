@@ -8,6 +8,20 @@ fn logical_rect(rect: Rect, native_scale: f32, pixels_per_point: f32) -> Option<
         .then(|| Rect::from_min_max(rect.min * scale, rect.max * scale))
 }
 
+fn logical_safe_rect(full: Rect, insets: [f32; 4], native_scale: f32, pixels_per_point: f32) -> Option<Rect> {
+    let scale = native_scale / pixels_per_point;
+    let [top, right, bottom, left] = insets.map(|value| value * scale);
+    if !full.is_finite() || !full.is_positive() || !scale.is_finite() || scale <= 0.0
+        || [top, right, bottom, left].iter().any(|value| !value.is_finite() || *value < 0.0) {
+        return None;
+    }
+    let safe = Rect::from_min_max(
+        full.min + eframe::egui::vec2(left, top),
+        full.max - eframe::egui::vec2(right, bottom),
+    );
+    safe.is_positive().then_some(safe)
+}
+
 fn docked_keyboard_top(full: Rect, keyboard: Option<Rect>) -> Option<f32> {
     let keyboard = keyboard?;
     if !full.is_finite()
@@ -64,6 +78,10 @@ mod native {
         width: f64,
         height: f64,
         scale: f64,
+        safe_top: f64,
+        safe_right: f64,
+        safe_bottom: f64,
+        safe_left: f64,
         keyboard_x: f64,
         keyboard_y: f64,
         keyboard_width: f64,
@@ -180,6 +198,16 @@ mod native {
         /// Docked keyboard top in egui screen coordinates. Floating keyboards return None.
         pub fn keyboard_top(&self, full_window: Rect) -> Option<f32> {
             docked_keyboard_top(full_window, self.keyboard_rect(full_window))
+        }
+
+        /// Safe area of this live UIView, including apps without a UIWindowScene.
+        pub fn safe_content_rect(&self, full_window: Rect) -> Option<Rect> {
+            if !self.geometry.width.is_finite() || !self.geometry.height.is_finite()
+                || self.geometry.width <= 0.0 || self.geometry.height <= 0.0 { return None; }
+            logical_safe_rect(full_window, [
+                self.geometry.safe_top as f32, self.geometry.safe_right as f32,
+                self.geometry.safe_bottom as f32, self.geometry.safe_left as f32,
+            ], self.geometry.scale as f32, self.ctx.pixels_per_point())
         }
 
         /// Amount to remove from the *current* content bottom. Safe area is counted once.
@@ -320,6 +348,20 @@ mod tests {
         assert_eq!(zoomed.min.y, 250.0);
         assert_eq!(zoomed.width(), 195.0);
         assert_eq!(logical_rect(native, 3.0, 0.0), None);
+    }
+
+    #[test]
+    fn live_view_safe_edges_convert_once_and_follow_full_canvas_origin() {
+        let full = Rect::from_min_size(pos2(10.0, 20.0), vec2(402.0, 874.0));
+        assert_eq!(logical_safe_rect(full, [62.0, 0.0, 34.0, 0.0], 3.0, 3.0),
+            Some(Rect::from_min_max(pos2(10.0, 82.0), pos2(412.0, 860.0))));
+        let zoomed = Rect::from_min_size(full.min, vec2(201.0, 437.0));
+        assert_eq!(logical_safe_rect(zoomed, [62.0, 0.0, 34.0, 0.0], 3.0, 6.0),
+            Some(Rect::from_min_max(pos2(10.0, 51.0), pos2(211.0, 440.0))));
+        assert_eq!(logical_safe_rect(full, [f32::NAN, 0.0, 34.0, 0.0], 3.0, 3.0), None);
+        assert_eq!(logical_safe_rect(full, [-1.0, 0.0, 34.0, 0.0], 3.0, 3.0), None);
+        assert_eq!(logical_safe_rect(full, [800.0, 0.0, 100.0, 0.0], 3.0, 3.0), None);
+        assert_eq!(logical_safe_rect(full, [62.0, 0.0, 34.0, 0.0], 3.0, 0.0), None);
     }
 
     #[test]

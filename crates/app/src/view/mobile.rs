@@ -5,27 +5,35 @@ use super::*;
 mod search;
 mod home;
 mod player;
+mod lyrics;
 mod chrome;
+pub(super) mod controls;
 mod sheets;
 pub(super) mod details;
 #[cfg(test)]
 mod dialog_tests;
 #[cfg(test)]
 mod native_ui_geometry_tests;
+#[cfg(test)]
+mod edge_chrome_tests;
+#[cfg(test)]
+mod notice_tests;
 
 const TAP: f32 = 44.0;
-const NAV_HEIGHT: f32 = 64.0;
-const HEADER_HEIGHT: f32 = 76.0;
-const MINI_HEIGHT: f32 = 78.0;
+const NAV_HEIGHT: f32 = 52.0;
+const HEADER_HEIGHT: f32 = MOBILE_HEADER_HEIGHT;
+const MINI_HEIGHT: f32 = 64.0;
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
 
 pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
-    IconButton::new(id, glyph, palette).variant(ButtonVariant::Ghost)
-        .accessibility_label(label).size(ControlSize::Spacious).render().size(Some(TAP), Some(TAP))
+    controls::action(id, glyph, label, 22.0, palette)
 }
 
 pub(super) fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
+    let insets = state.mobile_ui.content_insets;
+    let width = (window.width - insets.left - insets.right).max(TAP);
+    let surface = page_surface(state);
     let searching = state.page == Page::Search && state.mobile_search;
     let title = match &state.page {
         Page::Library => "Tu biblioteca",
@@ -52,14 +60,14 @@ pub(super) fn view(state: &State, window: Size) -> Element {
                 Text::new(&track.artist, palette).font_size(12.0).muted().truncate().render()]).gap(4.0)
         })
     } else { Text::new(title, palette).font_size(if state.page == Page::Playing { 14.0 } else if state.mobile_ui.compact_header { 18.0 } else { 24.0 }).truncate().render() };
-    header.push(copy.centered_y().flex(1.0));
+    header.push(if state.page == Page::Playing && !compact_player { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
     if compact_player {
         if let Some(track) = state.current() {
             header.push(icon("mobile-player-header-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart }, if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"));
         }
-        header.push(icon("mobile-player-header-play", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette).dispatch_as("play-pause"));
+        header.push(controls::playback("mobile-player-header-play", state.player.playing, 44.0, 22.0, palette).dispatch_as("play-pause"));
     } else if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
-        header.push(icon("mobile-detail-header-play", Icon::PlayFill, "Reproducir", palette).dispatch_as("page-play"));
+        header.push(controls::playback("mobile-detail-header-play", false, 44.0, 22.0, palette).dispatch_as("page-play"));
     }
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, if state.queue_open { "Volver a la canción" } else { "Ver cola" }, palette));
@@ -71,63 +79,63 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if editing { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
-    let header = Element::panel(Element::row(header).gap(8.0).padding(16.0).size(None, Some(HEADER_HEIGHT)))
+    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
+    let header = if state.page == Page::Lyrics { lyrics::header(state, palette) }
+        else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
     let header = if compact_player {
         Element::stack(vec![header, Element::column(vec![Element::spacer().flex(1.0),
             Progress::new(state.progress(), palette).height(2.0).render()])])
             .size(None, Some(header_height)).clip_children()
     } else { header };
-    let mut top = vec![header];
-    let mut top_height = header_height;
+    let mut top = vec![Element::spacer().size(None, Some(insets.top)), header];
+    let mut top_height = insets.top + header_height;
     if searching {
         top.push(search::field(state, palette));
-        top_height += if editing { 68.0 } else { 72.0 } + if cfg!(any(target_os = "ios", test)) { 52.0 } else { 0.0 };
+        top_height += search::field_height(state);
     }
-    // The notice participates in flow, so longer messages never cover an action.
-    let mut notices = Vec::new();
-    if let Some(notice) = &state.mobile_ui.notice {
-        notices.push(Element::panel(Element::row(vec![Text::new(notice, palette).render().flex(1.0),
-            icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0)).background(SCHEME.raised));
-    }
-    let content = if state.page == Page::Playing && state.queue_open {
+    let mut content = if state.page == Page::Playing && state.queue_open {
         upcoming(state, palette)
     } else if searching {
-        search::content(state, window.width, palette)
+        search::content(state, width, palette)
     } else if state.page == Page::Search {
-        home::content(state, window.width, palette)
+        home::content(state, width, palette)
     } else {
-        page(state, window.width, palette)
+        page(state, width, palette)
     };
+    if state.page == Page::Lyrics {
+        // The mobile shell owns the full-height song color, including plain/error states.
+        content.style.bottom_background_fade = None;
+    }
+    let content = with_notice(content, state, palette);
     let mut bottom = Vec::new();
-    let mut bottom_height = 0.0;
-    if state.page != Page::Playing && !keyboard {
+    let mut bottom_height = insets.bottom;
+    if state.page == Page::Lyrics {
+        bottom.push(lyrics::footer(state, palette));
+        bottom_height += lyrics::FOOTER_HEIGHT;
+    } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             bottom.push(mini_player(state, track, palette));
             bottom_height += MINI_HEIGHT;
         }
     }
-    if state.page != Page::Playing && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
+    if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
+    bottom.push(Element::spacer().size(None, Some(insets.bottom)));
     let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
-    let tint = if state.page == Page::Playing {
-        state.current().and_then(|track| track.artwork_url.as_ref()).and_then(|url| state.tints.get(url)).copied()
-    } else { None };
-    let lower = (150.0 * (1.0 - top_height / HEADER_WASH).max(0.0)).round() as u8;
-    let header_edge = tint.map_or(SCHEME.canvas, |color| header_edge_color(color, lower));
-    let content = chrome::under_bars(content, top_height, bottom_height, header_edge);
-    let mut top = Element::column(top).background(SCHEME.canvas).block_pointer("mobile-header-bar");
-    if let Some(tint) = tint {
-        // Match the full player's wash over an opaque base, so scrolled text
-        // cannot show through the compact transport.
-        top = top.vertical_gradient(vec![Color { a: 150, ..tint }, Color { a: lower, ..tint }]);
-    }
-    let bars = Element::column(vec![top, Element::spacer().flex(1.0), Element::column(bottom)]);
+    let header_edge = mix(surface.0, surface.1, (top_height / window.height.max(1.0)).clamp(0.0, 1.0));
+    let song_surface = matches!(state.page, Page::Playing | Page::Lyrics);
+    let footer_edge = if song_surface {
+        mix(surface.0, surface.1, ((window.height - bottom_height) / window.height.max(1.0)).clamp(0.0, 1.0))
+    } else { SCHEME.canvas };
+    let content = chrome::under_bars(content, top_height, bottom_height, header_edge, footer_edge);
+    let top = Element::column(top).vertical_gradient(vec![surface.0, header_edge]).block_pointer("mobile-header-bar");
+    let footer = Element::column(bottom).background(footer_edge).block_pointer("mobile-footer-bar");
+    let footer = if song_surface { footer.vertical_gradient(vec![footer_edge, surface.1]) } else { footer };
+    let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
-    let content = if state.page == Page::Playing { state.current().map_or(content.clone(), |track| washed(state, &track.artwork_url, content)) } else { content };
-    notices.push(content.flex(1.0));
-    let content = Element::column(notices);
-    let tree = Element::panel(content).background(SCHEME.canvas).size(Some(window.width), Some(window.height));
+    let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
+    let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
+        .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // UIKit owns these surfaces when its bridge is ready. Keep the limn
@@ -142,13 +150,69 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         .max_height(680.0).body(equalizer(state, palette)).render()
 }
 
-/// Opaque color where the header's wash meets the edge scrim. Compositing over
-/// the canvas prevents a black seam without allowing scrolled text through it.
-fn header_edge_color(tint: Color, alpha: u8) -> Color {
-    let channel = |tint: u8, base: u8| {
-        ((u32::from(tint) * u32::from(alpha) + u32::from(base) * u32::from(255 - alpha) + 127) / 255) as u8
+fn with_notice(mut content: Element, state: &State, palette: ComponentPalette) -> Element {
+    let Some(message) = &state.mobile_ui.notice else { return content; };
+    let notice = Element::panel(Element::row(vec![Text::new(message, palette).render().flex(1.0),
+        icon("mobile-notice-close", Icon::Close, "Cerrar aviso", palette)]).gap(8.0).padding(12.0))
+        .background(SCHEME.raised);
+    let mut notice = Some(notice);
+    if prepend_notice(&mut content, &mut notice) { return content; }
+    // Loading and error panes have no scroll of their own. Keep even a long
+    // notice reachable without adding a second viewport to the normal pages.
+    ScrollArea::new(format!("mobile-notice:{}", route_key(state)),
+        Element::column(vec![notice.unwrap(), content])).render().flex(1.0)
+}
+
+fn prepend_notice(content: &mut Element, notice: &mut Option<Element>) -> bool {
+    match &mut content.kind {
+        limn::ElementKind::Scroll { child, .. } => {
+            let body = std::mem::replace(child.as_mut(), Element::spacer());
+            **child = Element::column(vec![notice.take().unwrap(), body]);
+            true
+        }
+        limn::ElementKind::Column(children) => children.iter_mut().any(|child| prepend_notice(child, notice)),
+        _ => false,
+    }
+}
+
+fn horizontal_inset(content: Element, left: f32, right: f32) -> Element {
+    Element::row(vec![Element::spacer().size(Some(left), None), content.flex(1.0),
+        Element::spacer().size(Some(right), None)])
+}
+
+fn mix(from: Color, to: Color, amount: f32) -> Color {
+    let channel = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * amount).round() as u8;
+    Color::rgb(channel(from.r, to.r), channel(from.g, to.g), channel(from.b, to.b))
+}
+
+/// Keep even a very bright cover readable with Surco's secondary text token.
+fn cover_tone(tint: Color, amount: f32) -> Color {
+    let luminance = |color: Color| {
+        let linear = |channel: u8| {
+            let s = f32::from(channel) / 255.0;
+            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+        };
+        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
     };
-    Color::rgb(channel(tint.r, SCHEME.canvas.r), channel(tint.g, SCHEME.canvas.g), channel(tint.b, SCHEME.canvas.b))
+    let mut color = mix(SCHEME.canvas, tint, amount);
+    for _ in 0..16 {
+        if (luminance(SCHEME.muted) + 0.05) / (luminance(color) + 0.05) >= 4.5 { break; }
+        color = mix(color, SCHEME.canvas, 0.12);
+    }
+    color
+}
+
+fn page_surface(state: &State) -> (Color, Color) {
+    let artwork = match &state.page {
+        Page::Playing | Page::Lyrics => state.current().and_then(|track| track.artwork_url.as_deref()),
+        Page::Album(album) => album.artwork_url.as_deref(),
+        Page::Artist(artist) => artist.artwork_url.as_deref(),
+        Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.tracks.first()).and_then(|track| track.artwork_url.as_deref()),
+        _ => None,
+    };
+    let Some(tint) = artwork.and_then(|url| state.tints.get(url)).copied() else { return (SCHEME.canvas, SCHEME.canvas); };
+    let bottom = if matches!(state.page, Page::Playing | Page::Lyrics) { cover_tone(tint, 0.28) } else { SCHEME.canvas };
+    (cover_tone(tint, 0.60), bottom)
 }
 
 fn route_key(state: &State) -> String {
@@ -165,8 +229,8 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
     let tab = |id: &str, glyph: Icon, label: &str, selected: bool| {
         let ink = if selected { palette.text } else { palette.muted };
         let copy = Element::column(vec![
-            Element::icon(glyph).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
-            Text::new(label, palette).role(TextRole::Caption).render().foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:label")),
+            Element::icon(glyph).large_icon(26.0).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
+            Text::new(label, palette).font_size(11.0).render().foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:label")),
         ]).gap(4.0).centered();
         Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected))
             .size(None, Some(NAV_HEIGHT)).flex(1.0)
@@ -175,26 +239,32 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
         tab("home", Icon::Home, "Inicio", state.page == Page::Search && !state.mobile_search),
         tab("mobile-search", Icon::Search, "Buscar", state.page == Page::Search && state.mobile_search),
         tab("mobile-library", Icon::Playlist, "Biblioteca", matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_))),
-    ]).background(SCHEME.canvas).block_pointer("mobile-nav-bar")
+    ]).block_pointer("mobile-nav-bar")
 }
 
 fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Element {
+    let tint = track.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied();
+    let surface = tint.map_or(SCHEME.raised, |tint| cover_tone(tint, 0.32));
     let label = Element::row(vec![
-        cover(state, &track.artwork_url, TAP, palette),
+        cover(state, &track.artwork_url, 40.0, palette).radius(4.0).centered_y(),
         Element::column(vec![
-            Text::new(&track.title, palette).role(TextRole::Label).truncate().render(),
-            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).role(TextRole::Caption).muted().truncate().render(),
-        ]).gap(4.0).centered_y().flex(1.0),
-    ]).gap(12.0);
+            Text::new(&track.title, palette).font_size(13.0).truncate().render(),
+            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).font_size(11.0).muted().truncate().render(),
+        ]).gap(3.0).centered_y().flex(1.0),
+    ]).gap(10.0).size(None, Some(TAP));
     let open = Element::clickable("mobile-playing", label)
         .accessible(limn::Access::new(limn::Role::Button).name(format!("Abrir reproductor: {}", track.title))).flex(1.0);
     let controls = Element::row(vec![
         open,
         icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), "Conectar a un dispositivo", palette),
-        icon("play-pause", if state.player.playing { Icon::PauseFill } else { Icon::PlayFill }, if state.player.playing { "Pausar" } else { "Reproducir" }, palette),
-    ]).gap(8.0).padding(8.0);
+        icon("mobile-mini-like", if state.is_liked(&track.id) { Icon::HeartFill } else { Icon::Heart },
+            if state.is_liked(&track.id) { "Quitar de Tus me gusta" } else { "Me gusta" }, palette).dispatch_as("like"),
+        controls::playback("play-pause", state.player.playing, 32.0, 18.0, palette),
+    ]).gap(0.0).padding(4.0);
     let progress = Progress::new(state.progress(), palette).height(2.0).render();
-    Element::panel(Element::column(vec![controls, progress])).background(SCHEME.raised).radius(PANEL_RADIUS).padding(8.0).size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
+    let card = Element::panel(Element::column(vec![controls, progress])).background(surface).radius(8.0).clip_children();
+    Element::column(vec![Element::spacer().size(None, Some(4.0)), horizontal_inset(card, 8.0, 8.0),
+        Element::spacer().size(None, Some(6.0))]).size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
 }
 
 /// Overflow stays visible on touch screens, independently of pointer hover.
@@ -290,7 +360,7 @@ mod tests {
         let frame = tree.layout(size);
         let edge = frame.commands.iter().find_map(|command| match command {
             limn::DrawCommand::FillVerticalGradient { rect, top, bottom }
-                if rect.y == HEADER_HEIGHT && rect.height == 48.0 && bottom.a == 0 => Some(*top),
+                if rect.y == HEADER_HEIGHT && rect.height == 20.0 && bottom.a == 0 => Some(*top),
             _ => None,
         }).expect("the player's top edge is visible after scrolling");
         assert_eq!(edge.a, 255, "the edge masks the song content beneath it");
@@ -345,7 +415,7 @@ mod tests {
             let mut tree = UiTree::new(super::view(&state, size));
             let frame = tree.layout(size);
             assert!(!frame.access.iter().any(|node| matches!(node.id.as_str(), "home" | "mobile-library" | "play-pause")));
-            for id in ["search", "mobile-search-cancel", "ios-paste:search"] {
+            for id in ["search", "mobile-search-cancel"] {
                 let rect = frame.access.iter().find(|node| node.id == id).unwrap().rect;
                 assert!(rect.x >= 0.0 && rect.y >= 0.0 && rect.x + rect.width <= size.width + 0.1
                     && rect.y + rect.height <= size.height + 0.1 && rect.height >= TAP, "{id}: {rect:?}");

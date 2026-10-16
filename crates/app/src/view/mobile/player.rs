@@ -36,7 +36,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         .render().flex(1.0)
 }
 
-fn timeline(state: &State, palette: ComponentPalette) -> Element {
+pub(super) fn timeline(state: &State, palette: ComponentPalette) -> Element {
     let duration = state.player.duration.max(0.0);
     let progress = state.progress();
     let elapsed = if duration > 0.0 { f64::from(progress) * duration } else { state.player.position.max(0.0) };
@@ -52,24 +52,19 @@ fn timeline(state: &State, palette: ComponentPalette) -> Element {
 }
 
 fn transport(state: &State, palette: ComponentPalette) -> Element {
-    let control = |id: &str, glyph, label: &str, active| IconButton::new(id, glyph, palette)
-        .variant(ButtonVariant::Ghost).size(ControlSize::Spacious).active(active)
-        .accessibility_label(label).render().size(Some(TAP), Some(TAP)).centered_y();
-    // The primary transport is a composed media control, with a larger standalone
-    // glyph; ordinary icon buttons keep limn's standard glyph size.
-    let play = Element::clickable("play-pause", Element::icon(if state.player.playing { Icon::PauseFill } else { Icon::PlayFill })
-        .large_icon(32.0).foreground(SCHEME.canvas).centered())
-        .accessible(limn::Access::new(limn::Role::Button).name(if state.player.playing { "Pausar" } else { "Reproducir" }))
-        .background(palette.text).hover_background(ROUND_HOVER).pressed_background(ROUND_HELD)
-        .radius(36.0).size(Some(72.0), Some(72.0));
+    let control = |id: &str, glyph, label: &str, glyph_size, active| {
+        let action = controls::action(id, glyph, label, glyph_size, palette);
+        if active { action.background(palette.selected) } else { action }.centered_y()
+    };
+    let play = controls::playback("play-pause", state.player.playing, 72.0, 32.0, palette);
     Element::row(vec![
-        control("shuffle", shuffle_step(state).0, shuffle_step(state).1, state.player.shuffle),
+        control("shuffle", shuffle_step(state).0, shuffle_step(state).1, 24.0, state.player.shuffle),
         Element::spacer().flex(1.0),
-        control("previous", Icon::SkipBack, "Canción anterior", false),
+        control("previous", Icon::SkipBack, "Canción anterior", 28.0, false),
         Element::spacer().flex(1.0), play, Element::spacer().flex(1.0),
-        control("next", Icon::SkipForward, "Siguiente canción", false),
+        control("next", Icon::SkipForward, "Siguiente canción", 28.0, false),
         Element::spacer().flex(1.0),
-        control("repeat", if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, "Repetir", state.player.repeat != Repeat::Off),
+        control("repeat", if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, "Repetir", 24.0, state.player.repeat != Repeat::Off),
     ])
 }
 

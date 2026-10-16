@@ -8,7 +8,7 @@ use limn::{DismissDrag, Frame, HitKind, Point, Role, ScalarTransition, Size, UiA
 
 use crate::{backend::Command, state::{Page, State}};
 
-const HEADER: f32 = 76.0;
+const HEADER: f32 = crate::view::MOBILE_HEADER_HEIGHT;
 const OPEN: Duration = Duration::from_millis(320);
 const RETURN: Duration = Duration::from_millis(220);
 const CLOSE: Duration = Duration::from_millis(240);
@@ -88,7 +88,7 @@ impl Motion {
         state.mobile_ui.player_offset = self.player.value(now);
         let search = state.mobile && state.page == Page::Search && state.mobile_search;
         if search {
-            self.search.retarget_with_motion(if state.mobile_ui.search_editing { 0.0 } else { HEADER }, now, RETURN, reduced);
+            self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { HEADER }, now, RETURN, reduced);
             state.mobile_ui.search_header = Some(self.search.value(now));
         } else {
             self.search.snap_to(HEADER, now);
@@ -222,7 +222,7 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
         _ => None,
     };
-    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < HEADER);
+    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER);
     std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact
 }
 
@@ -241,7 +241,7 @@ fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32,
         || frame.access.iter().any(|node| node.id == hit.id && node.role == Role::Slider)) {
         return false;
     }
-    point.y < offset + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
+    point.y < offset + state.mobile_ui.content_insets.top + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
         region.id == "mobile-playing" && region.kind == HitKind::Scroll && region.rect.contains(point)))
 }
 
@@ -645,6 +645,30 @@ mod tests {
         assert_eq!(state.mobile_ui.search_header, Some(middle));
         motion.advance(&mut state, size, now + Duration::from_millis(2300));
         assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+    }
+
+    #[test]
+    fn submitted_search_keeps_the_heading_compact_until_the_unfocused_query_is_empty() {
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        motion.set_reduced_motion(true);
+        let mut state = State::default();
+        state.mobile = true;
+        state.mobile_search = true;
+        state.query = "Consulta conservada".into();
+        state.mobile_ui.blur = true;
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, size, now);
+        assert_eq!(state.mobile_ui.search_header, Some(0.0));
+        assert!(!state.mobile_ui.search_editing && state.focus.is_none(), "visual compactness cannot request keyboard focus");
+        state.update(&UiAction::Clicked { id: "mobile-search-cancel".into() });
+        motion.advance(&mut state, size, now + Duration::from_millis(1));
+        assert_eq!(state.mobile_ui.search_header, Some(0.0));
+        assert_eq!(state.query, "Consulta conservada");
+        state.query.clear();
+        motion.advance(&mut state, size, now + Duration::from_millis(2));
+        assert_eq!(state.mobile_ui.search_header, Some(HEADER));
+        assert!(!state.mobile_ui.search_editing && state.focus.is_none());
     }
 
     #[test]
