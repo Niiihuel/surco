@@ -1,7 +1,8 @@
-//! The phone's settings as a flat monochrome list, like the app's mark: white glyphs and
-//! words on the page, bold section headings, white for what is on.
+//! The phone's settings as iOS inset-grouped cards in monochrome, like the app's mark: white
+//! glyphs and words on gray cards, bold section headings, white for what is on.
 
 use super::*;
+use limn::{CornerRadii, Separator};
 
 const GUTTER: f32 = 16.0;
 /// The least height of a row, above the 44-point touch minimum.
@@ -10,6 +11,10 @@ const ROW_HEIGHT: f32 = 52.0;
 const ROW_PAD: f32 = 10.0;
 const GLYPH: f32 = 24.0;
 const ROW_GAP: f32 = 14.0;
+const CARD: Color = CHOSEN;
+const CARD_RADIUS: f32 = 16.0;
+/// Hairlines start under the words, past the glyph, as in iOS.
+const SEPARATOR_INSET: f32 = GUTTER + GLYPH + ROW_GAP;
 /// A segment's height; the track adds 2 on each side, to a 44-point target.
 const SEGMENT: f32 = 40.0;
 /// The only hue: what cannot be undone.
@@ -53,7 +58,8 @@ fn action(id: &str, glyph: Icon, title: &str, detail: Option<&str>, trailing: Op
     let mut said = limn::Access::new(limn::Role::Button).name(title);
     if let Some(detail) = detail { said = said.description(detail); }
     if !enabled { return row.accessible(said.id(id).disabled(true)); }
-    ComponentPalette { surface: SCHEME.canvas, hover: SCHEME.hover, selected: SCHEME.control.pressed, ..SCHEME.palette() }
+    // Square here: the group rounds its first and last rows to the card's corners.
+    ComponentPalette { surface: CARD, hover: SCHEME.selected, selected: SCHEME.control.pressed, ..SCHEME.palette() }
         .bar_item_surface(Element::clickable(id, row).accessible(said))
 }
 
@@ -71,19 +77,26 @@ fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     strip.radius(SEGMENT / 2.0 + 2.0)
 }
 
-/// A bold heading, its rows straight on the page, and what the rows mean.
+/// A bold heading, a rounded card of rows with inset hairlines, and what the rows mean.
 fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
     let palette = SCHEME.palette();
+    let last = rows.len().saturating_sub(1);
+    let mut cells = Vec::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 { cells.push(horizontal_inset(Separator::horizontal(palette).render(), SEPARATOR_INSET, 0.0)); }
+        let (top, bottom) = (if index == 0 { CARD_RADIUS } else { 0.0 }, if index == last { CARD_RADIUS } else { 0.0 });
+        cells.push(row.corner_radii(CornerRadii { top_left: top, top_right: top, bottom_right: bottom, bottom_left: bottom }));
+    }
+    let card = Element::panel(Element::column(cells)).background(CARD).radius(CARD_RADIUS).clip_children()
+        .accessible(limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title));
     let caption = |text: Element| horizontal_inset(text, GUTTER, GUTTER);
     let heading = Text::new(title, palette).role(TextRole::Heading).font_size(17.0).render().font_family(FontFamily::SansBold);
-    let rows = Element::column(rows)
-        .accessible(limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title));
-    Element::column(vec![caption(heading), rows, caption(Text::new(footer, palette).font_size(13.0).muted().render())]).gap(6.0)
+    Element::column(vec![caption(heading), card, caption(Text::new(footer, palette).font_size(13.0).muted().render())]).gap(8.0)
 }
 
 pub(in crate::view) fn page(state: &State, width: f32) -> Element {
-    // The rows' inside, for controls that span it.
-    let inner = (width - GUTTER * 2.0).max(0.0);
+    // The card's inside, for controls that span it.
+    let inner = (width - GUTTER * 4.0).max(0.0);
     let white = Color::WHITE;
     let seconds = state.settings.crossfade;
     let crossfade = stacked(
@@ -151,9 +164,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     ], "Lo descargado es para escuchar sin conexión. Antes de borrar te pedimos confirmación.");
 
     let groups = vec![playback, connections, audio, display, library, about, erase];
-    // Rows run edge to edge, as tap targets; their words keep the 16-point gutter.
-    let space = || Element::spacer().size(None, Some(GUTTER));
-    ScrollArea::new("settings", Element::column(vec![space(), Element::column(groups).gap(28.0), space()])).render().flex(1.0)
+    ScrollArea::new("settings", Element::column(groups).gap(28.0).padding(GUTTER)).render().flex(1.0)
 }
 
 #[cfg(test)]
@@ -180,15 +191,14 @@ mod tests {
         state.mobile = true;
         for width in [320.0, 390.0, 430.0] {
             let frame = frame(&state, width);
-            let rows = ["setting:connections", "equalizer", "import-open", "downloads-clear", "recent-clear"];
-            for id in ROWS.into_iter().chain(["recent-clear", "setting:quality:low", "library-sort:added", "library-view:compact"]).filter(|id| !rows.contains(id)) {
+            for id in ROWS.into_iter().chain(["recent-clear", "setting:quality:low", "library-sort:added", "library-view:compact"]) {
                 let target = rect(&frame, id);
                 assert!(target.x >= GUTTER - 0.01 && target.x + target.width <= width - GUTTER + 0.01, "{id} keeps the 16-point margins at {width}: {target:?}");
             }
-            for id in rows {
+            for id in ["setting:connections", "equalizer", "import-open", "downloads-clear", "recent-clear"] {
                 let row = rect(&frame, id);
                 assert!(row.height >= 44.0, "{id} is a full touch row at {width}: {row:?}");
-                assert!(row.x.abs() < 0.01 && (row.width - width).abs() < 0.01, "{id} runs edge to edge at {width}: {row:?}");
+                assert!((row.width - (width - GUTTER * 2.0)).abs() < 0.01, "{id} spans its card at {width}: {row:?}");
             }
             for id in ["setting:quality:normal", "library-sort:alphabetical", "library-view:list"] {
                 assert!(rect(&frame, id).height >= 39.99, "{id} is a comfortable segment at {width}: {:?}", rect(&frame, id));
@@ -213,21 +223,23 @@ mod tests {
             let frame = tree.layout(Size::new(width, 6000.0));
             for id in ROWS {
                 let target = rect(&frame, id);
-                // A whole row may reach the inset edge; a control keeps the gutter inside it.
-                let gutter = if ["setting:connections", "equalizer", "import-open", "downloads-clear"].contains(&id) { 0.0 } else { GUTTER };
-                assert!(target.x >= left + gutter - 0.01 && target.x + target.width <= width - right - gutter + 0.01, "{id} clears the insets at {width}: {target:?}");
+                assert!(target.x >= left + GUTTER - 0.01 && target.x + target.width <= width - right - GUTTER + 0.01, "{id} clears the insets at {width}: {target:?}");
             }
         }
     }
 
     #[test]
-    fn groups_lie_flat_in_monochrome_and_destructive_actions_come_last() {
+    fn groups_are_monochrome_rounded_cards_and_destructive_actions_come_last() {
         let mut state = State::default();
         state.mobile = true;
         let frame = frame(&state, 390.0);
         let groups: Vec<_> = frame.access.iter().filter(|node| node.id.starts_with("settings-group:")).collect();
         assert_eq!(groups.len(), 7);
-        // No cards and no hue but the destructive red: the page matches the monochrome mark.
+        for group in &groups {
+            assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { rect, color, radius }
+                if *color == CARD && *radius == CARD_RADIUS && (rect.y - group.rect.y).abs() < 0.01)), "{} is a rounded card", group.id);
+        }
+        // No hue but the destructive red: the page matches the monochrome mark.
         for command in &frame.commands {
             if let DrawCommand::FillRect { color, .. } = command {
                 assert!(color.r == color.g && color.g == color.b, "a gray fill, not a card tint: {color:?}");
