@@ -72,10 +72,10 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     let list = ScrollArea::new("mobile-search-results", Element::column(rows).gap(4.0)).render().flex(1.0);
     // Keep recovery outside the retained scroll: a failure while browsing deep
     // results must offer Retry without asking the user to find the list's top.
-    let status = if let Some(error) = &state.search_error {
+    let status = if state.search_error.is_some() {
         Element::row(vec![Element::column(vec![
             Text::new("No pudimos actualizar", palette).font_size(13.0).render(),
-            Text::new(error, palette).font_size(12.0).muted().render(),
+            Text::new("Intentá de nuevo en un momento.", palette).font_size(12.0).muted().render(),
         ]).gap(4.0).flex(1.0),
             Button::new("search-submit", "Reintentar", palette).variant(ButtonVariant::Secondary)
                 .size(ControlSize::Spacious).render().size(None, Some(TAP)),
@@ -224,10 +224,16 @@ mod tests {
         }
         state.searching = false;
         state.mobile_ui.pending = None;
-        state.search_error = Some("Sin conexión".into());
+        let diagnostic = "ytmdapi internal_parse_error: respuesta inesperada";
+        state.search_error = Some(diagnostic.into());
         tree.set_root(results(&state));
         let frame = tree.layout(size);
         assert_eq!(tree.scroll_offset("mobile-search-results"), offset, "failure retains the reader's list position");
+        assert_eq!(state.search_error.as_deref(), Some(diagnostic), "the raw diagnostic remains available to the engine");
+        assert!(!frame.commands.iter().any(|command| matches!(command,
+            DrawCommand::Text { text, .. } if text.contains("ytmdapi") || text.contains("internal_parse_error"))),
+            "provider diagnostics do not leak into the user-facing recovery copy");
+        assert!(text(&frame, "Intentá de nuevo en un momento."));
         assert!(frame.regions.iter().any(|region| region.id == "track:3" && region.kind == HitKind::Button));
         let retry = frame.regions.iter().find(|region| region.id == "search-submit" && region.kind == HitKind::Button)
             .expect("recovery remains visible even when the results are scrolled").rect;
