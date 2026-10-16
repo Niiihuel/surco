@@ -167,7 +167,7 @@ typedef struct {
     _picker = [[AVRoutePickerView alloc] initWithFrame:CGRectZero];
     _picker.prioritizesVideoDevices = NO;
     _picker.tintColor = UIColor.whiteColor;
-    _picker.activeTintColor = UIColor.systemGreenColor;
+    _picker.activeTintColor = UIColor.whiteColor;
     _picker.accessibilityLabel = @"Salida de audio";
     _picker.hidden = YES;
     _picker.userInteractionEnabled = NO;
