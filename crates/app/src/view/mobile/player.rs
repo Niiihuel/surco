@@ -111,12 +111,12 @@ fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
         parts.push(Text::new(message, card).font_size(16.0).muted().render());
         if matches!(known, Some((_, Lyrics::Failed { .. } | Lyrics::Missing))) {
             parts.push(Button::new("retry-lyrics", "Reintentar", card).variant(ButtonVariant::Outline)
-                .size(ControlSize::Spacious).render().size(None, Some(TAP)));
+                .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render());
         }
     }
     parts.push(Element::row(vec![
         Button::new("lyrics", "Mostrar la letra", card).variant(ButtonVariant::Outline)
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)),
+            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         Element::spacer().flex(1.0),
     ]));
     Element::panel(Element::column(parts).gap(18.0).padding(20.0)).background(card.surface).radius(16.0)
@@ -130,7 +130,7 @@ fn artist_card(state: &State, width: f32, palette: ComponentPalette) -> Option<E
         .accessible(limn::Access::new(limn::Role::Button).name(format!("Ver artista: {}", artist.name)))
         .size(None, Some(TAP)).flex(1.0);
     let follow = Button::new("about-follow", if followed { "Siguiendo" } else { "Seguir" }, card)
-        .variant(ButtonVariant::Outline).size(ControlSize::Spacious).render().size(None, Some(TAP));
+        .variant(ButtonVariant::Outline).sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     let mut copy = vec![
         Text::new("Acerca del artista", card).font_size(16.0).render(),
         Element::row(vec![name, follow]).gap(12.0),

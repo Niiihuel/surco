@@ -8,7 +8,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         Text::new("Tu música.\nA tu manera.", palette).font_size(36.0).render(),
         Text::new("Un tema que vuelve. Un artista por descubrir. Todo empieza con algo que te gusta.", palette).font_size(16.0).muted().render(),
         Button::new("mobile-discover", "Encontrá algo para escuchar", palette).icon(Icon::Search)
-            .variant(ButtonVariant::Default).size(ControlSize::Spacious).render().size(None, Some(48.0)),
+            .variant(ButtonVariant::Default).sizing(limn::ButtonSizing { height: 48.0, ..ControlSize::Spacious.button_sizing() }).round().render(),
     ]).gap(20.0).padding(24.0);
     let panel = Element::panel(intro).background(SCHEME.raised).radius(16.0);
     ScrollArea::new("mobile-home", Element::column(vec![panel,

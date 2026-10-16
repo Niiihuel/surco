@@ -84,7 +84,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
             Text::new("Intentá de nuevo en un momento.", palette).font_size(12.0).muted().render(),
         ]).gap(4.0).flex(1.0),
             Button::new("search-submit", "Reintentar", palette).variant(ButtonVariant::Secondary)
-                .size(ControlSize::Spacious).render().size(None, Some(TAP)),
+                .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         ]).gap(8.0).padding(8.0)
     } else {
         let copy = if pending { Text::new("Buscando…", palette).font_size(12.0).muted().render() }

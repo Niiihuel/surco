@@ -255,9 +255,9 @@ pub(in crate::view) fn playlist(
         about.push(
             Button::new("import-missed", label, palette)
                 .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Spacious)
-                .render()
-                .size(None, Some(TAP)),
+                .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() })
+                .round()
+                .render(),
         );
     }
     let mut sections = vec![picture.centered_x(), Element::column(about).gap(8.0)];

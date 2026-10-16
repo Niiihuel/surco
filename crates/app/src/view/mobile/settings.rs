@@ -77,7 +77,7 @@ fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     strip.radius(SEGMENT / 2.0 + 2.0)
 }
 
-/// A bold heading, a rounded card of rows with inset hairlines, and what the rows mean.
+/// A bold heading, a rounded card of rows with inset hairlines, and a note only when one helps.
 fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
     let palette = SCHEME.palette();
     let last = rows.len().saturating_sub(1);
@@ -91,7 +91,9 @@ fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
         .accessible(limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title));
     let caption = |text: Element| horizontal_inset(text, GUTTER, GUTTER);
     let heading = Text::new(title, palette).role(TextRole::Heading).font_size(17.0).render().font_family(FontFamily::SansBold);
-    Element::column(vec![caption(heading), card, caption(Text::new(footer, palette).font_size(13.0).muted().render())]).gap(8.0)
+    let mut parts = vec![caption(heading), card];
+    if !footer.is_empty() { parts.push(caption(Text::new(footer, palette).font_size(13.0).muted().render())); }
+    Element::column(parts).gap(8.0)
 }
 
 pub(in crate::view) fn page(state: &State, width: f32) -> Element {
@@ -106,11 +108,11 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     let playback = group("Reproducción", vec![
         switch(Icon::Infinity, "Reproducción automática", "setting:autoplay", state.settings.autoplay),
         crossfade,
-    ], "Al terminar lo que escuchás, sigue con algo similar. El crossfade mezcla el final de una canción con el comienzo de la siguiente.");
+    ], "");
 
     let mut connections = group("Conexiones y dispositivos", vec![
         action("setting:connections", Icon::Custom(AUDIO_ROUTE), "Escuchar en otro dispositivo", None, Some(chevron()), true, false),
-    ], "Elegí el iPhone, auriculares, parlantes o un destino AirPlay disponible.");
+    ], "");
     if let Some(notice) = &state.output_notice {
         connections = Element::column(vec![connections, Alert::new("Salida de audio", notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
     }
@@ -129,11 +131,11 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
         switch(Icon::Headphones, "Audio mono", "setting:mono", state.settings.mono),
         action("equalizer", Icon::Sliders, "Ecualizador", None,
             Some(Element::row(vec![value(equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
-    ], "La calidad cambia a partir de la próxima canción. Normalizar iguala el nivel de las canciones; en mono los dos parlantes reproducen lo mismo. El ecualizador tiene diez bandas y un previo.");
+    ], "La calidad cambia desde la próxima canción.");
 
     let display = group("Visualización", vec![
         switch(Icon::Bolt, "Reducir movimiento", "setting:motion", state.settings.reduce_motion),
-    ], "Muestra los cambios de una vez, sin animaciones.");
+    ], "");
 
     let sort = state.settings.library_sort;
     let view = state.settings.library_view;
@@ -149,19 +151,19 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
             Tab::new("library-view:grid", "Cuadrícula", 0.0).active(view == LibraryView::Grid),
         ])),
         action("import-open", Icon::Playlist, "Importar música de otras apps", None, Some(chevron()), true, false),
-    ], "Elegí qué aparece primero en Tu biblioteca y cuánto detalle ves. Importá playlists de Spotify, Apple Music y YouTube Music con su enlace.");
+    ], "");
 
     let about = group("Acerca de", vec![
-        cell(line(Icon::InfoCircle, "Versión", Some("Surco para iOS."), Some(value(env!("CARGO_PKG_VERSION"))), white)),
-        cell(line(Icon::Book, "Licencias de terceros", Some("Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT)."), None, white)),
-    ], "Los cambios se guardan en este equipo.");
+        cell(line(Icon::InfoCircle, "Versión", None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+        cell(line(Icon::Book, "Licencias de terceros", Some("zuno, Spell UI, Lucide, Bootstrap Icons y ytmapi-rs"), None, white)),
+    ], "");
 
     // What cannot be undone sits last, each behind a confirmation.
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
     let erase = group("Almacenamiento y privacidad", vec![
         action("downloads-clear", Icon::Trash, "Eliminar todas las descargas", Some(&downloads), None, !state.saved.is_empty(), true),
-        action("recent-clear", Icon::History, "Borrar abiertos recientemente", Some("Quita de Inicio los álbumes y artistas que abriste."), None, !state.collection.recent.is_empty(), true),
-    ], "Lo descargado es para escuchar sin conexión. Antes de borrar te pedimos confirmación.");
+        action("recent-clear", Icon::History, "Borrar abiertos recientemente", Some("Álbumes y artistas de Inicio"), None, !state.collection.recent.is_empty(), true),
+    ], "");
 
     let groups = vec![playback, connections, audio, display, library, about, erase];
     ScrollArea::new("settings", Element::column(groups).gap(28.0).padding(GUTTER)).render().flex(1.0)

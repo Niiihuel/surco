@@ -86,7 +86,7 @@ fn connections(state: &State, base: Element, palette: ComponentPalette) -> Eleme
     ]).gap(8.0).padding(8.0);
     let body = Element::column(vec![route, choose, Separator::horizontal(palette).render(), guide, volume]).gap(16.0);
     let done = Button::new("mobile-connections-close", "Listo", palette).variant(ButtonVariant::Default)
-        .size(ControlSize::Spacious).render().size(None, Some(TAP));
+        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     BottomSheet::new(base, state.mobile_ui.connections, "Escuchar en", "Elegí dónde sigue la música.", "mobile-connections-close", SCHEME.menu())
         .max_height(600.0).body(body).footer(done).return_focus("mobile-connections").render()
 }
