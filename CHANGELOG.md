@@ -31,6 +31,8 @@
   native editing through rotation without reopening a dismissed keyboard.
 - Song search keeps tracks whose album has no link, including collaborations,
   instead of rejecting the entire result list.
+- Mixed song searches accept the provider's video rows while preserving their
+  view counts, duration and artist credits.
 - Search recovery shows a concise message and Retry without provider internals.
 
 ## 0.4.0
