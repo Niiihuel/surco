@@ -129,6 +129,14 @@ fn follow_lyrics(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut 
     Some(frame)
 }
 
+/// Slide the player's lyric card so the line before the one being sung is at its top,
+/// laying out again when it moved.
+fn follow_lyric_card(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    let line = |index: usize| tree.anchor_offset(&format!("lyric-card:{index}"));
+    let to = line(0).map(|first| state.active_line().and_then(|sung| line(sung.saturating_sub(1))).map_or(0.0, |top| top - first));
+    state.follow_lyric_card(to, Instant::now()).then(|| layout_with_notice(state, tree, window, seen))
+}
+
 fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Frame {
     tree.set_root(view::view(state, window));
     let frame = tree.layout(window);
@@ -492,6 +500,9 @@ impl eframe::App for Host {
         let mut input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         if let Some(frame) = follow_lyrics(&mut self.state, &mut self.tree, window, &mut self.notice) {
             self.stirred = Instant::now();
+            input_frame = frame;
+        }
+        if let Some(frame) = follow_lyric_card(&mut self.state, &mut self.tree, window, &mut self.notice) {
             input_frame = frame;
         }
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
@@ -915,6 +926,20 @@ mod lyrics_viewport_tests {
                 assert!(above > 0.0, "the line just sung stays visible above");
             }
         }
+    }
+
+    #[test]
+    fn the_player_card_slides_the_line_before_the_sung_one_to_its_top() {
+        let (mut state, mut tree, size) = phone(verses(40), 10.5);
+        state.page = state::Page::Playing;
+        layout_view(&mut state, &mut tree, size);
+        let mut seen = None;
+        assert!(follow_lyric_card(&mut state, &mut tree, size, &mut seen).is_some());
+        let now = std::time::Instant::now();
+        let pitch = tree.anchor_offset("lyric-card:1").unwrap() - tree.anchor_offset("lyric-card:0").unwrap();
+        assert!(pitch > 20.0 && (state.lyric_card_offset(now) - 9.0 * pitch).abs() < 1.0,
+            "verse 9 tops the card: {} by {pitch}", state.lyric_card_offset(now));
+        assert!(follow_lyric_card(&mut state, &mut tree, size, &mut seen).is_none(), "and stays while the line holds");
     }
 
     #[test]

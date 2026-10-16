@@ -78,22 +78,29 @@ fn tools(palette: ComponentPalette) -> Element {
     ]).gap(8.0)
 }
 
+const LYRIC_CARD_LINE: f32 = 30.0;
+const LYRIC_CARD_GAP: f32 = 18.0;
+
 fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
     let card = ComponentPalette { surface: SCHEME.raised, ..palette };
     let mut parts = vec![Text::new("Vista previa de la letra", card).font_size(16.0).render()];
     let lines = state.lines();
     if !lines.is_empty() {
-        // The line being sung stays second, with the one before it above; each line keeps
-        // its own ink as the window moves on, so it brightens and dims instead of switching.
+        // Every line, in a window four lines tall that slides them up so the one being sung
+        // rests second (the Host measures where it is); each keeps its own ink, so it
+        // brightens and dims as it passes instead of switching.
         let sung = state.active_line().map_or(-1, |index| index as i64);
-        let from = sung.max(1) as usize - 1;
-        let from = from.min(lines.len().saturating_sub(4));
-        parts.extend(lines.iter().enumerate().skip(from).take(4).map(|(index, line)| {
+        let rows = lines.iter().enumerate().map(|(index, line)| {
             let ink = Color { a: (255.0 * lyric_focus(index as i64 - sung).0) as u8, ..card.text };
             Text::new(if line.text.trim().is_empty() { "♪" } else { &line.text }, card)
-                .font_size(22.0).line_height(30.0).ink(ink).render()
+                .font_size(22.0).line_height(LYRIC_CARD_LINE).ink(ink).render()
                 .font_family(FontFamily::SansBold).animate_foreground(format!("lyric-card-ink:{index}"))
-        }));
+                .anchor(format!("lyric-card:{index}"))
+        }).collect();
+        let slide = limn::Point::new(0.0, -state.lyric_card_offset(std::time::Instant::now()));
+        let height = 4.0 * LYRIC_CARD_LINE + 3.0 * LYRIC_CARD_GAP;
+        parts.push(Element::column(vec![Element::column(rows).gap(LYRIC_CARD_GAP).translate(slide)])
+            .size(None, Some(height)).clip_children());
     } else if !state.plain_lyrics().is_empty() {
         parts.extend(state.plain_lyrics().iter().filter(|line| !line.is_empty()).take(4)
             .map(|line| Text::new(line, card).font_size(22.0).line_height(30.0).render()));

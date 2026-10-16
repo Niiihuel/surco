@@ -599,6 +599,10 @@ pub struct State {
     lyric_shown: Option<usize>,
     /// How far the rows of the lyrics still trail the list's last jump to the line being sung.
     lyric_glide: ScalarSpring,
+    /// How far the player's lyric card has slid its lines up, so the one being sung rests second.
+    lyric_card: ScalarSpring,
+    /// Whether the card was on screen at the last layout; one that appears is in place at once.
+    lyric_card_shown: bool,
     /// Consumed by the Host before following the new track's first timed line.
     pub(crate) lyrics_scroll_reset: bool,
     pub outputs: Vec<AudioOutputDevice>,
@@ -824,6 +828,8 @@ impl Default for State {
             lyrics: None,
             lyric_shown: None,
             lyric_glide: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
+            lyric_card: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
+            lyric_card_shown: false,
             lyrics_scroll_reset: false,
             outputs: Vec::new(),
             outputs_loading: false,
@@ -942,6 +948,7 @@ impl State {
     pub fn is_sliding(&self, now: Instant) -> bool {
         self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now) || self.library_search_slide.is_active(now)
             || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
+            || self.lyric_card.is_active(now)
     }
 
     /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
@@ -2236,6 +2243,29 @@ impl State {
         }
     }
 
+    /// Slides the player's lyric card `to` this far up, by spring when it was already on
+    /// screen and moving is allowed; `None` when the card is not laid out. Whether it moved.
+    pub(crate) fn follow_lyric_card(&mut self, to: Option<f32>, now: Instant) -> bool {
+        let Some(to) = to else {
+            self.lyric_card_shown = false;
+            return false;
+        };
+        if (self.lyric_card.target() - to).abs() < 0.5 && self.lyric_card_shown {
+            return false;
+        }
+        if self.lyric_card_shown && self.motion {
+            self.lyric_card.release(self.lyric_card.value(now), self.lyric_card.velocity(now), to, now);
+        } else {
+            self.lyric_card.snap_to(to, now);
+        }
+        self.lyric_card_shown = true;
+        true
+    }
+
+    pub fn lyric_card_offset(&self, now: Instant) -> f32 {
+        self.lyric_card.value(now)
+    }
+
     /// How far below its place the row of line `index` is painted at `now`. A row sets off a
     /// little after the one before it, counting out from the line being sung, so the list
     /// ripples into place instead of moving as one slab.
@@ -3265,6 +3295,24 @@ mod tests {
         assert_eq!(clock(291.0), "4:51");
         assert_eq!(clock(-3.0), "0:00");
         assert_eq!(clock(f64::NAN), "0:00");
+    }
+
+    #[test]
+    fn lyric_card_appears_in_place_then_springs_to_each_new_line() {
+        let mut state = State::default();
+        state.motion = true;
+        let now = Instant::now();
+        assert!(state.follow_lyric_card(Some(48.0), now), "a card that appears is placed");
+        assert_eq!(state.lyric_card_offset(now), 48.0);
+        assert!(!state.follow_lyric_card(Some(48.0), now), "nothing to do while the line holds");
+        assert!(state.follow_lyric_card(Some(96.0), now));
+        assert_eq!(state.lyric_card_offset(now), 48.0, "the next line slides in rather than jumps");
+        assert!(state.is_sliding(now + Duration::from_millis(100)));
+        let later = now + Duration::from_secs(2);
+        assert!((state.lyric_card_offset(later) - 96.0).abs() < 0.01 && !state.is_sliding(later));
+        assert!(!state.follow_lyric_card(None, later));
+        assert!(state.follow_lyric_card(Some(0.0), later));
+        assert_eq!(state.lyric_card_offset(later), 0.0, "reopened, it is in place at once");
     }
 
     #[test]
