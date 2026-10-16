@@ -14,6 +14,12 @@ repository = "https://github.com/Niiihuel/surco"
 [workspace.metadata.surco]
 minimum = "0.1.0"
 
+# Thin LTO inlines across crates at a fraction of fat LTO's build time; dropping the
+# standard library's debug info saves megabytes while panics still name their functions.
+[profile.release]
+lto = "thin"
+strip = "debuginfo"
+
 [profile.dev]
 debug = "line-tables-only"
 

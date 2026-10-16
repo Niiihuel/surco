@@ -251,7 +251,7 @@ local no confirma que Apple ya haya habilitado el build.
 ## 5. Instalar en el iPhone
 
 La distribución actual autorizada es **fuera de Francia**. La app incorpora TLS
-mediante rustls (`ring` y `aws-lc-rs`), además de TOTP/HMAC-SHA1 y hashes SHA256:
+mediante rustls (`aws-lc-rs`), además de TOTP/HMAC-SHA1 y hashes SHA256:
 usa algoritmos estándar incluidos en la app, no solo el cifrado del SO Apple.
 Apple distingue ese caso del cifrado limitado al sistema operativo y señala la
 declaración francesa para distribución por App Store en Francia. Antes de ampliar
