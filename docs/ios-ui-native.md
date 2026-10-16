@@ -52,11 +52,27 @@ original target and discarded if the control is hidden, retargeted or destroyed.
 Pasting opens an editable draft; it never starts importing automatically.
 iOS 15 uses an explicit-tap fallback for the card.
 
-The import drawer instead contains a full-width native `UITextField`. UIKit owns
-selection, the **Pegar** editing menu and physical-keyboard shortcuts; there is no
-redundant Paste button beside the editor. Its editing events update Rust's draft
-without replacing the live field or caret. Return dismisses the keyboard; only
-the explicit Import action fetches a playlist.
+The import drawer contains a native `UITextField` with a `UIPasteControl` beside
+it. UIKit owns selection, the **Pegar** editing menu and physical-keyboard
+shortcuts; the visible control exists because iOS may offer AutoFill instead of
+the edit menu on an empty URL field. Pasting replaces the whole draft, including
+while the field is editing, and never prompts for pasteboard access. Typing
+updates Rust's draft without replacing the live field or caret. Return dismisses
+the keyboard; only the explicit Import action fetches a playlist. iOS 15 uses an
+explicit-tap fallback.
+
+## Header and tab bar
+
+Outside the player and lyrics, UIKit draws the phone's header and tab bar over
+the `ios-header` and `ios-tabs` slots that the limn layout reserves. Rust sends
+the title, the header's buttons, the tabs and their selection; UIKit returns only
+the id of a button from the last payload, which Rust validates before acting.
+Rows scroll beneath both bars. The header follows iOS 26's scroll-edge
+convention: a blur and the page's tint fade out below it, and its buttons are
+Liquid Glass circles on iOS 26 (a translucent circle before). The tab bar uses
+the Spotify iPhone kit: SF Symbols with labels, white when selected, over a
+canvas scrim that is clear above the mini-player and solid by the tab labels.
+Both fade instead of popping while the player slides over them.
 
 `NativeUi::paste_text` remains the explicit paste bridge for canvas-editor
 fallbacks. The Host binds a request to its original field and checks that it is

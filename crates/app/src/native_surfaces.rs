@@ -12,7 +12,25 @@ pub(crate) struct Payload {
     pub sheet: Option<Sheet>,
     pub paste: Option<PasteSlot>,
     pub search: Option<SearchSlot>,
+    pub chrome: Option<Chrome>,
     pub reduce_motion: bool,
+}
+
+/// The phone's header and tab bar. Rects are screen points; `edge` is the
+/// bottom of the header backdrop, including the status bar and search field.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct Chrome {
+    pub edge: f32,
+    pub tint: [u8; 3],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<[f32; 4]>,
+    pub title: String,
+    pub compact: bool,
+    pub leading: Vec<Action>,
+    pub trailing: Vec<Action>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tabs: Option<[f32; 4]>,
+    pub items: Vec<Action>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -76,6 +94,7 @@ pub(crate) enum Event {
     SearchFocus { session: String, revision: u64, editing: bool },
     SearchSubmit { session: String },
     SearchCancel { session: String },
+    Chrome { id: String },
 }
 
 #[derive(Clone)]
@@ -94,6 +113,7 @@ pub(crate) struct Controller {
     next_sheet: u64,
     search: Option<SearchBinding>,
     next_search: u64,
+    chrome: HashSet<String>,
 }
 
 impl Controller {
@@ -101,7 +121,8 @@ impl Controller {
         let mut payload = Payload { reduce_motion: state.settings.reduce_motion || !state.motion, ..Payload::default() };
         self.menus.clear();
         self.paste = None;
-        if !state.mobile { self.sheet = None; self.search = None; self.active_menu = None; return payload; }
+        if !state.mobile { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
+        payload.chrome = self.chrome(state, frame, origin);
         if let Some((key, mut sheet)) = sheet_spec(state) {
             self.search = None;
             sheet.id = match self.sheet.as_ref().filter(|held| held.key == key) {
@@ -164,9 +185,36 @@ impl Controller {
         payload
     }
 
+    fn chrome(&mut self, state: &State, frame: &Frame, origin: Pos2) -> Option<Chrome> {
+        self.chrome.clear();
+        let slot = |id: &str| frame.access.iter().find(|node| node.id == id)
+            .and_then(|node| screen_rect(node.rect, origin)).filter(|rect| rect[3] >= 44.0);
+        let edge = frame.regions.iter().find(|region| region.id == "mobile-header-bar")?;
+        let header = slot("ios-header");
+        let tabs = slot("ios-tabs");
+        if header.is_none() && tabs.is_none() { return None; }
+        let action = |(id, title, symbol): (&str, &str, &str)| Action::new(id, title, symbol);
+        let (leading, trailing) = crate::view::header_buttons(state);
+        let (leading, trailing): (Vec<_>, Vec<_>) = if header.is_some() {
+            (leading.into_iter().map(action).collect(), trailing.into_iter().map(action).collect())
+        } else { Default::default() };
+        let items: Vec<_> = if tabs.is_some() {
+            crate::view::tabs(state).into_iter().map(|(id, _, symbol, title, selected)|
+                Action { selected, ..Action::new(id, title, symbol) }).collect()
+        } else { Vec::new() };
+        self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
+        let tint = crate::view::surface_tint(state);
+        Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, tint: [tint.r, tint.g, tint.b], header,
+            title: crate::view::mobile_title(state).into(), compact: state.mobile_ui.compact_header, leading, trailing, tabs, items })
+    }
+
     pub fn apply(&mut self, state: &mut State, event: Event) -> Vec<Command> {
         if !state.mobile { return Vec::new(); }
         match event {
+            // Only a button offered by the last rendered header or tab bar.
+            Event::Chrome { id } if self.chrome.contains(&id) => {
+                return state.update(&UiAction::Clicked { id });
+            }
             Event::SearchEdit { session, revision, text } if self.current_search(state, &session) => {
                 let binding = self.search.as_mut().unwrap();
                 if revision > binding.revision {
@@ -706,6 +754,37 @@ mod tests {
         state.equalizer.preamp_db = 3.0;
         let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
         assert!(sheet.rows.iter().any(|row| matches!(row, Row::Text { title, .. } if title == "Personalizado")));
+    }
+
+    #[test]
+    fn native_chrome_replaces_the_limn_bars_and_accepts_only_offered_buttons() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        let size = Size::new(390.0, 844.0);
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        for id in ["home", "mobile-search", "mobile-library", "settings"] {
+            assert!(!frame.access.iter().any(|node| node.id == id), "{id} is a UIKit button");
+        }
+        let mut controller = Controller::default();
+        let chrome = controller.payload(&state, &frame, Pos2::new(0.0, 10.0)).chrome.unwrap();
+        let header = chrome.header.unwrap();
+        assert!(header[1] >= 10.0 && chrome.edge >= header[1] + header[3]);
+        assert_eq!(chrome.trailing.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["settings"]);
+        assert!(chrome.leading.is_empty());
+        let tabs = chrome.tabs.unwrap();
+        assert!(tabs[1] + tabs[3] <= 854.0 && tabs[3] >= 44.0);
+        assert_eq!(chrome.items.iter().map(|item| (item.id.as_str(), item.selected)).collect::<Vec<_>>(),
+            [("home", true), ("mobile-search", false), ("mobile-library", false)]);
+        assert!(controller.apply(&mut state, Event::Chrome { id: "next".into() }).is_empty());
+        assert_eq!(state.page, state::Page::Search);
+        controller.apply(&mut state, Event::Chrome { id: "mobile-library".into() });
+        assert_eq!(state.page, state::Page::Library);
+        assert_eq!(serde_json::from_str::<Event>(r#"{"kind":"chrome","id":"home"}"#).unwrap(), Event::Chrome { id: "home".into() });
+
+        state.page = state::Page::Playing;
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        assert!(controller.payload(&state, &frame, Pos2::ZERO).chrome.is_none(), "the player keeps its own bars");
+        assert!(controller.apply(&mut state, Event::Chrome { id: "home".into() }).is_empty() && state.page == state::Page::Playing);
     }
 
     #[test]

@@ -56,6 +56,11 @@ pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32, header_edg
     }
 }
 
+/// The transport scrim from the iPhone kit: clear above the mini-player, solid by the tab labels.
+pub(super) fn spotify_fade(canvas: Color) -> Vec<Color> {
+    [0, 96, 190, 235, 250, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
+}
+
 fn space(height: f32) -> Element {
     Element::spacer().size(None, Some(height))
 }
@@ -69,8 +74,9 @@ fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32, header_edge: Color
     // The whole transition must sit beside the opaque chrome. A gradient
     // spanning the bar's height spends most of its opacity behind the bar,
     // leaving only a faint sliver visible at the content edge.
-    scroll.style.top_fade = Some((header_edge, TOP_FADE));
-    scroll.style.bottom_fade = (bottom > 0.0).then_some((footer_edge, BOTTOM_FADE));
+    // A transparent edge means native chrome draws its own transition.
+    scroll.style.top_fade = (header_edge.a > 0).then_some((header_edge, TOP_FADE));
+    scroll.style.bottom_fade = (bottom > 0.0 && footer_edge.a > 0).then_some((footer_edge, BOTTOM_FADE));
     let element = std::mem::replace(scroll, Element::spacer());
     *scroll = element.fade_insets(top, bottom).scrollbar_visibility(SCROLL_INDICATOR);
     if let ElementKind::Scroll { appearance, .. } = &mut scroll.kind {

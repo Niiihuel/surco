@@ -35,20 +35,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let width = (window.width - insets.left - insets.right).max(TAP);
     let surface = page_surface(state);
     let searching = state.page == Page::Search && state.mobile_search;
-    let title = match &state.page {
-        Page::Library => "Tu biblioteca",
-        Page::Settings => "Configuración",
-        Page::Playing => if state.queue_open { "Cola de reproducción" } else { "Ahora suena" },
-        Page::Lyrics => "Letra",
-        Page::Search if searching => "Buscar",
-        Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())),
-        Page::Downloads => "Descargas",
-        Page::Liked => "Tus me gusta",
-        Page::Album(album) if state.mobile_ui.compact_header => &album.title,
-        Page::Artist(artist) if state.mobile_ui.compact_header => &artist.name,
-        Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or("Playlist", |playlist| playlist.name.as_str()),
-        _ => "Tu música",
-    };
+    let title = title(state);
     let mut header = Vec::new();
     if state.can_go_back() || state.page == Page::Playing {
         header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, "Volver", palette));
@@ -80,7 +67,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
-    let header = if state.page == Page::Lyrics { lyrics::header(state, palette) }
+    // UIKit draws the header and tabs over these slots outside the song pages.
+    let native_chrome = state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
+    let header = if native_chrome {
+        Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title))
+    } else if state.page == Page::Lyrics { lyrics::header(state, palette) }
         else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
     let header = if compact_player {
@@ -119,18 +110,32 @@ pub(super) fn view(state: &State, window: Size) -> Element {
             bottom_height += MINI_HEIGHT;
         }
     }
-    if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard { bottom.push(navigation(state, palette)); bottom_height += NAV_HEIGHT; }
+    if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard {
+        bottom.push(if native_chrome {
+            Element::spacer().size(None, Some(NAV_HEIGHT))
+                .accessible(limn::Access::new(limn::Role::Group).id("ios-tabs").name("Pestañas"))
+                .block_pointer("mobile-nav-bar")
+        } else { navigation(state, palette) });
+        bottom_height += NAV_HEIGHT;
+    }
     bottom.push(Element::spacer().size(None, Some(insets.bottom)));
-    let content = if state.page == Page::Playing && !state.queue_open { content } else { content.animate_enter(route_key(state)) };
+    let route = route_key(state);
+    let content = if (state.page == Page::Playing && !state.queue_open) || state.mobile_ui.revealed.as_deref() == Some(route.as_str()) { content }
+        else { content.animate_enter(route) };
     let header_edge = mix(surface.0, surface.1, (top_height / window.height.max(1.0)).clamp(0.0, 1.0));
     let song_surface = matches!(state.page, Page::Playing | Page::Lyrics);
     let footer_edge = if song_surface {
         mix(surface.0, surface.1, ((window.height - bottom_height) / window.height.max(1.0)).clamp(0.0, 1.0))
     } else { SCHEME.canvas };
+    // Natively, rows pass beneath a blurred header and fade out behind the transport.
+    let (header_edge, footer_edge) = if native_chrome { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
     let content = chrome::under_bars(content, top_height, bottom_height, header_edge, footer_edge);
-    let top = Element::column(top).vertical_gradient(vec![surface.0, header_edge]).block_pointer("mobile-header-bar");
-    let footer = Element::column(bottom).background(footer_edge).block_pointer("mobile-footer-bar");
-    let footer = if song_surface { footer.vertical_gradient(vec![footer_edge, surface.1]) } else { footer };
+    let top = Element::column(top);
+    let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    let footer = Element::column(bottom);
+    let footer = if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
+        else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
+        else { footer.background(footer_edge) }.block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
@@ -148,6 +153,25 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = confirm_dialog(state, tree, palette);
     limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
         .max_height(680.0).body(equalizer(state, palette)).render()
+}
+
+/// The page title, shared by the limn header and the native iOS header.
+pub(crate) fn title(state: &State) -> &str {
+    let searching = state.page == Page::Search && state.mobile_search;
+    match &state.page {
+        Page::Library => "Tu biblioteca",
+        Page::Settings => "Configuración",
+        Page::Playing => if state.queue_open { "Cola de reproducción" } else { "Ahora suena" },
+        Page::Lyrics => "Letra",
+        Page::Search if searching => "Buscar",
+        Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())),
+        Page::Downloads => "Descargas",
+        Page::Liked => "Tus me gusta",
+        Page::Album(album) if state.mobile_ui.compact_header => &album.title,
+        Page::Artist(artist) if state.mobile_ui.compact_header => &artist.name,
+        Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or("Playlist", |playlist| playlist.name.as_str()),
+        _ => "Tu música",
+    }
 }
 
 fn with_notice(mut content: Element, state: &State, palette: ComponentPalette) -> Element {
@@ -215,7 +239,7 @@ fn page_surface(state: &State) -> (Color, Color) {
     (cover_tone(tint, 0.60), bottom)
 }
 
-fn route_key(state: &State) -> String {
+pub(crate) fn route_key(state: &State) -> String {
     match &state.page {
         Page::Search => if state.mobile_search { "mobile:search" } else { "mobile:home" }.into(),
         Page::Album(album) => format!("mobile:album:{}", album.id),
@@ -235,12 +259,39 @@ fn navigation(state: &State, palette: ComponentPalette) -> Element {
         Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected))
             .size(None, Some(NAV_HEIGHT)).flex(1.0)
     };
-    Element::row(vec![
-        tab("home", Icon::Home, "Inicio", state.page == Page::Search && !state.mobile_search),
-        tab("mobile-search", Icon::Search, "Buscar", state.page == Page::Search && state.mobile_search),
-        tab("mobile-library", Icon::Playlist, "Biblioteca", matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_))),
-    ]).block_pointer("mobile-nav-bar")
+    Element::row(tabs(state).into_iter().map(|(id, glyph, _, label, selected)| tab(id, glyph, label, selected)).collect())
+        .block_pointer("mobile-nav-bar")
 }
+
+/// Each tab's id, limn glyph, SF Symbol, label and selection, shared with the native tab bar.
+pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'static str, bool); 3] {
+    let home = state.page == Page::Search && !state.mobile_search;
+    let library = matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
+    [
+        ("home", Icon::Home, if home { "house.fill" } else { "house" }, "Inicio", home),
+        ("mobile-search", Icon::Search, "magnifyingglass", "Buscar", state.page == Page::Search && state.mobile_search),
+        ("mobile-library", Icon::Library, if library { "books.vertical.fill" } else { "books.vertical" }, "Tu biblioteca", library),
+    ]
+}
+
+/// (dispatch id, label, SF Symbol)
+#[cfg(any(target_os = "ios", test))]
+pub(crate) type HeaderButton = (&'static str, &'static str, &'static str);
+
+/// The native header's (leading, trailing) buttons.
+/// Mirrors the limn header in `view` for the pages outside the player.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderButton>) {
+    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_));
+    let leading = if state.can_go_back() { vec![("back", "Volver", "chevron.left")] } else { Vec::new() };
+    let mut trailing = Vec::new();
+    if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", "Reproducir", "play.fill")); }
+    if state.page != Page::Settings && !detail { trailing.push(("settings", "Configuración", "gearshape")); }
+    (leading, trailing)
+}
+
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn surface_tint(state: &State) -> Color { page_surface(state).0 }
 
 fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Element {
     let tint = track.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied();
@@ -335,7 +386,7 @@ mod tests {
         state.player.current = None;
         let mut tree = UiTree::new(super::view(&state, Size::new(390.0, 844.0)));
         let frame = tree.layout(Size::new(390.0, 844.0));
-        for label in ["Inicio", "Buscar", "Biblioteca"] {
+        for label in ["Inicio", "Buscar", "Tu biblioteca"] {
             let positions: Vec<_> = frame.commands.iter().filter_map(|command| match command {
                 limn::DrawCommand::Text { text, position, .. } if text == label => Some(position),
                 _ => None,

@@ -83,7 +83,9 @@ impl Motion {
             self.player.snap_to(0.0, now);
             state.mobile_ui.player_offset = 0.0;
             let id = if state.can_go_back() { "back" } else { "home" };
-            return state.update(&UiAction::Clicked { id: id.into() });
+            let commands = state.update(&UiAction::Clicked { id: id.into() });
+            state.mobile_ui.revealed = Some(crate::view::mobile_route_key(state));
+            return commands;
         }
         state.mobile_ui.player_offset = self.player.value(now);
         let search = state.mobile && state.page == Page::Search && state.mobile_search;
@@ -555,6 +557,7 @@ mod tests {
         assert_eq!(state.mobile_ui.player_offset, middle, "closing starts from the displayed position");
         let commands = motion.advance(&mut state, size, now + Duration::from_millis(320));
         assert_eq!(state.page, Page::Library);
+        assert_eq!(state.mobile_ui.revealed.as_deref(), Some("mobile:Library"), "the uncovered page does not fade in again");
         assert!(state.player.playing && commands.iter().all(|command| !matches!(command, Command::PlayPause)));
     }
 

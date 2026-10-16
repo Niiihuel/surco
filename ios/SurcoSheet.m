@@ -1,4 +1,5 @@
 #import "SurcoSheet.h"
+#import "SurcoSurfaces.h"
 #import <AVKit/AVKit.h>
 #import <math.h>
 
@@ -49,6 +50,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 @property(nonatomic, strong) UILabel *secondary;
 @property(nonatomic, strong) UIView *control;
 @property(nonatomic, strong) NSLayoutConstraint *height;
+@property(nonatomic, strong) SurcoPasteTarget *pasteTarget;
 @property(nonatomic, copy) NSDictionary *model;
 @end
 @implementation SurcoSheetRow
@@ -213,11 +215,11 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         [field.heightAnchor constraintGreaterThanOrEqualToConstant:48].active = YES;
         [field addTarget:self action:@selector(fieldChanged:) forControlEvents:UIControlEventEditingChanged];
         row.control = field;
-        // UITextField already owns the native selection, Paste edit menu and
-        // keyboard shortcuts. Keep its full width and never read the pasteboard
-        // to enable another control beside it.
-        // https://developer.apple.com/documentation/uikit/uieditmenuinteraction
-        row.view = field;
+        // UITextField keeps its own selection, Paste edit menu and shortcuts.
+        // A link field also gets a visible Paste beside it, as AutoFill can take
+        // the place of the edit menu. Neither path reads the pasteboard unasked.
+        // https://developer.apple.com/documentation/uikit/uipastecontrol
+        row.view = SheetBool(model[@"paste"]) ? [self pasteRow:row field:field] : field;
     } else if ([kind isEqualToString:@"slider"]) {
         UISlider *slider = [UISlider new];
         slider.continuous = YES;
@@ -270,6 +272,51 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         row.view = SheetStack(@[row.title, row.secondary], UILayoutConstraintAxisVertical, 6);
     }
     return row;
+}
+
+- (UIView *)pasteRow:(SurcoSheetRow *)row field:(UITextField *)field {
+    __weak SurcoSheet *weakSelf = self;
+    __weak UITextField *weakField = field;
+    row.pasteTarget = [SurcoPasteTarget new];
+    row.pasteTarget.receive = ^(NSString *text) {
+        SurcoSheet *sheet = weakSelf;
+        UITextField *live = weakField;
+        if (!sheet || !live.window || !live.enabled) return;
+        // The whole link replaces the draft, also while the field is editing.
+        live.text = text;
+        if (sheet->_emit) sheet->_emit(@{@"kind":@"paste", @"target":live.accessibilityIdentifier ?: @"", @"text":text});
+    };
+    UIControl *paste;
+    if (@available(iOS 16.0, *)) {
+        UIPasteControlConfiguration *configuration = [UIPasteControlConfiguration new];
+        configuration.displayMode = UIPasteControlDisplayModeIconAndLabel;
+        configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        configuration.baseBackgroundColor = UIColor.whiteColor;
+        configuration.baseForegroundColor = UIColor.blackColor;
+        UIPasteControl *control = [[UIPasteControl alloc] initWithConfiguration:configuration];
+        control.target = row.pasteTarget;
+        paste = control;
+    } else {
+        // iOS 15 has no UIPasteControl. This path still requires an explicit tap.
+        UIButtonConfiguration *configuration = [UIButtonConfiguration filledButtonConfiguration];
+        configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        configuration.baseBackgroundColor = UIColor.whiteColor;
+        configuration.baseForegroundColor = UIColor.blackColor;
+        configuration.title = @"Pegar";
+        SurcoPasteTarget *target = row.pasteTarget;
+        paste = [UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(UIAction *action) {
+            UIPasteboard *pasteboard = UIPasteboard.generalPasteboard;
+            NSString *text = pasteboard.URL.absoluteString ?: pasteboard.string;
+            if (text.length && text.length <= 65536 && target.receive) target.receive(text);
+        }]];
+    }
+    paste.accessibilityIdentifier = [@"sheet-paste:" stringByAppendingString:SheetString(row.model[@"id"])];
+    [paste setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [paste setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    [paste.heightAnchor constraintEqualToConstant:48].active = YES;
+    UIStackView *stack = SheetStack(@[field, paste], UILayoutConstraintAxisHorizontal, 8);
+    stack.alignment = UIStackViewAlignmentCenter;
+    return stack;
 }
 
 - (void)updateRow:(SurcoSheetRow *)row model:(NSDictionary *)model {
@@ -329,7 +376,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     NSMutableArray *structure = [NSMutableArray array];
     for (id value in rows) {
         NSDictionary *row = [value isKindOfClass:NSDictionary.class] ? value : @{};
-        [structure addObject:@[SheetString(row[@"kind"]), SheetString(row[@"id"])]];
+        [structure addObject:@[SheetString(row[@"kind"]), SheetString(row[@"id"]), @(SheetBool(row[@"paste"]))]];
     }
     return structure;
 }

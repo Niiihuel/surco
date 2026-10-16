@@ -4,6 +4,10 @@
 
 static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 255.0 alpha:1]; }
 static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
+static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
+static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
+// The soft edge below the header, where the blur fades into the page.
+static const CGFloat SurcoEdgeFade = 28;
 static BOOL SurcoDeliverPaste(NSString *text, void (^receive)(NSString *)) {
     if (!text.length || text.length > 65536) return NO;
     dispatch_async(dispatch_get_main_queue(), ^{ if (receive) receive(text); });
@@ -16,11 +20,8 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     }];
 }
 
-// A real UIPasteControl recipient. No pasteboard reads occur while checking availability.
+// No pasteboard reads occur while checking availability.
 // https://developer.apple.com/documentation/uikit/uipastecontrol
-@interface SurcoPasteTarget : UIResponder
-@property(nonatomic, copy) void (^receive)(NSString *);
-@end
 
 @implementation SurcoPasteTarget
 - (instancetype)init {
@@ -50,6 +51,24 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
         SurcoLoadPasteString(textProvider, receive);
     }];
 }
+@end
+
+// Empty chrome passes touches to the canvas below; only its buttons take them.
+@interface SurcoChromeView : UIView
+@end
+@implementation SurcoChromeView
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    UIView *hit = [super hitTest:point withEvent:event];
+    return hit == self ? nil : hit;
+}
+@end
+
+@interface SurcoGradientView : UIView
+@property(nonatomic, readonly) CAGradientLayer *gradient;
+@end
+@implementation SurcoGradientView
++ (Class)layerClass { return CAGradientLayer.class; }
+- (CAGradientLayer *)gradient { return (CAGradientLayer *)self.layer; }
 @end
 
 @interface SurcoSearchBar : UISearchBar
@@ -89,12 +108,24 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     NSUInteger _searchRevision;
     BOOL _searchWantsEditing;
     BOOL _updatingSearch;
+    NSDictionary *_desiredChrome;
+    UIVisualEffectView *_backdrop;
+    SurcoGradientView *_backdropMask;
+    SurcoGradientView *_shade;
+    SurcoChromeView *_header;
+    UIStackView *_headerRow;
+    UILabel *_title;
+    NSArray *_headerButtons;
+    SurcoChromeView *_tabs;
+    UIStackView *_tabRow;
+    NSArray *_tabItems;
     NSMutableArray<NSDictionary *> *_events;
     void (^_wake)(void);
 }
 - (void)emit:(NSDictionary *)event;
 - (void)reconcileSheet;
 - (void)updateSearch:(NSDictionary *)model;
+- (void)updateChrome:(NSDictionary *)model;
 @end
 
 @implementation SurcoSurfaces
@@ -135,6 +166,9 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
     _sheet = nil;
+    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
+        if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
+    }
     _view = nil;
     [_events removeAllObjects];
 }
@@ -177,14 +211,235 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     if (!_desiredSheet || ![_desiredSheet[@"id"] isEqual:_dismissedSheet]) _dismissedSheet = nil;
     _desiredPaste = [payload[@"paste"] isKindOfClass:NSDictionary.class] ? payload[@"paste"] : nil;
     _desiredSearch = [payload[@"search"] isKindOfClass:NSDictionary.class] ? payload[@"search"] : nil;
+    _desiredChrome = [payload[@"chrome"] isKindOfClass:NSDictionary.class] ? payload[@"chrome"] : nil;
+    [self updateChrome:_desiredChrome];
     [self updateSearch:_desiredSearch];
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
 }
 - (void)refresh {
+    [self updateChrome:_desiredChrome];
     [self updateSearch:_desiredSearch];
     [self updatePaste:_desiredPaste];
     [self reconcileSheet];
+}
+- (BOOL)chromeAnimates {
+    return !_reduceMotion && !UIAccessibilityIsReduceMotionEnabled();
+}
+// Chrome fades instead of popping while the canvas slides the player over it.
+- (void)setChrome:(UIView *)view shown:(BOOL)shown {
+    BOOL interactive = shown && view != _backdrop && view != _shade;
+    if (!view || (view.alpha == (shown ? 1 : 0) && view.userInteractionEnabled == interactive)) return;
+    view.userInteractionEnabled = interactive;
+    if (shown) view.hidden = NO;
+    void (^change)(void) = ^{ view.alpha = shown ? 1 : 0; };
+    if (![self chromeAnimates] || !view.window) { change(); return; }
+    [UIView animateWithDuration:0.22 delay:0 options:UIViewAnimationOptionBeginFromCurrentState |
+        UIViewAnimationOptionAllowUserInteraction animations:change completion:nil];
+}
+- (void)updateChrome:(NSDictionary *)model {
+    BOOL live = model && _view.window;
+    CGRect header = live ? [self rect:model[@"header"]] : CGRectNull;
+    CGRect tabs = live ? [self rect:model[@"tabs"]] : CGRectNull;
+    double edge = live && [model[@"edge"] isKindOfClass:NSNumber.class] ? [model[@"edge"] doubleValue] : 0;
+    edge = isfinite(edge) && edge > 0 ? edge * _scale : 0;
+    [self updateBackdrop:edge tint:SurcoArray(model[@"tint"])];
+    [self updateHeader:model rect:header];
+    [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
+}
+- (void)updateBackdrop:(CGFloat)edge tint:(NSArray *)tint {
+    if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
+    if (!_backdrop) {
+        // iOS 26's scroll edge convention: rows blur and darken softly as they
+        // pass beneath the header, instead of meeting an opaque bar.
+        // https://developer.apple.com/documentation/uikit/uiscrolledgeeffect
+        _backdrop = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+        _backdropMask = [SurcoGradientView new];
+        _backdrop.maskView = _backdropMask;
+        _shade = [SurcoGradientView new];
+        for (UIView *view in @[_backdrop, _shade]) { view.userInteractionEnabled = NO; view.alpha = 0; }
+    }
+    if (_backdrop.superview != _view) { [_view addSubview:_backdrop]; [_view addSubview:_shade]; }
+    CGRect bounds = _view.bounds;
+    CGRect frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
+    NSNumber *solid = @(MAX(0, MIN(1, (edge - 8) / frame.size.height)));
+    _backdrop.frame = frame;
+    _backdropMask.frame = _backdrop.bounds;
+    _backdropMask.gradient.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
+    _backdropMask.gradient.locations = @[@0, solid, @1];
+    CGFloat channel[3] = {18, 18, 18};
+    for (NSUInteger index = 0; index < 3 && index < tint.count; index++) {
+        if ([tint[index] isKindOfClass:NSNumber.class]) channel[index] = MAX(0, MIN(255, [tint[index] doubleValue]));
+    }
+    UIColor *color = [UIColor colorWithRed:channel[0] / 255 green:channel[1] / 255 blue:channel[2] / 255 alpha:1];
+    _shade.frame = frame;
+    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.86].CGColor, (id)[color colorWithAlphaComponent:0.62].CGColor,
+                               (id)[color colorWithAlphaComponent:0].CGColor];
+    _shade.gradient.locations = @[@0, solid, @1];
+    [self setChrome:_backdrop shown:YES];
+    [self setChrome:_shade shown:YES];
+}
+- (UIButton *)chromeButton:(id)value {
+    NSDictionary *item = SurcoDictionary(value);
+    NSString *identifier = SurcoString(item[@"id"]);
+    UIButtonConfiguration *configuration = nil;
+    // Liquid Glass circles on iOS 26, a quiet translucent circle before it.
+    if (@available(iOS 26.0, *)) configuration = [UIButtonConfiguration glassButtonConfiguration];
+    if (!configuration) {
+        configuration = [UIButtonConfiguration plainButtonConfiguration];
+        configuration.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
+    }
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    configuration.baseForegroundColor = UIColor.whiteColor;
+    configuration.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
+    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
+    __weak SurcoSurfaces *weakSelf = self;
+    UIButton *button = [UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}];
+    }]];
+    button.accessibilityIdentifier = identifier;
+    button.accessibilityLabel = SurcoString(item[@"title"]);
+    [NSLayoutConstraint activateConstraints:@[
+        [button.widthAnchor constraintEqualToConstant:44],
+        [button.heightAnchor constraintEqualToConstant:44],
+    ]];
+    return button;
+}
+- (void)updateHeader:(NSDictionary *)model rect:(CGRect)rect {
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect)) { [self setChrome:_header shown:NO]; return; }
+    if (!_header) {
+        _header = [SurcoChromeView new];
+        _header.alpha = 0;
+        _title = [UILabel new];
+        _title.textColor = UIColor.whiteColor;
+        _title.adjustsFontForContentSizeCategory = YES;
+        _title.accessibilityTraits = UIAccessibilityTraitHeader;
+        _title.accessibilityIdentifier = @"surco.native.title";
+        [_title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        [_title setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+        _headerRow = [[UIStackView alloc] initWithArrangedSubviews:@[_title]];
+        _headerRow.axis = UILayoutConstraintAxisHorizontal;
+        _headerRow.alignment = UIStackViewAlignmentCenter;
+        _headerRow.spacing = 8;
+        _headerRow.translatesAutoresizingMaskIntoConstraints = NO;
+        [_header addSubview:_headerRow];
+        [NSLayoutConstraint activateConstraints:@[
+            [_headerRow.leadingAnchor constraintEqualToAnchor:_header.leadingAnchor constant:16],
+            [_headerRow.trailingAnchor constraintEqualToAnchor:_header.trailingAnchor constant:-12],
+            [_headerRow.topAnchor constraintEqualToAnchor:_header.topAnchor],
+            [_headerRow.bottomAnchor constraintEqualToAnchor:_header.bottomAnchor],
+        ]];
+    }
+    if (_header.superview != _view) [_view addSubview:_header];
+    _header.frame = rect;
+    BOOL compact = [model[@"compact"] boolValue];
+    UIFont *font = [UIFont systemFontOfSize:compact ? 17 : 24 weight:compact ? UIFontWeightSemibold : UIFontWeightBold];
+    _title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2] scaledFontForFont:font maximumPointSize:compact ? 22 : 30];
+    NSString *title = SurcoString(model[@"title"]);
+    if (![_title.text isEqualToString:title]) {
+        if (_title.text.length && [self chromeAnimates]) {
+            CATransition *fade = [CATransition animation];
+            fade.type = kCATransitionFade;
+            fade.duration = 0.18;
+            [_title.layer addAnimation:fade forKey:@"title"];
+        }
+        _title.text = title;
+    }
+    NSArray *buttons = @[SurcoArray(model[@"leading"]), SurcoArray(model[@"trailing"])];
+    if (![_headerButtons isEqual:buttons]) {
+        _headerButtons = buttons;
+        for (UIView *view in [_headerRow.arrangedSubviews copy]) {
+            if (view == _title) continue;
+            [_headerRow removeArrangedSubview:view];
+            [view removeFromSuperview];
+        }
+        NSUInteger index = 0;
+        for (id item in buttons[0]) [_headerRow insertArrangedSubview:[self chromeButton:item] atIndex:index++];
+        for (id item in buttons[1]) [_headerRow addArrangedSubview:[self chromeButton:item]];
+    }
+    [self setChrome:_header shown:YES];
+}
+- (UIButtonConfiguration *)tabConfiguration:(NSDictionary *)item {
+    BOOL selected = [item[@"selected"] isKindOfClass:NSNumber.class] && [item[@"selected"] boolValue];
+    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+    configuration.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
+    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:22
+        weight:selected ? UIImageSymbolWeightSemibold : UIImageSymbolWeightRegular];
+    configuration.imagePlacement = NSDirectionalRectEdgeTop;
+    configuration.imagePadding = 4;
+    configuration.contentInsets = NSDirectionalEdgeInsetsMake(4, 2, 2, 2);
+    // The iPhone kit's tab bar: white when selected, a quiet gray otherwise.
+    configuration.baseForegroundColor = selected ? UIColor.whiteColor : [UIColor colorWithWhite:0.70 alpha:1];
+    UIFont *font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleCaption2]
+        scaledFontForFont:[UIFont systemFontOfSize:10 weight:UIFontWeightMedium] maximumPointSize:13];
+    configuration.attributedTitle = [[NSAttributedString alloc] initWithString:SurcoString(item[@"title"])
+        attributes:@{NSFontAttributeName: font}];
+    configuration.titleLineBreakMode = NSLineBreakByTruncatingTail;
+    return configuration;
+}
+- (void)updateTabs:(NSArray *)items rect:(CGRect)rect {
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect) || !items.count) { [self setChrome:_tabs shown:NO]; return; }
+    if (!_tabs) {
+        _tabs = [SurcoChromeView new];
+        _tabs.alpha = 0;
+        _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
+        _tabRow = [UIStackView new];
+        _tabRow.axis = UILayoutConstraintAxisHorizontal;
+        _tabRow.distribution = UIStackViewDistributionFillEqually;
+        _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
+        [_tabs addSubview:_tabRow];
+        [NSLayoutConstraint activateConstraints:@[
+            [_tabRow.leadingAnchor constraintEqualToAnchor:_tabs.leadingAnchor],
+            [_tabRow.trailingAnchor constraintEqualToAnchor:_tabs.trailingAnchor],
+            [_tabRow.topAnchor constraintEqualToAnchor:_tabs.topAnchor],
+            [_tabRow.bottomAnchor constraintEqualToAnchor:_tabs.bottomAnchor],
+        ]];
+    }
+    if (_tabs.superview != _view) [_view addSubview:_tabs];
+    _tabs.frame = rect;
+    [self setChrome:_tabs shown:YES];
+    if ([_tabItems isEqual:items]) return;
+    NSString *(^selection)(NSArray *) = ^NSString *(NSArray *list) {
+        for (id value in list) if ([SurcoDictionary(value)[@"selected"] boolValue]) return SurcoString(SurcoDictionary(value)[@"id"]);
+        return nil;
+    };
+    NSString *before = selection(_tabItems);
+    NSString *after = selection(items);
+    _tabItems = [items copy];
+    NSArray<UIView *> *buttons = _tabRow.arrangedSubviews;
+    BOOL same = buttons.count == items.count;
+    for (NSUInteger index = 0; same && index < items.count; index++) {
+        same = [buttons[index].accessibilityIdentifier isEqualToString:SurcoString(SurcoDictionary(items[index])[@"id"])];
+    }
+    if (!same) {
+        for (UIView *view in buttons) { [_tabRow removeArrangedSubview:view]; [view removeFromSuperview]; }
+        __weak SurcoSurfaces *weakSelf = self;
+        for (id value in items) {
+            NSString *identifier = SurcoString(SurcoDictionary(value)[@"id"]);
+            UIButton *button = [UIButton buttonWithConfiguration:[UIButtonConfiguration plainButtonConfiguration]
+                primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+                    [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}];
+                }]];
+            button.accessibilityIdentifier = identifier;
+            [button.heightAnchor constraintGreaterThanOrEqualToConstant:44].active = YES;
+            [_tabRow addArrangedSubview:button];
+        }
+    }
+    for (NSUInteger index = 0; index < items.count; index++) {
+        NSDictionary *item = SurcoDictionary(items[index]);
+        UIButton *button = (UIButton *)_tabRow.arrangedSubviews[index];
+        BOOL selected = [item[@"selected"] isKindOfClass:NSNumber.class] && [item[@"selected"] boolValue];
+        button.configuration = [self tabConfiguration:item];
+        button.accessibilityLabel = SurcoString(item[@"title"]);
+        button.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
+        if (selected && before && ![before isEqualToString:after ?: @""] && [self chromeAnimates]) {
+            // A small spring on the newly selected glyph, like the system tab bar.
+            UIImageView *glyph = button.imageView;
+            glyph.transform = CGAffineTransformMakeScale(0.82, 0.82);
+            [UIView animateWithDuration:0.42 delay:0 usingSpringWithDamping:0.45 initialSpringVelocity:0.6
+                options:UIViewAnimationOptionAllowUserInteraction animations:^{ glyph.transform = CGAffineTransformIdentity; } completion:nil];
+        }
+    }
 }
 - (BOOL)searchIsLive {
     return _valid && !_updatingSearch && _searchSession.length && !_searchBar.hidden && _view.window;

@@ -48,7 +48,8 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
         (
             Page::Search,
             "home",
-            vec!["mobile-search", "mobile-library", "settings", "heard:0"],
+            // The tabs and Settings are UIKit buttons that XCUI finds by identifier.
+            vec!["heard:0"],
         ),
         (
             Page::Library,

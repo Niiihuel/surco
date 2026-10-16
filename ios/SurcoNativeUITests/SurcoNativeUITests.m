@@ -105,7 +105,7 @@
 - (void)pasteThroughEditingMenu:(XCUIElement *)field {
     [field pressForDuration:1.1];
     // UIKit owns the edit menu. Match its localized action, not an app button.
-    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"(label == 'Paste' OR label == 'Pegar') AND NOT (identifier BEGINSWITH 'sheet-paste:')"];
     XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
     XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"The native editor must offer Paste: %@", self.app.debugDescription);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
@@ -186,20 +186,37 @@
     [self waitFor:field predicate:@"exists == NO"];
 }
 
+- (void)testImportPasteControlFillsTheLinkWithoutImporting {
+    NSString *link = @"https://open.spotify.com/playlist/surco-ui-paste-control";
+    UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
+    [self launch];
+    [self openImport];
+    XCUIElement *field = self.app.textFields[@"import-link"];
+    XCUIElement *paste = [self element:@"sheet-paste:import-link"];
+    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
+    [paste tap];
+    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
+    XCTAssertTrue([self element:@"import-go"].exists, @"Paste fills the link and leaves import explicit");
+    XCTAssertEqual(self.app.alerts.count, 0u, @"UIPasteControl must not prompt for pasteboard permission");
+    [self attachScreenshot:@"native-import-paste-control"];
+    [[self element:@"import-cancel"] tap];
+    [self waitFor:field predicate:@"exists == NO"];
+}
+
 - (void)testImportUsesTheNativeEditingMenuToPasteAndReplaceSelectedText {
     NSString *text = @"niñez";
     UIPasteboard.generalPasteboard.string = text;
     [self launch];
     [self openImport];
     XCUIElement *field = self.app.textFields[@"import-link"];
-    XCTAssertFalse([self element:@"sheet-paste:import-link"].exists, @"The editor uses UIKit's menu without a redundant Paste button");
     [self pasteThroughEditingMenu:field];
     [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
     // Double-tapping this one-word value selects it through UITextField itself.
     NSString *replacement = @"https://open.spotify.com/playlist/surco-ui-selection";
     UIPasteboard.generalPasteboard.string = replacement;
     [field doubleTap];
-    NSPredicate *label = [NSPredicate predicateWithFormat:@"label == 'Paste' OR label == 'Pegar'"];
+    NSPredicate *label = [NSPredicate predicateWithFormat:@"(label == 'Paste' OR label == 'Pegar') AND NOT (identifier BEGINSWITH 'sheet-paste:')"];
     XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
     XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     [paste tap];

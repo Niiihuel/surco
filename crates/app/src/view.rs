@@ -1,6 +1,9 @@
 //! The window, described from the state. Rebuilt on every frame.
 
 mod mobile;
+pub(crate) use mobile::route_key as mobile_route_key;
+#[cfg(any(target_os = "ios", test))]
+pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
 
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{Album, AlbumRef, Artist, Repeat, Track};

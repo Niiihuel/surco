@@ -88,6 +88,9 @@ pub(crate) struct MobileUi {
     pub keyboard_visible: bool,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
+    /// The route uncovered by closing the player. It is already on screen
+    /// beneath the player, so it must not fade in again.
+    pub revealed: Option<String>,
 }
 
 impl State {

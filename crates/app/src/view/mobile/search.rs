@@ -15,8 +15,8 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_surfaces {
         return Element::panel(Element::spacer().size(None, Some(TAP))
             .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name("Buscar música")))
-            .padding(padding).background(SCHEME.canvas)
-            .size(None, Some(field_height(state)));
+            // Transparent: the native header's blur continues behind the field.
+            .padding(padding).size(None, Some(field_height(state)));
     }
     let field = if editing {
         SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised())
