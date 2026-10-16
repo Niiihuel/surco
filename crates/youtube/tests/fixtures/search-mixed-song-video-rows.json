@@ -22,15 +22,19 @@
                       ]
                     }},
                     {"musicResponsiveListItemRenderer": {
-                      "playlistItemData": {"videoId": "unlinked-song"},
+                      "playlistItemData": {"videoId": "video-song"},
                       "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": []}}},
                       "flexColumns": [
-                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Sin enlace de álbum"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{
+                          "text": "Video oficial",
+                          "navigationEndpoint": {"watchEndpoint": {"watchEndpointMusicSupportedConfigs": {
+                            "watchEndpointMusicConfig": {"musicVideoType": "MUSIC_VIDEO_TYPE_OMV"}
+                          }}}
+                        }]}}},
                         {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
-                          {"text": "Artista dos"}, {"text": " • "}, {"text": "Álbum sin enlace"},
+                          {"text": "Artista dos"}, {"text": " • "}, {"text": "235M views"},
                           {"text": " • "}, {"text": "4:02"}
-                        ]}}},
-                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "2000 plays"}]}}}
+                        ]}}}
                       ]
                     }},
                     {"musicResponsiveListItemRenderer": {
@@ -42,6 +46,18 @@
                           {"text": "Artista tres"}, {"text": " • "}, {"text": "1:03"}
                         ]}}},
                         {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "3000 plays"}]}}}
+                      ]
+                    }},
+                    {"musicResponsiveListItemRenderer": {
+                      "playlistItemData": {"videoId": "unlinked-song"},
+                      "thumbnail": {"musicThumbnailRenderer": {"thumbnail": {"thumbnails": []}}},
+                      "flexColumns": [
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "Sin enlace de álbum"}]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [
+                          {"text": "Artista cuatro"}, {"text": " • "}, {"text": "Álbum sin enlace"},
+                          {"text": " • "}, {"text": "2:34"}
+                        ]}}},
+                        {"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [{"text": "2000 plays"}]}}}
                       ]
                     }}
                   ]

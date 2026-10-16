@@ -21,16 +21,18 @@ fn parse_response(raw: &str, query: &SongsQuery<'_>) -> Result<Vec<SearchResultS
         Err(error) => error,
     };
     let mut response: serde_json::Value = serde_json::from_str(raw)?;
-    if !omit_unlinked_albums(&mut response) { return Err(error.into()); }
+    if !normalize_song_rows(&mut response) { return Err(error.into()); }
     Ok(ytmapi_rs::process_json::<SongsQuery<'_>, NoAuthToken>(response.to_string(), query)?)
 }
 
-fn omit_unlinked_albums(response: &mut serde_json::Value) -> bool {
+fn normalize_song_rows(response: &mut serde_json::Value) -> bool {
     // ytmapi-rs 0.3.3 requires an album browseId when the byline has three
-    // fields. YouTube also returns unlinked album names. Express just that
-    // known shape as the provider's supported artist/duration byline: the song
-    // stays playable, without inventing an album ID. Upstream still parses and
-    // validates every other field, including rows elsewhere in this response.
+    // fields. Mixed song searches also return OMV/UGC videos with artist,
+    // views, duration in two columns. Move their real views into the separate
+    // plays column expected by upstream, retaining artist/duration in byline.
+    // An unlinked album with an existing plays column uses that same supported
+    // byline without inventing an album ID. Upstream validates every other
+    // field, including rows elsewhere in this response.
     // https://github.com/nick42d/youtui/blob/379efe9ef63d703c7891a964215e7a211b209758/ytmapi-rs/src/parse/search.rs#L564-L628
     let Some(sections) = response.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
         .and_then(serde_json::Value::as_array_mut) else { return false; };
@@ -39,22 +41,31 @@ fn omit_unlinked_albums(response: &mut serde_json::Value) -> bool {
         let Some(rows) = section.pointer_mut("/musicShelfRenderer/contents")
             .and_then(serde_json::Value::as_array_mut) else { continue; };
         for row in rows {
-            let Some(runs) = row.pointer_mut("/musicResponsiveListItemRenderer/flexColumns/1/musicResponsiveListItemFlexColumnRenderer/text/runs")
+            let video = row.pointer("/musicResponsiveListItemRenderer/flexColumns/0/musicResponsiveListItemFlexColumnRenderer/text/runs/0/navigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType")
+                .and_then(serde_json::Value::as_str).is_some_and(|kind| matches!(kind, "MUSIC_VIDEO_TYPE_OMV" | "MUSIC_VIDEO_TYPE_UGC"));
+            let Some(columns) = row.pointer_mut("/musicResponsiveListItemRenderer/flexColumns")
+                .and_then(serde_json::Value::as_array_mut) else { continue; };
+            let missing_plays = columns.len() == 2;
+            let Some(runs) = columns.get_mut(1).and_then(|column| column.pointer_mut("/musicResponsiveListItemFlexColumnRenderer/text/runs"))
                 .and_then(serde_json::Value::as_array_mut) else { continue; };
             if runs.len() < 5 { continue; }
-            let album = runs.len() - 3;
-            if runs[album - 1]["text"] != " • " || runs[album + 1]["text"] != " • " { continue; }
-            if runs[album].pointer("/navigationEndpoint/browseEndpoint/browseId").is_some_and(|id| !id.is_null()) { continue; }
-            let Some(artists) = runs[..album - 1].iter().map(|run| run["text"].as_str()).collect::<Option<String>>() else { continue; };
+            let middle = runs.len() - 3;
+            if runs[middle - 1]["text"] != " • " || runs[middle + 1]["text"] != " • " { continue; }
+            if runs[middle].pointer("/navigationEndpoint/browseEndpoint/browseId").is_some_and(|id| !id.is_null()) { continue; }
+            let Some(artists) = runs[..middle - 1].iter().map(|run| run["text"].as_str()).collect::<Option<String>>() else { continue; };
             if artists.trim().is_empty() || artists.contains(" • ")
-                || runs[album]["text"].as_str().is_none_or(|text| text.is_empty()) { continue; }
-            let Some(duration) = runs[album + 2]["text"].as_str() else { continue; };
+                || runs[middle]["text"].as_str().is_none_or(|text| text.is_empty()) { continue; }
+            let Some(duration) = runs[middle + 2]["text"].as_str() else { continue; };
             let parts: Vec<_> = duration.split(':').collect();
             if !(2..=3).contains(&parts.len()) || !parts.iter().all(|part|
                 !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit())) { continue; }
             // Artist collaborations can have several linked runs before the
             // first separator; retain those credits and their punctuation.
-            runs.drain(album - 1..album + 1);
+            let views = (video && missing_plays).then(|| runs[middle].clone());
+            runs.drain(middle - 1..middle + 1);
+            if let Some(views) = views {
+                columns.push(serde_json::json!({"musicResponsiveListItemFlexColumnRenderer": {"text": {"runs": [views]}}}));
+            }
             changed = true;
         }
     }
@@ -67,17 +78,22 @@ mod tests {
     use crate::found_song;
     use serde_json::Value;
 
-    const RESPONSE: &str = include_str!("../tests/fixtures/search-missing-album-id.json");
+    const RESPONSE: &str = include_str!("../tests/fixtures/search-mixed-song-video-rows.json");
 
     #[test]
-    fn a_missing_album_id_keeps_every_song_and_the_other_albums() {
+    fn mixed_search_rows_preserve_songs_videos_and_linked_albums() {
         let query = SearchQuery::new_filtered("prueba", SongsFilter);
-        let tracks: Vec<_> = parse_response(RESPONSE, &query).unwrap().into_iter().map(found_song).collect();
-        assert_eq!(tracks.len(), 3);
+        let songs = parse_response(RESPONSE, &query).unwrap();
+        assert_eq!(songs[0].plays, "1000 plays");
+        assert_eq!(songs[1].plays, "235M views");
+        assert_eq!(songs[3].plays, "2000 plays");
+        let tracks: Vec<_> = songs.into_iter().map(found_song).collect();
+        assert_eq!(tracks.len(), 4);
         for (track, id, title, artist, duration) in [
             (&tracks[0], "linked-song", "Con álbum", "Artista uno", 181_000),
-            (&tracks[1], "unlinked-song", "Sin enlace de álbum", "Artista dos", 242_000),
+            (&tracks[1], "video-song", "Video oficial", "Artista dos", 242_000),
             (&tracks[2], "no-album-song", "Sin álbum", "Artista tres", 63_000),
+            (&tracks[3], "unlinked-song", "Sin enlace de álbum", "Artista cuatro", 154_000),
         ] {
             assert_eq!(track.id, id);
             assert_eq!(track.title, title);
@@ -89,6 +105,7 @@ mod tests {
         assert!(tracks[1].album_id.is_none());
         assert!(tracks[2].album.is_none());
         assert!(tracks[2].album_id.is_none());
+        assert!(tracks[3].album_id.is_none());
     }
 
     #[test]
@@ -102,7 +119,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unlinked_album_preserves_multiple_artist_runs() {
+    fn a_video_byline_preserves_multiple_artist_runs() {
         let query = SearchQuery::new_filtered("prueba", SongsFilter);
         let mut response: Value = serde_json::from_str(RESPONSE).unwrap();
         let runs = response.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer/contents/1/musicResponsiveListItemRenderer/flexColumns/1/musicResponsiveListItemFlexColumnRenderer/text/runs").unwrap();
@@ -110,12 +127,15 @@ mod tests {
             {"text": "Artista dos", "navigationEndpoint": {"browseEndpoint": {"browseId": "UC-artist-two"}}},
             {"text": ", "},
             {"text": "Invitada", "navigationEndpoint": {"browseEndpoint": {"browseId": "UC-guest"}}},
-            {"text": " • "}, {"text": "Álbum sin enlace"}, {"text": " • "}, {"text": "4:02"}
+            {"text": " • "}, {"text": "235M views"}, {"text": " • "}, {"text": "4:02"}
         ]);
-        let tracks: Vec<_> = parse_response(&response.to_string(), &query).unwrap().into_iter().map(found_song).collect();
-        assert_eq!(tracks.len(), 3);
-        assert_eq!(tracks[1].id, "unlinked-song");
-        assert_eq!(tracks[1].title, "Sin enlace de álbum");
+        *response.pointer_mut("/contents/tabbedSearchResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents/0/musicShelfRenderer/contents/1/musicResponsiveListItemRenderer/flexColumns/0/musicResponsiveListItemFlexColumnRenderer/text/runs/0/navigationEndpoint/watchEndpoint/watchEndpointMusicSupportedConfigs/watchEndpointMusicConfig/musicVideoType").unwrap() = "MUSIC_VIDEO_TYPE_UGC".into();
+        let songs = parse_response(&response.to_string(), &query).unwrap();
+        assert_eq!(songs[1].plays, "235M views");
+        let tracks: Vec<_> = songs.into_iter().map(found_song).collect();
+        assert_eq!(tracks.len(), 4);
+        assert_eq!(tracks[1].id, "video-song");
+        assert_eq!(tracks[1].title, "Video oficial");
         assert_eq!(tracks[1].artist, "Artista dos, Invitada");
         assert_eq!(tracks[1].duration_ms, 242_000);
         assert!(tracks[1].album_id.is_none());
