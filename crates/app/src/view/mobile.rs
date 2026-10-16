@@ -62,6 +62,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else if state.page == Page::Playing && !compact_player && state.current().is_some() {
         header.push(icon("mobile-player-header-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"));
     }
+    if state.page == Page::Library {
+        header.push(icon("playlist-new", Icon::Add, "Crear playlist", palette));
+    }
     if !matches!(state.page, Page::Settings | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
         header.push(icon("settings", Icon::Settings, "Configuración", palette));
     }
@@ -289,6 +292,8 @@ pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderBut
     let leading = if state.can_go_back() { vec![("back", "Volver", "chevron.left")] } else { Vec::new() };
     let mut trailing = Vec::new();
     if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", "Reproducir", "play.fill")); }
+    // A new playlist is made from the library's bar, a glass button beside Settings.
+    if state.page == Page::Library { trailing.push(("playlist-new", "Crear playlist", "plus")); }
     if !matches!(state.page, Page::Settings | Page::Equalizer) && !detail { trailing.push(("settings", "Configuración", "gearshape")); }
     (leading, trailing)
 }

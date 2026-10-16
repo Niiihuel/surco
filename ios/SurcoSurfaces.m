@@ -7,7 +7,7 @@ static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.cl
 static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
 // The soft edge below the header, where the blur fades into the page.
-static const CGFloat SurcoEdgeFade = 28;
+static const CGFloat SurcoEdgeFade = 40;
 // view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
 static const CGFloat SurcoHeaderHeight = 56;
 // mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
@@ -115,12 +115,9 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     BOOL _searchStyled;
     BOOL _searchCompact;
     NSDictionary *_desiredChrome;
-    UIVisualEffectView *_backdrop;
-    SurcoGradientView *_backdropMask;
+    UIView *_backdrop;
+    NSArray<SurcoGradientView *> *_backdropMasks;
     SurcoGradientView *_shade;
-    // iOS 26: a scroll view that never takes touches, only drawing the system's soft edge.
-    UIScrollView *_edgeHost;
-    BOOL _edgeLinked;
     SurcoChromeView *_header;
     UIStackView *_headerRow;
     UILabel *_title;
@@ -175,7 +172,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
     _sheet = nil;
-    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _edgeHost ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
+    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
         if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
     }
     _view = nil;
@@ -237,7 +234,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
 }
 // Chrome fades instead of popping while the canvas slides the player over it.
 - (void)setChrome:(UIView *)view shown:(BOOL)shown {
-    BOOL interactive = shown && view != _backdrop && view != _shade && view != _edgeHost;
+    BOOL interactive = shown && view != _backdrop && view != _shade;
     if (!view || (view.alpha == (shown ? 1 : 0) && view.userInteractionEnabled == interactive)) return;
     view.userInteractionEnabled = interactive;
     if (shown) view.hidden = NO;
@@ -257,80 +254,53 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
 }
 - (void)updateBackdrop:(CGFloat)edge tint:(NSArray *)tint {
-    if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; [self setChrome:_edgeHost shown:NO]; return; }
-    if (@available(iOS 26.0, *)) {
-        [self updateSystemEdge:edge];
-        return;
-    }
+    if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
     if (!_backdrop) {
-        // iOS 26's scroll edge convention: rows blur and darken softly as they
-        // pass beneath the header, instead of meeting an opaque bar.
+        // iOS 26's soft scroll edge, from public parts: blurs stacked under masks that end
+        // at different depths, so rows blur more the nearer they are to the top of the
+        // screen, and a wash of the page's color that deepens the same way. (The system's
+        // own UIScrollEdgeEffect only blurs a UIScrollView's content, never this canvas.)
         // https://developer.apple.com/documentation/uikit/uiscrolledgeeffect
-        _backdrop = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
-        _backdropMask = [SurcoGradientView new];
-        _backdrop.maskView = _backdropMask;
+        _backdrop = [UIView new];
+        NSMutableArray *masks = [NSMutableArray array];
+        for (NSUInteger index = 0; index < 3; index++) {
+            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+            SurcoGradientView *mask = [SurcoGradientView new];
+            mask.gradient.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
+            blur.maskView = mask;
+            blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [_backdrop addSubview:blur];
+            [masks addObject:mask];
+        }
+        _backdropMasks = masks;
         _shade = [SurcoGradientView new];
         for (UIView *view in @[_backdrop, _shade]) { view.userInteractionEnabled = NO; view.alpha = 0; }
     }
     if (_backdrop.superview != _view) { [_view addSubview:_backdrop]; [_view addSubview:_shade]; }
     CGRect bounds = _view.bounds;
     CGRect frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
-    NSNumber *solid = @(MAX(0, MIN(1, (edge - 8) / frame.size.height)));
     _backdrop.frame = frame;
-    _backdropMask.frame = _backdrop.bounds;
-    _backdropMask.gradient.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
-    _backdropMask.gradient.locations = @[@0, solid, @1];
+    // The first blur reaches below the header, the last only covers the status bar.
+    for (NSUInteger index = 0; index < _backdropMasks.count; index++) {
+        SurcoGradientView *mask = _backdropMasks[index];
+        UIView *blur = _backdrop.subviews[index];
+        blur.frame = _backdrop.bounds;
+        mask.frame = blur.bounds;
+        double end = 1.0 - 0.2 * index;
+        mask.gradient.locations = @[@0, @(MAX(0, end - 0.45)), @(end)];
+    }
     CGFloat channel[3] = {18, 18, 18};
     for (NSUInteger index = 0; index < 3 && index < tint.count; index++) {
         if ([tint[index] isKindOfClass:NSNumber.class]) channel[index] = MAX(0, MIN(255, [tint[index] doubleValue]));
     }
     UIColor *color = [UIColor colorWithRed:channel[0] / 255 green:channel[1] / 255 blue:channel[2] / 255 alpha:1];
     _shade.frame = frame;
-    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.86].CGColor, (id)[color colorWithAlphaComponent:0.62].CGColor,
+    // Darkest over the status bar, still holding the header, gone just below it.
+    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.78].CGColor, (id)[color colorWithAlphaComponent:0.45].CGColor,
                                (id)[color colorWithAlphaComponent:0].CGColor];
-    _shade.gradient.locations = @[@0, solid, @1];
+    _shade.gradient.locations = @[@0, @(MAX(0, MIN(1, edge / frame.size.height))), @1];
     [self setChrome:_backdrop shown:YES];
     [self setChrome:_shade shown:YES];
-}
-// iOS 26's own scroll edge, as under a navigation bar: a blur that deepens toward the
-// top of the screen over the canvas's rows, fitted to the header registered with it.
-// https://developer.apple.com/documentation/uikit/uiscrolledgeeffect
-- (void)updateSystemEdge:(CGFloat)edge API_AVAILABLE(ios(26.0)) {
-    if (!_edgeHost) {
-        _edgeHost = [UIScrollView new];
-        _edgeHost.userInteractionEnabled = NO;
-        // Only paint: VoiceOver reads the canvas's rows, not this stand-in's scroll bars.
-        _edgeHost.accessibilityElementsHidden = YES;
-        _edgeHost.scrollsToTop = NO;
-        _edgeHost.showsVerticalScrollIndicator = NO;
-        _edgeHost.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
-        _edgeHost.topEdgeEffect.style = UIScrollEdgeEffectStyle.softStyle;
-        _edgeHost.bottomEdgeEffect.hidden = YES;
-        _edgeHost.leftEdgeEffect.hidden = YES;
-        _edgeHost.rightEdgeEffect.hidden = YES;
-        _edgeHost.alpha = 0;
-    }
-    if (_edgeHost.superview != _view) [_view insertSubview:_edgeHost atIndex:0];
-    CGRect bounds = _view.bounds;
-    _edgeHost.frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
-    // Like the blur it replaces, the edge stands whenever the header does: the
-    // stand-in is kept scrolled so the system draws it.
-    _edgeHost.contentSize = CGSizeMake(bounds.size.width, MAX(bounds.size.height, 1) * 4);
-    _edgeHost.contentOffset = CGPointMake(0, MAX(bounds.size.height, 1));
-    [self linkSystemEdge];
-    [self setChrome:_edgeHost shown:YES];
-    [self setChrome:_backdrop shown:NO];
-    [self setChrome:_shade shown:NO];
-}
-- (void)linkSystemEdge {
-    if (@available(iOS 26.0, *)) {
-        if (_edgeLinked || !_edgeHost || !_header) return;
-        UIScrollEdgeElementContainerInteraction *interaction = [UIScrollEdgeElementContainerInteraction new];
-        interaction.scrollView = _edgeHost;
-        interaction.edge = UIRectEdgeTop;
-        [_header addInteraction:interaction];
-        _edgeLinked = YES;
-    }
 }
 - (UIButton *)chromeButton:(id)value {
     NSDictionary *item = SurcoDictionary(value);
@@ -388,7 +358,6 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     }
     if (_header.superview != _view) [_view addSubview:_header];
     _header.frame = rect;
-    [self linkSystemEdge];
     // Only a collapsing header crops; at rest the glass buttons keep their glow.
     _header.clipsToBounds = CGRectGetHeight(rect) < SurcoHeaderHeight;
     BOOL compact = [model[@"compact"] boolValue];

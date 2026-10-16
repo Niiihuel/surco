@@ -43,7 +43,7 @@ fn explicit_library_overflow_and_the_hold_share_a_touch_sized_action() {
             let mut tree = UiTree::new(library(&state, false, width, SCHEME.palette()));
             tree.set_reduced_motion(true);
             let frame = tree.layout(size);
-            for id in ["library-more:downloads", "library-more:playlist:7", "library-more:artist:held", "library-search", "playlist-new"] {
+            for id in ["library-more:downloads", "library-more:playlist:7", "library-more:artist:held", "library-search"] {
                 let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id} in {mode:?} at {width}"));
                 let rect = node.rect;
                 assert!(rect.width >= 43.99 && rect.height >= 43.99 && rect.x >= 0.0 && rect.x + rect.width <= width + 0.01, "{id}: {rect:?}");

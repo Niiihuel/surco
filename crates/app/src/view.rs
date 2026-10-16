@@ -893,10 +893,10 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut header = vec![
         Text::new(if state.mobile { "Guardado para vos" } else { "Tu biblioteca" }, palette).font_size(15.0).muted().render().centered_y(),
         Element::spacer().flex(1.0),
-        if state.mobile { mobile::icon("playlist-new", Icon::Add, "Crear playlist", palette).centered_y() }
-        else { IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y() },
     ];
+    // A phone makes playlists from the page's own bar.
     if !state.mobile {
+        header.push(IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y());
         header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
     }
     let header = Element::row(header)

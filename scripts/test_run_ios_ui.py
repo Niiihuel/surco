@@ -71,7 +71,7 @@ class NativeUIGateTests(unittest.TestCase):
                 pass
 
     def test_all_native_interactions_must_execute_and_pass(self):
-        complete = {"result": "Passed", "totalTestCount": 12, "passedTests": 12, "failedTests": 0, "skippedTests": 0}
+        complete = {"result": "Passed", "totalTestCount": 13, "passedTests": 13, "failedTests": 0, "skippedTests": 0}
         script["validate_summary"](complete)
         for incomplete in [
             {},
@@ -136,8 +136,8 @@ class NativeUIGateTests(unittest.TestCase):
                             if fails:
                                 raise RuntimeError("real XCTest failure")
                         if command[:4] == ["xcrun", "xcresulttool", "get", "test-results"]:
-                            return json.dumps({"result": "Passed", "totalTestCount": 12,
-                                "passedTests": 12, "failedTests": 0, "skippedTests": 0})
+                            return json.dumps({"result": "Passed", "totalTestCount": 13,
+                                "passedTests": 13, "failedTests": 0, "skippedTests": 0})
                         return ""
 
                     with patch.dict(script["build"], {"run": fake_run}), patch.object(subprocess, "Popen", return_value=process):

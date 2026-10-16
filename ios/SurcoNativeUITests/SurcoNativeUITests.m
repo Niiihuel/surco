@@ -445,6 +445,16 @@
     [self attachScreenshot:@"native-search-query-after-cancel-and-navigation"];
 }
 
+- (void)testSettingsRowsBlurBeneathTheHeaderAsTheyScroll {
+    [self launch];
+    [self canvasTap:@"settings" page:@"home"];
+    [[self entryCoordinate:@"setting:connections" page:@"settings"] pressForDuration:0.05
+        thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.12)]];
+    [NSThread sleepForTimeInterval:1.0];
+    // Evidence for review: rows under the header fade into the progressive edge.
+    [self attachScreenshot:@"settings-scrolled-header-edge"];
+}
+
 - (void)testSystemSymbolsUsedBySurcoExistInUIKit {
     NSURL *fixture = [[NSBundle bundleForClass:self.class] URLForResource:@"SymbolNames" withExtension:@"json"];
     XCTAssertNotNil(fixture);
