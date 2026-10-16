@@ -1414,8 +1414,6 @@ pub(crate) const TRACK_LIST: &str = "track-list";
 fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Option<String>, width: f32, palette: ComponentPalette) -> Element {
     let count = rows.len();
     let range = track_range(count, track_pitch(state), state.track_window);
-    // Rows that only leave the built window are not removed: they must not play leaving.
-    let leaving = leaving.filter(|_| range == (0..count));
     if state.mobile {
         let built = rows[range.clone()].iter().map(|(place, track)| mobile::track_row(state, format!("page-track:{place}"), track, &track.artist, palette)).collect();
         return windowed(built, range, count, MOBILE_TRACK_PITCH, 4.0);
@@ -1471,9 +1469,12 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             None => element,
         }
     });
-    let body = windowed(body.collect(), range, count, TRACK_TABLE_ROW, 0.0);
+    let body = windowed(body.collect(), range.clone(), count, TRACK_TABLE_ROW, 0.0);
+    // The rows a column remembers are named by where the built window starts: rows that only
+    // scroll out of it are not removed and must not close, while one taken out of the list
+    // closes where it was. limn forgets a name the frame no longer lays out.
     let body = match &leaving {
-        Some(list) => body.keep_leaving(format!("{list}:rows")),
+        Some(list) => body.keep_leaving(format!("{list}:rows:{}", range.start)),
         None => body,
     };
     Element::column(vec![header, body]).gap(sizing.header_gap)

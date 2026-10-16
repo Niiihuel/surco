@@ -1274,4 +1274,38 @@ mod track_window_tests {
             }
         }
     }
+
+    #[test]
+    fn scrolling_a_long_list_closes_nothing_and_a_removed_song_still_closes() {
+        let (mut state, mut tree, size) = liked(false, 300);
+        let mut seen = None;
+        // As a frame does: lay out, then build the rows that came into view.
+        let settle = |state: &mut State, tree: &mut UiTree, seen: &mut Option<String>| {
+            let mut frame = layout_view(state, tree, size);
+            while let Some(next) = follow_track_window(state, tree, size, seen) { frame = next; }
+            frame
+        };
+        // The page is in place before motion is on, so only the rows can move.
+        settle(&mut state, &mut tree, &mut seen);
+        tree.set_reduced_motion(false);
+        settle(&mut state, &mut tree, &mut seen);
+        tree.set_scroll_offset("liked", 6_000.0);
+        let scrolled = rows(&settle(&mut state, &mut tree, &mut seen));
+        let pitch = view::track_pitch(&state);
+        // The first row in view is cut by the top of the area; the rest stand a row apart.
+        assert!(scrolled[1..].windows(2).all(|pair| pair[1].0 == pair[0].0 + 1 && (pair[1].1 - pair[0].1 - pitch).abs() < 0.5),
+            "rows scrolled out of the window leave no closing slot: {scrolled:?}");
+        // Unliking a song in view: the next one takes its place only once its slot closes.
+        let (gone, at) = scrolled[3];
+        let next = scrolled[4].1;
+        state.collection.liked.remove(gone);
+        let closing = rows(&settle(&mut state, &mut tree, &mut seen));
+        let (_, moved) = closing.iter().copied().find(|(place, _)| *place == gone).unwrap();
+        assert!((moved - next).abs() < 1.0, "the slot is still open: {moved} vs {next}");
+        std::thread::sleep(Duration::from_millis(900));
+        let closed = rows(&settle(&mut state, &mut tree, &mut seen));
+        let (_, moved) = closed.iter().copied().find(|(place, _)| *place == gone).unwrap();
+        assert!((moved - at).abs() < 1.0, "and then it closes: {moved} vs {at}");
+    }
 }
+
