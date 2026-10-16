@@ -5,6 +5,9 @@
 //! on 2026-10-12). YouTube closed the previous client of this kind (android_vr) in August
 //! 2026; when this one goes the fallback is a PO token bound to the video id.
 
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+
 use serde_json::{json, Value};
 
 use crate::Result;
@@ -13,6 +16,21 @@ const USER_AGENT: &str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 15_7_3) AppleWe
 const CLIENT_VERSION: &str = "1.02";
 /// A fresh session is sometimes restricted (see `restricted`); this many are tried.
 const MAX_SESSIONS: u32 = 4;
+/// How long the visitor id of a session that played is used again. A new one costs a round
+/// trip before every song.
+const VISITOR_KEPT: Duration = Duration::from_secs(30 * 60);
+static VISITOR: Mutex<Option<(String, Instant)>> = Mutex::new(None);
+
+fn remembered_visitor() -> Option<String> {
+    let kept = VISITOR.lock().ok()?.clone()?;
+    (kept.1.elapsed() < VISITOR_KEPT).then_some(kept.0)
+}
+
+fn remember_visitor(visitor: Option<String>) {
+    if let Ok(mut kept) = VISITOR.lock() {
+        *kept = visitor.map(|visitor| (visitor, Instant::now()));
+    }
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Audio {
@@ -83,8 +101,7 @@ async fn visitor_data(http: &reqwest::Client) -> Result<String> {
     Ok(value[0][2][0][0][13].as_str().ok_or("sw.js_data: no visitor data")?.to_owned())
 }
 
-async fn player(http: &reqwest::Client, video_id: &str) -> Result<Stream> {
-    let visitor = visitor_data(http).await?;
+async fn player(http: &reqwest::Client, video_id: &str, visitor: &str) -> Result<Stream> {
     let body = json!({
         "context": {"client": {
             "clientName": "VISIONOS", "clientVersion": CLIENT_VERSION,
@@ -99,7 +116,7 @@ async fn player(http: &reqwest::Client, video_id: &str) -> Result<Stream> {
         .header("User-Agent", USER_AGENT)
         .header("X-YouTube-Client-Name", "101")
         .header("X-YouTube-Client-Version", CLIENT_VERSION)
-        .header("X-Goog-Visitor-Id", &visitor)
+        .header("X-Goog-Visitor-Id", visitor)
         .header("Origin", "https://www.youtube.com")
         .json(&body)
         .send()
@@ -179,15 +196,34 @@ async fn restricted(http: &reqwest::Client, audio: &Audio) -> Result<bool> {
     Ok(status == reqwest::StatusCode::FORBIDDEN)
 }
 
+/// The last session that played is tried first; refused or restricted, it is let go and
+/// up to `MAX_SESSIONS` fresh ones are tried as before.
 pub(crate) async fn resolve(http: &reqwest::Client, video_id: &str) -> Result<Stream> {
-    for _ in 0..MAX_SESSIONS {
-        let stream = player(http, video_id).await?;
-        let best = stream.best().ok_or("no audio format with a direct URL")?;
-        if !restricted(http, best).await? {
-            return Ok(stream);
+    let mut kept = remembered_visitor();
+    let mut sessions = 0;
+    loop {
+        let reused = kept.is_some();
+        let visitor = match kept.take() {
+            Some(visitor) => visitor,
+            None if sessions < MAX_SESSIONS => {
+                sessions += 1;
+                visitor_data(http).await?
+            }
+            None => return Err(format!("streams still restricted after {MAX_SESSIONS} sessions").into()),
+        };
+        match player(http, video_id, &visitor).await {
+            Ok(stream) => {
+                let best = stream.best().ok_or("no audio format with a direct URL")?;
+                if !restricted(http, best).await? {
+                    remember_visitor(Some(visitor));
+                    return Ok(stream);
+                }
+            }
+            Err(error) if !reused => return Err(error),
+            Err(_) => {}
         }
+        remember_visitor(None);
     }
-    Err(format!("streams still restricted after {MAX_SESSIONS} sessions").into())
 }
 
 #[cfg(test)]
