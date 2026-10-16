@@ -19,6 +19,7 @@ use limn::{
 
 use crate::backend::{Release, Target};
 use crate::clip::Showing;
+use crate::i18n::{t, Language};
 use crate::state::{
     clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
 };
@@ -1713,6 +1714,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         switch(Icon::PanelRight, "Mostrar lo que suena", Some("La tapa, la letra y el artista en el panel derecho."), "setting:player-panel", state.panel_open),
         switch(Icon::Video, "Videos en lo que suena", Some("Un tramo del video de la canción, sin sonido, donde va su tapa."), "setting:clips", state.settings.clips),
         switch(Icon::Bolt, "Reducir movimiento", Some("Los cambios de una vez, sin animaciones."), "setting:motion", state.settings.reduce_motion),
+        beside(Icon::Globe, &t!("common-language"), Some(&t!("common-language-detail")), segmented("setting-language", span, Language::ALL.into_iter()
+            .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);

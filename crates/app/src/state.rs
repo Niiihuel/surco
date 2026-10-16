@@ -13,6 +13,8 @@ use surco_core::lyrics::{active, Line};
 use std::sync::Arc;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
+
+pub use crate::i18n::Language;
 use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
@@ -169,6 +171,8 @@ pub struct Settings {
     pub normalize: bool,
     /// The library's offer to bring music in from another app was put away.
     pub import_dismissed: bool,
+    /// The language chosen for the app; none follows the system's.
+    pub language: Option<Language>,
 }
 
 /// The order the library lists what is not pinned in.
@@ -244,7 +248,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None }
     }
 }
 
@@ -1660,6 +1664,13 @@ impl State {
             "setting:clips" | "cover-clips" => {
                 self.settings.clips = !self.settings.clips;
                 self.ask_clip()
+            }
+            _ if id.starts_with("setting:language:") => {
+                if let Some(language) = Language::from_tag(&id["setting:language:".len()..]) {
+                    self.settings.language = Some(language);
+                    crate::i18n::set(language);
+                }
+                Vec::new()
             }
             _ if id.starts_with("setting:quality:") => {
                 let Some((quality, ..)) = Quality::ALL.into_iter().find(|(_, name, _)| id.ends_with(name)) else { return Vec::new() };

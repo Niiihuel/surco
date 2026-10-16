@@ -9,6 +9,7 @@
 
 mod backend;
 mod clip;
+mod i18n;
 mod import;
 #[cfg(any(target_os = "ios", test))]
 mod ios_media;
@@ -816,6 +817,7 @@ pub fn run() -> eframe::Result {
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
                 state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
             }
+            i18n::set(state.settings.language.unwrap_or_else(i18n::Language::system));
             #[cfg(target_os = "ios")]
             let native_ui = match ios_ui::NativeUi::new(&creation.egui_ctx) {
                 Ok(mut native) => {

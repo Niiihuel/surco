@@ -37,6 +37,11 @@ base64 = "0.22"
 # its tracks fetched side by side when one is opened.
 percent-encoding = "2"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+# MIT/Apache-2.0. The words of the interface, in Spanish and English: Mozilla's Fluent,
+# with its plurals; the language the system speaks picks the first one.
+fluent-bundle = "0.16"
+unic-langid = "0.9"
+sys-locale = "0.3"
 
 # MIT/Apache-2.0. A later version is announced by the system's own notifications; on Linux
 # over the zbus already in the tree.

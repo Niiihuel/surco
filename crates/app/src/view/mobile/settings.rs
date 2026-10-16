@@ -133,6 +133,8 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
 
     let display = group("Visualización", vec![
         switch(Icon::Bolt, "Reducir movimiento", None, "setting:motion", state.settings.reduce_motion),
+        stacked(line(Icon::Globe, &t!("common-language"), None, None, white), segmented("setting-language", inner, Language::ALL.into_iter()
+            .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
     let sort = state.settings.library_sort;
