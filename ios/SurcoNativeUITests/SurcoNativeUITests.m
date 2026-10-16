@@ -389,10 +389,14 @@
     [field tap];
     [field typeText:@"consulta retenida"];
     [self waitFor:field predicate:@"value == 'consulta retenida'"];
-    NSPredicate *cancelLabel = [NSPredicate predicateWithFormat:@"label == 'Cancel' OR label == 'Cancelar'"];
-    XCUIElement *cancel = [self.app.buttons matchingPredicate:cancelLabel].firstMatch;
+    // iOS 26 names UISearchBar's trailing cancel action Close/Cerrar. Scope
+    // the localized control to the real bar rather than any screen button.
+    NSPredicate *cancelLabel = [NSPredicate predicateWithFormat:@"label == 'Cancel' OR label == 'Cancelar' OR label == 'Close' OR label == 'Cerrar'"];
+    XCUIElement *cancel = [[self element:@"surco.native.search"].buttons matchingPredicate:cancelLabel].firstMatch;
     XCTAssertTrue([cancel waitForExistenceWithTimeout:12]);
     [self waitFor:cancel predicate:@"hittable == YES"];
+    XCTAssertGreaterThanOrEqual(cancel.frame.size.width, 44.0);
+    XCTAssertGreaterThanOrEqual(cancel.frame.size.height, 44.0);
     [cancel tap];
     [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
     XCTAssertEqualObjects(field.value, @"consulta retenida", @"Cancel leaves the user's query intact");
