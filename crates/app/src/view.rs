@@ -641,11 +641,13 @@ const LIBRARY_GRID_TILE: f32 = 112.0;
 /// What the library's row of tools keeps for the cross of its search and the button of its order.
 /// The share of its row the library's search has as it starts to open: about a magnifier's width.
 const LIBRARY_SEARCH_SHUT: f32 = 0.15;
+/// The narrowest the library's filters get before they scroll: room for «Playlists» in each.
+const LIBRARY_FILTERS_LEAST: f32 = 320.0;
 const LIBRARY_MENU_WIDTH: f32 = 220.0;
 
 /// A button of a header: quiet, small, with its hint under it.
 fn header_button(id: &str, icon: Icon, hint: TooltipSpec, palette: ComponentPalette) -> IconButton {
-    IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip_with(hint.placement(TooltipPlacement::Below))
+    IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip_with(hint.placement(TooltipPlacement::Below))
 }
 
 /// A track as the card that is handed around: its sleeve plays it, and while it plays the
@@ -881,7 +883,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     ];
     // A phone makes playlists from the page's own bar.
     if !state.mobile {
-        header.push(IconButton::new("playlist-new", Icon::Add, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y());
+        header.push(IconButton::new("playlist-new", Icon::Add, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip("Crear playlist").accessibility_label("Crear playlist").render().centered_y());
         header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new("Ocultar tu biblioteca").shortcut("Ctrl+B"), palette).render().centered_y());
     }
     let header = Element::row(header)
@@ -891,12 +893,24 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
         .sizing(if state.mobile { limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() } } else { ControlSize::Regular.button_sizing() })
         .round().render();
-    let filters = Element::horizontal_scroll_2d("mobile-library-filters", Element::row(vec![
-        chip("filter:all", "Todo", state.filter == Filter::All),
-        chip("filter:lists", "Playlists", state.filter == Filter::Lists),
-        chip("filter:artists", "Artistas", state.filter == Filter::Artists),
-        chip("filter:albums", "Álbumes", state.filter == Filter::Albums),
-    ]).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
+    let filters = if state.mobile {
+        Element::row(vec![
+            chip("filter:all", "Todo", state.filter == Filter::All),
+            chip("filter:lists", "Playlists", state.filter == Filter::Lists),
+            chip("filter:artists", "Artistas", state.filter == Filter::Artists),
+            chip("filter:albums", "Álbumes", state.filter == Filter::Albums),
+        ]).gap(8.0)
+    } else {
+        // Settings' pill track across the panel; one too narrow for its names scrolls it sideways.
+        let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
+        mobile::settings::segmented("library-filter", (width - 16.0).max(LIBRARY_FILTERS_LEAST), vec![
+            filter("filter:all", "Todo", Filter::All),
+            filter("filter:lists", "Playlists", Filter::Lists),
+            filter("filter:artists", "Artistas", Filter::Artists),
+            filter("filter:albums", "Álbumes", Filter::Albums),
+        ])
+    };
+    let filters = Element::horizontal_scroll_2d("mobile-library-filters", filters).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
         Filter::All => "Buscar en tu biblioteca",
@@ -1124,7 +1138,7 @@ fn heading(title: &str, palette: ComponentPalette) -> Element {
 /// the trackpad, or a few tiles at a time with the arrows beside the heading.
 fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
     let arrow = |way: &str, icon: Icon, hint: &str| {
-        IconButton::new(format!("shelf-{way}:{id}"), icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(hint).render().centered_y()
+        IconButton::new(format!("shelf-{way}:{id}"), icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(hint).render().centered_y()
     };
     let mut header = vec![heading(title, palette).flex(1.0)];
     // A shelf that fits has nowhere to go.
@@ -1277,7 +1291,7 @@ fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) 
         }
         None => DropdownMenuEntry::Separator,
     });
-    let dots = IconButton::new(format!("more:{row}"), Icon::More, palette)
+    let dots = IconButton::new(format!("more:{row}"), Icon::More, palette).round()
         .variant(ButtonVariant::Ghost)
         .size(ControlSize::Compact)
         .tooltip("Opciones")
@@ -1545,7 +1559,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
     // Icons, as the play and the shuffle beside them: the row has to fit a narrow pane.
-    let own = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
+    let own = |id: &str, icon: Icon, hint: &str| IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
     let copied = state.list_copied == Some(playlist.id);
     let share = own("playlist-share", if copied { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/share-2.svg")) }, if copied { "Enlace copiado" } else { "Compartir" });
     let exported = state.list_exported == Some(playlist.id);
@@ -1756,7 +1770,7 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
         let action = mobile::controls::action("page-shuffle", icon, hint, 22.0, palette);
         if state.player.shuffle { action.background(palette.selected) } else { action }
     } else {
-        IconButton::new("page-shuffle", icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
+        IconButton::new("page-shuffle", icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
     };
     let mut actions = vec![play, shuffle.centered_y()];
     actions.extend(own.into_iter().map(Element::centered_y));
@@ -1944,7 +1958,7 @@ fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Optio
     let height = LYRICS_SHOWN as f32 * LYRICS_LINE + (LYRICS_SHOWN - 1) as f32 * LYRICS_GAP;
     parts.push(Element::column(vec![Element::column(rows).gap(LYRICS_GAP).translate(slide)])
         .size(None, Some(height)).clip_children());
-    let all = Button::new("lyrics", "Mostrar la letra", raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
+    let all = Button::new("lyrics", "Mostrar la letra", raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
     parts.push(Element::row(vec![all, Element::spacer().flex(1.0)]));
     (!lines.is_empty()).then(|| panel_card(parts, width))
 }
@@ -2275,7 +2289,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let has_track = current.is_some();
     let wide = width >= RAIL_BELOW;
     let transport = |id: &str, icon: Icon, hint: &str| {
-        IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).enabled(has_track)
+        IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).enabled(has_track)
     };
     let now_playing = match current {
         Some(track) => Element::row(vec![
@@ -2312,7 +2326,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .centered_y(),
             {
                 let liked = state.is_liked(&track.id);
-                IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette)
+                IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette).round()
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Compact)
                     .tooltip(if liked { "Quitar de Tus me gusta" } else { "Me gusta" })
@@ -2357,7 +2371,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     ])
     .gap(8.0);
     let side = |id: &str, icon: Icon, hint: &str, active: bool| {
-        IconButton::new(id, icon, palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).tooltip(hint).active(active).render().centered_y()
+        IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact).tooltip(hint).active(active).render().centered_y()
     };
     let equalizer = Popover::new(
         side("equalizer", Icon::Sliders, "Ecualizador", state.equalizer_open),
@@ -2378,7 +2392,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         side("lyrics", Icon::Custom(LYRICS), "Letra", state.lyrics_open()),
         side("queue", Icon::Playlist, "Cola", state.queue_open),
         equalizer,
-        IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette)
+        IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette).round()
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Compact)
             .tooltip(if state.volume > 0.0 { "Silenciar" } else { "Activar sonido" })
