@@ -308,7 +308,7 @@ impl Controller {
 }
 
 pub(crate) fn has_sheet(state: &State) -> bool {
-    state.equalizer_open || state.confirm.is_some() || (state.missed_open && state.imported.is_some())
+    state.confirm.is_some() || (state.missed_open && state.imported.is_some())
         || state.importing.is_some() || state.creating.is_some() || state.sharing.is_some()
         || state.mobile_ui.connections || state.mobile_ui.library.is_some() || state.mobile_ui.context.is_some()
 }
@@ -392,18 +392,6 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
     let shell = |title: &str, description: &str, dismiss: &str| Sheet { id: String::new(), title: title.into(), description: description.into(),
         dismiss: dismiss.into(), rows: Vec::new(), actions: Vec::new(), large: false, confirmation: false };
     // Match limn's overlay order. UIKit receives precisely the top surface.
-    if state.equalizer_open {
-        let mut sheet = shell("Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close");
-        sheet.large = true;
-        sheet.rows.push(text(if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" }, true));
-        sheet.rows.push(Row::Slider { id: "equalizer:preamp".into(), title: "Preamplificador".into(), value: state.equalizer.preamp_db, min: -state::EQUALIZER_DB, max: state::EQUALIZER_DB });
-        sheet.rows.extend(surco_audio::equalizer::BAND_HZ.iter().zip(state.equalizer.bands_db).enumerate().map(|(i, (hz, gain))| Row::Slider {
-            id: format!("equalizer:{i}"), title: if *hz >= 1000.0 { format!("{:.0} kHz", hz / 1000.0) } else { format!("{hz:.0} Hz") },
-            value: gain, min: -state::EQUALIZER_DB, max: state::EQUALIZER_DB,
-        }));
-        sheet.actions = vec![Action::new("equalizer-reset", "Restablecer", "arrow.counterclockwise"), Action::new("equalizer-close", "Listo", "checkmark")];
-        return Some(("equalizer".into(), sheet));
-    }
     if let Some(confirm) = &state.confirm {
         let (title, description, yes) = match confirm {
             Confirm::DeletePlaylist(id) => (format!("¿Eliminar «{}»?", state.collection.playlist(*id).map_or("esta playlist", |list| list.name.as_str())), "La playlist se borra de tu biblioteca. Las canciones no se tocan.", "Eliminar"),
@@ -614,24 +602,25 @@ mod tests {
     #[test]
     fn only_the_current_top_sheet_accepts_its_declared_controls() {
         let mut state = phone();
-        state.equalizer_open = true;
+        state.mobile_ui.connections = true;
         state.confirm = Some(Confirm::ClearQueue);
         let mut controller = Controller::default();
         let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_eq!(sheet.title, "Ecualizador");
+        assert!(sheet.confirmation);
         let id = sheet.id;
-        assert!(controller.apply(&mut state, Event::SheetAction { sheet: id.clone(), action: "confirm-yes".into() }).is_empty());
-        assert!(state.confirm.is_some());
+        assert!(controller.apply(&mut state, Event::SheetAction { sheet: id.clone(), action: "mobile-connections-close".into() }).is_empty());
+        assert!(state.mobile_ui.connections);
+        let volume = state.volume;
         assert!(controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "volume".into(), value: 0.2 }).is_empty());
-        assert!(controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "equalizer:preamp".into(), value: f32::NAN }).is_empty());
-        let commands = controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "equalizer:preamp".into(), value: 6.0 });
-        assert_eq!(state.equalizer.preamp_db, 6.0);
-        assert_eq!(commands, vec![Command::Equalizer(state.equalizer)]);
+        assert_eq!(state.volume, volume);
         controller.apply(&mut state, Event::SheetClose { sheet: id.clone() });
-        assert!(!state.equalizer_open && state.confirm.is_some());
-        let confirm = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_ne!(confirm.id, id);
-        assert!(confirm.confirmation);
+        assert!(state.confirm.is_none() && state.mobile_ui.connections);
+        let connections = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
+        assert_ne!(connections.id, id);
+        let id = connections.id;
+        assert!(controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "volume".into(), value: f32::NAN }).is_empty());
+        let commands = controller.apply(&mut state, Event::SheetSlider { sheet: id, id: "volume".into(), value: 0.2 });
+        assert_eq!((state.volume, commands), (0.2, vec![Command::Volume(0.2)]));
     }
 
     #[test]
@@ -747,17 +736,12 @@ mod tests {
     }
 
     #[test]
-    fn native_equalizer_keeps_all_shared_controls_and_reports_its_current_state() {
+    fn the_equalizer_is_a_limn_page_rather_than_a_native_sheet() {
         let mut state = phone();
-        state.equalizer_open = true;
-        let mut controller = Controller::default();
-        let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_eq!(sheet.rows.iter().filter(|row| matches!(row, Row::Slider { .. })).count(), surco_audio::equalizer::BAND_HZ.len() + 1);
-        assert!(sheet.actions.iter().any(|action| action.id == "equalizer-reset"));
-        assert!(sheet.rows.iter().any(|row| matches!(row, Row::Text { title, .. } if title == "Plano")));
-        state.equalizer.preamp_db = 3.0;
-        let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert!(sheet.rows.iter().any(|row| matches!(row, Row::Text { title, .. } if title == "Personalizado")));
+        state.update(&UiAction::Clicked { id: "equalizer".into() });
+        assert_eq!(state.page, state::Page::Equalizer);
+        assert!(!has_sheet(&state));
+        assert!(Controller::default().payload(&state, &Frame::default(), Pos2::ZERO).sheet.is_none());
     }
 
     #[test]

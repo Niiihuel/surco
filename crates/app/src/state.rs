@@ -47,6 +47,8 @@ pub enum Page {
     Lyrics,
     /// What the artists the user follows have released, and a later version of the app.
     News,
+    /// The equaliser as a page of its own on a phone.
+    Equalizer,
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -529,6 +531,8 @@ pub struct State {
     pub menu: Option<String>,
     pub equalizer_open: bool,
     pub equalizer: EqualizerValues,
+    /// The band last moved: its name is lit and its point marked on the curve.
+    pub equalizer_band: Option<usize>,
     pub artwork: HashMap<String, RasterImage>,
     /// The color each cover lends to a card, by the cover's address.
     pub tints: HashMap<String, limn::Color>,
@@ -706,6 +710,22 @@ fn artist_of(track: &Track) -> Target {
 /// The equaliser's range, each side of zero.
 pub const EQUALIZER_DB: f32 = 12.0;
 
+/// The equaliser's ready-made curves: the id after `equalizer-preset:`, the name, and the bands.
+/// Each leaves the preamp as it is.
+pub const EQUALIZER_PRESETS: [(&str, &str, [f32; 10]); 6] = [
+    ("flat", "Plano", [0.0; 10]),
+    ("bass", "Más graves", [6.0, 5.0, 4.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+    ("voice", "Voz", [-3.0, -2.0, -1.0, 1.0, 3.0, 4.0, 4.0, 2.0, 0.0, -1.0]),
+    ("treble", "Agudos", [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 4.0, 5.0, 6.0]),
+    ("acoustic", "Acústico", [4.0, 3.0, 2.0, 1.0, 1.0, 1.0, 2.0, 3.0, 3.0, 2.0]),
+    ("electronic", "Electrónica", [5.0, 4.0, 1.0, 0.0, -2.0, 1.0, 0.0, 2.0, 4.0, 5.0]),
+];
+
+/// The ready-made curve the bands are set to, by its id and name, if they are one.
+pub fn equalizer_preset(values: EqualizerValues) -> Option<(&'static str, &'static str)> {
+    EQUALIZER_PRESETS.iter().find(|(_, _, bands)| *bands == values.bands_db).map(|(key, name, _)| (*key, *name))
+}
+
 /// The equaliser as it is kept between runs: the preamp and then each band.
 pub fn equalizer_text(values: EqualizerValues) -> String {
     let gains = std::iter::once(values.preamp_db).chain(values.bands_db);
@@ -765,6 +785,7 @@ impl Default for State {
             menu: None,
             equalizer_open: false,
             equalizer: EqualizerValues::FLAT,
+            equalizer_band: None,
             artwork: HashMap::new(),
             tints: HashMap::new(),
             sharing: None,
@@ -1197,7 +1218,10 @@ impl State {
             UiAction::SliderChanged { id, fraction, .. } if id.starts_with("equalizer:") => {
                 let gain = ((fraction * 2.0 - 1.0) * EQUALIZER_DB).round();
                 match id["equalizer:".len()..].parse::<usize>() {
-                    Ok(band) if band < self.equalizer.bands_db.len() => self.equalizer.bands_db[band] = gain,
+                    Ok(band) if band < self.equalizer.bands_db.len() => {
+                        self.equalizer.bands_db[band] = gain;
+                        self.equalizer_band = Some(band);
+                    }
                     Ok(_) => return Vec::new(),
                     Err(_) => self.equalizer.preamp_db = gain,
                 }
@@ -1257,6 +1281,10 @@ impl State {
         if let Some(key) = id.strip_prefix("pin:") {
             self.collection.pin(key);
             return Vec::new();
+        }
+        if let Some((_, _, bands)) = id.strip_prefix("equalizer-preset:").and_then(|key| EQUALIZER_PRESETS.iter().find(|preset| preset.0 == key)) {
+            self.equalizer.bands_db = *bands;
+            return vec![Command::Equalizer(self.equalizer)];
         }
         if let Some(row) = id.strip_prefix("more:") {
             self.menu = (self.menu.as_deref() != Some(row)).then(|| row.to_owned());
@@ -1501,6 +1529,13 @@ impl State {
                 let mut commands = self.ask_lyrics();
                 commands.extend(self.ask_about());
                 commands
+            }
+            // A phone gives it a page; a window, a popover.
+            "equalizer" if self.mobile => {
+                if self.page != Page::Equalizer {
+                    self.go(Page::Equalizer);
+                }
+                Vec::new()
             }
             "equalizer" => {
                 self.equalizer_open = !self.equalizer_open;
@@ -3170,6 +3205,32 @@ mod tests {
         assert!(state.equalizer_open);
         click(&mut state, "equalizer-close");
         assert!(!state.equalizer_open);
+        // A phone opens it as a page, and back leaves it.
+        let mut phone = State { mobile: true, ..State::default() };
+        click(&mut phone, "equalizer");
+        assert_eq!((phone.page.clone(), phone.equalizer_open), (Page::Equalizer, false));
+        click(&mut phone, "back");
+        assert_ne!(phone.page, Page::Equalizer);
+    }
+
+    #[test]
+    fn a_preset_sets_every_band_and_moving_one_makes_it_custom() {
+        let mut state = State::default();
+        state.equalizer.preamp_db = -2.0;
+        assert_eq!(equalizer_preset(state.equalizer), Some(("flat", "Plano")));
+        let commands = click(&mut state, "equalizer-preset:bass");
+        assert_eq!(state.equalizer.bands_db, EQUALIZER_PRESETS[1].2);
+        assert_eq!(state.equalizer.preamp_db, -2.0, "the preamp stays");
+        assert_eq!(commands, vec![Command::Equalizer(state.equalizer)]);
+        assert_eq!(equalizer_preset(state.equalizer).map(|preset| preset.1), Some("Más graves"));
+        state.update(&UiAction::SliderChanged { id: "equalizer:9".into(), fraction: 1.0, committed: true });
+        assert_eq!((equalizer_preset(state.equalizer), state.equalizer_band), (None, Some(9)));
+        assert!(click(&mut state, "equalizer-preset:nope").is_empty());
+        // Each preset is a different curve, in whole decibels within the range.
+        for (index, (_, _, bands)) in EQUALIZER_PRESETS.iter().enumerate() {
+            assert!(bands.iter().all(|gain| gain.fract() == 0.0 && gain.abs() <= EQUALIZER_DB));
+            assert!(EQUALIZER_PRESETS[..index].iter().all(|other| other.2 != *bands));
+        }
     }
 
     #[test]

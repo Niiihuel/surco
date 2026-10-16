@@ -124,7 +124,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
         segmented("setting-quality", inner, Quality::ALL.into_iter()
             .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect()),
     );
-    let equalizer = if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
+    let equalizer = super::super::equalizer::summary(state);
     let audio = group("Calidad de audio", vec![
         quality,
         switch(Icon::Volume, "Normalizar el volumen", "setting:normalize", state.settings.normalize),
@@ -167,6 +167,27 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
 
     let groups = vec![playback, connections, audio, display, library, about, erase];
     ScrollArea::new("settings", Element::column(groups).gap(28.0).padding(GUTTER)).render().flex(1.0)
+}
+
+/// The equaliser as a page of the same cards: the ready-made curves, the curve its filters
+/// draw over a slider for each band, and the preamp with the reset.
+pub(in crate::view) fn equalizer(state: &State, width: f32) -> Element {
+    use super::super::equalizer as parts;
+    let palette = SCHEME.palette();
+    let inner = (width - GUTTER * 4.0).max(0.0);
+    let heading = |title: &str| horizontal_inset(Text::new(title, palette).role(TextRole::Heading).font_size(17.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
+    let presets = Element::column(vec![heading("Ajustes"), parts::presets(state, 44.0)]).gap(8.0);
+    // Columns as wide as the card allows: about 34 points each on a 390-point phone.
+    let response = Element::column(vec![parts::curve(state, 150.0, CARD), parts::bands(state, 170.0)]).gap(12.0).padding(6.0);
+    let response = group("Bandas", vec![response.padding(4.0)], "");
+    let preamp = stacked(
+        line(Icon::Volume, "Previo", None, Some(value(&parts::decibels(state.equalizer.preamp_db))), Color::WHITE),
+        parts::preamp(state, Some(inner)).size(None, Some(44.0)),
+    );
+    let flat = state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT;
+    let reset = action("equalizer-reset", Icon::Refresh, "Restablecer", Some("Bandas y previo a 0 dB"), None, !flat, false);
+    let preamp = group("Previo", vec![preamp, reset], "El previo sube o baja todo antes de las bandas.");
+    ScrollArea::new("equalizer", Element::column(vec![presets, response, preamp]).gap(28.0).padding(GUTTER)).render().flex(1.0)
 }
 
 #[cfg(test)]

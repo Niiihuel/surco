@@ -1,6 +1,7 @@
 //! The window, described from the state. Rebuilt on every frame.
 
 mod mobile;
+mod equalizer;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
@@ -128,7 +129,8 @@ const RAIL_BELOW: f32 = 860.0;
 const PANEL_FROM: f32 = 1024.0;
 /// What the middle panel keeps however wide the user drags the other two.
 const CONTENT_MIN_WIDTH: f32 = 360.0;
-const EQUALIZER_SLIDER: f32 = 180.0;
+/// The popover: ten band columns of 34 inside its padding.
+const EQUALIZER_WIDTH: f32 = 364.0;
 const TILE_WIDTH: f32 = 148.0;
 /// The space between two tiles of a shelf, the room under them for the shelf's bar, and
 /// how far an arrow carries the shelf: three tiles.
@@ -1438,6 +1440,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Settings => "page:settings".to_owned(),
         Page::Lyrics => "page:lyrics".to_owned(),
         Page::News => "page:news".to_owned(),
+        Page::Equalizer => "page:equalizer".to_owned(),
     };
     page(state, width, palette).animate_enter(entering)
 }
@@ -1483,6 +1486,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
             None => centered(Empty::new("Esta playlist ya no existe", "Fue eliminada de tu biblioteca.", palette).icon(Icon::Playlist).render()),
         },
         Page::Settings => settings_page(state, width, palette),
+        Page::Equalizer => mobile::settings::equalizer(state, width),
     }
 }
 
@@ -1569,7 +1573,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     ]).gap(16.0);
     let choices = |group: &str, tabs: Vec<Tab>| Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Spacious).fill_width(picker_width).render();
 
-    let equalizer = if state.equalizer == surco_audio::equalizer::EqualizerValues::FLAT { "Plano" } else { "Personalizado" };
+    let equalizer = equalizer::summary(state);
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
     let system_output = state.outputs.iter().find(|output| output.is_default)
@@ -2228,83 +2232,6 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
     ScrollArea::new("queue-list", Element::column(vec![list]).padding(PANEL_PAD / 2.0)).render().flex(1.0)
 }
 
-/// Ten bands and the preamp, a row each: the label, the slider and the gain it is set to.
-fn equalizer(state: &State, palette: ComponentPalette) -> Element {
-    let text = |value: String, width: f32| {
-        Element::text(value)
-            .font_family(FontFamily::Monospace)
-            .font_size(11.0)
-            .foreground(palette.muted)
-            .size(Some(width), None)
-            .centered_y()
-    };
-    let row = |id: String, label: String, gain: f32| {
-        let slider = Slider::new(id, (gain / EQUALIZER_DB + 1.0) / 2.0, palette)
-            .steps(EQUALIZER_DB as usize * 2 + 1)
-            .width(EQUALIZER_SLIDER)
-            .render();
-        let slider = if state.mobile {
-            slider.size(None, Some(44.0)).flex(1.0)
-        } else {
-            slider.centered_y()
-        };
-        Element::row(vec![
-            text(label, 36.0),
-            slider,
-            text(
-                if gain == 0.0 {
-                    "0 dB".into()
-                } else {
-                    format!("{gain:+.0} dB")
-                },
-                44.0,
-            ),
-        ])
-        .gap(8.0)
-    };
-    let hertz = |hz: f32| {
-        if hz >= 1000.0 {
-            format!("{:.0}k", hz / 1000.0)
-        } else {
-            format!("{hz:.0}")
-        }
-    };
-    let reset = Button::new("equalizer-reset", "Restablecer", palette)
-        .variant(ButtonVariant::Ghost)
-        .size(ControlSize::Compact)
-        .render();
-    let reset = if state.mobile {
-        reset.size(None, Some(44.0))
-    } else {
-        reset
-    };
-    let header = Element::row(vec![
-        Element::text("Ecualizador")
-            .font_family(FontFamily::Sans)
-            .font_size(13.0)
-            .foreground(palette.text)
-            .centered_y(),
-        Element::spacer().flex(1.0),
-        reset,
-    ]);
-    let mut rows = vec![
-        header,
-        row(
-            "equalizer:preamp".into(),
-            "Pre".into(),
-            state.equalizer.preamp_db,
-        ),
-    ];
-    rows.extend(
-        BAND_HZ
-            .iter()
-            .zip(state.equalizer.bands_db)
-            .enumerate()
-            .map(|(band, (hz, gain))| row(format!("equalizer:{band}"), hertz(*hz), gain)),
-    );
-    Element::column(rows).gap(6.0).padding(12.0)
-}
-
 fn cover(state: &State, artwork: &Option<String>, side: f32, palette: ComponentPalette) -> Element {
     picture(state, artwork, side, false, palette)
 }
@@ -2426,13 +2353,13 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     };
     let equalizer = Popover::new(
         side("equalizer", Icon::Sliders, "Ecualizador", state.equalizer_open),
-        equalizer(state, palette),
+        equalizer::popover(state, SCHEME.menu()),
         state.equalizer_open,
         "equalizer-close",
         SCHEME.menu(),
     )
     .placement(PopoverPlacement::TopEnd)
-    .width(36.0 + EQUALIZER_SLIDER + 44.0 + 16.0 + 24.0)
+    .width(EQUALIZER_WIDTH)
     .render()
     .centered_y();
     let mut controls = Vec::new();

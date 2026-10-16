@@ -133,15 +133,24 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
 }
 
 #[test]
-fn equalizer_sliders_fit_and_reveal_without_hiding_the_close_control() {
+fn the_equalizer_page_reveals_its_controls_and_each_band_takes_its_column() {
     let size = Size::new(320.0, 360.0);
     let mut state = State::default();
     state.mobile = true;
-    state.equalizer_open = true;
+    state.equalizer.bands_db[3] = 4.0;
+    state.update(&limn::UiAction::Clicked { id: "equalizer".into() });
+    assert_eq!(state.page, Page::Equalizer);
     let mut tree = tree(&state, size);
-    reveal(&mut tree, "equalizer-reset", size);
-    for id in ["equalizer:preamp", "equalizer:0", "equalizer:9"] {
+    for id in ["equalizer-preset:flat", "equalizer-reset", "equalizer:preamp"] {
         reveal(&mut tree, id, size);
     }
-    target(&tree.layout(size), "equalizer-close:close", size);
+    // A band is dragged up and down its column: the whole column, a tenth of the card.
+    for id in ["equalizer:0", "equalizer:9"] {
+        tree.reveal(id);
+        let frame = tree.layout(size);
+        let rect = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id} is present")).rect;
+        assert!(rect.height >= 150.0 && rect.width >= 26.0, "{id} is a column: {rect:?}");
+        assert!(rect.x >= 0.0 && rect.x + rect.width <= size.width, "{id} fits: {rect:?}");
+    }
+    assert!(tree.layout(size).access.iter().any(|node| node.id == "back"), "back leaves it");
 }

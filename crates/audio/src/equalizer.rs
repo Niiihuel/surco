@@ -118,6 +118,19 @@ pub fn values() -> EqualizerValues {
         .unwrap_or(EqualizerValues::FLAT)
 }
 
+/// What the equaliser does to a tone at `frequency`, in dB: the preamp plus each band's peaking
+/// filter, the very ones the audio runs through at `sample_rate`. It draws the curve.
+pub fn response_db(values: &EqualizerValues, frequency: f32, sample_rate: f32) -> f32 {
+    let values = values.clamped();
+    let omega = std::f32::consts::TAU * frequency / sample_rate;
+    let bands: f32 = BAND_HZ
+        .iter()
+        .zip(values.bands_db)
+        .map(|(hz, gain)| Biquad::peaking(*hz, sample_rate, gain).gain_db(omega))
+        .sum();
+    values.preamp_db + bands
+}
+
 /**
  * One peaking filter, direct form I.
  *
@@ -197,6 +210,18 @@ impl Biquad {
         // next filter's arithmetic instead of stopping it here.
         self.y1 = flush_denormal(output);
         self.y1
+    }
+
+    /// The filter's gain for a tone of `omega` radians a sample, in dB: |B(e^jω)| / |A(e^jω)|.
+    fn gain_db(&self, omega: f32) -> f32 {
+        let omega = f64::from(omega);
+        let magnitude = |c0: f32, c1: f32, c2: f32| {
+            let (c0, c1, c2) = (f64::from(c0), f64::from(c1), f64::from(c2));
+            let real = c0 + c1 * omega.cos() + c2 * (2.0 * omega).cos();
+            let imaginary = c1 * omega.sin() + c2 * (2.0 * omega).sin();
+            real.hypot(imaginary)
+        };
+        (20.0 * (magnitude(self.b0, self.b1, self.b2) / magnitude(1.0, self.a1, self.a2)).log10()) as f32
     }
 
     /// Swaps in new coefficients without disturbing the sample history, so a slider moved during
@@ -396,7 +421,48 @@ impl<S: Source> Source for EqualizedSource<S> {
 
 #[cfg(test)]
 mod tests {
-    use super::{flush_denormal, Biquad, EqualizerValues, BAND_COUNT, BAND_HZ, MAX_GAIN_DB};
+    use super::{flush_denormal, response_db, Biquad, EqualizerValues, BAND_COUNT, BAND_HZ, MAX_GAIN_DB};
+
+    const RATE: f32 = 48_000.0;
+    /// 20 Hz to 20 kHz, ten to an octave.
+    fn audible() -> impl Iterator<Item = f32> {
+        (0..100).map(|step| 20.0 * 2f32.powf(step as f32 / 10.0))
+    }
+
+    #[test]
+    fn the_curve_is_flat_when_the_equaliser_is() {
+        for frequency in audible() {
+            assert!(response_db(&EqualizerValues::FLAT, frequency, RATE).abs() < 1e-4, "{frequency} Hz");
+        }
+        // The preamp alone lifts it all.
+        let trimmed = EqualizerValues { preamp_db: -3.0, ..EqualizerValues::FLAT };
+        assert!((response_db(&trimmed, 440.0, RATE) + 3.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn a_band_peaks_at_its_gain_on_its_centre_and_fades_away_from_it() {
+        let mut values = EqualizerValues::FLAT;
+        values.bands_db[5] = 6.0;
+        let peak = response_db(&values, BAND_HZ[5], RATE);
+        assert!((peak - 6.0).abs() < 0.01, "{peak} dB at 1 kHz");
+        assert!(audible().all(|frequency| response_db(&values, frequency, RATE) <= peak + 1e-3));
+        assert!(response_db(&values, 62.0, RATE) < 0.1 && response_db(&values, 16_000.0, RATE) < 0.1);
+        // Gains past the limit are drawn as they are heard: clamped.
+        values.bands_db[5] = 40.0;
+        assert!((response_db(&values, BAND_HZ[5], RATE) - MAX_GAIN_DB).abs() < 0.01);
+    }
+
+    #[test]
+    fn a_cut_mirrors_the_same_boost() {
+        let (mut boost, mut cut) = (EqualizerValues::FLAT, EqualizerValues::FLAT);
+        (boost.bands_db[2], boost.bands_db[7]) = (5.0, 9.0);
+        (cut.bands_db[2], cut.bands_db[7]) = (-5.0, -9.0);
+        for frequency in audible() {
+            let (up, down) = (response_db(&boost, frequency, RATE), response_db(&cut, frequency, RATE));
+            // Within the rounding of single-precision coefficients far below a band.
+            assert!((up + down).abs() < 0.01, "{frequency} Hz: {up} and {down}");
+        }
+    }
 
     /// A value below the floor lands on exact zero; an audible one passes through untouched,
     /// regardless of sign.

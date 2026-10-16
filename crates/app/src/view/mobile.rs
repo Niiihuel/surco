@@ -62,7 +62,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else if state.page == Page::Playing && !compact_player && state.current().is_some() {
         header.push(icon("mobile-player-header-more", Icon::More, "Opciones de la canción", palette).dispatch_as("more:current"));
     }
-    if state.page != Page::Settings && state.page != Page::Playing && !matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
+    if !matches!(state.page, Page::Settings | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
         header.push(icon("settings", Icon::Settings, "Configuración", palette));
     }
     let editing = searching && state.mobile_ui.search_editing;
@@ -154,9 +154,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = playlist_dialog(state, tree, window.width, palette);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
-    let tree = confirm_dialog(state, tree, palette);
-    limn::BottomSheet::new(tree, state.equalizer_open, "Ecualizador", "Ajustá el sonido de este equipo.", "equalizer-close", palette)
-        .max_height(680.0).body(equalizer(state, palette)).render()
+    confirm_dialog(state, tree, palette)
 }
 
 /// The page title, shared by the limn header and the native iOS header.
@@ -165,6 +163,7 @@ pub(crate) fn title(state: &State) -> &str {
     match &state.page {
         Page::Library => "Tu biblioteca",
         Page::Settings => "Configuración",
+        Page::Equalizer => "Ecualizador",
         Page::Playing => if state.queue_open { "Cola de reproducción" } else { "Ahora suena" },
         Page::Lyrics => "Letra",
         Page::Search if searching => "Buscar",
@@ -290,7 +289,7 @@ pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderBut
     let leading = if state.can_go_back() { vec![("back", "Volver", "chevron.left")] } else { Vec::new() };
     let mut trailing = Vec::new();
     if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", "Reproducir", "play.fill")); }
-    if state.page != Page::Settings && !detail { trailing.push(("settings", "Configuración", "gearshape")); }
+    if !matches!(state.page, Page::Settings | Page::Equalizer) && !detail { trailing.push(("settings", "Configuración", "gearshape")); }
     (leading, trailing)
 }
 
