@@ -372,10 +372,10 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         return Some((format!("missed:{id}"), sheet));
     }
     if let Some(link) = &state.importing {
-        let mut sheet = shell("Importar música", "Spotify · Apple Music · YouTube Music", "import-cancel");
+        let description = if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" };
+        let mut sheet = shell("Importar música", description, "import-cancel");
         sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
             placeholder: "Enlace de playlist o álbum público".into(), keyboard: "url".into(), paste: true }];
-        if state.import_unknown { sheet.rows.push(text("No reconocimos ese enlace.", true)); }
         sheet.actions = vec![Action::new("import-cancel", "Cancelar", "xmark"), Action::new("import-go", "Importar", "square.and.arrow.down")];
         return Some(("import".into(), sheet));
     }
@@ -606,6 +606,10 @@ mod tests {
         assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
         assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
         assert_eq!(json["sheet"]["rows"][0]["paste"], true);
+        state.import_unknown = true;
+        let error = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
+        assert_eq!(serde_json::to_value(error).unwrap()["sheet"]["rows"], json["sheet"]["rows"],
+            "validation changes the description without rebuilding the live editor");
         assert!(json["menus"].as_array().unwrap().is_empty());
         let action = serde_json::to_value(Row::Action(Action::new("test", "Title", "heart"))).unwrap();
         assert_eq!(action["kind"], "action");

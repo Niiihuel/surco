@@ -146,6 +146,20 @@
     XCTAssertTrue([self element:@"import-go"].exists, @"Copied text is an editable draft, not an automatic import");
     XCTAssertEqual(self.app.alerts.count, 0u);
     [self attachScreenshot:@"native-playlist-card-utf16-text"];
+    [[self element:@"import-go"] tap];
+    XCUIElement *error = self.app.staticTexts[@"No reconocimos ese enlace."];
+    XCTAssertTrue([error waitForExistenceWithTimeout:12]);
+    [field tap];
+    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
+    NSString *correction = @"-corregido";
+    [field typeText:correction];
+    NSString *edited = [field.value copy];
+    NSArray<NSString *> *parts = [edited componentsSeparatedByString:correction];
+    XCTAssertEqual(parts.count, 2u, @"Validation must not replace the live field after the first correction character");
+    XCTAssertEqualObjects([parts componentsJoinedByString:@""], text);
+    [self waitFor:error predicate:@"exists == NO"];
+    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Correcting an invalid link preserves keyboard and caret");
+    [self attachScreenshot:@"native-import-invalid-text-correction"];
     [[self element:@"import-cancel"] tap];
     [self waitFor:field predicate:@"exists == NO"];
 }

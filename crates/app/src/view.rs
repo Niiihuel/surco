@@ -334,8 +334,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let form = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD);
-        let mut fields = if state.import_unknown { form.hint("No reconocimos ese enlace.").rows() } else { form.rows() };
+        let mut fields = FormField::new("Enlace", field, palette).sizing(DIALOG_FIELD).rows();
         if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", "Pegar enlace", palette)
                 .variant(ButtonVariant::Secondary).size(ControlSize::Spacious).render().size(None, Some(44.0)));
@@ -353,7 +352,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             window_tree,
             true,
             "Importar música",
-            "Spotify · Apple Music · YouTube Music",
+            if state.import_unknown { "No reconocimos ese enlace." } else { "Spotify · Apple Music · YouTube Music" },
             "import-cancel",
             palette,
         )
