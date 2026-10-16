@@ -657,8 +657,8 @@ pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
 }
 
 /// The side every cover is fetched at: a phone draws its rows and shelves at three pixels a
-/// point, and the catalog lists most covers at 60 or 120.
-pub const COVER_SIDE: u32 = 544;
+/// point, and the catalog lists most covers at 60 or 120. limn decodes thumbnails at 384.
+pub const COVER_SIDE: u32 = 384;
 
 /// A cover's address at the size a large picture needs: a phone's player is 380 points wide.
 pub fn large_cover(url: &str) -> String {
