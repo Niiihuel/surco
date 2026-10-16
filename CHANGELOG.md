@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1
+
+### Changed
+
+- On the desktop, the library's filters use the pill track of Settings and scroll
+  sideways when the panel is narrow.
+- Every icon button's hover is round, and so is the lyrics card's button.
+- The library search closes from a cross inside the field, as the main search does.
+
 ## 0.6.0
 
 ### Added
