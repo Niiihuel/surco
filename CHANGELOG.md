@@ -29,6 +29,9 @@
   rows without covering the real transport and navigation controls.
 - Search retains its results and scroll position while updating, and preserves
   native editing through rotation without reopening a dismissed keyboard.
+- Song search keeps tracks whose album has no link, including collaborations,
+  instead of rejecting the entire result list.
+- Search recovery shows a concise message and Retry without provider internals.
 
 ## 0.4.0
 
