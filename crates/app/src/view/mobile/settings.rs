@@ -1,10 +1,11 @@
-//! The phone's settings as iOS inset-grouped cards in monochrome, like the app's mark: white
-//! glyphs and words on gray cards, bold section headings, white for what is on.
+//! The settings as iOS inset-grouped cards in monochrome, like the app's mark: white
+//! glyphs and words on gray cards, bold section headings, white for what is on. The desktop
+//! lays out its own rows with these same pieces.
 
 use super::*;
 use limn::{CornerRadii, Separator};
 
-const GUTTER: f32 = 16.0;
+pub(in crate::view) const GUTTER: f32 = 16.0;
 /// The least height of a row, above the 44-point touch minimum.
 const ROW_HEIGHT: f32 = 52.0;
 /// A row's inside: 10 above and below, 16 at the sides once `cell` adds its 6.
@@ -21,7 +22,7 @@ const SEGMENT: f32 = 40.0;
 const DESTRUCTIVE: Color = Color::rgb(255, 69, 58);
 
 /// The glyph, the name over an optional line about it, and what sits at the end.
-fn line(glyph: Icon, title: &str, detail: Option<&str>, trailing: Option<Element>, ink: Color) -> Element {
+pub(in crate::view) fn line(glyph: Icon, title: &str, detail: Option<&str>, trailing: Option<Element>, ink: Color) -> Element {
     let palette = SCHEME.palette();
     let mut copy = vec![Text::new(title, palette).font_size(16.0).ink(ink).render()];
     if let Some(detail) = detail { copy.push(Text::new(detail, palette).font_size(13.0).muted().render()); }
@@ -31,28 +32,28 @@ fn line(glyph: Icon, title: &str, detail: Option<&str>, trailing: Option<Element
     Element::row(children).gap(ROW_GAP)
 }
 
-fn cell(content: Element) -> Element {
+pub(in crate::view) fn cell(content: Element) -> Element {
     horizontal_inset(content.min_size(0.0, ROW_HEIGHT).padding(ROW_PAD), GUTTER - ROW_PAD, GUTTER - ROW_PAD)
 }
 
-fn value(text: &str) -> Element {
+pub(in crate::view) fn value(text: &str) -> Element {
     Text::new(text, SCHEME.palette()).font_size(15.0).muted().render()
 }
 
-fn chevron() -> Element {
+pub(in crate::view) fn chevron() -> Element {
     Element::icon(Icon::ChevronRight).foreground(SCHEME.muted)
 }
 
-fn switch(glyph: Icon, title: &str, id: &str, on: bool) -> Element {
+pub(in crate::view) fn switch(glyph: Icon, title: &str, detail: Option<&str>, id: &str, on: bool) -> Element {
     // Monochrome: a white track with a dark thumb when on, a white thumb on gray when off.
     let track = ComponentPalette { surface: if on { SCHEME.canvas } else { Color::WHITE }, selected: SCHEME.control.border, ..SCHEME.on_raised() };
     let control = Switch::new(id, on, track).ink(Color::WHITE).size(ControlSize::Spacious).accessibility_label(title).render();
-    cell(line(glyph, title, None, Some(control), Color::WHITE))
+    cell(line(glyph, title, detail, Some(control), Color::WHITE))
 }
 
 /// A whole row that does one thing; a destructive one is named in red. A disabled one keeps
 /// its id, passive and muted.
-fn action(id: &str, glyph: Icon, title: &str, detail: Option<&str>, trailing: Option<Element>, enabled: bool, destructive: bool) -> Element {
+pub(in crate::view) fn action(id: &str, glyph: Icon, title: &str, detail: Option<&str>, trailing: Option<Element>, enabled: bool, destructive: bool) -> Element {
     let ink = if !enabled { SCHEME.muted } else if destructive { DESTRUCTIVE } else { Color::WHITE };
     let row = cell(line(glyph, title, detail, trailing, ink));
     let mut said = limn::Access::new(limn::Role::Button).name(title);
@@ -64,21 +65,18 @@ fn action(id: &str, glyph: Icon, title: &str, detail: Option<&str>, trailing: Op
 }
 
 /// A row whose control needs the card's width: its line, then the control under it.
-fn stacked(head: Element, control: Element) -> Element {
+pub(in crate::view) fn stacked(head: Element, control: Element) -> Element {
     cell(Element::column(vec![head, control]).gap(12.0))
 }
 
 /// A pill-shaped choice among a few: the chosen one white with dark words.
-fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
+pub(in crate::view) fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     let palette = ComponentPalette { surface: SCHEME.selected, selected: Color::WHITE, ..SCHEME.palette() };
-    let mut strip = Tabs::new(tabs, palette).id(group).height(SEGMENT).accent(SCHEME.canvas).fill_width(width).render();
-    // shortcut: Tabs take their corners from limn's global radius tokens; round them here until Tabs has a radius.
-    if let limn::ElementKind::TabStrip { selection: Some(selection), .. } = &mut strip.kind { selection.radius = SEGMENT / 2.0; }
-    strip.radius(SEGMENT / 2.0 + 2.0)
+    Tabs::new(tabs, palette).id(group).height(SEGMENT).accent(SCHEME.canvas).radius(SEGMENT / 2.0).fill_width(width).render()
 }
 
 /// A bold heading, a rounded card of rows with inset hairlines, and a note only when one helps.
-fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
+pub(in crate::view) fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
     let palette = SCHEME.palette();
     let last = rows.len().saturating_sub(1);
     let mut cells = Vec::new();
@@ -106,7 +104,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
         Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(inner).render(),
     );
     let playback = group("Reproducción", vec![
-        switch(Icon::Infinity, "Reproducción automática", "setting:autoplay", state.settings.autoplay),
+        switch(Icon::Infinity, "Reproducción automática", None, "setting:autoplay", state.settings.autoplay),
         crossfade,
     ], "");
 
@@ -127,14 +125,14 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     let equalizer = super::super::equalizer::summary(state);
     let audio = group("Calidad de audio", vec![
         quality,
-        switch(Icon::Volume, "Normalizar el volumen", "setting:normalize", state.settings.normalize),
-        switch(Icon::Headphones, "Audio mono", "setting:mono", state.settings.mono),
+        switch(Icon::Volume, "Normalizar el volumen", None, "setting:normalize", state.settings.normalize),
+        switch(Icon::Headphones, "Audio mono", None, "setting:mono", state.settings.mono),
         action("equalizer", Icon::Sliders, "Ecualizador", None,
             Some(Element::row(vec![value(equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
     ], "La calidad cambia desde la próxima canción.");
 
     let display = group("Visualización", vec![
-        switch(Icon::Bolt, "Reducir movimiento", "setting:motion", state.settings.reduce_motion),
+        switch(Icon::Bolt, "Reducir movimiento", None, "setting:motion", state.settings.reduce_motion),
     ], "");
 
     let sort = state.settings.library_sort;

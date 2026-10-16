@@ -205,7 +205,7 @@ fn prepend_notice(content: &mut Element, notice: &mut Option<Element>) -> bool {
     }
 }
 
-fn horizontal_inset(content: Element, left: f32, right: f32) -> Element {
+pub(in crate::view) fn horizontal_inset(content: Element, left: f32, right: f32) -> Element {
     Element::row(vec![Element::spacer().size(Some(left), None), content.flex(1.0),
         Element::spacer().size(Some(right), None)])
 }

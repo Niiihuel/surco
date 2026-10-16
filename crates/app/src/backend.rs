@@ -696,8 +696,13 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             }
             let shared = shared.clone();
             tokio::spawn(async move {
+                let mut announced = None;
                 loop {
                     if let Some(release) = latest_release(&shared).await {
+                        if announced.as_ref() != Some(&release.version) {
+                            announced = Some(release.version.clone());
+                            tokio::task::spawn_blocking({ let version = release.version.clone(); move || announce_update(&version) });
+                        }
                         (shared.reply)(Event::Update(release));
                     }
                     tokio::time::sleep(UPDATE_EVERY).await;
@@ -911,6 +916,20 @@ const UPDATE_EVERY: Duration = Duration::from_secs(15 * 60);
 const AGENT: &str = concat!("surco/", env!("CARGO_PKG_VERSION"));
 
 /// The latest published release, when it is later than this build.
+/// A later version, said once by the system's notifications, so it is seen with the window shut.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+fn announce_update(version: &str) {
+    // Nobody to tell is no failure: a desktop without a notification daemon still has the toast.
+    let _ = notify_rust::Notification::new()
+        .appname("Surco")
+        .summary("Hay una versión nueva de Surco")
+        .body(&format!("La {version} está lista. Abrí Surco para actualizar."))
+        .show();
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn announce_update(_version: &str) {}
+
 async fn latest_release(shared: &Shared) -> Option<Release> {
     let request = shared.youtube.http().get(RELEASES).header("User-Agent", AGENT);
     let release: serde_json::Value = request.send().await.ok()?.error_for_status().ok()?.json().await.ok()?;

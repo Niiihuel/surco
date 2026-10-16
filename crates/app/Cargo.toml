@@ -38,6 +38,11 @@ base64 = "0.22"
 percent-encoding = "2"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 
+# MIT/Apache-2.0. A later version is announced by the system's own notifications; on Linux
+# over the zbus already in the tree.
+[target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+notify-rust = "4"
+
 # MIT. The desktop's media keys and "now playing" widget; over zbus, so nothing to link.
 [target.'cfg(target_os = "linux")'.dependencies]
 souvlaki = { version = "0.8.3", default-features = false, features = ["use_zbus"] }

@@ -986,6 +986,19 @@ mod lyrics_viewport_tests {
     }
 
     #[test]
+    fn the_desktop_panel_card_slides_the_same_way() {
+        let (mut state, mut tree, _) = phone(verses(40), 10.5);
+        let size = Size::new(1400.0, 900.0);
+        (state.mobile, state.page, state.panel_open) = (false, state::Page::Search, true);
+        layout_view(&mut state, &mut tree, size);
+        let mut seen = None;
+        assert!(follow_lyric_card(&mut state, &mut tree, size, &mut seen).is_some());
+        let pitch = tree.anchor_offset("lyric-card:1").unwrap() - tree.anchor_offset("lyric-card:0").unwrap();
+        let offset = state.lyric_card_offset(std::time::Instant::now());
+        assert!(pitch > 20.0 && (offset - 9.0 * pitch).abs() < 1.0, "verse 9 tops the panel's card: {offset} by {pitch}");
+    }
+
+    #[test]
     fn a_new_line_glides_the_rows_after_the_jump_and_a_new_track_or_reduced_motion_does_not() {
         let (mut state, mut tree, size) = phone(verses(40), 10.5);
         state.motion = true;

@@ -9,10 +9,10 @@ pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_titl
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    ActionRow, ActionRowSizing, Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
+    Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
-    Modal, PageColumn, PageHeader, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
+    Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, SearchField, Select, SelectorSizing, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec,
 };
@@ -93,7 +93,12 @@ pub(crate) const MOBILE_HEADER_HEIGHT: f32 = 56.0;
 const SYSTEM_OUTPUT: &str = "Predeterminado del sistema";
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
-    Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).fill_width(width).render()
+    Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).radius(pill(ControlSize::Compact)).fill_width(width).render()
+}
+
+/// The corner of a segment's selection that makes it and its track pills (the track rounds 2 more).
+fn pill(size: ControlSize) -> f32 {
+    size.height() / 2.0 - 2.0
 }
 
 fn menu_sizing(state: &State) -> SelectorSizing {
@@ -445,30 +450,10 @@ fn import_picture() -> Option<limn::RasterImage> {
 }
 
 /// The library's offer to bring music in from another app, until it is used or put away.
-fn import_card(width: f32, palette: ComponentPalette, phone: bool, native: bool) -> Element {
-    if phone {
-        return phone_import_card(width, palette, native);
-    }
-    let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let away = Element::row(vec![Element::spacer().flex(1.0), on_picture("import-dismiss", Icon::Close, "No mostrar más", palette)]);
-    // As wide as the card's own room, at the proportions it was drawn at.
-    let across = width - 24.0;
-    let top = match import_picture() {
-        Some(picture) => {
-            let picture = Element::raster_image(picture.cover()).size(Some(across), Some(across * 130.0 / 460.0)).radius(limn::tokens().radius.control);
-            Element::stack(vec![picture, away.padding(6.0)])
-        }
-        None => away,
-    };
-    let title = Text::new("Traé tu música de otras apps", raised).render();
-    let about = Text::new("Tus playlists de Spotify, Apple Music y YouTube Music, con su enlace.", raised).role(TextRole::Caption).muted().render();
-    let go = Button::new("import-open", "Importar", raised).size(ControlSize::Compact).render();
-    Element::panel(Element::column(vec![top, title, about, Element::row(vec![go]).gap(8.0)]).gap(8.0)).padding(12.0).background(CHOSEN).radius(RadiusRole::Card.px())
-}
-
-/// The phone's offer, after the Spotify kit's promotion cards: the picture edge to edge
-/// over a lifted surface, a bold title, a quiet line and white capsules.
-fn phone_import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
+/// The library's offer to bring music in from another app, until it is used or put away,
+/// after the Spotify kit's promotion cards: the picture edge to edge over a lifted surface,
+/// a bold title, a quiet line and white capsules.
+fn import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
     let raised = ComponentPalette { surface: PROMO, ..palette };
     let close = mobile::icon("import-dismiss", Icon::Close, "No mostrar más", palette).background(Color { a: 140, ..CANVAS }).radius(22.0);
     let away = Element::row(vec![Element::spacer().flex(1.0), close]).padding(4.0);
@@ -760,7 +745,7 @@ const BELL_CHIP: f32 = 14.0;
 /// Across the top: the way back, home, and the search in the middle of the window. A side
 /// panel that is shut is opened from here, on its own side.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH)).render();
+    let field = SearchField::new("search", &state.query, "¿Qué querés escuchar?", SCHEME.on_raised()).width((width - 280.0).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
     // What was typed is taken back from a cross at the field's end, filled as the field is so it covers a long text.
     let search = if state.query.is_empty() {
         field
@@ -798,7 +783,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Element::row(vec![
             end(leading),
             Element::spacer().flex(1.0),
-            header_button("home", Icon::Home, TooltipSpec::new("Inicio"), palette).render().centered_y(),
+            header_button("home", Icon::Home, TooltipSpec::new("Inicio"), palette).round().render().centered_y(),
             search,
             Element::spacer().flex(1.0),
             end(trailing),
@@ -902,29 +887,16 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let header = Element::row(header)
     .gap(8.0)
     .size(None, Some(if state.mobile { 44.0 } else { 40.0 }));
-    let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
-    let filters = segments(
-        "library-filter",
-        width - 16.0,
-        vec![
-            filter("filter:all", "Todo", Filter::All),
-            filter("filter:lists", "Playlists", Filter::Lists),
-            filter("filter:artists", "Artistas", Filter::Artists),
-            filter("filter:albums", "Álbumes", Filter::Albums),
-        ],
-    );
-    let filters = if state.mobile {
-        let pill = |id: &str, label: &str, selected| Button::new(id, label, palette)
-            .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
-            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() })
-            .round().render();
-        Element::horizontal_scroll_2d("mobile-library-filters", Element::row(vec![
-            pill("filter:all", "Todo", state.filter == Filter::All),
-            pill("filter:lists", "Playlists", state.filter == Filter::Lists),
-            pill("filter:artists", "Artistas", state.filter == Filter::Artists),
-            pill("filter:albums", "Álbumes", state.filter == Filter::Albums),
-        ]).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR)
-    } else { filters };
+    let chip = |id: &str, label: &str, selected| Button::new(id, label, palette)
+        .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
+        .sizing(if state.mobile { limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() } } else { ControlSize::Regular.button_sizing() })
+        .round().render();
+    let filters = Element::horizontal_scroll_2d("mobile-library-filters", Element::row(vec![
+        chip("filter:all", "Todo", state.filter == Filter::All),
+        chip("filter:lists", "Playlists", state.filter == Filter::Lists),
+        chip("filter:artists", "Artistas", state.filter == Filter::Artists),
+        chip("filter:albums", "Álbumes", state.filter == Filter::Albums),
+    ]).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
         Filter::All => "Buscar en tu biblioteca",
@@ -940,7 +912,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         // however wide the order's name leaves that: the room is shared out, not counted.
         let grown = open.max(LIBRARY_SEARCH_SHUT);
         let field = SearchField::new("library-query", &state.library_search, looking, SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
-        let field = if state.mobile { field.size(None, Some(44.0)).radius(22.0) } else { field };
+        let field = if state.mobile { field.size(None, Some(44.0)).radius(22.0) } else { field.radius(ControlSize::Compact.height() / 2.0) };
         vec![field.centered_y().flex(grown), search_button(Icon::Close, "Cerrar la búsqueda"), Element::spacer().flex(1.0 - grown)]
     } else {
         vec![search_button(Icon::Search, looking), Element::spacer().flex(1.0)]
@@ -1028,7 +1000,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
     if !state.settings.import_dismissed && wanted.is_empty() {
-        let card = import_card(width - 16.0, palette, state.mobile, state.mobile_ui.native_surfaces);
+        let card = import_card(width - 16.0, palette, state.mobile_ui.native_surfaces);
         if state.mobile {
             if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
                 let rows = std::mem::replace(child.as_mut(), Element::spacer());
@@ -1615,31 +1587,34 @@ fn megabytes(bytes: u64) -> String {
     if megabytes >= 1024.0 { format!("{:.1} GB", megabytes / 1024.0) } else { format!("{megabytes:.0} MB") }
 }
 
-/// A settings row's measures: its name over what it does, a control at the end.
-const SETTINGS_ROW: ActionRowSizing = ActionRowSizing { gap: 24.0, copy_gap: 8.0, icon_column: 20.0, min_height: 56.0, min_height_with_subtitle: 64.0 };
+/// The widest the settings' column grows on a desktop.
+const SETTINGS_WIDTH: f32 = 760.0;
 
-/// What the user can set: one page of groups, each row its name and what it does beside
-/// its control. A narrow page stacks the control under the copy.
+/// What the user can set, in the phone's cards: on a desktop a column of reading width with
+/// its own rows (the output device, the side panels), each control beside its name while
+/// there is room and under it when not.
 fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    use mobile::settings::{action, cell, chevron, group, line, segmented, stacked, switch, value, GUTTER};
     if state.mobile { return mobile::settings::page(state, width); }
-    let column = PageColumn::new("settings", width, palette).max_width(900.0).gutter(24.0, 32.0, 720.0).gap(32.0).reserve_rail(true);
-    // A switch or a short button fits beside its row's copy in less room than a field would.
-    let compact = column.content_width() < 600.0;
-    let picker_width = (column.content_width() - 20.0).min(288.0);
-    let (card, control) = (SCHEME.palette(), SCHEME.on_raised());
-    let row = |title: &str, about: &str| ActionRow::new(title, card).subtitle(about).wrap_title(true).sizing(SETTINGS_ROW);
-    let switch = |title: &str, about: &str, id: &str, on: bool| row(title, about)
-        .trailing(Switch::new(id, on, control).size(ControlSize::Spacious).accessibility_label(title).render())
-        .stacked(compact).render();
-    let action = |id: &str, label: &str, enabled: bool| Button::new(id, label, control).variant(ButtonVariant::Outline).size(ControlSize::Spacious).enabled(enabled).render();
-    let group = |title: &str, rows: Vec<Element>| Element::column(vec![
-        Text::new(title, card).role(TextRole::Heading).render(),
-        Element::column(rows).gap(8.0),
-    ]).gap(16.0);
-    let choices = |group: &str, tabs: Vec<Tab>| Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Spacious).fill_width(picker_width).render();
+    let across = width.min(SETTINGS_WIDTH);
+    let inner = (across - GUTTER * 4.0).max(0.0);
+    let wide = inner >= 560.0;
+    let span = if wide { inner.min(288.0) } else { inner };
+    let white = Color::WHITE;
+    let beside = |glyph, title: &str, detail: Option<&str>, control: Element| if wide { cell(line(glyph, title, detail, Some(control), white)) }
+        else { stacked(line(glyph, title, detail, None, white), control) };
 
-    let equalizer = equalizer::summary(state);
-    let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let seconds = state.settings.crossfade;
+    let fade = if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") };
+    let slider = Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(span).render();
+    let mixes = Some("Mezcla el final de una canción con el comienzo de la siguiente.");
+    let crossfade = if wide { cell(line(Icon::Shuffle, "Crossfade", mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
+        else { stacked(line(Icon::Shuffle, "Crossfade", mixes, Some(value(&fade)), white), slider) };
+    let playback = group("Reproducción", vec![
+        switch(Icon::Infinity, "Reproducción automática", Some("Cuando termina lo que estás escuchando, sigue con algo similar."), "setting:autoplay", state.settings.autoplay),
+        crossfade,
+    ], "");
+
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
     let system_output = state.outputs.iter().find(|output| output.is_default)
         .map_or_else(|| SYSTEM_OUTPUT.to_owned(), |output| format!("Sistema: {}", output.name));
@@ -1651,28 +1626,12 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         Some(id) => state.outputs.iter().find(|output| output.id == *id).map_or("Salida guardada no disponible", |output| output.name.as_str()),
         None => system_output.as_str(),
     };
-    let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", control)
+    let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", SCHEME.on_raised())
         .menu_palette(SCHEME.menu())
         .accessibility_label("Dispositivo de salida")
         .size(ControlSize::Spacious)
-        .width(picker_width)
+        .width(span)
         .render();
-    let chosen = state.settings.quality;
-    let quality = choices(
-        "setting-quality",
-        Quality::ALL.into_iter().map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect(),
-    );
-    let ceiling = match chosen {
-        Quality::Low => "Hasta 50 kbps.",
-        Quality::Normal => "Hasta 70 kbps.",
-        Quality::High => "Hasta 140 kbps.",
-    };
-    let seconds = state.settings.crossfade;
-    let crossfade = Element::row(vec![
-        Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, control).steps(CROSSFADE_MAX as usize + 1).width(140.0).render().centered_y(),
-        Text::new(if seconds == 0.0 { "No".to_owned() } else { format!("{seconds:.0} s") }, card).role(TextRole::Caption).muted().render().size(Some(28.0), None).centered_y(),
-    ])
-    .gap(8.0);
     let output_status = if state.outputs_loading {
         "Buscando salidas de audio…".to_owned()
     } else if let Some(error) = &state.outputs_error {
@@ -1682,88 +1641,63 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     } else {
         format!("{} {} en este equipo.", state.outputs.len(), if state.outputs.len() == 1 { "salida disponible" } else { "salidas disponibles" })
     };
-    let mut connections = vec![
-        row("Dispositivo de salida", "Elegí por dónde escuchar: parlantes, auriculares o una salida Bluetooth conectada al sistema.")
-            .trailing(output).stacked(compact).render(),
-        row("Salidas disponibles", &output_status)
-            .trailing(action("setting:outputs-refresh", if state.outputs_loading { "Buscando…" } else { "Actualizar" }, !state.outputs_loading))
-            .stacked(compact).render(),
-        row("Conectar por Bluetooth", "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.").render(),
-    ];
+    let mut connections = group("Conexiones y dispositivos", vec![
+        beside(Icon::Custom(AUDIO_ROUTE), "Dispositivo de salida", Some("Parlantes, auriculares o una salida Bluetooth."), output),
+        action("setting:outputs-refresh", Icon::Refresh, "Actualizar salidas", Some(&output_status), None, !state.outputs_loading, false),
+    ], "Emparejá tus auriculares o parlantes desde la configuración Bluetooth del sistema. Después, actualizá las salidas y elegilos arriba.");
     if let Some(notice) = &state.output_notice {
-        connections.push(Alert::new("Salida de audio", notice, card).id("setting:output-notice").compact(compact).render());
+        connections = Element::column(vec![connections, Alert::new("Salida de audio", notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
     }
-    let library_sort = choices("setting-library-sort", vec![
-        Tab::new("library-sort:added", "Recientes", 0.0).active(state.settings.library_sort == Sort::Added),
-        Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(state.settings.library_sort == Sort::Alphabetical),
-        Tab::new("library-sort:creator", "Creador", 0.0).active(state.settings.library_sort == Sort::Creator),
-    ]);
-    let library_view = choices("setting-library-view", vec![
-        Tab::new("library-view:compact", "Compacta", 0.0).active(state.settings.library_view == LibraryView::Compact),
-        Tab::new("library-view:list", "Lista", 0.0).active(state.settings.library_view == LibraryView::List),
-        Tab::new("library-view:grid", "Cuadrícula", 0.0).active(state.settings.library_view == LibraryView::Grid),
-    ]);
-    let visualization = vec![
-        switch("Mostrar biblioteca", "Dejá tus playlists, artistas y álbumes a mano en el panel izquierdo.", "setting:library-panel", state.library_open),
-        switch("Mostrar lo que suena", "Mostrá la tapa, la letra y el artista en el panel derecho.", "setting:player-panel", state.panel_open),
-        switch("Videos en lo que suena", "Muestra un tramo del video de la canción, sin sonido, donde va su tapa.", "setting:clips", state.settings.clips),
-        switch("Reducir movimiento", "Muestra los cambios de una vez, sin animaciones.", "setting:motion", state.settings.reduce_motion),
-    ];
-    let body = vec![
-        PageHeader::new("Configuración", card).description("Los cambios se guardan en este equipo.").stacked(compact).render(),
-        group(
-            "Reproducción",
-            vec![
-                switch("Reproducción automática", "Cuando termina lo que estás escuchando, sigue con algo similar.", "setting:autoplay", state.settings.autoplay),
-                row("Crossfade entre canciones", "Mezcla el final de una canción con el comienzo de la siguiente.").trailing(crossfade).stacked(compact).render(),
-            ],
-        ),
-        group("Conexiones y dispositivos", connections),
-        group(
-            "Calidad de audio",
-            vec![
-                row("Calidad de reproducción", &format!("{} Cambia a partir de la próxima canción.", ceiling)).trailing(quality).stacked(compact).render(),
-                switch("Normalizar el volumen", "Baja las canciones más fuertes para que todas suenen al mismo nivel.", "setting:normalize", state.settings.normalize),
-                switch("Audio mono", "Los dos parlantes reproducen lo mismo.", "setting:mono", state.settings.mono),
-                row("Ecualizador", &format!("Diez bandas y un previo. Ahora: {equalizer}.")).trailing(action("equalizer", "Ajustar", true)).stacked(compact).render(),
-            ],
-        ),
-        group("Visualización", visualization),
-        group(
-            "Biblioteca",
-            vec![
-                row("Orden de la biblioteca", "Elegí qué aparece primero entre tus álbumes, artistas y playlists.").trailing(library_sort).stacked(compact).render(),
-                row("Vista de la biblioteca", "Cambiá cuánto detalle ves en el panel izquierdo.").trailing(library_view).stacked(compact).render(),
-                row("Importar música de otras apps", "Trae playlists de Spotify, Apple Music y YouTube Music con su enlace.").trailing(action("import-open", "Importar", true)).stacked(compact).render(),
-            ],
-        ),
-        group(
-            "Almacenamiento",
-            vec![
-                row(&format!("Descargas: {downloads}"), "Lo que descargaste para escuchar sin conexión.")
-                    .trailing(action("downloads-clear", "Eliminar todas las descargas", !state.saved.is_empty()))
-                    .stacked(compact)
-                    .render(),
-            ],
-        ),
-        group(
-            "Privacidad y datos",
-            vec![
-                row("Borrar abiertos recientemente", "Quita de Inicio los álbumes y artistas que abriste en este equipo.")
-                    .trailing(action("recent-clear", "Borrar", !state.collection.recent.is_empty()))
-                    .stacked(compact)
-                    .render(),
-            ],
-        ),
-        group(
-            "Acerca de",
-            vec![
-                row("Versión", "Surco para escritorio.").value(env!("CARGO_PKG_VERSION")).stacked(compact).render(),
-                row("Licencias de terceros", "Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT).").render(),
-            ],
-        ),
-    ];
-    column.children(body).render().flex(1.0)
+
+    let chosen = state.settings.quality;
+    let ceiling = match chosen { Quality::Low => "Hasta 50 kbps", Quality::Normal => "Hasta 70 kbps", Quality::High => "Hasta 140 kbps" };
+    let audio = group("Calidad de audio", vec![
+        beside(Icon::ChartBar, "Calidad", Some(ceiling), segmented("setting-quality", span, Quality::ALL.into_iter()
+            .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect())),
+        switch(Icon::Volume, "Normalizar el volumen", Some("Baja las canciones más fuertes para que todas suenen al mismo nivel."), "setting:normalize", state.settings.normalize),
+        switch(Icon::Headphones, "Audio mono", Some("Los dos parlantes reproducen lo mismo."), "setting:mono", state.settings.mono),
+        action("equalizer", Icon::Sliders, "Ecualizador", None,
+            Some(Element::row(vec![value(equalizer::summary(state)).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
+    ], "La calidad cambia desde la próxima canción.");
+
+    let display = group("Visualización", vec![
+        switch(Icon::PanelLeft, "Mostrar biblioteca", Some("Tus playlists, artistas y álbumes en el panel izquierdo."), "setting:library-panel", state.library_open),
+        switch(Icon::PanelRight, "Mostrar lo que suena", Some("La tapa, la letra y el artista en el panel derecho."), "setting:player-panel", state.panel_open),
+        switch(Icon::Video, "Videos en lo que suena", Some("Un tramo del video de la canción, sin sonido, donde va su tapa."), "setting:clips", state.settings.clips),
+        switch(Icon::Bolt, "Reducir movimiento", Some("Los cambios de una vez, sin animaciones."), "setting:motion", state.settings.reduce_motion),
+    ], "");
+
+    let (sort, view) = (state.settings.library_sort, state.settings.library_view);
+    let library = group("Biblioteca", vec![
+        beside(Icon::Sort, "Orden", None, segmented("setting-library-sort", span, vec![
+            Tab::new("library-sort:added", "Recientes", 0.0).active(sort == Sort::Added),
+            Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(sort == Sort::Alphabetical),
+            Tab::new("library-sort:creator", "Creador", 0.0).active(sort == Sort::Creator),
+        ])),
+        beside(Icon::Grid, "Vista", None, segmented("setting-library-view", span, vec![
+            Tab::new("library-view:compact", "Compacta", 0.0).active(view == LibraryView::Compact),
+            Tab::new("library-view:list", "Lista", 0.0).active(view == LibraryView::List),
+            Tab::new("library-view:grid", "Cuadrícula", 0.0).active(view == LibraryView::Grid),
+        ])),
+        action("import-open", Icon::Playlist, "Importar música de otras apps", Some("Playlists de Spotify, Apple Music y YouTube Music con su enlace."), Some(chevron()), true, false),
+    ], "");
+
+    let about = group("Acerca de", vec![
+        cell(line(Icon::InfoCircle, "Versión", None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+        cell(line(Icon::Book, "Licencias de terceros", Some("Motor de audio adaptado de zuno (Apache-2.0). Tarjeta de pista según Spell UI (MIT). Íconos de Lucide (ISC) y Bootstrap Icons (MIT). Catálogo con ytmapi-rs (MIT)."), None, white)),
+    ], "");
+
+    // What cannot be undone sits last, each behind a confirmation.
+    let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
+    let erase = group("Almacenamiento y privacidad", vec![
+        action("downloads-clear", Icon::Trash, "Eliminar todas las descargas", Some(&downloads), None, !state.saved.is_empty(), true),
+        action("recent-clear", Icon::History, "Borrar abiertos recientemente", Some("Álbumes y artistas de Inicio"), None, !state.collection.recent.is_empty(), true),
+    ], "");
+
+    let title = mobile::horizontal_inset(Text::new("Configuración", palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
+    let groups = vec![title, playback, connections, audio, display, library, about, erase];
+    let column = Element::column(groups).gap(28.0).padding(GUTTER).size(Some(across), None);
+    ScrollArea::new("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)])).render().flex(1.0)
 }
 
 fn results(state: &State, palette: ComponentPalette) -> Element {
@@ -1858,7 +1792,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             .size(ControlSize::Compact)
             .width(width)
             .render();
-        let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field };
+        let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field.radius(ControlSize::Compact.height() / 2.0) };
         let field = field.centered_y()
             // In a narrow pane it makes do with what the row has left.
             .shrink_to_fit();
@@ -1986,21 +1920,30 @@ fn panel_card(parts: Vec<Element>, width: f32) -> Element {
     Element::panel(Element::column(parts).gap(8.0).padding(12.0)).background(CHOSEN).radius(RadiusRole::Panel.px()).size(Some(width), None)
 }
 
-/// How many lines of the lyrics the panel of what plays shows.
+/// How many lines of the lyrics the panel of what plays shows, how tall each is and the space between two.
 const LYRICS_SHOWN: usize = 5;
+const LYRICS_LINE: f32 = 24.0;
+const LYRICS_GAP: f32 = 8.0;
 
-/// The lines around the one being sung, and the way to all of them.
+/// The lines around the one being sung, and the way to all of them. As on the phone, every
+/// line is there and slides up under a window so the one sung rests second (the Host
+/// measures where it is); each keeps its own ink, so it brightens and dims as it passes.
 fn lyrics_preview(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
     let lines = state.lines();
-    let sung = state.active_line();
-    // From the line before the one sung, and never past the last few.
-    let from = sung.unwrap_or(0).saturating_sub(1).min(lines.len().saturating_sub(LYRICS_SHOWN));
+    let sung = state.active_line().map_or(-1, |index| index as i64);
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let mut parts = vec![Text::eyebrow("LETRA", raised).render()];
-    parts.extend(lines.iter().enumerate().skip(from).take(LYRICS_SHOWN).map(|(index, line)| {
-        let text = Text::new(&line.text, raised).font_size(15.0);
-        if sung == Some(index) { text } else { text.muted() }.render()
-    }));
+    let rows = lines.iter().enumerate().map(|(index, line)| {
+        let ink = Color { a: (255.0 * lyric_focus(index as i64 - sung).0) as u8, ..raised.text };
+        Text::new(if line.text.trim().is_empty() { "♪" } else { &line.text }, raised)
+            .font_size(16.0).line_height(LYRICS_LINE).ink(ink).render()
+            .font_family(FontFamily::SansBold).animate_foreground(format!("lyric-card-ink:{index}"))
+            .anchor(format!("lyric-card:{index}"))
+    }).collect();
+    let slide = limn::Point::new(0.0, -state.lyric_card_offset(std::time::Instant::now()));
+    let height = LYRICS_SHOWN as f32 * LYRICS_LINE + (LYRICS_SHOWN - 1) as f32 * LYRICS_GAP;
+    parts.push(Element::column(vec![Element::column(rows).gap(LYRICS_GAP).translate(slide)])
+        .size(None, Some(height)).clip_children());
     let all = Button::new("lyrics", "Mostrar la letra", raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
     parts.push(Element::row(vec![all, Element::spacer().flex(1.0)]));
     (!lines.is_empty()).then(|| panel_card(parts, width))
@@ -2801,35 +2744,6 @@ mod tests {
         let frame = shown(&state);
         let selected = frame.access.iter().find(|node| node.id == "setting:output").unwrap();
         assert_eq!(selected.value_text.as_deref(), Some("Salida guardada no disponible"));
-    }
-
-    #[test]
-    fn the_chosen_filter_travels_to_its_place_instead_of_jumping() {
-        use std::time::{Duration, Instant};
-        let mut state = State::default();
-        let size = Size::new(1400.0, 900.0);
-        let start = Instant::now();
-        let mut tree = UiTree::new(view(&state, size));
-        // Where the chosen segment's fill is drawn, and where each filter sits.
-        let mut chosen = |state: &State, now: Instant| {
-            tree.set_root(view(state, size));
-            let frame = tree.layout_at(size, now);
-            let at = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap();
-            let (all, albums) = (at("filter:all"), at("filter:albums"));
-            let fill = frame.commands.iter().find_map(|command| match command {
-                limn::DrawCommand::FillRect { rect, color, .. } if *color == SCHEME.canvas && rect.height == all.height && rect.y == all.y => Some(rect.x),
-                _ => None,
-            });
-            (fill.expect("the chosen segment is filled"), all.x, albums.x)
-        };
-        let (rest, all, albums) = chosen(&state, start);
-        assert_eq!(rest, all);
-        state.update(&limn::UiAction::Clicked { id: "filter:albums".into() });
-        chosen(&state, start + Duration::from_millis(1));
-        let (midway, ..) = chosen(&state, start + Duration::from_millis(60));
-        assert!(midway > all && midway < albums, "on its way: {midway} between {all} and {albums}");
-        let (arrived, ..) = chosen(&state, start + Duration::from_millis(600));
-        assert!((arrived - albums).abs() < 0.5, "and there: {arrived} at {albums}");
     }
 
     #[test]
