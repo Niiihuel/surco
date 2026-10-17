@@ -290,6 +290,8 @@ impl Player {
                 }
                 self.start(next)
             }
+            // The music goes on where it was, on the device the engine moved to.
+            Event::Rerouted => self.reload(),
             Event::Failed { track_id, message } if self.is_current(&track_id) => {
                 self.loaded = false;
                 self.playing = false;
@@ -528,6 +530,8 @@ mod tests {
         player.engine(Event::Position { track_id: "a".into(), position_sec: 42.0, duration_sec: Some(200.0) });
         player.command(Command::PlayPause);
         assert_eq!(player.reload(), vec![Effect::Restore(track("a"), 42.0, false)]);
+        player.command(Command::PlayPause);
+        assert_eq!(player.engine(Event::Rerouted), vec![Effect::Restore(track("a"), 42.0, true)], "a new device picks up where the old one was");
     }
 
     #[test]

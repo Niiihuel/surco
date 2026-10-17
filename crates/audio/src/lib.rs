@@ -18,6 +18,7 @@
  *     Event::Ended { track_id } => { /* advance the queue */ }
  *     Event::Failed { track_id, message } => { /* load it again */ }
  *     Event::StreamFailed { message } => { /* the output device died */ }
+ *     Event::Rerouted => { /* load the track again where it was */ }
  * })?;
  *
  * let buffer = MediaBuffer::new(Some(3_400_000));

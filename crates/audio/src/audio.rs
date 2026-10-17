@@ -59,6 +59,9 @@ const STREAM_RETRY_WINDOW: Duration = Duration::from_secs(10);
 
 const STREAM_LOST: &str = "the audio output stream failed";
 
+/// How often the system's default output is looked at, to follow it onto a device just plugged in.
+const DEFAULT_POLL: Duration = Duration::from_secs(1);
+
 /// A decoded stream ready to be handed to a deck. rodio resamples it to the device's rate.
 type BoxedSource = Box<dyn Source + Send>;
 
@@ -97,6 +100,9 @@ pub enum Event {
     Failed { track_id: String, message: String },
     /// The output stream died and both decks went with it. The next load reopens the device.
     StreamFailed { message: String },
+    /// The output moved to another device — the system's default changed, or the one playing
+    /// went away — and both decks went with it. Loading the track again where it was resumes it.
+    Rerouted,
 }
 
 /// A track to decode onto a deck.
@@ -842,6 +848,7 @@ fn run(
     let mut engine = Engine {
         emit,
         stream,
+        default_device: if initial_device.is_none() { default_output_id() } else { None },
         device_id: initial_device,
         commands,
         generation: 0,
@@ -863,6 +870,7 @@ fn run(
     }
 
     let mut next_tick = Instant::now() + TICK;
+    let mut next_follow = Instant::now() + DEFAULT_POLL;
     loop {
         let now = Instant::now();
         let until_tick = next_tick.saturating_duration_since(now);
@@ -893,7 +901,19 @@ fn run(
         } else if engine.is_ending() {
             engine.finish();
         }
+        if Instant::now() >= next_follow {
+            engine.follow_default();
+            next_follow = Instant::now() + DEFAULT_POLL;
+        }
     }
+}
+
+/// The system's default output now. On Linux it is the sound server's "default", which the
+/// server itself moves between sinks, so it never changes here.
+fn default_output_id() -> Option<rodio::cpal::DeviceId> {
+    use rodio::cpal::traits::HostTrait;
+
+    rodio::cpal::default_host().default_output_device()?.id().ok()
 }
 
 struct Engine {
@@ -904,6 +924,8 @@ struct Engine {
     stream: Option<MixerDeviceSink>,
     /// What to reopen, `None` for the OS default.
     device_id: Option<String>,
+    /// Which device the default was when the stream opened on it, to tell when it moves.
+    default_device: Option<rodio::cpal::DeviceId>,
     /// Handed to each stream's error callback, the way back onto this thread.
     commands: Sender<Command>,
     /// Bumped per stream, so a late error from a replaced stream is ignored.
@@ -1128,6 +1150,11 @@ impl Engine {
                 // Dropping it is what ends cpal's loop on the dead device.
                 self.stream = None;
                 self.fade = None;
+                // A device that went away, as headphones unplugged: the music goes on on the one
+                // to use now. One that dies right after opening is left to the backoff below.
+                if self.opened_at.elapsed() >= STREAM_RETRY_WINDOW && self.reroute() {
+                    return false;
+                }
                 if self.opened_at.elapsed() < STREAM_RETRY_WINDOW {
                     self.reopen_after = Some(Instant::now() + STREAM_RETRY_WINDOW);
                 }
@@ -1156,6 +1183,7 @@ impl Engine {
         self.fade = None;
         self.stream = Some(stream);
         self.decks = decks;
+        self.default_device = if id.is_none() { default_output_id() } else { None };
         self.device_id = id;
         self.generation = generation;
         self.opened_at = Instant::now();
@@ -1163,6 +1191,34 @@ impl Engine {
         self.active = 0;
         self.playing = false;
         Ok(())
+    }
+
+    /// Moves onto the system's default output when it changes under a stream opened on it,
+    /// as when headphones are plugged in.
+    fn follow_default(&mut self) {
+        if self.device_id.is_some() || self.stream.is_none() || self.default_device.is_none() {
+            return;
+        }
+        let now = default_output_id();
+        if now.is_some() && now != self.default_device {
+            // Looked at once: a device that will not open is not tried again every second.
+            self.default_device = now;
+            self.reroute();
+        }
+    }
+
+    /// Reopens the output on the device to use now, for the caller to load its track again.
+    fn reroute(&mut self) -> bool {
+        match self.reopen(self.device_id.clone()) {
+            Ok(()) => {
+                (self.emit)(Event::Rerouted);
+                true
+            }
+            Err(error) => {
+                warn(format_args!("failed to move to the current audio output: {error}"));
+                false
+            }
+        }
     }
 
     fn cancel_fade(&mut self) {
@@ -1263,7 +1319,7 @@ mod tests {
         let (events, received) = mpsc::channel();
         let mut engine = Engine {
             output: output.clone(), emit: Box::new(move |event| { let _ = events.send(event); }),
-            stream: None, device_id: None, commands, generation: 1, opened_at: Instant::now(),
+            stream: None, device_id: None, default_device: None, commands, generation: 1, opened_at: Instant::now(),
             reopen_after: Some(Instant::now() + STREAM_RETRY_WINDOW), lost_track: Some("a".into()),
             decks: [Deck::disconnected(), Deck::disconnected()], active: 0, volume: 1.0,
             muted: false, rate: 1.0, playing: true, fade: None,
