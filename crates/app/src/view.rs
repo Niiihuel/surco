@@ -13,7 +13,7 @@ use limn::{
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
-    Markdown, ScrollArea, SearchField, Select, SelectorSizing, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
+    Markdown, ScrollArea, ScrollbarAppearance, SearchField, Select, SelectorSizing, Separator, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec,
 };
 
@@ -139,11 +139,15 @@ const CONTENT_MIN_WIDTH: f32 = 360.0;
 /// The popover: ten band columns of 34 inside its padding.
 const EQUALIZER_WIDTH: f32 = 364.0;
 const TILE_WIDTH: f32 = 148.0;
+/// On a desktop a tile is a card: its padding frames the cover, and the cards of a shelf
+/// stand side by side, their padding the space between the covers.
+const TILE_PAD: f32 = 12.0;
+const CARD_WIDTH: f32 = TILE_WIDTH + 2.0 * TILE_PAD;
 /// The space between two tiles of a shelf, the room under them for the shelf's bar, and
 /// how far an arrow carries the shelf: three tiles.
 const TILE_GAP: f32 = 12.0;
 const SHELF_BAR_ROOM: f32 = 12.0;
-pub const SHELF_STEP: f32 = 3.0 * (TILE_WIDTH + TILE_GAP);
+pub const SHELF_STEP: f32 = 3.0 * CARD_WIDTH;
 const COVER: f32 = 40.0;
 const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
@@ -186,6 +190,9 @@ const TRACK_ROW: ListRowSizing = ListRowSizing {
 const ALBUM_COVER: f32 = 168.0;
 const ARTIST_PICTURE: f32 = 128.0;
 const PAGE_TITLE: f32 = 26.0;
+/// The name over a page's songs: an artist, an album, a list. As Spotify's, it is the largest
+/// thing on the page.
+const HERO_TITLE: f32 = 48.0;
 
 pub fn view(state: &State, window: Size) -> Element {
     if state.mobile {
@@ -634,7 +641,7 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         let empty = Empty::new(t!("desktop-news-empty"), t!("desktop-news-empty-detail"), palette).icon(Icon::Bell).render();
         return Element::column(vec![sections.remove(0), centered(empty)]).gap(16.0).padding(12.0).flex(1.0);
     }
-    ScrollArea::new("news", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+    page_scroll("news", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 /// The narrowest a tile of the library gets, and the width of the menu of its orders and views.
@@ -642,8 +649,6 @@ const LIBRARY_GRID_TILE: f32 = 112.0;
 /// What the library's row of tools keeps for the cross of its search and the button of its order.
 /// The share of its row the library's search has as it starts to open: about a magnifier's width.
 const LIBRARY_SEARCH_SHUT: f32 = 0.15;
-/// The narrowest the library's filters get before they scroll: room for «Playlists» in each.
-const LIBRARY_FILTERS_LEAST: f32 = 320.0;
 const LIBRARY_MENU_WIDTH: f32 = 220.0;
 
 /// A button of a header: quiet, small, with its hint under it.
@@ -760,7 +765,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     };
     let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]).centered_y();
     let room = |width: f32| (width > 0.0).then(|| Element::spacer().size(Some(width), None));
-    let mut leading: Vec<Element> = room(left).into_iter().collect();
+    // A rule tells the window's buttons apart from the app's.
+    let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render().centered_y());
+    let mut leading: Vec<Element> = room(left).into_iter().chain(rule(left)).collect();
     if !state.library_open {
         leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new(t!("desktop-show-library")).shortcut("Ctrl+B"), palette).render().centered_y());
     }
@@ -783,7 +790,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new(t!("desktop-show-now-playing")), palette).render().centered_y());
     }
-    trailing.extend(room(right));
+    trailing.extend(rule(right).into_iter().chain(room(right)));
     // Both ends take the same room, so the search stays in the middle of the window.
     let end = |children: Vec<Element>| Element::row(children).gap(4.0).size(Some(TOP_BAR_END + left.max(right)), None);
     Element::panel(
@@ -896,23 +903,13 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
         .sizing(if state.mobile { limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() } } else { ControlSize::Regular.button_sizing() })
         .round().render();
-    let filters = if state.mobile {
-        Element::row(vec![
-            chip("filter:all", &t!("common-all"), state.filter == Filter::All),
-            chip("filter:lists", &t!("desktop-playlists"), state.filter == Filter::Lists),
-            chip("filter:artists", &t!("common-artists"), state.filter == Filter::Artists),
-            chip("filter:albums", &t!("common-albums"), state.filter == Filter::Albums),
-        ]).gap(8.0)
-    } else {
-        // Settings' pill track across the panel; one too narrow for its names scrolls it sideways.
-        let filter = |id: &str, label: &str, filter: Filter| Tab::new(id, label, 0.0).active(state.filter == filter);
-        mobile::settings::segmented("library-filter", (width - 16.0).max(LIBRARY_FILTERS_LEAST), vec![
-            filter("filter:all", &t!("common-all"), Filter::All),
-            filter("filter:lists", &t!("desktop-playlists"), Filter::Lists),
-            filter("filter:artists", &t!("common-artists"), Filter::Artists),
-            filter("filter:albums", &t!("common-albums"), Filter::Albums),
-        ])
-    };
+    // Pills, as Spotify's: the one chosen is filled light. A panel too narrow for them scrolls them sideways.
+    let filters = Element::row(vec![
+        chip("filter:all", &t!("common-all"), state.filter == Filter::All),
+        chip("filter:lists", &t!("desktop-playlists"), state.filter == Filter::Lists),
+        chip("filter:artists", &t!("common-artists"), state.filter == Filter::Artists),
+        chip("filter:albums", &t!("common-albums"), state.filter == Filter::Albums),
+    ]).gap(8.0);
     let filters = Element::horizontal_scroll_2d("mobile-library-filters", filters).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
@@ -1124,7 +1121,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !artists.is_empty() {
         sections.push(shelf(state, "home-artists", &t!("desktop-your-artists"), artists, palette));
     }
-    ScrollArea::new("home", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+    page_scroll("home", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 /// Where a search starts: what was searched lately as cards to search again or forget,
@@ -1133,7 +1130,7 @@ fn browse_page(state: &State, width: f32, palette: ComponentPalette) -> Element 
     let mut sections = Vec::new();
     let recent: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
         let disc = Element::panel(Element::icon(Icon::Search).large_icon(TILE_WIDTH * 0.3).foreground(palette.muted).centered()).background(CHOSEN);
-        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(TILE_WIDTH).round(true).artwork(disc).subtitle(t!("desktop-search-tile")).render();
+        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).padding(if state.mobile { 0.0 } else { TILE_PAD }).round(true).artwork(disc).subtitle(t!("desktop-search-tile")).render();
         let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round().tooltip(t!("desktop-forget-search", query = query.as_str())).render();
         Element::stack(vec![tile, Element::row(vec![Element::spacer().flex(1.0), forget])])
     }).collect();
@@ -1145,7 +1142,7 @@ fn browse_page(state: &State, width: f32, palette: ComponentPalette) -> Element 
     let columns = ((width / 200.0) as usize).clamp(2, 5);
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
     sections.push(mobile::search::browse(usize::MAX, width, columns, (side * 0.6).clamp(98.0, 160.0), palette));
-    ScrollArea::new("browse-page", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+    page_scroll("browse-page", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 /// A page's content under the colour of its cover, which gives way to the surface below
@@ -1155,6 +1152,12 @@ fn washed(state: &State, artwork: &Option<String>, content: Element) -> Element 
         Some(tint) => content.top_background_fade(Color { a: 150, ..*tint }, HEADER_WASH),
         None => content,
     }
+}
+
+/// A page of the middle panel. Its bar floats over the page, as Spotify's does, so a
+/// page's wash runs under it to the panel's edge instead of stopping short of a rail.
+fn page_scroll(id: &str, content: Element) -> Element {
+    ScrollArea::new(id, content).appearance(ScrollbarAppearance::overlay()).render().flex(1.0)
 }
 
 fn centered(element: Element) -> Element {
@@ -1171,13 +1174,16 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
     let arrow = |way: &str, icon: Icon, hint: &str| {
         IconButton::new(format!("shelf-{way}:{id}"), icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(hint).render().centered_y()
     };
-    let mut header = vec![heading(title, palette).flex(1.0)];
+    // The heading lines up with the covers, inside their cards' padding.
+    let pad = || Element::spacer().size(Some(if state.mobile { 0.0 } else { TILE_PAD }), None);
+    let mut header = vec![pad(), heading(title, palette).flex(1.0)];
     // A shelf that fits has nowhere to go.
     if !state.mobile && tiles.len() > SHELF_FITS {
         header.extend([arrow("back", Icon::ArrowLeft, &t!("desktop-shelf-back")), arrow("on", Icon::ArrowRight, &t!("desktop-shelf-on"))]);
     }
+    header.push(pad());
     // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
-    let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
+    let tiles = Element::column(vec![Element::row(tiles).gap(if state.mobile { TILE_GAP } else { 0.0 }), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
     let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted);
     let strip = if state.mobile { strip.scrollbar_visibility(mobile::SCROLL_INDICATOR) } else { strip };
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
@@ -1185,7 +1191,12 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
 
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
     let row = id.clone();
-    let tile = MediaTile::new(id, title, palette).width(TILE_WIDTH).round(round);
+    let tile = MediaTile::new(id, title, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
+    // On a desktop a tile is a card whose play button rises under the pointer.
+    let tile = if state.mobile { tile } else {
+        let sounding = state.player.playing && state.track_at(&row).zip(state.current()).is_some_and(|(track, current)| track.id == current.id);
+        tile.padding(TILE_PAD).play(format!("tile-play:{row}"), t!("common-play")).playing(sounding)
+    };
     let tile = match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
         Some(image) => tile.artwork(Element::raster_image(image.clone().cover())),
         None => tile,
@@ -1397,7 +1408,7 @@ pub(crate) fn track_pitch(state: &State) -> f32 {
     if state.mobile { MOBILE_TRACK_PITCH } else { TRACK_TABLE_ROW }
 }
 pub(crate) const MOBILE_TRACK_PITCH: f32 = 72.0;
-const TRACK_TABLE_ROW: f32 = 60.0;
+const TRACK_TABLE_ROW: f32 = 56.0;
 /// A list up to this long is built whole; a longer one only around what is in view.
 const BUILT_WHOLE: usize = 120;
 /// Rows are built in blocks this long, so scrolling rebuilds the list seldom.
@@ -1452,7 +1463,14 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             let row = format!("page-track:{place}");
             let current = state.current().is_some_and(|current| current.id == track.id);
             // Numbered as they read, whatever their place in the list's own order.
-            let number = Element::text((position + 1).to_string()).font_family(FontFamily::Monospace).font_size(12.0).foreground(if current { palette.text } else { palette.muted });
+            let sounding = current && state.player.playing;
+            let at_rest = if sounding { wave(state, format!("wave:{row}"), palette) } else {
+                Element::text((position + 1).to_string()).font_family(FontFamily::Monospace).font_size(12.0).foreground(if current { palette.text } else { palette.muted })
+            };
+            // Under the pointer the number says what a click on the row does, as Spotify's.
+            let does = Element::icon(if sounding { Icon::PauseFill } else { Icon::PlayFill }).foreground(palette.text).size(Some(14.0), Some(14.0));
+            let end = |element: Element| Element::row(vec![Element::spacer().flex(1.0), element.centered_y()]);
+            let number = Element::stack(vec![end(at_rest).conceal_on_hover(format!("number:{row}")), end(does).reveal_on_hover(format!("does:{row}"))]);
             let copy = Element::column(vec![
                 Text::new(&track.title, palette).font_size(TRACK_ROW.title_size).truncate().render(),
                 Text::new(&track.artist, palette).font_size(TRACK_ROW.subtitle_size).muted().truncate().render(),
@@ -1460,7 +1478,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             .gap(TRACK_ROW.copy_gap)
             .flex(1.0)
             .centered_y();
-            let mut cells = vec![number, Element::row(vec![sleeve(state, &row, track, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0)];
+            let mut cells = vec![number, Element::row(vec![cover(state, &track.artwork_url, COVER, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0)];
             if album {
                 cells.push(Text::new(track.album.as_deref().unwrap_or_default(), palette).muted().truncate().render());
             }
@@ -1494,6 +1512,10 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
         Some(list) => body.keep_leaving(format!("{list}:rows:{}", range.start)),
         None => body,
     };
+    // The heads stay in view under the page's bar while the rows pass beneath them. Their fill
+    // comes with the bar, so in place they leave the page's wash whole.
+    let header = Element::panel(header);
+    let header = if state.page_stuck { header.background(SCHEME.canvas) } else { header }.sticky_top().sticky_top_inset(STUCK_BAR);
     Element::column(vec![header, body]).gap(sizing.header_gap)
 }
 
@@ -1525,7 +1547,48 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Browse => "page:browse".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
-    page(state, width, palette).animate_enter(entering)
+    let page = page(state, width, palette).animate_enter(entering);
+    match stuck_bar(state, palette) {
+        Some(bar) => Element::stack(vec![page, Element::column(vec![bar, Element::spacer().flex(1.0)])]),
+        None => page,
+    }
+}
+
+/// The top of a page's actions, as the Host measures it to know when they have scrolled
+/// away under the page's bar.
+pub(crate) const PAGE_ACTIONS: &str = "page-actions";
+/// The bar a page keeps at its top once its actions are gone, as Spotify's.
+const STUCK_BAR: f32 = 64.0;
+/// Where the actions' top is when their play button reaches the bar's: there the bar takes over.
+pub(crate) const STUCK_FROM: f32 = (STUCK_BAR - 36.0) / 2.0;
+
+/// What stays at the top of a page once its actions have scrolled away: its play button and
+/// its name over the page's own floor, with its wash fading down through it, so it reads as
+/// the top of the page rather than a band of another colour.
+fn stuck_bar(state: &State, palette: ComponentPalette) -> Option<Element> {
+    if state.mobile || !state.page_stuck {
+        return None;
+    }
+    let (title, artwork) = match &state.page {
+        Page::Artist(artist) => (artist.name.clone(), artist.artwork_url.clone()),
+        Page::Album(album) => (album.title.clone(), album.artwork_url.clone()),
+        Page::Playlist(id) => {
+            let playlist = state.collection.playlist(*id)?;
+            (playlist.name.clone(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
+        }
+        Page::Liked => (t!("common-liked-songs").into_owned(), None),
+        Page::Downloads => (t!("common-downloads").into_owned(), None),
+        _ => return None,
+    };
+    let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+    let play = IconButton::new("stuck-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip(t!("common-play")).render();
+    let title = Text::new(title, palette).font_size(24.0).truncate().render().flex(1.0).centered_y();
+    let bar = Element::panel(Element::row(vec![play, title]).gap(12.0)).padding((STUCK_BAR - 36.0) / 2.0).background(SCHEME.canvas);
+    let bar = match artwork.as_deref().and_then(|url| state.tints.get(url)) {
+        Some(tint) => bar.top_background_fade(Color { a: 150, ..*tint }, STUCK_BAR),
+        None => bar,
+    };
+    Some(bar.size(None, Some(STUCK_BAR)).animate_enter("stuck-bar"))
 }
 
 fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
@@ -1614,7 +1677,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     });
     let mut about = vec![
         Text::eyebrow(if playlist.collaborative { t!("desktop-collaborative-playlist-eyebrow") } else { t!("desktop-playlist-eyebrow") }, palette).render(),
-        Text::new(&playlist.name, palette).font_size(PAGE_TITLE).truncate().render(),
+        Text::new(&playlist.name, palette).font_size(HERO_TITLE).truncate().render(),
         Text::new(format!("{} · {length}", songs(playlist.tracks.len())), palette).muted().render(),
     ];
     // What a list brought in from another app left behind, a click from being read.
@@ -1629,7 +1692,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
         track_table(state, &state.page_rows(), true, Some(format!("playlist-row:{}", playlist.id)), table_width(width), palette)
     };
     let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
-    ScrollArea::new("playlist", washed(state, &cover, Element::column(vec![header, actions, list]).gap(16.0).padding(12.0))).render().flex(1.0)
+    page_scroll("playlist", washed(state, &cover, Element::column(vec![header, actions, list]).gap(16.0).padding(12.0)))
 }
 
 /// A size on disk as people read it.
@@ -1752,7 +1815,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let title = mobile::horizontal_inset(Text::new(t!("common-settings"), palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let groups = vec![title, playback, connections, audio, display, library, about, erase];
     let column = Element::column(groups).gap(28.0).padding(GUTTER).size(Some(across), None);
-    ScrollArea::new("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)])).render().flex(1.0)
+    page_scroll("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]))
 }
 
 fn results(state: &State, palette: ComponentPalette) -> Element {
@@ -1783,7 +1846,7 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
         let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette));
         sections.extend([heading(&t!("common-songs-heading"), palette), Element::column(rows.collect()).gap(2.0)]);
     }
-    ScrollArea::new("results", Element::column(sections).gap(12.0).padding(12.0)).render().flex(1.0)
+    page_scroll("results", Element::column(sections).gap(12.0).padding(12.0))
 }
 
 /// The shuffle's three steps as its button shows them: the icon of the one it is on, and
@@ -1820,7 +1883,7 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
         return Element::column(vec![Element::row(actions).gap(12.0), Element::row(page_search(state, palette)).gap(8.0)]).gap(8.0);
     }
     actions.extend(page_search(state, palette));
-    Element::row(actions).gap(8.0)
+    Element::row(actions).gap(8.0).anchor(PAGE_ACTIONS)
 }
 
 /// The actions of a page the library can hold: `keep` names keeping it, before and after.
@@ -1869,7 +1932,7 @@ const SORT_MENU_WIDTH: f32 = 200.0;
 
 fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPalette) -> Element {
     if state.mobile { return mobile::details::artist(state, artist, width, palette); }
-    let mut about = vec![Text::new(&artist.name, palette).font_size(PAGE_TITLE).truncate().render()];
+    let mut about = vec![Text::new(&artist.name, palette).font_size(HERO_TITLE).truncate().render()];
     if let Some(subscribers) = &artist.subscribers {
         about.push(Text::new(t!("desktop-subscribers", subscribers = subscribers.as_str()), palette).muted().render());
     }
@@ -1890,7 +1953,7 @@ fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPal
         let tiles = release_tiles(state, "page-single", &artist.singles, palette);
         sections.push(shelf(state, "artist-singles", &t!("desktop-singles"), tiles, palette));
     }
-    ScrollArea::new("artist", washed(state, &artist.artwork_url, Element::column(sections).gap(12.0).padding(12.0))).render().flex(1.0)
+    page_scroll("artist", washed(state, &artist.artwork_url, Element::column(sections).gap(12.0).padding(12.0)))
 }
 
 fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
@@ -1906,7 +1969,7 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
         (saved, saving) => t!("desktop-downloads-saving", saved = saved, saving = saving),
     };
     let mut sections = vec![Element::column(vec![
-        Text::new(t!("common-downloads"), palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("common-downloads"), palette).font_size(HERO_TITLE).render(),
         Text::new(count, palette).muted().render(),
         play_buttons(state, None, palette),
     ])
@@ -1914,7 +1977,7 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
     sections.extend(failure);
     // A download that is removed closes where it was.
     sections.push(track_table(state, &state.page_rows(), true, Some("saved-row".into()), table_width(width), palette));
-    ScrollArea::new("downloads", Element::column(sections).gap(16.0).padding(12.0)).render().flex(1.0)
+    page_scroll("downloads", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 /// The tracks marked with the heart, the last one first.
@@ -1924,14 +1987,14 @@ fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         return centered(Empty::new(t!("desktop-liked-empty"), t!("desktop-liked-empty-detail"), palette).icon(Icon::Heart).render());
     }
     let header = Element::column(vec![
-        Text::new(t!("common-liked-songs"), palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("common-liked-songs"), palette).font_size(HERO_TITLE).render(),
         Text::new(songs(liked.len()), palette).muted().render(),
         play_buttons(state, None, palette),
     ])
     .gap(10.0);
     // A track that loses its heart closes where it was.
     let list = track_table(state, &state.page_rows(), true, Some("liked-row".into()), table_width(width), palette);
-    ScrollArea::new("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0)).render().flex(1.0)
+    page_scroll("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0))
 }
 
 fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalette) -> Element {
@@ -1942,7 +2005,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
     let header = Element::row(vec![
         cover(state, &album.artwork_url, ALBUM_COVER, palette),
         Element::column(vec![
-            Text::new(&album.title, palette).font_size(PAGE_TITLE).truncate().render(),
+            Text::new(&album.title, palette).font_size(HERO_TITLE).truncate().render(),
             Link::new("page-artist", &album.artist, palette).ink(palette.text).font_size(14.0).render(),
             Text::new(facts.join(" · "), palette).muted().render(),
         ])
@@ -1954,7 +2017,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
     // Every track is of this album: its table needs no column to say so.
     let tracks = track_table(state, &state.page_rows(), false, None, table_width(width), palette);
     let sections = vec![header, play_buttons(state, Some((&t!("desktop-save"), &t!("desktop-in-library"))), palette), tracks];
-    ScrollArea::new("album", washed(state, &album.artwork_url, Element::column(sections).gap(16.0).padding(12.0))).render().flex(1.0)
+    page_scroll("album", washed(state, &album.artwork_url, Element::column(sections).gap(16.0).padding(12.0)))
 }
 
 /// A panel's head: what it shows, and a muted line about it.
@@ -2402,7 +2465,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     };
     let seek = Element::row(vec![
         time(f64::from(state.progress()) * state.player.duration),
-        Slider::new("seek", state.progress(), palette).enabled(has_track && state.player.duration > 0.0).render().flex(1.0).centered_y(),
+        Slider::new("seek", state.progress(), palette).enabled(has_track && state.player.duration > 0.0).thumb_on_hover().render().flex(1.0).centered_y(),
         time(state.player.duration),
     ])
     .gap(8.0);
@@ -2434,7 +2497,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .tooltip(if state.volume > 0.0 { t!("desktop-mute") } else { t!("desktop-unmute") })
             .render()
             .centered_y(),
-        Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).render().centered_y(),
+        Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).thumb_on_hover().render().centered_y(),
     ]);
     let controls = Element::row(controls).gap(6.0).centered_y();
     let middle = Element::column(vec![buttons, seek]).gap(2.0).centered_y();

@@ -141,6 +141,16 @@ fn follow_track_window(state: &mut State, tree: &mut UiTree, window: Size, seen:
     (view::track_range(count, pitch, measured) != built).then(|| layout_with_notice(state, tree, window, seen))
 }
 
+/// Show the page's bar once its actions have scrolled under the page's top, and lay out
+/// again when that changes.
+fn follow_page_actions(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    let stuck = tree.anchor_offset(view::PAGE_ACTIONS).is_some_and(|top| top < view::STUCK_FROM);
+    (stuck != state.page_stuck).then(|| {
+        state.page_stuck = stuck;
+        layout_with_notice(state, tree, window, seen)
+    })
+}
+
 /// Slide the player's lyric card so the line before the one being sung is at its top,
 /// laying out again when it moved.
 fn follow_lyric_card(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
@@ -381,6 +391,11 @@ impl eframe::App for Host {
             self.state.mobile_ui.keyboard_visible = self.native_ui.as_ref().is_some_and(|native| native.keyboard_top(ctx.viewport_rect()).is_some())
                 && !(self.state.mobile_ui.native_surfaces && native_surfaces::has_sheet(&self.state));
         }
+        // Full screen, AppKit shows the lights in a bar of its own that slides down.
+        #[cfg(target_os = "macos")]
+        if self.chrome == window::Chrome::Overlaid && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
+            window::center_lights(_frame, view::TOP_BAR_HEIGHT);
+        }
         let area = if self.state.mobile {
             mobile_canvas(ui, self.script.mobile)
         } else {
@@ -603,6 +618,7 @@ impl eframe::App for Host {
         // laying out a long list again costs a frame's worth of time for nothing.
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
         let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
+        let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -1294,6 +1310,36 @@ mod track_window_tests {
                 assert_eq!(rows(&shown), expected, "rows stand where the whole list puts them (mobile {mobile}, {offset})");
             }
         }
+    }
+
+    #[test]
+    fn the_pages_bar_takes_over_once_its_actions_scroll_away_and_leaves_with_them() {
+        let (mut state, mut tree, size) = liked(false, 60);
+        let mut seen = None;
+        let bar = |frame: &limn::Frame| frame.access.iter().find(|node| node.id == "stuck-play").map(|node| node.rect.y);
+        assert!(follow_page_actions(&mut state, &mut tree, size, &mut seen).is_none(), "at the top the actions are in view");
+        assert!(!state.page_stuck);
+        tree.set_scroll_offset("liked", 400.0);
+        layout_view(&mut state, &mut tree, size);
+        let frame = follow_page_actions(&mut state, &mut tree, size, &mut seen).expect("the bar comes");
+        assert!(state.page_stuck);
+        let top = bar(&frame).expect("its play button is there");
+        assert!(top < view::TOP_BAR_HEIGHT + 2.0 * 8.0 + 64.0, "at the top of the page: {top}");
+        assert_eq!(click(&mut state, "stuck-play"), click(&mut state, "page-play"));
+        tree.set_scroll_offset("liked", 0.0);
+        layout_view(&mut state, &mut tree, size);
+        let frame = follow_page_actions(&mut state, &mut tree, size, &mut seen).expect("the bar goes");
+        assert!(!state.page_stuck && bar(&frame).is_none());
+        for offset in (0..900).step_by(7) {
+            tree.set_scroll_offset("liked", offset as f32);
+            layout_view(&mut state, &mut tree, size);
+            follow_page_actions(&mut state, &mut tree, size, &mut seen);
+            assert!(follow_page_actions(&mut state, &mut tree, size, &mut seen).is_none(), "the bar settles at {offset}");
+        }
+    }
+
+    fn click(state: &mut State, id: &str) -> Vec<backend::Command> {
+        state.update(&limn::UiAction::Clicked { id: id.into() })
     }
 
     #[test]

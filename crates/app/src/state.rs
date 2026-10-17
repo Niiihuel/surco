@@ -533,6 +533,8 @@ pub struct State {
     /// The playlist just brought in and the songs of it that were not found, while its page
     /// says so, and whether the list of them is open.
     pub imported: Option<(u64, Vec<String>)>,
+    /// What a tile's play button asked for, to play once it arrives without leaving the page.
+    pub play_when: Option<Target>,
     pub missed_open: bool,
     /// How many songs of the list being brought in have been looked for, out of how many.
     pub import_progress: Option<(usize, usize)>,
@@ -565,6 +567,8 @@ pub struct State {
     /// Where the page's song list began against its scroll area at the last layout, and the
     /// area's height: a long list builds only the rows around what is in view.
     pub track_window: Option<(f32, f32)>,
+    /// The page's actions have scrolled away under its top, where its bar now stands.
+    pub page_stuck: bool,
     /// The covers held, oldest first, so a long session lets the ones it saw first go.
     artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
@@ -816,6 +820,7 @@ impl Default for State {
             importing: None,
             import_unknown: false,
             imported: None,
+            play_when: None,
             missed_open: false,
             import_progress: None,
             confirm: None,
@@ -829,6 +834,7 @@ impl Default for State {
             equalizer_band: None,
             artwork: HashMap::new(),
             track_window: None,
+            page_stuck: false,
             artwork_order: VecDeque::new(),
             tints: HashMap::new(),
             sharing: None,
@@ -1034,6 +1040,7 @@ impl State {
         }
         (self.page_sort, self.sort_open) = (None, false);
         self.track_window = None;
+        self.page_stuck = false;
         let leaving = std::mem::replace(&mut self.page, page);
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
@@ -1342,6 +1349,18 @@ impl State {
             self.query = query.to_owned();
             return self.search();
         }
+        // A tile's play button: a track does what its tile does, anything else is fetched and
+        // played where the user is, as Spotify's cards do.
+        if let Some(tile) = id.strip_prefix("tile-play:") {
+            let tile = tile.strip_prefix("home-").unwrap_or(tile);
+            if let Some(track) = self.track_at(tile) {
+                if self.current().is_some_and(|current| current.id == track.id) { return vec![Command::PlayPause]; }
+                return self.click(tile);
+            }
+            let Some(target) = self.target_of(tile) else { return Vec::new() };
+            self.play_when = Some(target.clone());
+            return vec![Command::Open(target)];
+        }
         if let Some(key) = id.strip_prefix("pin:") {
             self.collection.pin(key);
             return Vec::new();
@@ -1413,7 +1432,7 @@ impl State {
                 Vec::new()
             }
             // Shuffled, a page starts anywhere in itself; otherwise, at the top of what it lists.
-            "page-play" => {
+            "page-play" | "stuck-play" => {
                 let top = self.page_rows().first().map_or(0, |(place, _)| *place);
                 self.play_page(if self.player.shuffle { fastrand::usize(..self.page_tracks().len().max(1)) } else { top })
             }
@@ -1923,6 +1942,16 @@ impl State {
                 self.page = Page::Playlist(id);
                 self.imported = Some((id, missed));
                 self.page_covers()
+            }
+            Event::Opened { target, result } if self.play_when.as_ref() == Some(&target) && self.page != Page::Loading(target.clone()) => {
+                self.play_when = None;
+                let tracks = match result {
+                    Ok(Content::Artist(artist)) => artist.songs,
+                    Ok(Content::Album(album)) => album.tracks,
+                    Ok(Content::Song(track)) => vec![track],
+                    Ok(Content::List { .. }) | Err(_) => Vec::new(),
+                };
+                if tracks.is_empty() { Vec::new() } else { vec![Command::PlayList { tracks, index: 0 }] }
             }
             Event::Opened { target, result } if self.page == Page::Loading(target.clone()) => {
                 self.page = match result {
@@ -2482,6 +2511,23 @@ mod tests {
         assert_eq!(state.update(&volume), vec![Command::Volume(0.3)]);
         assert_eq!(click(&mut state, "mute"), vec![Command::Volume(0.0)]);
         assert_eq!(click(&mut state, "mute"), vec![Command::Volume(0.8)]);
+    }
+
+    #[test]
+    fn a_tiles_play_button_plays_what_it_shows_without_leaving_the_page() {
+        let mut state = State { query: "q".into(), ..State::default() };
+        state.search();
+        let mut results = found(&["a"]);
+        results.albums = vec![AlbumRef { id: "lp".into(), title: "lp".into(), artist: Some("artist".into()), year: String::new(), artwork_url: None }];
+        state.apply(Event::SearchResults { query: "q".into(), found: results });
+        let page = state.page.clone();
+        assert_eq!(click(&mut state, "tile-play:album:0"), vec![Command::Open(Target::Album("lp".into()))]);
+        assert_eq!(state.page, page, "the page stays");
+        let played = state.apply(Event::Opened { target: Target::Album("lp".into()), result: Ok(Content::Album(album("lp", None))) });
+        assert_eq!(played, vec![Command::PlayList { tracks: vec![track("t1"), track("t2")], index: 0 }]);
+        assert_eq!(state.page, page, "what arrived plays where the user is");
+        assert!(state.apply(Event::Opened { target: Target::Album("lp".into()), result: Ok(Content::Album(album("lp", None))) }).is_empty(), "once");
+        assert!(click(&mut state, "tile-play:album:9").is_empty());
     }
 
     #[test]

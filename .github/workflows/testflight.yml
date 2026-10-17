@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  LIMN_REF: d34c6f486627051ed8b9c5854cd4a8bfc8f88211 # reviewed mobile primitives
+  LIMN_REF: f6b688d6d5f0dad1c69aa567cdb8eb531c5fcd98 # reviewed mobile primitives
   # App Store Connect requires SDK 26+. SDK 27 also requires a UIScene migration.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'

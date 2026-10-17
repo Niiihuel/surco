@@ -7,11 +7,13 @@ use egui::viewport::ResizeDirection;
 
 use crate::i18n::t;
 
-const CONTROL_HEIGHT: f32 = 32.0;
 const CONTROL_WIDTH: f32 = 46.0;
 const EDGE: f32 = 5.0;
 /// Where macOS's three lights end, from the window's left.
 const LIGHTS: f32 = 72.0;
+/// Where they start once lowered: about as far in as the bar's buttons are, to end by `LIGHTS`.
+#[cfg(target_os = "macos")]
+const LIGHTS_FROM: f64 = 18.0;
 
 /// Who draws the window's frame.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -80,7 +82,8 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
         (1, if maximized { t!("state-window-restore") } else { t!("state-window-maximize") }, ViewportCommand::Maximized(!maximized)),
         (2, t!("common-close"), ViewportCommand::Close),
     ] {
-        let rect = Rect::from_min_size(pos2(caption.right() + index as f32 * CONTROL_WIDTH, inner.top()), vec2(CONTROL_WIDTH, CONTROL_HEIGHT));
+        // As tall as the bar, so the marks sit on the line of the app's own buttons.
+        let rect = Rect::from_min_size(pos2(caption.right() + index as f32 * CONTROL_WIDTH, inner.top()), vec2(CONTROL_WIDTH, bar));
         // Like the native caption, leave Tab to the app and keyboard window commands to Alt+Space.
         let button = ui.interact(rect, ui.id().with(("window-control", index)), Sense::CLICK);
         button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
@@ -127,6 +130,44 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
         }
     }
     inner
+}
+
+/// AppKit keeps the lights in a title bar of its own height, above the middle of the app's
+/// taller one: this lowers them onto the line of the app's buttons. AppKit lays them out
+/// again as the window resizes, so it is called every frame.
+#[cfg(target_os = "macos")]
+pub fn center_lights(frame: &eframe::Frame, bar: f32) {
+    use objc2_app_kit::{NSView, NSWindowButton};
+    use objc2_foundation::NSPoint;
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    let Ok(handle) = frame.window_handle() else { return };
+    let RawWindowHandle::AppKit(handle) = handle.as_raw() else { return };
+    // eframe supplies the live content view, and this runs on the main thread.
+    let view: &NSView = unsafe { handle.ns_view.cast().as_ref() };
+    let Some(window) = view.window() else { return };
+    let [Some(close), Some(minimize), Some(zoom)] =
+        [NSWindowButton::CloseButton, NSWindowButton::MiniaturizeButton, NSWindowButton::ZoomButton].map(|kind| window.standardWindowButton(kind))
+    else { return };
+    // Only their frames change: the views stay AppKit's, where AppKit put them.
+    let Some(row) = (unsafe { close.superview() }) else { return };
+    let Some(container) = (unsafe { row.superview() }) else { return };
+    // The lights' container grows down from the window's top to the bar's height.
+    let bar = f64::from(bar);
+    let mut rect = container.frame();
+    rect.origin.y = window.frame().size.height - bar;
+    rect.size.height = bar;
+    if container.frame() != rect {
+        container.setFrame(rect);
+    }
+    let spacing = minimize.frame().origin.x - close.frame().origin.x;
+    for (index, light) in [close, minimize, zoom].iter().enumerate() {
+        let size = light.frame().size;
+        let origin = NSPoint::new(LIGHTS_FROM + index as f64 * spacing, (row.frame().size.height - size.height) / 2.0);
+        if light.frame().origin != origin {
+            light.setFrameOrigin(origin);
+        }
+    }
 }
 
 fn resize_direction(bounds: Rect, point: egui::Pos2) -> Option<ResizeDirection> {
@@ -203,7 +244,7 @@ mod tests {
         ] {
             let ctx = egui::Context::default();
             let edge = if maximized { 0.0 } else { EDGE };
-            let point = pos2(WIDTH - edge - (2.5 - index as f32) * CONTROL_WIDTH, edge + CONTROL_HEIGHT / 2.0);
+            let point = pos2(WIDTH - edge - (2.5 - index as f32) * CONTROL_WIDTH, edge + BAR / 2.0);
             frame(&ctx, vec![], false, maximized, false);
             let (_, pressed) = frame(&ctx, vec![egui::Event::PointerMoved(point), button(point, true)], false, maximized, false);
             assert!(commands(&pressed).is_empty());
