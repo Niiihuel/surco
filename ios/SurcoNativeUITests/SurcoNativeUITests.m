@@ -16,6 +16,8 @@
     self.continueAfterFailure = NO;
     XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
     self.app = [XCUIApplication new];
+    // The interface follows the system's language; these tests read its Spanish texts.
+    self.app.launchArguments = @[@"-AppleLanguages", @"(es)", @"-AppleLocale", @"es_ES"];
 }
 - (void)tearDown {
     [self.app terminate];
