@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- The whole interface in Spanish and English, following the system's language by
+  default, with a choice of language in Settings.
+- On the desktop, a page to browse from beside the search field: recent searches
+  that can be forgotten one by one, and genre cards.
+- Thirty-five genres to browse on the phone, in vivid colours.
+
+### Changed
+
+- On Windows, macOS and Linux without Wayland the window's buttons sit in the top
+  bar, on the side each system puts them, instead of in a row of their own.
+
+### Fixed
+
+- On iPhone, the search header collapses in sight as the keyboard rises instead
+  of jumping.
+
 ## 0.6.1
 
 ### Changed
