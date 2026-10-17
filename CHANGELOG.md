@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- On the desktop, album and artist cards with a play button that rises under the
+  pointer. It plays without leaving the page.
+- A page's play button and name stay at its top once you scroll past them, with the
+  song table's column names pinned beneath.
+- Music follows the system's output: connecting headphones or a speaker moves the song
+  there, and unplugging the device in use carries on on the next one instead of
+  stopping.
+
+### Changed
+
+- The seek and volume bars show their thumb only under the pointer.
+- In a song table the number turns into play under the pointer. Rows are tighter and
+  page titles larger.
+- The library's filters are pills on the desktop too.
+- The window's buttons line up with the top bar's icons, with a rule between them.
+
+### Fixed
+
+- A page's colour wash reaches the panel's edge instead of stopping at the scrollbar.
+
 ## 0.7.0
 
 ### Added
