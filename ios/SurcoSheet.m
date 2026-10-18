@@ -244,8 +244,14 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         configuration.image = symbol.length ? [UIImage systemImageNamed:symbol] : nil;
         configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithTextStyle:UIFontTextStyleTitle2 scale:UIImageSymbolScaleMedium];
     } else {
-        // A row sits flush with the text and leads with its glyph in gray.
-        configuration.contentInsets = NSDirectionalEdgeInsetsMake(14, 0, 14, 0);
+        // A row leads with its glyph in gray. A press is a faint pad, not the system's pill.
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(14, 12, 14, 12);
+        configuration.background.cornerRadius = 12;
+        button.configurationUpdateHandler = ^(UIButton *pressed) {
+            UIButtonConfiguration *updated = pressed.configuration;
+            updated.background.backgroundColor = pressed.isHighlighted ? [UIColor colorWithWhite:1 alpha:0.08] : UIColor.clearColor;
+            pressed.configuration = updated;
+        };
         configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
         configuration.imagePadding = 16;
         configuration.image = symbol.length ? [UIImage systemImageNamed:symbol] : selected ? [UIImage systemImageNamed:@"checkmark"] : nil;
@@ -272,8 +278,20 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     row.title = SheetLabel(UIFontTextStyleBody, NO);
     row.secondary = SheetLabel(UIFontTextStyleFootnote, YES);
     if ([kind isEqualToString:@"action"]) {
-        row.control = [self actionButton];
-        row.view = row.control;
+        // The row reaches 12 into the margins and keeps 12 inside, so its words stay in
+        // line with the heading while a press lights a pad with room around them.
+        UIButton *button = [self actionButton];
+        UIView *pad = [UIView new];
+        button.translatesAutoresizingMaskIntoConstraints = NO;
+        [pad addSubview:button];
+        [NSLayoutConstraint activateConstraints:@[
+            [button.topAnchor constraintEqualToAnchor:pad.topAnchor],
+            [button.bottomAnchor constraintEqualToAnchor:pad.bottomAnchor],
+            [button.leadingAnchor constraintEqualToAnchor:pad.leadingAnchor constant:-12],
+            [button.trailingAnchor constraintEqualToAnchor:pad.trailingAnchor constant:12],
+        ]];
+        row.control = button;
+        row.view = pad;
     } else if ([kind isEqualToString:@"field"]) {
         UITextField *field = [UITextField new];
         field.borderStyle = UITextBorderStyleNone;

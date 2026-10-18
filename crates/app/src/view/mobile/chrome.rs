@@ -56,9 +56,10 @@ pub(super) fn under_bars(mut content: Element, top: f32, bottom: f32, header_edg
     }
 }
 
-/// The transport scrim from the iPhone kit: clear above the mini-player, solid by the tab labels.
+/// The transport scrim, as dark as Spotify's: clear above the mini-player, nearly solid by
+/// its middle and solid behind the tab bar.
 pub(super) fn spotify_fade(canvas: Color) -> Vec<Color> {
-    [0, 96, 190, 235, 250, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
+    [0, 150, 220, 248, 255, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
 }
 
 fn space(height: f32) -> Element {

@@ -141,7 +141,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let top = Element::column(top);
     let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
     let footer = Element::column(bottom);
-    let footer = if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
+    // The scrim is the tab bar's: a song's own page has none, and runs clear to the bottom.
+    let footer = if native_chrome && song_surface { footer }
+        else if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
         else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
         else { footer.background(footer_edge) }.block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);

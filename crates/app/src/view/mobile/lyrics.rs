@@ -36,7 +36,8 @@ fn translate(state: &State, palette: ComponentPalette) -> Element {
     if !state.translatable() { return Element::spacer().size(Some(0.0), Some(0.0)); }
     let on = state.settings.translate_lyrics;
     let label = if on { t!("common-original-lyrics") } else { t!("common-translate-lyrics") };
-    let button = icon("lyrics-translate", Icon::Custom(include_str!("../../../assets/icons/languages.svg")), &label, palette);
+    // Round, so that a press lights a circle and not the square around it.
+    let button = icon("lyrics-translate", Icon::Custom(include_str!("../../../assets/icons/languages.svg")), &label, palette).radius(22.0);
     if on { Element::panel(button).background(Color::rgba(255, 255, 255, 40)).radius(22.0).centered_y() } else { button.centered_y() }
 }
 
