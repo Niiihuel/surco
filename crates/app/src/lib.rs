@@ -723,7 +723,8 @@ fn on_screen() -> bool {
 
 /// The app's own mark, for the window and the task bar where the system takes it from the window.
 fn icon() -> egui::IconData {
-    let mark = image::load_from_memory(include_bytes!("../assets/icon.png")).map(|mark| mark.to_rgba8());
+    // The desktop's mark has its corners rounded and clear: iOS rounds the square one itself.
+    let mark = image::load_from_memory(include_bytes!("../assets/icon-rounded.png")).map(|mark| mark.to_rgba8());
     mark.map_or_else(|_| egui::IconData::default(), |mark| egui::IconData { width: mark.width(), height: mark.height(), rgba: mark.into_raw() })
 }
 
@@ -792,7 +793,7 @@ pub fn run() -> eframe::Result {
     let mobile = cfg!(target_os = "ios") || script.mobile;
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     #[cfg(target_os = "windows")]
-    backend::register_notifications(&data);
+    backend::register_with_windows(&data);
     let chrome = window::Chrome::current(mobile);
     let overlaid = chrome == window::Chrome::Overlaid;
     let viewport = egui::ViewportBuilder::default()

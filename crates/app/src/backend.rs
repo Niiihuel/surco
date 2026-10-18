@@ -980,30 +980,64 @@ fn announce_update(version: &str) {
 #[cfg(target_os = "windows")]
 const APP_USER_MODEL_ID: &str = "Niiihuel.Surco";
 
-/// Registers the app's notifications for this user, under its name and with its mark, as
-/// Windows asks of a program that has no installer. `data` is where the mark is kept.
+/// Introduces the app to Windows for this user, as a program without an installer has to:
+/// its notifications are filed under its name and mark, and a Start menu entry is how
+/// search finds it by its name and how it is pinned to the taskbar. `data` is where the mark
+/// is kept.
 // https://learn.microsoft.com/windows/apps/develop/notifications/app-notifications/send-local-toast-other-apps
 #[cfg(target_os = "windows")]
-pub fn register_notifications(data: &std::path::Path) {
+pub fn register_with_windows(data: &std::path::Path) {
     use windows_sys::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ};
     let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
     let icon = data.join("notifications.png");
     // Without its mark a notification still says whose it is.
-    let _ = std::fs::write(&icon, include_bytes!("../assets/icon.png"));
+    let _ = std::fs::write(&icon, include_bytes!("../assets/icon-rounded.png"));
     let key = wide(&format!(r"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}"));
     let mut handle: HKEY = std::ptr::null_mut();
     // SAFETY: every string is NUL-terminated UTF-16 that outlives the call, and the key is
     // closed once its two values are written.
     unsafe {
-        if RegCreateKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, std::ptr::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, std::ptr::null(), &mut handle, std::ptr::null_mut()) != 0 {
-            return;
+        if RegCreateKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, std::ptr::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, std::ptr::null(), &mut handle, std::ptr::null_mut()) == 0 {
+            for (name, value) in [("DisplayName", "Surco".to_owned()), ("IconUri", icon.display().to_string())] {
+                let value = wide(&value);
+                RegSetValueExW(handle, wide(name).as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32);
+            }
+            RegCloseKey(handle);
         }
-        for (name, value) in [("DisplayName", "Surco".to_owned()), ("IconUri", icon.display().to_string())] {
-            let value = wide(&value);
-            RegSetValueExW(handle, wide(name).as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32);
-        }
-        RegCloseKey(handle);
     }
+    // A program opened from inside its zip runs from a folder that goes away: no entry for it.
+    if let Some(program) = update::running().filter(|program| !program.starts_with(std::env::temp_dir())) {
+        let program = program.to_owned();
+        std::thread::spawn(move || {
+            if let Err(error) = start_menu_entry(&program) {
+                eprintln!("[surco] the Start menu entry could not be written: {error}");
+            }
+        });
+    }
+}
+
+/// The Start menu's entry for the program, written each start so it follows the program
+/// wherever it is kept. Its mark is the program's own.
+#[cfg(target_os = "windows")]
+fn start_menu_entry(program: &std::path::Path) -> windows::core::Result<()> {
+    use windows::core::{Interface, HSTRING};
+    use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, IPersistFile, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
+    use windows::Win32::UI::Shell::{IShellLinkW, ShellLink};
+    let Some(appdata) = std::env::var_os("APPDATA") else { return Ok(()) };
+    let entry = std::path::Path::new(&appdata).join(r"Microsoft\Windows\Start Menu\Programs\Surco.lnk");
+    // SAFETY: COM is started on this thread before the link is made, and every string handed
+    // to it outlives the call that takes it.
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+        let link: IShellLinkW = CoCreateInstance(&ShellLink, None, CLSCTX_INPROC_SERVER)?;
+        link.SetPath(&HSTRING::from(program))?;
+        link.SetDescription(&HSTRING::from("Surco"))?;
+        if let Some(folder) = program.parent() {
+            link.SetWorkingDirectory(&HSTRING::from(folder))?;
+        }
+        link.cast::<IPersistFile>()?.Save(&HSTRING::from(entry.as_path()), true)?;
+    }
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]

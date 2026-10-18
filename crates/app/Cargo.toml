@@ -49,9 +49,15 @@ sys-locale = "0.3"
 notify-rust = "4"
 
 # MIT/Apache-2.0, already in the tree through winit and wgpu. Registers the app's
-# notifications under its own name, as Windows otherwise files them under PowerShell.
+# notifications under its own name, as Windows otherwise files them under PowerShell, and
+# writes its Start menu entry, which search and the taskbar's pins go by.
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Security", "Win32_System_Registry"] }
+windows = { version = "0.62", features = ["Win32_System_Com", "Win32_UI_Shell"] }
+
+# MIT. The program's mark and name, written into it for Explorer, the taskbar and search.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
 
 # MIT. The desktop's media keys and "now playing" widget; over zbus, so nothing to link.
 [target.'cfg(target_os = "linux")'.dependencies]
