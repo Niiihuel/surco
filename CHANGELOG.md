@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Settings are a list of their parts, each a page of its own, as in Spotify.
+- A playlist ends in ten recommended songs, to play or add; Refresh brings the next ten.
+- The lyrics can carry a translation into the app's language under each line.
+- A first start offers to bring in your playlists from Spotify, Apple Music or YouTube
+  Music.
+- Release notes have a page of their own, every version's, with their pictures and videos.
+- On the desktop, recent searches drop down from the search field.
+- On iOS, a song is shared with the system's share sheet, previewed with its cover.
+
+### Changed
+
+- Covers that are on their way pulse where they will be, and the home page's picks show
+  their shelves while they load.
+- Browse all's genres each carry a record out of its sleeve.
+- iOS sheets are translucent, size themselves to their content and have less text.
+- On Windows the app has its own name and mark: in search, on the taskbar, where it can
+  be pinned, and in its notifications, which no longer come from PowerShell.
+
+### Fixed
+
+- A long context menu no longer scrolls in a window with room for it, and the songs
+  under it no longer light up as the pointer crosses it.
+- A release's notes keep each wrapped item whole.
+
 ## 0.8.0
 
 ### Added
