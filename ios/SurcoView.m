@@ -273,7 +273,8 @@ uint8_t *surco_ui_paste_text(size_t *length) {
     NSCAssert(NSThread.isMainThread, @"Surco clipboard must run on the main thread");
     *length = 0;
     // Called only after a user paste request; UIKit owns any privacy permission prompt.
-    NSString *text = UIPasteboard.generalPasteboard.string;
+    // The system share sheet's Copy leaves a link as a URL, not a string.
+    NSString *text = UIPasteboard.generalPasteboard.string ?: UIPasteboard.generalPasteboard.URL.absoluteString;
     if (!text) return NULL;
     NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
     if (!data) return NULL;

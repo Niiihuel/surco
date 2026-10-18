@@ -39,12 +39,39 @@ pub fn minimum(notes: &str) -> Option<&str> {
     (!version.is_empty()).then_some(version)
 }
 
-/// A part of what a release says of itself: text to read, as Markdown, or a picture by
-/// its address.
+/// A part of what a release says of itself: text to read, as Markdown, or a picture or a
+/// video by its address.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Note {
     Text(String),
     Picture(String),
+    Video(String),
+}
+
+/// Text of the notes, with each video in it apart: GitHub leaves one it was given as its
+/// address alone on a line.
+fn text_and_videos(notes: &mut Vec<Note>, text: &str) {
+    let mut lines = String::new();
+    let flush = |notes: &mut Vec<Note>, lines: &mut String| {
+        if !lines.trim().is_empty() {
+            notes.push(Note::Text(lines.trim().to_owned()));
+        }
+        lines.clear();
+    };
+    for line in text.lines() {
+        let address = line.trim();
+        let video = address.starts_with("https://") && !address.contains(char::is_whitespace)
+            && (address.starts_with("https://github.com/user-attachments/assets/")
+                || [".mp4", ".mov", ".webm"].iter().any(|kind| address.to_ascii_lowercase().ends_with(kind)));
+        if video {
+            flush(notes, &mut lines);
+            notes.push(Note::Video(address.to_owned()));
+        } else {
+            lines.push_str(line);
+            lines.push('\n');
+        }
+    }
+    flush(notes, &mut lines);
 }
 
 /// What a release says of itself in its notes, in their order: its text between its
@@ -60,11 +87,6 @@ pub fn notes(body: &str) -> Vec<Note> {
     said.push_str(rest);
 
     let mut notes = Vec::new();
-    let text = |notes: &mut Vec<Note>, text: &str| {
-        if !text.trim().is_empty() {
-            notes.push(Note::Text(text.trim().to_owned()));
-        }
-    };
     let mut rest = said.as_str();
     loop {
         let picture = [("![", "](", ")"), ("<img", "src=\"", ">")].into_iter().filter_map(|(opens, before, closes)| {
@@ -76,13 +98,13 @@ pub fn notes(body: &str) -> Vec<Note> {
             Some((at, end + closes.len(), address))
         });
         let Some((at, end, address)) = picture.min_by_key(|(at, ..)| *at) else { break };
-        text(&mut notes, &rest[..at]);
+        text_and_videos(&mut notes, &rest[..at]);
         if address.starts_with("https://") {
             notes.push(Note::Picture(address.to_owned()));
         }
         rest = &rest[end..];
     }
-    text(&mut notes, rest);
+    text_and_videos(&mut notes, rest);
     notes
 }
 
@@ -139,6 +161,10 @@ mod tests {
         let picture = |address: &str| Note::Picture(address.into());
         assert_eq!(notes(body), [text("## Novedades\n- Importar de Spotify"), picture("https://github.com/user-attachments/assets/abc"), text("Y más."), picture("https://example.com/b.png")]);
         assert_eq!(notes("Solo texto, con un ![ suelto"), [text("Solo texto, con un ![ suelto")]);
+        let video = "https://github.com/user-attachments/assets/9f1c-2b";
+        assert_eq!(notes(&format!("Mirá:\n{video}\n\nY sigue [aquí](https://example.com/a.mp4).\nhttps://example.com/demo.MP4")),
+            [text("Mirá:"), Note::Video(video.into()), text("Y sigue [aquí](https://example.com/a.mp4)."), Note::Video("https://example.com/demo.MP4".into())],
+            "a video is an address alone on its line; a link in a sentence is text");
         assert!(notes("<!-- surco:minimum=0.1.0 -->\n").is_empty());
     }
 

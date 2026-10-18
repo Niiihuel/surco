@@ -109,8 +109,13 @@ pub enum Command {
     Outputs,
     /// Look for the synced lyrics of a track.
     Lyrics(Track),
+    /// Put a track's lyrics, a line each, into the language `to` names (`es`, `en`).
+    Translate { track_id: String, lines: Vec<String>, to: String },
     /// Ask the catalog for the home page's picks.
     Discover(Taste),
+    /// Ask for songs that go with a playlist: what the catalog plays after these of its
+    /// songs, without the ones in `known`.
+    Suggest { playlist: u64, seeds: Vec<Track>, known: HashSet<String> },
     /// Look for a track's own video and fetch a few seconds of it.
     Clip(Track),
     /// Go on from where the track that plays is with another rendition of it in its place.
@@ -121,6 +126,8 @@ pub enum Command {
     News(Vec<String>),
     /// Ask whether a later version of the app has been published.
     CheckUpdate,
+    /// Ask for every version published and what each says of itself.
+    Patches,
     /// Fetch this system's program of a release and put it where the running one is.
     InstallUpdate(Release),
     /// Keep a track on disk to play it without a network, or stop keeping it.
@@ -140,6 +147,15 @@ pub struct Release {
     /// The release says versions as old as this one may not keep running.
     pub mandatory: bool,
     /// What it says of itself, as whoever published it wrote it.
+    pub notes: Vec<update::Note>,
+}
+
+/// A version as its release tells of it, for the page of what each one brought.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Patch {
+    pub version: String,
+    /// The day it came out, as `2026-10-17`.
+    pub date: String,
     pub notes: Vec<update::Note>,
 }
 
@@ -184,6 +200,8 @@ pub enum Event {
     SaveFailed { title: String, message: String },
     /// A cover, and the color it lends to a card of its track when it could be read.
     Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
+    /// A cover that could not be had.
+    ArtworkMissing(String),
     Outputs(Vec<AudioOutputDevice>),
     OutputsFailed(String),
     OutputFailed(String),
@@ -193,10 +211,15 @@ pub enum Event {
     LyricsPlain { track_id: String, lines: Vec<String>, source: String },
     /// A transient provider/network failure is not evidence that the song has no lyrics.
     LyricsFailed { track_id: String, message: String, retry_after: Duration },
+    /// A track's lyrics in the language asked for, a line for each of theirs; none when
+    /// they already are in it.
+    Translated { track_id: String, to: String, lines: Result<Option<Vec<String>>, String> },
     /// A track's own video, or none when it has no such video.
     Clip { track_id: String, footage: Option<Arc<Footage>> },
     /// A part of the home page's picks.
     Discovered(Picks),
+    /// Songs that go with a playlist, the closest first; none when the catalog had none.
+    Suggested { playlist: u64, tracks: Vec<Track> },
     /// Who the artist a track names is, or nobody when the catalog knows no artist of
     /// that name.
     About { artist: String, found: Option<Known> },
@@ -204,6 +227,8 @@ pub enum Event {
     Releases { artist: String, releases: Vec<AlbumRef> },
     /// A later version of the app.
     Update(Release),
+    /// The versions published, the latest first, or why they could not be had.
+    Patches(Result<Vec<Patch>, String>),
     /// How much of a later version's program has arrived, 0 to 1.
     UpdateProgress(f32),
     /// How many of the songs of a list being brought in have been looked for, out of how many.
@@ -587,10 +612,11 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 let Ok(_turn) = shared.covers.acquire().await else { return };
-                // A cover that does not arrive leaves its placeholder; nothing to report.
-                if let Some((image, tint)) = artwork(&shared, &url).await {
-                    (shared.reply)(Event::Artwork { url, image, tint });
-                }
+                // A cover that does not arrive leaves its placeholder instead of the pulse.
+                (shared.reply)(match artwork(&shared, &url).await {
+                    Some((image, tint)) => Event::Artwork { url, image, tint },
+                    None => Event::ArtworkMissing(url),
+                });
             });
         }
         // The slider is evenly spaced to the ear, not to the amplitude: half way is far quieter
@@ -657,11 +683,32 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Lyrics(track), Err(_)) => reply(Event::LyricsFailed { track_id: track.id, message: t!("backend-lyrics-start-failed").into_owned(), retry_after: Duration::ZERO }),
+        (Command::Translate { track_id, lines, to }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let lines = translate(&shared, &lines, &to).await;
+                (shared.reply)(Event::Translated { track_id, to, lines });
+            });
+        }
+        (Command::Translate { track_id, to, .. }, Err(message)) => reply(Event::Translated { track_id, to, lines: Err(message.clone()) }),
         (Command::Discover(taste), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move { discover(&shared, taste).await });
         }
         (Command::Discover(_), Err(_)) => {}
+        (Command::Suggest { playlist, seeds, known }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let radios: Vec<Vec<Track>> = join_all(seeds.iter().map(|seed| async { shared.youtube.radio(&seed.id).await.unwrap_or_default() })).await;
+                (shared.reply)(Event::Suggested { playlist, tracks: discover::blend(&radios, &known, SUGGESTIONS) });
+            });
+        }
+        (Command::Suggest { playlist, .. }, Err(_)) => reply(Event::Suggested { playlist, tracks: Vec::new() }),
+        (Command::Patches, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move { (shared.reply)(Event::Patches(patches(&shared).await)) });
+        }
+        (Command::Patches, Err(message)) => reply(Event::Patches(Err(message.clone()))),
         (Command::About(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -920,12 +967,43 @@ const AGENT: &str = concat!("surco/", env!("CARGO_PKG_VERSION"));
 /// A later version, said once by the system's notifications, so it is seen with the window shut.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 fn announce_update(version: &str) {
+    let mut notification = notify_rust::Notification::new();
+    notification.appname("Surco").summary(&t!("backend-update-title")).body(&t!("backend-update-body", version = version));
+    #[cfg(target_os = "windows")]
+    notification.app_id(APP_USER_MODEL_ID);
     // Nobody to tell is no failure: a desktop without a notification daemon still has the toast.
-    let _ = notify_rust::Notification::new()
-        .appname("Surco")
-        .summary(&t!("backend-update-title"))
-        .body(&t!("backend-update-body", version = version))
-        .show();
+    let _ = notification.show();
+}
+
+/// The name Windows files the app's notifications under. Without one that is registered,
+/// they come from PowerShell.
+#[cfg(target_os = "windows")]
+const APP_USER_MODEL_ID: &str = "Niiihuel.Surco";
+
+/// Registers the app's notifications for this user, under its name and with its mark, as
+/// Windows asks of a program that has no installer. `data` is where the mark is kept.
+// https://learn.microsoft.com/windows/apps/develop/notifications/app-notifications/send-local-toast-other-apps
+#[cfg(target_os = "windows")]
+pub fn register_notifications(data: &std::path::Path) {
+    use windows_sys::Win32::System::Registry::{RegCloseKey, RegCreateKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_OPTION_NON_VOLATILE, REG_SZ};
+    let wide = |text: &str| text.encode_utf16().chain([0]).collect::<Vec<u16>>();
+    let icon = data.join("notifications.png");
+    // Without its mark a notification still says whose it is.
+    let _ = std::fs::write(&icon, include_bytes!("../assets/icon.png"));
+    let key = wide(&format!(r"Software\Classes\AppUserModelId\{APP_USER_MODEL_ID}"));
+    let mut handle: HKEY = std::ptr::null_mut();
+    // SAFETY: every string is NUL-terminated UTF-16 that outlives the call, and the key is
+    // closed once its two values are written.
+    unsafe {
+        if RegCreateKeyExW(HKEY_CURRENT_USER, key.as_ptr(), 0, std::ptr::null(), REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, std::ptr::null(), &mut handle, std::ptr::null_mut()) != 0 {
+            return;
+        }
+        for (name, value) in [("DisplayName", "Surco".to_owned()), ("IconUri", icon.display().to_string())] {
+            let value = wide(&value);
+            RegSetValueExW(handle, wide(name).as_ptr(), 0, REG_SZ, value.as_ptr().cast(), (value.len() * 2) as u32);
+        }
+        RegCloseKey(handle);
+    }
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
@@ -950,6 +1028,21 @@ async fn latest_release(shared: &Shared) -> Option<Release> {
     let mandatory = minimum.is_some_and(|minimum| discover::newer(minimum, env!("CARGO_PKG_VERSION")));
     let notes = update::notes(release["body"].as_str().unwrap_or_default());
     Some(Release { version, page: release["html_url"].as_str()?.to_owned(), program, mandatory, notes })
+}
+
+/// Every version published, the latest first; one asked for only when its page opens.
+const ALL_RELEASES: &str = "https://api.github.com/repos/Niiihuel/surco/releases?per_page=30";
+
+async fn patches(shared: &Shared) -> Result<Vec<Patch>, String> {
+    let said = |error: &dyn std::fmt::Display| error.to_string();
+    let response = shared.youtube.http().get(ALL_RELEASES).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
+    let releases: Vec<serde_json::Value> = response.error_for_status().map_err(|error| said(&error))?.json().await.map_err(|error| said(&error))?;
+    let published = releases.iter().filter(|release| release["draft"].as_bool() != Some(true) && release["prerelease"].as_bool() != Some(true));
+    Ok(published.filter_map(|release| Some(Patch {
+        version: release["tag_name"].as_str()?.trim_start_matches('v').to_owned(),
+        date: release["published_at"].as_str().unwrap_or_default().chars().take(10).collect(),
+        notes: update::notes(release["body"].as_str().unwrap_or_default()),
+    })).collect())
 }
 
 /// Fetches the release's program for this system, checks it is the one the release
@@ -1093,6 +1186,35 @@ async fn footage(shared: &Shared, track: &Track) -> Option<Footage> {
     let video = Track { id, duration_ms: (stream.duration_seconds * 1000.0) as u64, ..track.clone() };
     (!samples.is_empty()).then(|| Footage { clip: Clip { parameters: small.0.header.parameters.clone(), samples }, small, large, video })
 }
+
+/// Where lyrics are translated.
+// shortcut: the endpoint Chrome's dictionary uses, which takes no key and keeps the lines, one
+// request a song in its address (lyrics up to some 6000 characters); move to a keyed service if
+// it starts refusing.
+const TRANSLATE: &str = "https://clients5.google.com/translate_a/t";
+
+/// `lines` in the language `to`, each to its own line; none when they already are in it. Blank
+/// lines stay blank and are not sent.
+async fn translate(shared: &Shared, lines: &[String], to: &str) -> Result<Option<Vec<String>>, String> {
+    let said: Vec<&str> = lines.iter().map(|line| line.trim()).filter(|line| !line.is_empty()).collect();
+    if said.is_empty() {
+        return Ok(None);
+    }
+    let query = [("client", "dict-chrome-ex"), ("sl", "auto"), ("tl", to), ("q", &said.join("\n"))];
+    let response = shared.youtube.http().get(TRANSLATE).query(&query).send().await.map_err(|error| error.to_string())?;
+    let answer: serde_json::Value = response.error_for_status().map_err(|error| error.to_string())?.json().await.map_err(|error| error.to_string())?;
+    let (Some(text), from) = (answer[0][0].as_str(), answer[0][1].as_str().unwrap_or_default()) else { return Err(t!("backend-translation-unreadable").into_owned()) };
+    if from.split('-').next() == to.split('-').next() {
+        return Ok(None);
+    }
+    let mut translated = text.split('\n').map(str::trim);
+    let all: Vec<String> = lines.iter().map(|line| if line.trim().is_empty() { Some(String::new()) } else { translated.next().map(str::to_owned) }).collect::<Option<_>>()
+        .ok_or_else(|| t!("backend-translation-unreadable").into_owned())?;
+    Ok(Some(all))
+}
+
+/// How many songs a playlist's recommendations hold, a few refreshes' worth.
+const SUGGESTIONS: usize = 50;
 
 /// How many tracks the mix has, how many seeds get a shelf of their own, and how many
 /// artists and albums are picked.

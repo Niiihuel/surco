@@ -56,7 +56,8 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
             "library",
             vec!["import-open", "ios-paste:import-card"],
         ),
-        (Page::Settings, "settings", vec!["setting:connections"]),
+        (Page::Settings, "settings", vec!["settings-part:devices"]),
+        (Page::SettingsPart(crate::state::SettingsPart::Devices), "settings-devices", vec!["setting:connections"]),
     ] {
         state.page = page;
         let mut tree = UiTree::new(super::view(&state, size));

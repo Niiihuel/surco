@@ -27,7 +27,8 @@ static NSString *SheetSliderValue(UISlider *slider) {
         numberStyle:volume ? NSNumberFormatterPercentStyle : NSNumberFormatterDecimalStyle];
     return [slider.accessibilityIdentifier hasPrefix:@"equalizer:"] ? [value stringByAppendingString:@" dB"] : value;
 }
-// Spotify's sheet: a lifted #282828 over the page, quiet gray glyphs and white capsules.
+// Spotify's sheet: thick dark material over the page, quiet gray glyphs and faint tiles.
+// With Reduce Transparency it falls back to a solid lifted #282828.
 static UIColor *SheetSurface(void) { return [UIColor colorWithWhite:40.0 / 255.0 alpha:1]; }
 static UIFont *SheetBold(UIFontTextStyle style) {
     UIFontDescriptor *descriptor = [UIFontDescriptor preferredFontDescriptorWithTextStyle:style];
@@ -70,6 +71,9 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     UIScrollView *_scroll;
     UIStackView *_body;
     UIStackView *_footer;
+    NSLayoutConstraint *_footerMaxWidth;
+    UIVisualEffectView *_material;
+    CGFloat _fittedHeight;
     NSArray<SurcoSheetRow *> *_rows;
     NSArray *_structure;
     NSArray<UIButton *> *_footerButtons;
@@ -96,20 +100,29 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 
 - (void)viewDidLoad {
     [super viewDidLoad];
-    self.view.backgroundColor = SheetSurface();
     self.view.tintColor = UIColor.whiteColor;
     self.view.accessibilityIdentifier = self.surfaceId;
+    // The material sits behind everything; a faint tint keeps text legible over bright art.
+    _material = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemThickMaterialDark]];
+    _material.frame = self.view.bounds;
+    _material.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    UIView *tint = [[UIView alloc] initWithFrame:_material.contentView.bounds];
+    tint.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    tint.backgroundColor = [UIColor colorWithWhite:0.16 alpha:0.55];
+    [_material.contentView addSubview:tint];
+    [self.view addSubview:_material];
+    [self updateSurface];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(updateSurface)
+        name:UIAccessibilityReduceTransparencyStatusDidChangeNotification object:nil];
 
-    _heading = SheetLabel(UIFontTextStyleTitle3, NO);
-    _heading.font = SheetBold(UIFontTextStyleTitle3);
-    _heading.textAlignment = NSTextAlignmentCenter;
+    _heading = SheetLabel(UIFontTextStyleTitle2, NO);
+    _heading.font = SheetBold(UIFontTextStyleTitle2);
     _heading.accessibilityTraits |= UIAccessibilityTraitHeader;
     _descriptionLabel = SheetLabel(UIFontTextStyleSubheadline, YES);
-    _descriptionLabel.textAlignment = NSTextAlignmentCenter;
     UIStackView *header = SheetStack(@[_heading, _descriptionLabel], UILayoutConstraintAxisVertical, 6);
-    // Centered under the grabber, clear of the close glyph on either side.
+    // Leading-aligned like the rows, its trailing edge clear of the close glyph.
     header.layoutMarginsRelativeArrangement = YES;
-    header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(0, 36, 0, 36);
+    header.directionalLayoutMargins = NSDirectionalEdgeInsetsMake(0, 0, 0, 44);
     UIButton *close = [UIButton buttonWithType:UIButtonTypeSystem];
     [close setImage:[UIImage systemImageNamed:@"xmark" withConfiguration:[UIImageSymbolConfiguration
         configurationWithPointSize:15 weight:UIImageSymbolWeightSemibold]] forState:UIControlStateNormal];
@@ -131,9 +144,15 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     _scroll.accessibilityIdentifier = @"sheet-scroll";
     _body = SheetStack(@[], UILayoutConstraintAxisVertical, 16);
     _footer = SheetStack(@[], UILayoutConstraintAxisVertical, 8);
+    // Tiles side by side stay tile-sized and centered; stacked ones take the full width.
+    UIView *footerWrap = [UIView new];
+    [footerWrap addSubview:_footer];
+    NSLayoutConstraint *footerFill = [_footer.widthAnchor constraintEqualToAnchor:footerWrap.widthAnchor];
+    footerFill.priority = UILayoutPriorityDefaultHigh;
+    _footerMaxWidth = [_footer.widthAnchor constraintLessThanOrEqualToConstant:0];
     // The whole form can scroll when the keyboard leaves little vertical room.
-    UIStackView *content = SheetStack(@[header, _body, _footer], UILayoutConstraintAxisVertical, 20);
-    for (UIView *view in @[_scroll, content, close]) view.translatesAutoresizingMaskIntoConstraints = NO;
+    UIStackView *content = SheetStack(@[header, _body, footerWrap], UILayoutConstraintAxisVertical, 20);
+    for (UIView *view in @[_scroll, content, close, _footer]) view.translatesAutoresizingMaskIntoConstraints = NO;
     [_scroll addSubview:content];
     [self.view addSubview:_scroll];
     [self.view addSubview:close];
@@ -150,8 +169,20 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         [content.leadingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.leadingAnchor constant:20],
         [content.trailingAnchor constraintEqualToAnchor:_scroll.contentLayoutGuide.trailingAnchor constant:-20],
         [content.widthAnchor constraintEqualToAnchor:_scroll.frameLayoutGuide.widthAnchor constant:-40],
+        [_footer.topAnchor constraintEqualToAnchor:footerWrap.topAnchor],
+        [_footer.bottomAnchor constraintEqualToAnchor:footerWrap.bottomAnchor],
+        [_footer.centerXAnchor constraintEqualToAnchor:footerWrap.centerXAnchor],
+        [_footer.leadingAnchor constraintGreaterThanOrEqualToAnchor:footerWrap.leadingAnchor],
+        footerFill,
     ]];
     [self updateModel:_model];
+}
+
+- (void)updateSurface {
+    BOOL solid = UIAccessibilityIsReduceTransparencyEnabled();
+    _material.hidden = solid;
+    // Clear so the material shows through the sheet's own container.
+    self.view.backgroundColor = solid ? SheetSurface() : UIColor.clearColor;
 }
 
 - (void)revealEditor {
@@ -163,12 +194,28 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
+    // A sheet sized to its rows follows them as they change.
+    if (@available(iOS 16.0, *)) {
+        CGFloat height = self.fittingHeight;
+        if (height != _fittedHeight) {
+            _fittedHeight = height;
+            UISheetPresentationController *presentation = self.sheetPresentationController;
+            [presentation animateChanges:^{ [presentation invalidateDetents]; }];
+        }
+    }
     CGSize viewport = _scroll.bounds.size;
     if (_revealEditingField || !CGSizeEqualToSize(viewport, _viewportSize)) {
         _viewportSize = viewport;
         _revealEditingField = NO;
         [self revealEditor];
     }
+}
+
+- (CGFloat)fittingHeight {
+    // Before UIKit gives the sheet its width, the rows have no height to report.
+    if (!self.isViewLoaded || CGRectGetWidth(self.view.bounds) <= 40) return 0;
+    [self.view layoutIfNeeded];
+    return ceil(_scroll.contentSize.height);
 }
 
 - (UIButton *)actionButton {
@@ -179,32 +226,38 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     return button;
 }
 
-- (void)updateButton:(UIButton *)button action:(NSDictionary *)action footer:(BOOL)footer primary:(BOOL)primary {
+- (void)updateButton:(UIButton *)button action:(NSDictionary *)action footer:(BOOL)footer {
     BOOL destructive = SheetBool(action[@"destructive"]);
     BOOL selected = SheetBool(action[@"selected"]);
-    UIButtonConfiguration *configuration = primary ? [UIButtonConfiguration filledButtonConfiguration] : [UIButtonConfiguration plainButtonConfiguration];
-    configuration.baseBackgroundColor = destructive ? UIColor.systemRedColor : UIColor.whiteColor;
-    configuration.baseForegroundColor = primary ? UIColor.blackColor : destructive ? UIColor.systemRedColor : UIColor.whiteColor;
-    // Footer capsules stand 48 tall, the quiet one outlined; rows sit flush with the text.
-    configuration.contentInsets = footer ? NSDirectionalEdgeInsetsMake(14, 20, 14, 20) : NSDirectionalEdgeInsetsMake(14, 0, 14, 0);
-    if (footer && !primary) {
-        configuration.background.strokeColor = [UIColor colorWithWhite:1 alpha:0.5];
-        configuration.background.strokeWidth = 1;
+    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+    configuration.baseForegroundColor = destructive ? UIColor.systemRedColor : UIColor.whiteColor;
+    NSString *symbol = SheetString(action[@"symbol"]);
+    if (footer) {
+        // Footer tiles: a faint rounded square, the glyph over a short caption.
+        configuration.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+        configuration.background.cornerRadius = 12;
+        configuration.cornerStyle = UIButtonConfigurationCornerStyleFixed;
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(14, 12, 14, 12);
+        configuration.titleAlignment = UIButtonConfigurationTitleAlignmentCenter;
+        configuration.imagePlacement = NSDirectionalRectEdgeTop;
+        configuration.imagePadding = 8;
+        configuration.image = symbol.length ? [UIImage systemImageNamed:symbol] : nil;
+        configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithTextStyle:UIFontTextStyleTitle2 scale:UIImageSymbolScaleMedium];
+    } else {
+        // A row sits flush with the text and leads with its glyph in gray.
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(14, 0, 14, 0);
+        configuration.titleAlignment = UIButtonConfigurationTitleAlignmentLeading;
+        configuration.imagePadding = 16;
+        configuration.image = symbol.length ? [UIImage systemImageNamed:symbol] : selected ? [UIImage systemImageNamed:@"checkmark"] : nil;
+        configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithTextStyle:UIFontTextStyleTitle3 scale:UIImageSymbolScaleMedium];
+        if (!destructive) configuration.imageColorTransformer = ^UIColor *(UIColor *color) { return SheetMuted(); };
     }
-    configuration.titleAlignment = footer ? UIButtonConfigurationTitleAlignmentCenter : UIButtonConfigurationTitleAlignmentLeading;
-    if (footer) configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
     configuration.titleLineBreakMode = NSLineBreakByWordWrapping;
     configuration.attributedTitle = [[NSAttributedString alloc] initWithString:SheetString(action[@"title"])
-        attributes:@{NSFontAttributeName: footer ? SheetBold(UIFontTextStyleBody) : [UIFont preferredFontForTextStyle:UIFontTextStyleBody]}];
+        attributes:@{NSFontAttributeName: [UIFont preferredFontForTextStyle:footer ? UIFontTextStyleFootnote : UIFontTextStyleBody]}];
     NSString *subtitle = SheetString(action[@"subtitle"]);
     if (subtitle.length) configuration.attributedSubtitle = [[NSAttributedString alloc] initWithString:subtitle
         attributes:@{NSFontAttributeName: [UIFont preferredFontForTextStyle:UIFontTextStyleFootnote]}];
-    NSString *symbol = SheetString(action[@"symbol"]);
-    // Footer capsules carry words only; a row leads with its glyph in gray.
-    configuration.image = footer ? nil : symbol.length ? [UIImage systemImageNamed:symbol] : selected ? [UIImage systemImageNamed:@"checkmark"] : nil;
-    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithTextStyle:UIFontTextStyleTitle3 scale:UIImageSymbolScaleMedium];
-    if (!destructive) configuration.imageColorTransformer = ^UIColor *(UIColor *color) { return SheetMuted(); };
-    configuration.imagePadding = 16;
     button.configuration = configuration;
     button.accessibilityIdentifier = SheetString(action[@"id"]);
     button.contentHorizontalAlignment = footer ? UIControlContentHorizontalAlignmentCenter : UIControlContentHorizontalAlignmentLeading;
@@ -286,6 +339,8 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
             [picker.heightAnchor constraintEqualToConstant:44],
         ]];
         UIStackView *copy = SheetStack(@[row.title, row.secondary], UILayoutConstraintAxisVertical, 6);
+        // Beside the 44pt picker, the subtitle keeps its line instead of being clipped.
+        for (UILabel *label in @[row.title, row.secondary]) [label setContentCompressionResistancePriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisVertical];
         UIStackView *stack = SheetStack(@[copy, picker], UILayoutConstraintAxisHorizontal, 12);
         stack.alignment = UIStackViewAlignmentCenter;
         row.control = picker;
@@ -356,7 +411,7 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
     row.secondary.hidden = !row.secondary.text.length;
     row.control.accessibilityIdentifier = identifier.length ? identifier : [kind isEqualToString:@"route"] ? @"sheet-route-picker" : @"";
     if ([kind isEqualToString:@"action"]) {
-        [self updateButton:(UIButton *)row.control action:model footer:NO primary:NO];
+        [self updateButton:(UIButton *)row.control action:model footer:NO];
     } else if ([kind isEqualToString:@"field"]) {
         UITextField *field = (UITextField *)row.control;
         NSString *value = SheetString(model[@"value"]);
@@ -442,20 +497,25 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
         NSMutableArray *buttons = [NSMutableArray array];
         for (NSUInteger index = 0; index < actions.count; index++) {
             UIButton *button = [self actionButton];
+            [button.heightAnchor constraintGreaterThanOrEqualToConstant:76].active = YES;
             [_footer addArrangedSubview:button];
             [buttons addObject:button];
         }
         _footerButtons = buttons;
         _footerIds = ids;
     }
-    // Two choices stand side by side, the quiet one first, unless large text needs the width.
-    BOOL beside = actions.count == 2 && !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
+    // Tiles stand side by side, about 170 wide each, unless large text needs the full width.
+    BOOL beside = !UIContentSizeCategoryIsAccessibilityCategory(self.traitCollection.preferredContentSizeCategory);
     _footer.axis = beside ? UILayoutConstraintAxisHorizontal : UILayoutConstraintAxisVertical;
     _footer.distribution = beside ? UIStackViewDistributionFillEqually : UIStackViewDistributionFill;
     _footer.spacing = beside ? 12 : 8;
+    _footerMaxWidth.constant = actions.count * 170.0 + MAX((NSInteger)actions.count - 1, 0) * 12.0;
+    _footerMaxWidth.active = beside;
+    // An empty footer takes no room, not even the content stack's spacing.
+    _footer.superview.hidden = actions.count == 0;
     for (NSUInteger index = 0; index < actions.count; index++) {
         NSDictionary *action = [actions[index] isKindOfClass:NSDictionary.class] ? actions[index] : @{};
-        [self updateButton:_footerButtons[index] action:action footer:YES primary:index + 1 == actions.count];
+        [self updateButton:_footerButtons[index] action:action footer:YES];
     }
 }
 

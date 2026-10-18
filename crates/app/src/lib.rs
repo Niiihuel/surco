@@ -340,6 +340,8 @@ impl eframe::App for Host {
             if self.state.output.is_some() {
                 self.send(vec![Command::Output(self.state.output.clone())]);
             }
+            // A first start offers to bring music in; a scripted run is about something else.
+            self.state.welcome = !self.state.settings.welcomed && self.script.actions.is_empty() && self.script.search.is_none();
             let covers = self.state.collection_covers();
             self.send(covers);
             let picks = self.state.ask_picks();
@@ -436,7 +438,7 @@ impl eframe::App for Host {
         while let Ok(event) = self.events.try_recv() {
             // A cover arriving is drawn once; it does not lift the settled frame rate,
             // which a library's worth of them arriving at launch would keep lifted.
-            let quiet = matches!(event, backend::Event::Artwork { .. });
+            let quiet = matches!(event, backend::Event::Artwork { .. } | backend::Event::ArtworkMissing(_));
             let commands = self.state.apply(event);
             self.send(commands);
             if !quiet { self.stirred = Instant::now(); }
@@ -452,6 +454,10 @@ impl eframe::App for Host {
         }
         self.run_script();
         let commands = self.state.mobile_tick(Instant::now());
+        self.send(commands);
+        let commands = self.state.ask_suggested();
+        self.send(commands);
+        let commands = self.state.ask_translation();
         self.send(commands);
         if let Some((_, due)) = &self.state.mobile_ui.pending {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
@@ -580,6 +586,12 @@ impl eframe::App for Host {
         // has to be handed to it.
         if self.tree.input_value("search").is_some_and(|shown| shown != self.state.query) {
             self.tree.set_input_value("search", self.state.query.clone());
+            acted = true;
+        }
+        // The recent searches drop down from the field while it holds the keyboard.
+        let focused = !self.state.mobile && self.tree.focused_id() == Some("search");
+        if focused != self.state.search_focused {
+            self.state.search_focused = focused;
             acted = true;
         }
         if let Some(text) = self.state.copy.take() {
@@ -779,6 +791,8 @@ pub fn run() -> eframe::Result {
     }
     let mobile = cfg!(target_os = "ios") || script.mobile;
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
+    #[cfg(target_os = "windows")]
+    backend::register_notifications(&data);
     let chrome = window::Chrome::current(mobile);
     let overlaid = chrome == window::Chrome::Overlaid;
     let viewport = egui::ViewportBuilder::default()

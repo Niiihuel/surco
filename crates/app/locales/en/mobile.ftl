@@ -158,20 +158,17 @@ mobile-genre-soundtracks =
 ## Settings
 
 mobile-crossfade-off = Off
-mobile-settings-playback = Playback
 mobile-autoplay = Autoplay
 mobile-connections = Connections and devices
 mobile-listen-elsewhere = Listen on another device
 mobile-audio-output = Audio output
 mobile-quality-ceiling = Up to { $kbps } kbps
 mobile-quality = Quality
-mobile-audio-quality = Audio quality
 mobile-normalize = Normalize volume
 mobile-mono = Mono audio
 mobile-quality-note = Quality changes from the next song.
 mobile-display = Display
 mobile-reduce-motion = Reduce motion
-mobile-settings-library = Library
 mobile-sort = Sort by
 mobile-sort-recent = Recent
 mobile-view = View

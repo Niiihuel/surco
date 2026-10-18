@@ -66,7 +66,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if state.page == Page::Library {
         header.push(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette));
     }
-    if !matches!(state.page, Page::Settings | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
+    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
         header.push(icon("settings", Icon::Settings, &t!("common-settings"), palette));
     }
     let editing = searching && state.mobile_ui.search_editing;
@@ -153,6 +153,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // UIKit owns these surfaces when its bridge is ready. Keep the limn
     // implementation available on other platforms or if the bridge is unavailable.
+    // The greeting is limn's on every platform: no UIKit surface draws it.
+    let tree = welcome_dialog(state, tree, window.width);
     if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
@@ -167,6 +169,7 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
     match &state.page {
         Page::Library => t!("common-library"),
         Page::Settings => t!("common-settings"),
+        Page::SettingsPart(part) => settings::part_title(*part),
         Page::Equalizer => t!("common-equalizer"),
         Page::Playing => if state.queue_open { t!("mobile-queue") } else { t!("mobile-now-playing") },
         Page::Lyrics => t!("mobile-lyrics"),
@@ -174,6 +177,7 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())).into(),
         Page::Downloads => t!("common-downloads"),
         Page::Liked => t!("common-liked-songs"),
+        Page::Patches => t!("common-patches"),
         Page::Album(album) if state.mobile_ui.compact_header => Cow::Borrowed(&album.title),
         Page::Artist(artist) if state.mobile_ui.compact_header => Cow::Borrowed(&artist.name),
         Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),
@@ -295,7 +299,7 @@ pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderBut
     if state.mobile_ui.compact_header && detail && !state.page_rows().is_empty() { trailing.push(("page-play", crate::i18n::fixed(t!("common-play")), "play.fill")); }
     // A new playlist is made from the library's bar, a glass button beside Settings.
     if state.page == Page::Library { trailing.push(("playlist-new", crate::i18n::fixed(t!("common-create-playlist")), "plus")); }
-    if !matches!(state.page, Page::Settings | Page::Equalizer) && !detail { trailing.push(("settings", crate::i18n::fixed(t!("common-settings")), "gearshape")); }
+    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer) && !detail { trailing.push(("settings", crate::i18n::fixed(t!("common-settings")), "gearshape")); }
     (leading, trailing)
 }
 
@@ -341,6 +345,25 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
     ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,
         vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, t!("common-song-options")))], SCHEME.menu())
         .open_action(more).render()
+}
+
+/// Songs recommended for a playlist: a tap plays one, its button adds it to the list, and
+/// the one below trades them for others.
+pub(super) fn suggested(state: &State, shown: &[&Track], palette: ComponentPalette) -> Element {
+    let rows = shown.iter().enumerate().map(|(index, track)| {
+        let copy = Element::column(vec![
+            Text::new(&track.title, palette).font_size(16.0).truncate().render(),
+            Text::new(&track.artist, palette).font_size(13.0).muted().truncate().render(),
+        ]).gap(5.0).centered_y().flex(1.0);
+        let body = Element::row(vec![cover(state, &track.artwork_url, 48.0, palette).radius(4.0), copy]).gap(12.0);
+        let main = Element::clickable(format!("suggested:{index}"), body)
+            .accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {}", track.title, track.artist))).flex(1.0);
+        let add = icon(&format!("suggested-add:{index}"), Icon::Add, &t!("common-recommended-add-title", title = track.title.as_str()), palette);
+        Element::row(vec![main, add.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0))
+    });
+    let refresh = Button::new("suggested-refresh", t!("common-refresh"), palette).variant(ButtonVariant::Secondary).round()
+        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).render();
+    Element::column(vec![Element::column(rows.collect()).gap(4.0), refresh.centered_x()]).gap(12.0)
 }
 
 pub(super) fn playing(state: &State, width: f32, palette: ComponentPalette) -> Element {

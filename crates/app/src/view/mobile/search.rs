@@ -70,8 +70,14 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, &album.artist.as_deref().map_or_else(|| t!("common-album"), Cow::Borrowed), &album.artwork_url, false, palette)));
     }
     if rows.is_empty() {
-        rows.push(if pending || state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
-            else { Empty::new(t!("common-no-results"), t!("mobile-no-results-detail"), palette).icon(Icon::Search).render().padding(20.0) });
+        if pending {
+            // The shape of the rows to come, pulsing in step with the covers on their way.
+            let pulse = ComponentPalette { raised: palette.selected, ..palette };
+            rows.extend(limn::SkeletonGroup::rows("cover-coming", pulse, 8).row_height(64.0).icon(true).into_rows());
+        } else {
+            rows.push(if state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
+                else { Empty::new(t!("common-no-results"), t!("mobile-no-results-detail"), palette).icon(Icon::Search).render().padding(20.0) });
+        }
     }
     // This retained scroll and its parent stay mounted throughout debounce,
     // loading and failures; the previous result rows remain usable meanwhile.
@@ -180,14 +186,29 @@ const GENRES: [Genre; 35] = [
 /// with the card.
 pub(in crate::view) fn browse(count: usize, width: f32, columns: usize, height: f32, palette: ComponentPalette) -> Element {
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
-    let art = (height * 0.65).round();
+    // A record half out of its sleeve in the tile's corner: the sleeve in the genre's colour,
+    // lighter, and the disc behind it, its grooves and its label. All inside the tile, whose
+    // clip is square.
+    let sleeve = (height * 0.56).round();
+    let disc = (sleeve * 0.92).round();
+    let (sleeve_x, sleeve_y) = (side - sleeve - 10.0, height - sleeve - 10.0);
+    let placed = |piece: Element, x: f32, y: f32| Element::column(vec![Element::row(vec![piece, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
+        .translate(limn::Point::new(x, y));
+    let round = |across: f32, inside: Element| Element::panel(inside.centered()).size(Some(across), Some(across)).radius(across / 2.0);
     let tile = |&(title, query, tint): &Genre| {
-        // shortcut: limn has no rotation, so the Figma kit's 25° tilt is set square;
-        // tilt it once Element can rotate.
-        let art = Element::panel(Element::icon(Icon::MusicNote).large_icon(art * 0.44).foreground(Color::rgba(255, 255, 255, 190)).centered())
-            .background(mix(tint, Color::rgb(255, 255, 255), 0.18)).radius(4.0).size(Some(art), Some(art))
-            .shadow(Color::rgba(0, 0, 0, 64), limn::Point::new(0.0, 0.0), 10.0, 0.0).translate(limn::Point::new(art * 0.22, art * 0.16));
-        let corner = Element::column(vec![Element::spacer().flex(1.0), Element::row(vec![Element::spacer().flex(1.0), art])]);
+        let groove = Color::rgba(255, 255, 255, 22);
+        let hole = Element::spacer().size(Some(disc * 0.05), Some(disc * 0.05)).background(Color::rgb(14, 14, 14)).radius(disc * 0.025);
+        let label = round(disc * 0.36, hole).background(mix(tint, Color::rgb(255, 255, 255), 0.35));
+        let grooves = [0.52, 0.68, 0.84].into_iter().fold(label, |inside, share| round(disc * share, inside).border(groove, 1.0));
+        let record = round(disc, grooves).background(Color::rgb(18, 18, 18))
+            .shadow(Color::rgba(0, 0, 0, 90), limn::Point::new(0.0, 2.0), 10.0, 0.0);
+        let cover = Element::panel(Element::icon(Icon::MusicNote).large_icon(sleeve * 0.4).foreground(Color::rgba(255, 255, 255, 170)).centered())
+            .background(mix(tint, Color::rgb(255, 255, 255), 0.18)).radius(4.0).size(Some(sleeve), Some(sleeve))
+            .shadow(Color::rgba(0, 0, 0, 72), limn::Point::new(0.0, 2.0), 10.0, 0.0);
+        let corner = Element::stack(vec![
+            placed(record, sleeve_x - disc * 0.62, sleeve_y + (sleeve - disc) / 2.0),
+            placed(cover, sleeve_x, sleeve_y),
+        ]);
         let copy = Text::new(title(), palette).font_size(if height > 120.0 { 22.0 } else { 16.0 }).render().font_family(FontFamily::SansBold).padding(12.0);
         Element::clickable(format!("browse:{query}"), Element::panel(Element::stack(vec![corner, copy])).background(tint).radius(6.0).clip_children())
             .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-for", query = query)))

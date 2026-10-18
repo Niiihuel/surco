@@ -315,6 +315,7 @@ pub(in crate::view) fn playlist(
         sections.push(Element::column(tools).gap(8.0));
         sections.push(tracks(state, palette));
     }
+    sections.extend(crate::view::suggested(state, playlist, width, palette));
     scroll("mobile-playlist", sections)
 }
 
@@ -437,6 +438,9 @@ mod tests {
         let mut state = State::default();
         state.mobile = true;
         state.collection.playlists.push(playlist.clone());
+        state.page = Page::Playlist(playlist.id);
+        state.ask_suggested();
+        state.apply(crate::backend::Event::Suggested { playlist: playlist.id, tracks: vec![track("recommended")] });
         for width in [320.0, 390.0, 430.0] {
             for page in [
                 Page::Album(album.clone()),
@@ -453,7 +457,7 @@ mod tests {
                     "more:page-track:1",
                 ];
                 if matches!(state.page, Page::Playlist(_)) {
-                    ids.extend(["playlist-share", "playlist-export", "playlist-delete"]);
+                    ids.extend(["playlist-share", "playlist-export", "playlist-delete", "suggested:0", "suggested-add:0", "suggested-refresh"]);
                 } else {
                     ids.push("keep");
                 }

@@ -60,6 +60,16 @@ pub(crate) struct Sheet {
     pub id: String, pub title: String, pub description: String, pub dismiss: String,
     pub rows: Vec<Row>, pub actions: Vec<Action>, pub large: bool, pub confirmation: bool,
     pub close_label: String,
+    /// UIKit's own share sheet for this link, previewed with the title, description and cover.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub share: Option<Share>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct Share {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -125,7 +135,9 @@ impl Controller {
             route_label: t!("native-audio-output").into_owned(), ..Payload::default() };
         self.menus.clear();
         self.paste = None;
-        if !state.mobile { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
+        // The greeting stands over everything, the header and the tab bar too, with no
+        // native surface beside it.
+        if !state.mobile || state.welcome { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
         payload.chrome = self.chrome(state, frame, origin);
         if let Some((key, mut sheet)) = sheet_spec(state) {
             self.search = None;
@@ -401,7 +413,7 @@ fn text(title: impl Into<String>, secondary: bool) -> Row { Row::Text { title: t
 fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
     let shell = |title: &str, description: &str, dismiss: &str| Sheet { id: String::new(), title: title.into(), description: description.into(),
         dismiss: dismiss.into(), rows: Vec::new(), actions: Vec::new(), large: false, confirmation: false,
-        close_label: t!("common-close").into_owned() };
+        close_label: t!("common-close").into_owned(), share: None };
     // Match limn's overlay order. UIKit receives precisely the top surface.
     if let Some(confirm) = &state.confirm {
         let (title, description, yes) = match confirm {
@@ -440,16 +452,15 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         return Some((format!("playlist:{}", draft.first.as_ref().map_or("", |track| track.id.as_str())), sheet));
     }
     if let Some(track) = &state.sharing {
-        let mut sheet = shell(&t!("common-share-song"), &t!("native-share-description"), "share-close");
-        sheet.rows = vec![text(&track.title, false), text(&track.artist, true), text(state::share_link(track), true), Row::Action(Action::new("share-card", t!("native-play-or-pause"), "playpause"))];
-        sheet.actions = vec![Action::new("share-copy", if state.copied { t!("common-link-copied") } else { t!("native-copy-link") }, "doc.on.doc"), Action::new("share-close", t!("native-done"), "checkmark")];
+        // Copying, AirDrop and the other apps are the system's own actions; only closing reaches Rust.
+        let mut sheet = shell(&track.title, &track.artist, "share-close");
+        sheet.share = Some(Share { url: state::share_link(track), artwork: track.artwork_url.clone() });
         return Some((format!("share:{}", track.id), sheet));
     }
     if state.mobile_ui.connections {
-        let mut sheet = shell(&t!("native-listen-on"), &t!("native-listen-on-description"), "mobile-connections-close");
+        let mut sheet = shell(&t!("native-listen-on"), "", "mobile-connections-close");
         sheet.rows = vec![Row::Route { title: t!("native-route-title").into_owned(), label: t!("native-choose-audio-device").into_owned(),
                 subtitle: state.mobile_ui.route.as_ref().map_or(t!("native-system-output"), |(name, _)| name.as_str().into()).into_owned() },
-            text(t!("native-new-device"), false), text(t!("native-new-device-help"), true),
             Row::Slider { id: "volume".into(), title: t!("native-volume").into_owned(), value: state.volume, min: 0.0, max: 1.0 }];
         sheet.actions.push(Action::new("mobile-connections-close", t!("native-done"), "checkmark"));
         return Some(("connections".into(), sheet));
@@ -638,18 +649,20 @@ mod tests {
     }
 
     #[test]
-    fn share_sheet_retargeting_rejects_a_copy_for_the_previous_track() {
+    fn share_sheet_retargeting_rejects_a_close_for_the_previous_track() {
         let mut state = phone();
         state.sharing = Some(track("first"));
         let mut controller = Controller::default();
-        let first = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap().id;
+        let first = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
+        assert_eq!(first.share.unwrap().url, state::share_link(&track("first")));
         state.sharing = Some(track("second"));
-        assert!(controller.apply(&mut state, Event::SheetAction { sheet: first.clone(), action: "share-copy".into() }).is_empty());
-        assert!(state.copy.is_none());
-        let second = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap().id;
-        assert_ne!(first, second);
-        controller.apply(&mut state, Event::SheetAction { sheet: second, action: "share-copy".into() });
-        assert_eq!(state.copy.as_deref(), Some(state::share_link(&track("second")).as_str()));
+        controller.apply(&mut state, Event::SheetClose { sheet: first.id.clone() });
+        assert!(state.sharing.is_some(), "a stale close leaves the new track's sheet open");
+        let second = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
+        assert_ne!(first.id, second.id);
+        assert!(second.rows.is_empty() && second.actions.is_empty(), "the system sheet brings its own actions");
+        controller.apply(&mut state, Event::SheetClose { sheet: second.id });
+        assert!(state.sharing.is_none());
     }
 
     #[test]

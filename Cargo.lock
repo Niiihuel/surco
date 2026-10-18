@@ -4773,6 +4773,7 @@ dependencies = [
  "sys-locale",
  "tokio",
  "unic-langid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

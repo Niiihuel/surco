@@ -21,12 +21,23 @@ pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
                     .font_family(FontFamily::SansMedium),
                 Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
             ]).gap(1.0).centered_y().flex(1.0),
+            translate(state, palette),
             icon("mobile-lyrics-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"),
         ],
         None => vec![close, Element::spacer().flex(1.0)],
     };
     horizontal_inset(Element::row(row).gap(10.0).padding(6.0), 6.0, 6.0)
         .size(None, Some(HEADER_HEIGHT)).clip_children()
+}
+
+/// Translates the lyrics into the app's language, or takes the translation away; nothing
+/// while there is nothing to translate. Lit while it is on.
+fn translate(state: &State, palette: ComponentPalette) -> Element {
+    if !state.translatable() { return Element::spacer().size(Some(0.0), Some(0.0)); }
+    let on = state.settings.translate_lyrics;
+    let label = if on { t!("common-original-lyrics") } else { t!("common-translate-lyrics") };
+    let button = icon("lyrics-translate", Icon::Custom(include_str!("../../../assets/icons/languages.svg")), &label, palette);
+    if on { Element::panel(button).background(Color::rgba(255, 255, 255, 40)).radius(22.0).centered_y() } else { button.centered_y() }
 }
 
 pub(super) fn footer(state: &State, palette: ComponentPalette) -> Element {

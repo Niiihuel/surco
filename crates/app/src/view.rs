@@ -21,7 +21,7 @@ use crate::backend::{Release, Target};
 use crate::clip::Showing;
 use crate::i18n::{t, Language};
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, SUGGESTED_SHOWN, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
 };
 use crate::update::Note;
 
@@ -244,7 +244,7 @@ pub fn view(state: &State, window: Size) -> Element {
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = playlist_dialog(state, shared, window.width, palette);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
-    let whole = update_dialog(state, confirm_dialog(state, imported, palette), palette);
+    let whole = update_dialog(state, confirm_dialog(state, welcome_dialog(state, imported, window.width), palette), palette);
     Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
 }
 
@@ -486,6 +486,89 @@ fn import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
     Element::panel(Element::column(vec![top, copy])).background(PROMO).radius(8.0).clip_children()
 }
 
+/// The offer that greets a first start, as Spotify's: a picture of the user's covers around
+/// the way in, the offer on a deep violet, a lavender button that opens the import, and a way
+/// out under the card.
+const WELCOME_RADIUS: f32 = 20.0;
+
+/// The greeting's violet to peach wash, with its top corners already rounded: limn paints a
+/// gradient square, and a picture's own clear corners round it on any backdrop. Made once.
+fn welcome_wash() -> Option<limn::RasterImage> {
+    use base64::Engine as _;
+    use sha2::Digest as _;
+    static WASH: std::sync::OnceLock<Option<(String, usize, std::sync::Arc<str>)>> = std::sync::OnceLock::new();
+    let made = WASH.get_or_init(|| {
+        // Drawn for the widest card at three pixels a point; a narrower one rounds a little less.
+        let (width, height, radius) = (1140u32, 866u32, WELCOME_RADIUS * 3.0);
+        let stops = [(86.0, 76.0, 236.0), (206.0, 170.0, 240.0), (252.0, 196.0, 128.0)];
+        let wash = image::RgbaImage::from_fn(width, height, |x, y| {
+            let along = y as f32 / (height - 1) as f32 * 2.0;
+            let (from, to) = if along < 1.0 { (stops[0], stops[1]) } else { (stops[1], stops[2]) };
+            let at = along.fract().max(if along >= 2.0 { 1.0 } else { 0.0 });
+            let mix = |a: f32, b: f32| (a + (b - a) * at) as u8;
+            // Outside the top corners' arcs, clear; across their edge, a pixel of fade.
+            let (cx, cy) = ((x as f32 + 0.5).clamp(radius, width as f32 - radius), (y as f32 + 0.5).max(radius));
+            let outside = ((x as f32 + 0.5 - cx).hypot(y as f32 + 0.5 - cy) - radius).clamp(0.0, 1.0);
+            image::Rgba([mix(from.0, to.0), mix(from.1, to.1), mix(from.2, to.2), (255.0 * (1.0 - outside)) as u8])
+        });
+        let mut png = Vec::new();
+        wash.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+        let digest: String = sha2::Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect();
+        Some((digest, png.len(), base64::engine::general_purpose::STANDARD.encode(&png).into()))
+    });
+    let (digest, length, encoded) = made.as_ref()?;
+    limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, *length as u32, encoded.clone(), t!("common-welcome-title"))
+}
+
+pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) -> Element {
+    if !state.welcome {
+        return window_tree;
+    }
+    const VIOLET: Color = Color::rgb(36, 8, 138);
+    const LAVENDER: Color = Color::rgb(222, 219, 255);
+    let side = (width - 48.0).clamp(240.0, 380.0);
+    let art = side * 0.76;
+    let mut layers = vec![match welcome_wash() {
+        Some(wash) => Element::raster_image(wash).size(Some(side), Some(art)),
+        None => Element::spacer().size(Some(side), Some(art)).background(Color::rgb(86, 76, 236)),
+    }];
+    // Covers of what the user already plays float around it, wherever they are in.
+    let own = state.collection.heard.iter().chain(&state.collection.liked).chain(state.collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
+    let mut covers: Vec<&String> = Vec::new();
+    for url in own.filter_map(|track| track.artwork_url.as_ref()).filter(|url| state.artwork.contains_key(*url)) {
+        if !covers.contains(&url) && covers.len() < 6 { covers.push(url); }
+    }
+    // A stack stretches each of its layers to its box: each piece keeps its own size at the
+    // box's corner, and is moved from there.
+    let placed = |piece: Element, x: f32, y: f32| Element::column(vec![Element::row(vec![piece, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
+        .translate(limn::Point::new(x, y));
+    for (url, (x, y, size)) in covers.into_iter().zip([(0.08, 0.06, 0.22), (0.72, 0.04, 0.19), (0.03, 0.55, 0.18), (0.80, 0.52, 0.16), (0.26, 0.74, 0.19), (0.62, 0.77, 0.15)]) {
+        let picture = cover(state, &Some(url.clone()), side * size, SCHEME.palette()).radius(10.0);
+        layers.push(placed(picture, side * x, art * y));
+    }
+    if let Some(picture) = import_picture() {
+        let (wide, high) = (side * 0.62, side * 0.62 * 260.0 / 920.0);
+        layers.push(placed(Element::raster_image(picture.cover()).size(Some(wide), Some(high)).radius(12.0), (side - wide) / 2.0, (art - high) / 2.0));
+    }
+    let on_violet = ComponentPalette { surface: VIOLET, text: Color::WHITE, muted: Color::rgba(255, 255, 255, 220), ..SCHEME.palette() };
+    let title = Text::new(t!("common-welcome-title"), on_violet).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content();
+    let about = Text::new(t!("common-welcome-detail"), on_violet).font_size(15.0).line_height(21.0).muted().render().center_content();
+    let label = Element::text(t!("common-welcome-import")).font_family(FontFamily::SansBold).font_size(16.0).foreground(VIOLET).center_content();
+    let go = Element::clickable("welcome-import", Element::panel(label.centered()).background(LAVENDER).radius(26.0).size(Some(side * 0.62), Some(52.0)))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-welcome-import")));
+    let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(8.0)), go.centered_x()]).gap(12.0).padding(24.0);
+    // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
+    let art = Element::stack(layers).size(Some(side), Some(art)).corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
+    let card = Element::panel(Element::column(vec![art, copy]))
+        .background(VIOLET).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
+    let close = Element::clickable("welcome-close", Element::text(t!("common-close")).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close"))).size(Some(side), Some(48.0));
+    // As wide as the card, so the window centres it.
+    let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
+        .accessible(limn::Access::new(limn::Role::Dialog).id("welcome:dialog").name(t!("common-welcome-title")));
+    Element::popover(window_tree, dialog, "welcome-close", PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200))
+}
+
 /// What cannot be undone asks before it is done.
 fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
     let (title, about, yes) = match &state.confirm {
@@ -552,7 +635,7 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
     }
     head.extend(action);
     parts.insert(0, Element::row(head).gap(12.0));
-    parts.extend(release_notes(state, release, (width - 32.0).min(NOTES_WIDTH), palette));
+    parts.extend(release_notes(state, &release.notes, (width - 32.0).min(NOTES_WIDTH), palette));
     Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(palette.surface).radius(RadiusRole::Panel.px())
 }
 
@@ -560,17 +643,63 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
 const NOTES_WIDTH: f32 = 600.0;
 
 /// What a release says of itself: its text as it was written, and its pictures as wide
-/// as the text, each in a room of a screen's proportions.
-fn release_notes(state: &State, release: &Release, width: f32, palette: ComponentPalette) -> Vec<Element> {
+/// as the text, each in a room of a screen's proportions. A video opens where it is kept.
+// shortcut: a video is a card that opens it in the browser, as the clips' decoder reads only
+// YouTube's fragmented MP4; play it here once that decoder reads a whole MP4 too.
+fn release_notes(state: &State, notes: &[Note], width: f32, palette: ComponentPalette) -> Vec<Element> {
     let radius = limn::tokens().radius.control;
-    let part = |note: &Note| match note {
+    let part = |(index, note): (usize, &Note)| match note {
+        Note::Video(address) => {
+            let label = Element::row(vec![Element::icon(Icon::PlayFill).foreground(palette.text).size(Some(18.0), Some(18.0)).centered_y(),
+                Text::new(t!("common-watch-video"), palette).render().centered_y()]).gap(8.0).centered();
+            let card = Element::panel(label).background(palette.selected).radius(radius).size(Some(width), Some(width * 9.0 / 16.0));
+            Element::clickable(format!("{RELEASE_LINK}video:{index}:{address}"), card)
+                .accessible(limn::Access::new(limn::Role::Link).name(t!("common-watch-video")))
+        }
         Note::Text(text) => Markdown::new(text, palette).width(width).link_action_prefix(RELEASE_LINK).render().element,
         Note::Picture(address) => match state.artwork.get(address) {
             Some(picture) => Element::raster_image(picture.clone().full_resolution()).size(Some(width), Some(width * 9.0 / 16.0)).radius(radius),
             None => Element::panel(Element::spacer()).background(palette.selected).radius(radius).size(Some(width), Some(width * 9.0 / 16.0)),
         },
     };
-    release.notes.iter().map(part).collect()
+    notes.iter().enumerate().map(part).collect()
+}
+
+/// What each version brought, the latest first, as its release tells it; the one that runs
+/// says so.
+fn patches_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let title = Element::column(vec![
+        Text::new(t!("common-patches"), palette).font_size(PAGE_TITLE).render(),
+        Text::new(t!("common-patches-detail"), palette).muted().render(),
+    ]).gap(4.0);
+    let patches = match &state.patches {
+        None => return Element::column(vec![title, loading("patches", palette)]).gap(16.0).padding(12.0).flex(1.0),
+        Some(Err(why)) => {
+            let failed = Empty::new(t!("common-patches-failed"), why, palette).icon(Icon::WarningTriangle)
+                .action("patches-retry", t!("common-retry"), ButtonVariant::Secondary).render();
+            return Element::column(vec![title, centered(failed)]).gap(16.0).padding(12.0).flex(1.0);
+        }
+        Some(Ok(patches)) => patches,
+    };
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let notes = (width - 24.0 - 32.0).min(NOTES_WIDTH);
+    let mut sections = vec![title];
+    for patch in patches {
+        let mut about = match patch.date.splitn(3, '-').collect::<Vec<_>>()[..] {
+            [year, month, day] => t!("common-patches-date", day = day.trim_start_matches('0'), month = month.trim_start_matches('0'), year = year).into_owned(),
+            _ => String::new(),
+        };
+        if patch.version == env!("CARGO_PKG_VERSION") {
+            about = [about, t!("common-patches-current").into_owned()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+        }
+        let mut parts = vec![Element::column(vec![
+            Text::new(format!("Surco {}", patch.version), raised).font_size(20.0).render(),
+            Text::new(about, raised).muted().render(),
+        ]).gap(2.0)];
+        parts.extend(release_notes(state, &patch.notes, notes, raised));
+        sections.push(Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(raised.surface).radius(RadiusRole::Panel.px()));
+    }
+    page_scroll("patches", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 /// A version that may not keep running stands in front of everything until the later one
@@ -593,7 +722,7 @@ fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette)
     if let Updating::Fetching(done) = &state.updating {
         body.push(Progress::new(*done, palette).height(6.0).render());
     }
-    let notes = release_notes(state, release, UPDATE_DIALOG - 48.0, palette);
+    let notes = release_notes(state, &release.notes, UPDATE_DIALOG - 48.0, palette);
     if !notes.is_empty() {
         body.push(ScrollArea::new("update-notes", Element::column(notes).gap(12.0)).render().size(None, Some(UPDATE_NOTES_ROOM)));
     }
@@ -618,6 +747,7 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
         sections.push(update_card(state, release, width - 24.0, raised));
     }
+    sections.push(Element::row(vec![Button::new("patches", t!("common-patches"), palette).variant(ButtonVariant::Secondary).size(ControlSize::Compact).render()]));
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
         let about = [release.artist.as_deref().unwrap_or_default(), release.year.as_str()].into_iter().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
         ListRow::new(format!("news:{index}"), &release.title, palette)
@@ -763,7 +893,8 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     } else {
         IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip(t!("common-clear")).render()
     };
-    let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]).centered_y();
+    let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]);
+    let search = recent_searches(state, search, palette).centered_y();
     let room = |width: f32| (width > 0.0).then(|| Element::spacer().size(Some(width), None));
     // A rule tells the window's buttons apart from the app's.
     let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render().centered_y());
@@ -786,7 +917,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
         }
     };
     trailing.push(bell.centered_y());
-    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(state.page == Page::Settings).render().centered_y());
+    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(matches!(state.page, Page::Settings | Page::SettingsPart(_))).render().centered_y());
     if !state.panel_open && width >= PANEL_FROM {
         trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new(t!("desktop-show-now-playing")), palette).render().centered_y());
     }
@@ -973,9 +1104,10 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             let entry = match view {
                 LibraryView::Grid => {
                     let tile = MediaTile::new(id, name, palette).width(tile_width).round(round).subtitle(about);
-                    match artwork.and_then(|url| state.artwork.get(url)) {
-                        Some(image) => tile.artwork(Element::raster_image(image.clone().cover())),
-                        None => tile,
+                    match (artwork.and_then(|url| state.artwork.get(url)), coming(state, artwork, palette)) {
+                        (Some(image), _) => tile.artwork(Element::raster_image(image.clone().cover())),
+                        (None, Some(pulse)) => tile.artwork(pulse),
+                        (None, None) => tile,
                     }
                     .render()
                 }
@@ -1083,6 +1215,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mix: Vec<Element> = state.mix.iter().enumerate().map(|(index, track)| pick(format!("mix:{index}"), track)).collect();
     if !mix.is_empty() {
         sections.push(shelf(state, "home-mix", &t!("desktop-made-for-you"), mix, palette));
+    } else if state.picks_coming[0] {
+        sections.push(shelf(state, "home-mix", &t!("desktop-made-for-you"), coming_tiles(state, false, palette), palette));
     }
     let artists: Vec<Element> = state
         .picked_artists
@@ -1092,9 +1226,13 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .collect();
     if !artists.is_empty() {
         sections.push(shelf(state, "home-pick-artists", &t!("desktop-artists-to-discover"), artists, palette));
+    } else if state.picks_coming[1] {
+        sections.push(shelf(state, "home-pick-artists", &t!("desktop-artists-to-discover"), coming_tiles(state, true, palette), palette));
     }
     if !state.picked_albums.is_empty() {
         sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), release_tiles(state, "pick-album", &state.picked_albums, palette), palette));
+    } else if state.picks_coming[2] {
+        sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), coming_tiles(state, false, palette), palette));
     }
     for (shelf_index, (seed, tracks)) in state.because.iter().enumerate() {
         let picks: Vec<Element> = tracks.iter().enumerate().map(|(index, track)| pick(format!("rec:{shelf_index}:{index}"), track)).collect();
@@ -1124,20 +1262,39 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     page_scroll("home", Element::column(sections).gap(16.0).padding(12.0))
 }
 
-/// Where a search starts: what was searched lately as cards to search again or forget,
-/// over every genre to browse.
-fn browse_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let mut sections = Vec::new();
-    let recent: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
-        let disc = Element::panel(Element::icon(Icon::Search).large_icon(TILE_WIDTH * 0.3).foreground(palette.muted).centered()).background(CHOSEN);
-        let tile = MediaTile::new(format!("recent-search:{index}"), query, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).padding(if state.mobile { 0.0 } else { TILE_PAD }).round(true).artwork(disc).subtitle(t!("desktop-search-tile")).render();
-        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, palette).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round().tooltip(t!("desktop-forget-search", query = query.as_str())).render();
-        Element::stack(vec![tile, Element::row(vec![Element::spacer().flex(1.0), forget])])
-    }).collect();
-    if !recent.is_empty() {
-        sections.push(shelf(state, "browse-recent", &t!("desktop-recent-searches"), recent, palette));
+/// What was searched lately, dropped down from the desktop's field while it holds the
+/// keyboard with nothing typed, as Spotify's: a row each to search again, its cross under the
+/// pointer, and a way to forget them all below. A click away puts it away.
+fn recent_searches(state: &State, field: Element, palette: ComponentPalette) -> Element {
+    if !state.recent_searches_shown() {
+        return field;
     }
-    sections.push(heading(&t!("desktop-browse-all"), palette));
+    let raised = ComponentPalette { surface: SCHEME.raised, ..palette };
+    let rows: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
+        let picture = Element::panel(Element::icon(Icon::Search).foreground(palette.muted).size(Some(20.0), Some(20.0)).centered())
+            .background(CHOSEN).radius(4.0).size(Some(48.0), Some(48.0));
+        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, raised).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round()
+            .tooltip(t!("desktop-forget-search", query = query.as_str())).render().reveal_on_hover(format!("forget:{index}"));
+        ListRow::new(format!("recent-search:{index}"), query, raised)
+            .sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), gap: 12.0, leading_width: 48.0, ..TRACK_ROW })
+            .leading(picture).subtitle(t!("desktop-search-tile")).title_fade(true).radius(RadiusRole::Card)
+            .trailing_action(format!("recent-search-remove:{index}"), middle(forget)).render().hover_region()
+    }).collect();
+    let heading = Text::new(t!("desktop-recent-searches"), raised).font_size(16.0).render().font_family(FontFamily::SansBold).padding(8.0);
+    let clear = Button::new("recent-search-clear", t!("common-clear-recent-searches"), raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
+    let list = ScrollArea::new("recent-searches", Element::column(rows).gap(2.0)).render().max_height(398.0);
+    let panel = Element::panel(Element::column(vec![heading, list, Element::row(vec![clear]).padding(8.0)]).gap(4.0))
+        .padding(8.0).background(SCHEME.raised).radius(8.0)
+        .shadow(Color::rgba(0, 0, 0, 77), limn::Point::new(0.0, 16.0), 24.0, 0.0)
+        .size(Some(SEARCH_MAX_WIDTH.min(560.0)), None);
+    Element::popover(field, panel, "search-recent-close", PopoverPlacement::BottomStart).popover_backdrop_dismiss(true)
+}
+
+/// Where a search starts: every genre to browse; what was searched lately drops down from
+/// the field instead.
+fn browse_page(width: f32, palette: ComponentPalette) -> Element {
+    // As Spotify's: the recent searches drop down from the field, and the page is the genres.
+    let mut sections = vec![Text::new(t!("desktop-browse-all"), palette).font_size(24.0).render().font_family(FontFamily::SansBold)];
     let width = width - 24.0;
     let columns = ((width / 200.0) as usize).clamp(2, 5);
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
@@ -1189,6 +1346,20 @@ fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: Com
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 
+/// A shelf's tiles while what fills them is on its way: the shape of each, a picture and two
+/// lines, pulsing in step with every cover that is coming.
+fn coming_tiles(state: &State, round: bool, palette: ComponentPalette) -> Vec<Element> {
+    let (width, inset) = if state.mobile { (TILE_WIDTH, 0.0) } else { (CARD_WIDTH, TILE_PAD) };
+    let side = width - 2.0 * inset;
+    let pulse = ComponentPalette { raised: palette.selected, ..palette };
+    (0..6).map(|_| {
+        let picture = limn::Skeleton::block("cover-coming", pulse, side, side).radius(if round { side / 2.0 } else { limn::tokens().radius.control }).render();
+        let lines = [0.7, 0.45].map(|share| limn::Skeleton::line("cover-coming", pulse, side * share).render());
+        let lines: Vec<Element> = if round { lines.map(Element::centered_x).into() } else { lines.into() };
+        Element::column(vec![picture, Element::column(lines).gap(8.0)]).gap(12.0).padding(inset).size(Some(width), None)
+    }).collect()
+}
+
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
     let row = id.clone();
     let tile = MediaTile::new(id, title, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
@@ -1197,9 +1368,10 @@ fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwor
         let sounding = state.player.playing && state.track_at(&row).zip(state.current()).is_some_and(|(track, current)| track.id == current.id);
         tile.padding(TILE_PAD).play(format!("tile-play:{row}"), t!("common-play")).playing(sounding)
     };
-    let tile = match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
-        Some(image) => tile.artwork(Element::raster_image(image.clone().cover())),
-        None => tile,
+    let tile = match (artwork.as_ref().and_then(|url| state.artwork.get(url)), coming(state, artwork.as_ref(), palette)) {
+        (Some(image), _) => tile.artwork(Element::raster_image(image.clone().cover())),
+        (None, Some(pulse)) => tile.artwork(pulse),
+        (None, None) => tile,
     };
     let element = match subtitle {
         Some(subtitle) => tile.subtitle(subtitle),
@@ -1542,8 +1714,10 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Library => "page:library".to_owned(),
         Page::Playing => "page:playing".to_owned(),
         Page::Settings => "page:settings".to_owned(),
+        Page::SettingsPart(part) => format!("page:settings:{}", part.slug()),
         Page::Lyrics => "page:lyrics".to_owned(),
         Page::News => "page:news".to_owned(),
+        Page::Patches => "page:patches".to_owned(),
         Page::Browse => "page:browse".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
@@ -1627,12 +1801,13 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, 0.0, palette),
         Page::News => news_page(state, width, palette),
-        Page::Browse => browse_page(state, width, palette),
+        Page::Patches => patches_page(state, width, palette),
+        Page::Browse => browse_page(width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
         },
-        Page::Settings => settings_page(state, width, palette),
+        Page::Settings | Page::SettingsPart(_) => settings_page(state, width, palette),
         Page::Equalizer => mobile::settings::equalizer(state, width),
     }
 }
@@ -1691,8 +1866,55 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     } else {
         track_table(state, &state.page_rows(), true, Some(format!("playlist-row:{}", playlist.id)), table_width(width), palette)
     };
+    let mut sections = vec![header, actions, list];
+    sections.extend(suggested(state, playlist, width, palette));
     let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
-    page_scroll("playlist", washed(state, &cover, Element::column(vec![header, actions, list]).gap(16.0).padding(12.0)))
+    page_scroll("playlist", washed(state, &cover, Element::column(sections).gap(16.0).padding(12.0)))
+}
+
+/// What goes with a playlist, ten at a time under it as Spotify offers it: a row plays its
+/// song, its button adds it to the end of the list, and the one below trades the ten for
+/// others. Nothing until the catalog has answered.
+fn suggested(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Option<Element> {
+    let shown = state.suggestions();
+    if shown.is_empty() {
+        return None;
+    }
+    let detail = if playlist.tracks.is_empty() { t!("common-recommended-listening") } else { t!("common-recommended-detail") };
+    let heading = Element::column(vec![
+        Text::new(t!("common-recommended"), palette).font_size(24.0).render(),
+        Text::new(detail, palette).muted().render(),
+    ]).gap(4.0);
+    if state.mobile {
+        return Some(Element::column(vec![heading, mobile::suggested(state, &shown[..shown.len().min(SUGGESTED_SHOWN)], palette)]).gap(12.0));
+    }
+    let columns = vec![
+        TableColumn::flexible("title", t!("common-title"), TITLE_MIN),
+        TableColumn::fixed("album", t!("common-album"), state.album_width).hide_below(ALBUM_FROM),
+        TableColumn::fixed("add", "", 96.0).align_end(),
+    ];
+    let rows = shown.iter().take(SUGGESTED_SHOWN).enumerate().map(|(index, track)| {
+        let copy = Element::column(vec![
+            Text::new(&track.title, palette).font_size(TRACK_ROW.title_size).truncate().render(),
+            Text::new(&track.artist, palette).font_size(TRACK_ROW.subtitle_size).muted().truncate().render(),
+        ]).gap(TRACK_ROW.copy_gap).flex(1.0).centered_y();
+        let add = format!("suggested-add:{index}");
+        let button = Button::new(&add, t!("common-recommended-add"), palette).variant(ButtonVariant::Secondary).size(ControlSize::Compact).round()
+            .tooltip(t!("common-recommended-add-title", title = track.title.as_str())).render();
+        TableRow::new(format!("suggested:{index}"), vec![
+            Element::row(vec![cover(state, &track.artwork_url, COVER, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0),
+            Text::new(track.album.as_deref().unwrap_or_default(), palette).muted().truncate().render(),
+            Element::row(vec![Element::spacer().flex(1.0), button.centered_y()]),
+        ]).controls([add])
+    }).collect();
+    // No heads: the rows read as more of the list above them.
+    let (_, rows) = Table::new("suggested", columns, table_width(width), palette)
+        .rows(rows)
+        .radius(RadiusRole::Card)
+        .sizing(TableSizing { row_height: TRACK_TABLE_ROW, ..TableSizing::ROOMY })
+        .into_parts();
+    let refresh = Button::new("suggested-refresh", t!("common-refresh"), palette).variant(ButtonVariant::Ghost).render();
+    Some(Element::column(vec![Element::spacer().size(None, Some(16.0)), heading, Element::column(rows), Element::row(vec![refresh])]).gap(12.0))
 }
 
 /// A size on disk as people read it.
@@ -1708,26 +1930,27 @@ const SETTINGS_WIDTH: f32 = 760.0;
 /// its own rows (the output device, the side panels), each control beside its name while
 /// there is room and under it when not.
 fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    use mobile::settings::{action, cell, chevron, group, line, segmented, stacked, switch, value, GUTTER};
+    use mobile::settings::{action, arrange, cell, chevron, group, line, segmented, stacked, switch, value, GUTTER};
+    use crate::state::SettingsPart;
     if state.mobile { return mobile::settings::page(state, width); }
     let across = width.min(SETTINGS_WIDTH);
     let inner = (across - GUTTER * 4.0).max(0.0);
     let wide = inner >= 560.0;
     let span = if wide { inner.min(288.0) } else { inner };
     let white = Color::WHITE;
-    let beside = |glyph, title: &str, detail: Option<&str>, control: Element| if wide { cell(line(glyph, title, detail, Some(control), white)) }
-        else { stacked(line(glyph, title, detail, None, white), control) };
+    let beside = |title: &str, detail: Option<&str>, control: Element| if wide { cell(line(title, detail, Some(control), white)) }
+        else { stacked(line(title, detail, None, white), control) };
 
     let seconds = state.settings.crossfade;
     let fade = if seconds == 0.0 { t!("desktop-crossfade-off").into_owned() } else { format!("{seconds:.0} s") };
     let slider = Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(span).render();
     let (mixes, crossfade) = (t!("desktop-crossfade-detail"), t!("desktop-crossfade"));
     let mixes = Some(&*mixes);
-    let crossfade = if wide { cell(line(Icon::Shuffle, &crossfade, mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
-        else { stacked(line(Icon::Shuffle, &crossfade, mixes, Some(value(&fade)), white), slider) };
-    let playback = group(&t!("desktop-playback"), vec![
-        switch(Icon::Infinity, &t!("desktop-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay),
-        crossfade,
+    let crossfade = if wide { cell(line(&crossfade, mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
+        else { stacked(line(&crossfade, mixes, Some(value(&fade)), white), slider) };
+    let transitions = group(&t!("common-settings-transitions"), vec![crossfade], "");
+    let controls = group(&t!("common-settings-controls"), vec![
+        switch(&t!("desktop-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay),
     ], "");
 
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
@@ -1758,8 +1981,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         t!("desktop-outputs-count", count = state.outputs.len())
     };
     let mut connections = group(&t!("desktop-connections"), vec![
-        beside(Icon::Custom(AUDIO_ROUTE), &t!("desktop-output-device"), Some(&t!("desktop-output-device-detail")), output),
-        action("setting:outputs-refresh", Icon::Refresh, &t!("desktop-refresh-outputs"), Some(&output_status), None, !state.outputs_loading, false),
+        beside(&t!("desktop-output-device"), Some(&t!("desktop-output-device-detail")), output),
+        action("setting:outputs-refresh", &t!("desktop-refresh-outputs"), Some(&output_status), None, !state.outputs_loading, false),
     ], &t!("desktop-connections-footer"));
     if let Some(notice) = &state.output_notice {
         connections = Element::column(vec![connections, Alert::new(t!("desktop-audio-output"), notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
@@ -1767,54 +1990,62 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 
     let chosen = state.settings.quality;
     let ceiling = t!("desktop-quality-up-to", kbps = match chosen { Quality::Low => 50, Quality::Normal => 70, Quality::High => 140 });
-    let audio = group(&t!("desktop-audio-quality"), vec![
-        beside(Icon::ChartBar, &t!("desktop-quality"), Some(&ceiling), segmented("setting-quality", span, Quality::ALL.into_iter()
+    let streaming = group(&t!("common-settings-streaming"), vec![
+        beside(&t!("desktop-quality"), Some(&ceiling), segmented("setting-quality", span, Quality::ALL.into_iter()
             .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect())),
-        switch(Icon::Volume, &t!("desktop-normalize"), Some(&t!("desktop-normalize-detail")), "setting:normalize", state.settings.normalize),
-        switch(Icon::Headphones, &t!("desktop-mono"), Some(&t!("desktop-mono-detail")), "setting:mono", state.settings.mono),
-        action("equalizer", Icon::Sliders, &t!("common-equalizer"), None,
-            Some(Element::row(vec![value(&equalizer::summary(state)).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
     ], &t!("desktop-quality-footer"));
+    let sound = group(&t!("common-settings-sound"), vec![
+        switch(&t!("desktop-normalize"), Some(&t!("desktop-normalize-detail")), "setting:normalize", state.settings.normalize),
+        switch(&t!("desktop-mono"), Some(&t!("desktop-mono-detail")), "setting:mono", state.settings.mono),
+        action("equalizer", &t!("common-equalizer"), None,
+            Some(Element::row(vec![value(&equalizer::summary(state)).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
+    ], "");
 
     let display = group(&t!("desktop-display"), vec![
-        switch(Icon::PanelLeft, &t!("desktop-show-library-setting"), Some(&t!("desktop-show-library-detail")), "setting:library-panel", state.library_open),
-        switch(Icon::PanelRight, &t!("desktop-show-now-playing"), Some(&t!("desktop-show-now-playing-detail")), "setting:player-panel", state.panel_open),
-        switch(Icon::Video, &t!("desktop-clips"), Some(&t!("desktop-clips-detail")), "setting:clips", state.settings.clips),
-        switch(Icon::Bolt, &t!("desktop-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
-        beside(Icon::Globe, &t!("common-language"), Some(&t!("common-language-detail")), segmented("setting-language", span, Language::ALL.into_iter()
+        switch(&t!("desktop-show-library-setting"), Some(&t!("desktop-show-library-detail")), "setting:library-panel", state.library_open),
+        switch(&t!("desktop-show-now-playing"), Some(&t!("desktop-show-now-playing-detail")), "setting:player-panel", state.panel_open),
+        switch(&t!("desktop-clips"), Some(&t!("desktop-clips-detail")), "setting:clips", state.settings.clips),
+        switch(&t!("desktop-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
+    ], "");
+    let language = group(&t!("common-language"), vec![
+        beside(&t!("common-language"), Some(&t!("common-language-detail")), segmented("setting-language", span, Language::ALL.into_iter()
             .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
-    let library = group(&t!("desktop-library"), vec![
-        beside(Icon::Sort, &t!("desktop-sort"), None, segmented("setting-library-sort", span, vec![
+    let library = group(&t!("common-settings-your-library"), vec![
+        beside(&t!("desktop-sort"), None, segmented("setting-library-sort", span, vec![
             Tab::new("library-sort:added", t!("desktop-sort-recent"), 0.0).active(sort == Sort::Added),
             Tab::new("library-sort:alphabetical", "A–Z", 0.0).active(sort == Sort::Alphabetical),
             Tab::new("library-sort:creator", t!("common-creator"), 0.0).active(sort == Sort::Creator),
         ])),
-        beside(Icon::Grid, &t!("desktop-view"), None, segmented("setting-library-view", span, vec![
+        beside(&t!("desktop-view"), None, segmented("setting-library-view", span, vec![
             Tab::new("library-view:compact", t!("desktop-view-compact"), 0.0).active(view == LibraryView::Compact),
             Tab::new("library-view:list", t!("desktop-view-list"), 0.0).active(view == LibraryView::List),
             Tab::new("library-view:grid", t!("desktop-view-grid"), 0.0).active(view == LibraryView::Grid),
         ])),
-        action("import-open", Icon::Playlist, &t!("desktop-import-settings"), Some(&t!("desktop-import-settings-detail")), Some(chevron()), true, false),
+    ], "");
+    let bring = group(&t!("common-settings-bring"), vec![
+        action("import-open", &t!("desktop-import-settings"), Some(&t!("desktop-import-settings-detail")), Some(chevron()), true, false),
     ], "");
 
     let about = group(&t!("desktop-about"), vec![
-        cell(line(Icon::InfoCircle, &t!("desktop-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
-        cell(line(Icon::Book, &t!("desktop-licenses"), Some(&t!("desktop-licenses-detail")), None, white)),
+        cell(line(&t!("desktop-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+        action("patches", &t!("common-patches"), Some(&t!("common-patches-detail")), Some(chevron()), true, false),
+        cell(line(&t!("desktop-licenses"), Some(&t!("desktop-licenses-detail")), None, white)),
     ], "");
 
     // What cannot be undone sits last, each behind a confirmation.
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
     let erase = group(&t!("desktop-storage"), vec![
-        action("downloads-clear", Icon::Trash, &t!("desktop-delete-downloads"), Some(&downloads), None, !state.saved.is_empty(), true),
-        action("recent-clear", Icon::History, &t!("desktop-clear-recent"), Some(&t!("desktop-clear-recent-settings-detail")), None, !state.collection.recent.is_empty(), true),
+        action("downloads-clear", &t!("desktop-delete-downloads"), Some(&downloads), None, !state.saved.is_empty(), true),
+        action("recent-clear", &t!("desktop-clear-recent"), Some(&t!("desktop-clear-recent-settings-detail")), None, !state.collection.recent.is_empty(), true),
     ], "");
 
-    let title = mobile::horizontal_inset(Text::new(t!("common-settings"), palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
-    let groups = vec![title, playback, connections, audio, display, library, about, erase];
-    let column = Element::column(groups).gap(28.0).padding(GUTTER).size(Some(across), None);
+    use SettingsPart::*;
+    let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
+        (Display, display), (Display, language), (Library, library), (Library, bring), (About, about), (Storage, erase)];
+    let column = Element::column(arrange(state, sections, true, palette)).gap(28.0).padding(GUTTER).size(Some(across), None);
     page_scroll("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]))
 }
 
@@ -2259,11 +2490,16 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
         ]).gap(20.0).padding(20.0)),
         Some((_, Lyrics::Plain { source, .. })) => {
             let words = std::iter::once(Text::new(t!("desktop-lyrics-unsynced", source = source.to_string()), palette).muted().render())
-                .chain(state.plain_lyrics().iter().map(|line| {
-                    if line.is_empty() { Element::spacer().size(None, Some(20.0)) }
-                    else { Text::new(line, palette).font_size(LYRIC_SIZE).render() }
+                .chain(state.plain_lyrics().iter().enumerate().map(|(index, line)| {
+                    if line.is_empty() { return Element::spacer().size(None, Some(20.0)); }
+                    let said = Text::new(line, palette).font_size(LYRIC_SIZE).render();
+                    match state.translated(index, line) {
+                        Some(translation) => Element::column(vec![said, Text::new(translation, palette).font_size(LYRIC_SIZE * TRANSLATION_SCALE).muted().render()]).gap(4.0),
+                        None => said,
+                    }
                 })).collect();
-            return ScrollArea::new("lyrics-list", Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0);
+            let list = ScrollArea::new("lyrics-list", Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0);
+            return with_translate(state, list, palette);
         }
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
@@ -2286,6 +2522,17 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
             .soft_focus(format!("lyric:{index}"), blur)
             // The line being sung grows a little from its leading edge; paint only, no re-wrap.
             .animate_scale(format!("lyric-scale:{index}"), if index as i64 == sung { 1.05 } else { 1.0 });
+        // Its translation goes under it, smaller, and dims and blurs with it.
+        let text = match state.translated(index, &line.text) {
+            Some(translation) => Element::column(vec![text, Element::text(translation)
+                .font_family(FontFamily::Sans)
+                .font_size(size * TRANSLATION_SCALE)
+                .line_height(size * TRANSLATION_SCALE * 1.25)
+                .foreground(ink)
+                .animate_foreground(format!("lyric-translation-ink:{index}"))
+                .soft_focus(format!("lyric-translation:{index}"), blur)]).gap(gap / 3.0),
+            None => text,
+        };
         let row = Element::clickable(format!("lyric:{index}"), text);
         // Still catching up with the list's jump to the line being sung.
         let lag = state.lyric_lag(index, now);
@@ -2300,11 +2547,27 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     // The list glides to each new line rather than stepping to it.
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
     let list = ScrollArea::new("lyrics-list", Element::column(rows).gap(gap).padding(margin)).motion(glide).render().flex(1.0);
-    let page = Element::column(vec![list]).flex(1.0);
+    let page = with_translate(state, list, palette);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
         Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
         None => page,
     }
+}
+
+/// How large a line's translation is next to the line.
+const TRANSLATION_SCALE: f32 = 0.58;
+
+/// The lyrics with the button that translates them over their top end, on the desktop; the
+/// phone has it in its header.
+fn with_translate(state: &State, list: Element, palette: ComponentPalette) -> Element {
+    if state.mobile || !state.translatable() {
+        return Element::column(vec![list]).flex(1.0);
+    }
+    let on = state.settings.translate_lyrics;
+    let button = IconButton::new("lyrics-translate", Icon::Custom(include_str!("../assets/icons/languages.svg")), palette)
+        .round().variant(if on { ButtonVariant::Secondary } else { ButtonVariant::Ghost }).size(ControlSize::Regular)
+        .tooltip(if on { t!("common-original-lyrics") } else { t!("common-translate-lyrics") }).render();
+    Element::column(vec![Element::row(vec![Element::spacer().flex(1.0), button]).padding(PANEL_PAD / 2.0), list]).flex(1.0)
 }
 
 fn upcoming(state: &State, palette: ComponentPalette) -> Element {
@@ -2369,12 +2632,20 @@ fn largest(state: &State, track: &Track) -> Option<String> {
     large.or_else(|| track.artwork_url.clone())
 }
 
+/// What a cover on its way stands in with: a pulse where it will be, every cover in step, so
+/// that covers do not appear out of nothing. One that has none, or could not be had, has none.
+fn coming(state: &State, artwork: Option<&String>, palette: ComponentPalette) -> Option<Element> {
+    artwork.filter(|url| state.cover_coming(url))
+        .map(|_| limn::Skeleton::new("cover-coming", ComponentPalette { raised: palette.selected, ..palette }).render())
+}
+
 fn picture(state: &State, artwork: &Option<String>, side: f32, whole: bool, palette: ComponentPalette) -> Element {
     let radius = limn::tokens().radius.control;
     match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
         // Covers are square; a video's thumbnail and an artist's banner are not.
         Some(image) if whole => Element::raster_image(image.clone().cover().full_resolution()).size(Some(side), Some(side)).radius(radius),
         Some(image) => Element::raster_image(image.clone().cover()).size(Some(side), Some(side)).radius(radius),
+        None if coming(state, artwork.as_ref(), palette).is_some() => coming(state, artwork.as_ref(), palette).unwrap().size(Some(side), Some(side)).radius(radius),
         None => Element::panel(Element::icon(Icon::MusicNote).foreground(palette.muted).centered())
             .size(Some(side), Some(side))
             .background(palette.selected)
@@ -2724,6 +2995,48 @@ mod tests {
     }
 
     #[test]
+    fn the_greeting_stands_over_the_window_until_it_is_answered_and_leads_to_the_import() {
+        let size = Size::new(1180.0, 700.0);
+        let mut state = State::default();
+        assert!(!ids(&state, size).iter().any(|id| id == "welcome-import"), "only when a start asks for it");
+        state.welcome = true;
+        let found = ids(&state, size);
+        assert!(found.iter().any(|id| id == "welcome-import") && found.iter().any(|id| id == "welcome-close"));
+        state.update(&limn::UiAction::Clicked { id: "welcome-import".into() });
+        assert!(!state.welcome && state.settings.welcomed && state.importing.is_some(), "answered, it opens the import and is not offered again");
+        state.mobile = true;
+        state.welcome = true;
+        let found = ids(&state, Size::new(390.0, 844.0));
+        assert!(found.iter().any(|id| id == "welcome-close"), "the phone has it too");
+        state.update(&limn::UiAction::Clicked { id: "welcome-close".into() });
+        assert!(!state.welcome);
+    }
+
+    #[test]
+    fn the_release_notes_page_asks_once_retries_a_failure_and_opens_a_video_where_it_is_kept() {
+        use crate::backend::{Command, Patch};
+        use crate::update::Note;
+        let size = Size::new(1180.0, 700.0);
+        let mut state = State::default();
+        assert!(ids(&state, size).iter().all(|id| id != "patches"), "not on the home page");
+        state.update(&limn::UiAction::Clicked { id: "settings".into() });
+        state.update(&limn::UiAction::Clicked { id: "settings-part:about".into() });
+        assert!(ids(&state, size).iter().any(|id| id == "patches"), "the way to them is in the settings, about Surco");
+        assert_eq!(state.update(&limn::UiAction::Clicked { id: "patches".into() }), vec![Command::Patches]);
+        assert!(state.update(&limn::UiAction::Clicked { id: "patches".into() }).is_empty(), "asked once while they come");
+        state.apply(Event::Patches(Err("sin red".into())));
+        assert!(ids(&state, size).iter().any(|id| id == "patches-retry"));
+        assert_eq!(state.update(&limn::UiAction::Clicked { id: "patches-retry".into() }), vec![Command::Patches]);
+        let video = "https://github.com/user-attachments/assets/clip";
+        let notes = vec![Note::Text("### Added\n- Recomendaciones".into()), Note::Video(video.into())];
+        state.apply(Event::Patches(Ok(vec![Patch { version: env!("CARGO_PKG_VERSION").into(), date: "2026-10-17".into(), notes }])));
+        let link = ids(&state, size).into_iter().find(|id| id.ends_with(video)).expect("the video is a card to open");
+        state.update(&limn::UiAction::Clicked { id: link });
+        assert_eq!(state.open_url.take().as_deref(), Some(video));
+        assert!(state.update(&limn::UiAction::Clicked { id: "patches".into() }).is_empty(), "once had, they are kept");
+    }
+
+    #[test]
     fn the_search_starts_from_a_browse_page_of_recent_searches_and_genres() {
         let size = Size::new(1180.0, 700.0);
         let has = |state: &State, id: &str| ids(state, size).iter().any(|found| found == id);
@@ -2735,9 +3048,19 @@ mod tests {
         assert!(has(&state, "browse"), "an empty field ends in the way to browse");
         state.update(&limn::UiAction::Clicked { id: "browse".into() });
         assert_eq!(state.page, Page::Browse);
-        for id in ["recent-search:0", "recent-search-remove:0", "browse:Rock argentino", "browse:Pop latino"] {
+        for id in ["browse:Rock argentino", "browse:Pop latino"] {
             assert!(has(&state, id), "{id} is on the browse page");
         }
+        assert!(!has(&state, "recent-search:0"), "the recent searches wait for the field, as Spotify's");
+        state.search_focused = true;
+        for id in ["recent-search:0", "recent-search-remove:0", "recent-search-clear"] {
+            assert!(has(&state, id), "{id} drops down from the field that holds the keyboard");
+        }
+        state.query = "C".into();
+        assert!(!has(&state, "recent-search:0"), "typing puts them away");
+        state.query.clear();
+        state.update(&limn::UiAction::Clicked { id: "search-recent-close".into() });
+        assert!(state.mobile_ui.blur, "a click away takes the keyboard from the field");
         assert!(matches!(state.update(&limn::UiAction::Clicked { id: "browse:Rock argentino".into() }).as_slice(), [crate::backend::Command::Search(query)] if query == "Rock argentino"));
         assert_eq!(state.collection.searches, ["Rock argentino", "Cerati"]);
         state.update(&limn::UiAction::Clicked { id: "recent-search-remove:1".into() });
@@ -2839,17 +3162,26 @@ mod tests {
 
         click(&mut state, "settings");
         state.apply(Event::Outputs(Vec::new()));
-        has(&state, &["setting:autoplay", "setting:output", "setting:outputs-refresh"]);
+        has(&state, &["settings-part:playback", "settings-part:devices"]);
+        click(&mut state, "settings-part:playback");
+        has(&state, &["setting:autoplay", "setting:crossfade"]);
         assert!(ids(&state, Size::new(720.0, 1000.0)).iter().any(|id| id == "setting:autoplay"), "and in a narrow window");
+        click(&mut state, "back");
+        click(&mut state, "settings-part:devices");
+        has(&state, &["setting:output", "setting:outputs-refresh"]);
     }
 
     #[test]
     fn settings_keep_the_output_picker_and_library_choices_inside_a_narrow_page() {
-        let state = State::default();
+        let mut state = State::default();
         for width in [360.0, 900.0] {
             let size = Size::new(width, 4000.0);
-            let mut tree = UiTree::new(settings_page(&state, width, SCHEME.palette()));
-            let frame = tree.layout(size);
+            // Each part of the settings on its own page.
+            let mut frame = limn::Frame::default();
+            for part in crate::state::SettingsPart::ALL {
+                state.page = Page::SettingsPart(part);
+                frame.access.extend(UiTree::new(settings_page(&state, width, SCHEME.palette())).layout(size).access);
+            }
             for id in ["setting:output", "setting:outputs-refresh", "library-sort:alphabetical", "library-view:grid", "setting:library-panel", "setting:player-panel", "setting:motion"] {
                 let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id} at {width}"));
                 assert!(node.rect.x >= 0.0 && node.rect.x + node.rect.width <= width, "{id}: {:?}", node.rect);
@@ -2870,6 +3202,7 @@ mod tests {
         };
         let has_text = |frame: &limn::Frame, text: &str| frame.text_layouts().iter().any(|layout| layout.source.contains(text));
         let mut state = State::default();
+        state.page = Page::SettingsPart(crate::state::SettingsPart::Devices);
         let frame = shown(&state);
         assert!(has_text(&frame, "No se encontraron salidas"));
         assert!(has_text(&frame, "Bluetooth"));

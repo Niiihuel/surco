@@ -1,5 +1,6 @@
 #import "SurcoSurfaces.h"
 #import "SurcoSheet.h"
+#import <LinkPresentation/LinkPresentation.h>
 #include <math.h>
 
 static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 255.0 alpha:1]; }
@@ -22,6 +23,43 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     [provider loadObjectOfClass:NSString.class completionHandler:^(id<NSItemProviderReading> item, NSError *error) {
         if (!error && [item isKindOfClass:NSString.class]) SurcoDeliverPaste((NSString *)item, receive);
     }];
+}
+
+/// The link the system share sheet sends, previewed as the track instead of a bare address.
+@interface SurcoShareItem : NSObject <UIActivityItemSource>
+@property(nonatomic) NSURL *url;
+@property(nonatomic) LPLinkMetadata *metadata;
+@end
+@implementation SurcoShareItem
+- (id)activityViewControllerPlaceholderItem:(UIActivityViewController *)controller { return _url; }
+- (id)activityViewController:(UIActivityViewController *)controller itemForActivityType:(UIActivityType)type { return _url; }
+- (LPLinkMetadata *)activityViewControllerLinkMetadata:(UIActivityViewController *)controller { return _metadata; }
+@end
+static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDictionary *share) {
+    NSURL *url = [NSURL URLWithString:SurcoString(share[@"url"])];
+    if (!url) return nil;
+    SurcoShareItem *item = [SurcoShareItem new];
+    item.url = url;
+    item.metadata = [LPLinkMetadata new];
+    item.metadata.originalURL = url;
+    item.metadata.URL = url;
+    NSString *title = SurcoString(model[@"title"]), *artist = SurcoString(model[@"description"]);
+    item.metadata.title = artist.length ? [NSString stringWithFormat:@"%@ · %@", title, artist] : title;
+    NSURL *artwork = [NSURL URLWithString:SurcoString(share[@"artwork"])];
+    if ([artwork.scheme isEqualToString:@"https"]) {
+        // The cover loads while the sheet opens; until then the system shows its placeholder.
+        NSItemProvider *icon = [NSItemProvider new];
+        [icon registerObjectOfClass:UIImage.class visibility:NSItemProviderRepresentationVisibilityAll loadHandler:^NSProgress *(void (^completion)(id<NSItemProviderWriting>, NSError *)) {
+            NSURLSessionDataTask *task = [NSURLSession.sharedSession dataTaskWithURL:artwork completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+                UIImage *image = data ? [UIImage imageWithData:data] : nil;
+                completion(image, image ? nil : (error ?: [NSError errorWithDomain:NSURLErrorDomain code:NSURLErrorCannotDecodeContentData userInfo:nil]));
+            }];
+            [task resume];
+            return task.progress;
+        }];
+        item.metadata.iconProvider = icon;
+    }
+    return [[UIActivityViewController alloc] initWithActivityItems:@[item] applicationActivities:nil];
 }
 
 // No pasteboard reads occur while checking availability.
@@ -811,12 +849,42 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
             }]];
         }
         _sheet = alert;
+    } else if ([model[@"share"] isKindOfClass:NSDictionary.class]) {
+        UIActivityViewController *activity = SurcoShareController(model, model[@"share"]);
+        if (!activity) { emit(@{@"kind": @"sheet_close", @"sheet": desired}); _dismissedSheet = desired; return; }
+        activity.popoverPresentationController.sourceView = _view;
+        activity.popoverPresentationController.sourceRect = CGRectMake(CGRectGetMidX(_view.bounds), CGRectGetMidY(_view.bounds), 1, 1);
+        __weak UIActivityViewController *weakActivity = activity;
+        activity.completionWithItemsHandler = ^(UIActivityType type, BOOL completed, NSArray *items, NSError *error) {
+            // A cancelled extension returns to the share sheet; anything else has dismissed it.
+            if (type && !completed) return;
+            SurcoSurfaces *owner = weakSelf;
+            // Rust closing the sheet dismisses it through reconcileSheet, which owns that path.
+            if (!owner || !owner->_valid || owner->_sheet != weakActivity || ![owner->_desiredSheet[@"id"] isEqual:desired]) return;
+            owner->_dismissedSheet = desired;
+            owner->_sheet = nil;
+            owner->_sheetId = nil;
+            owner->_transitioning = NO;
+            [owner emit:@{@"kind": @"sheet_close", @"sheet": desired}];
+        };
+        _sheet = activity;
     } else {
         SurcoSheet *sheet = [[SurcoSheet alloc] initWithModel:model emit:emit];
         sheet.modalPresentationStyle = UIModalPresentationPageSheet;
         UISheetPresentationController *presentation = sheet.sheetPresentationController;
         presentation.detents = @[[UISheetPresentationControllerDetent mediumDetent], [UISheetPresentationControllerDetent largeDetent]];
         presentation.selectedDetentIdentifier = [model[@"large"] boolValue] ? UISheetPresentationControllerDetentIdentifierLarge : UISheetPresentationControllerDetentIdentifierMedium;
+        if (@available(iOS 16.0, *)) {
+            // Sized to its rows, so a short menu leaves no empty sheet below them; a long one still reaches large.
+            __weak SurcoSheet *weakSheet = sheet;
+            UISheetPresentationControllerDetent *fit = [UISheetPresentationControllerDetent customDetentWithIdentifier:@"surco.fit"
+                resolver:^CGFloat(id<UISheetPresentationControllerDetentResolutionContext> context) {
+                    CGFloat height = weakSheet.fittingHeight;
+                    return height > 0 ? MIN(height, context.maximumDetentValue) : context.maximumDetentValue / 2;
+                }];
+            presentation.detents = @[fit, [UISheetPresentationControllerDetent largeDetent]];
+            presentation.selectedDetentIdentifier = fit.identifier;
+        }
         presentation.prefersGrabberVisible = YES;
         presentation.prefersScrollingExpandsWhenScrolledToEdge = YES;
         presentation.prefersEdgeAttachedInCompactHeight = YES;
@@ -826,7 +894,7 @@ static void SurcoLoadPasteString(NSItemProvider *provider, void (^receive)(NSStr
     }
     _sheet.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
     // SurcoSheet paints its own lifted surface.
-    if (![_sheet isKindOfClass:SurcoSheet.class]) _sheet.view.backgroundColor = SurcoSurfaceColor();
+    if ([_sheet isKindOfClass:UIAlertController.class]) _sheet.view.backgroundColor = SurcoSurfaceColor();
     _sheet.view.tintColor = UIColor.whiteColor;
     _sheetId = desired;
     _transitioning = YES;

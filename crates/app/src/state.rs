@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
 
-use crate::backend::{Command, Content, Event, Footage, Known, Picks, Release, Target, Taste};
+use crate::backend::{Command, Content, Event, Footage, Known, Patch, Picks, Release, Target, Taste};
 use crate::update::Note;
 use crate::clip::Showing;
 use crate::player::PlayerView;
@@ -47,14 +47,47 @@ pub enum Page {
     /// The phone's full player, backed by the same playback state.
     Playing,
     Settings,
+    /// A part of the settings, a page of its own under their list.
+    SettingsPart(SettingsPart),
     /// The lines of what plays, in the middle of the window.
     Lyrics,
     /// What the artists the user follows have released, and a later version of the app.
     News,
+    /// What each version of the app brought, as its release tells it.
+    Patches,
     /// The equaliser as a page of its own on a phone.
     Equalizer,
     /// Where a search starts on the desktop: what was searched lately, and genres to browse.
     Browse,
+}
+
+/// The settings in parts, each a page of its own under their list, as Spotify's.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsPart {
+    Playback,
+    Audio,
+    Devices,
+    Display,
+    Library,
+    About,
+    Storage,
+}
+
+impl SettingsPart {
+    pub const ALL: [SettingsPart; 7] = [Self::Playback, Self::Audio, Self::Devices, Self::Display, Self::Library, Self::About, Self::Storage];
+
+    /// How its row's id names it.
+    pub fn slug(self) -> &'static str {
+        match self {
+            Self::Playback => "playback",
+            Self::Audio => "audio",
+            Self::Devices => "devices",
+            Self::Display => "display",
+            Self::Library => "library",
+            Self::About => "about",
+            Self::Storage => "storage",
+        }
+    }
 }
 
 /// An album or an artist the library or the home page can lead to.
@@ -124,6 +157,19 @@ pub struct Collection {
     pub pinned: Vec<String>,
 }
 
+/// Songs that go with the playlist on screen, to add to it or to play.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Suggested {
+    pub playlist: u64,
+    /// What is still to be offered, the ones shown first.
+    pub tracks: Vec<Track>,
+    /// Every song offered so far, which a later answer leaves out.
+    offered: HashSet<String>,
+    /// How many times they were asked for: each time other songs of the list lead.
+    round: usize,
+    asking: bool,
+}
+
 /// A list the user makes. A collaborative one is meant for others to add to as well, which
 /// they can once accounts carry it; until then it is a mark on a list of this machine.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -175,6 +221,10 @@ pub struct Settings {
     pub import_dismissed: bool,
     /// The language chosen for the app; none follows the system's.
     pub language: Option<Language>,
+    /// Each line of the lyrics comes with its translation into the app's language.
+    pub translate_lyrics: bool,
+    /// The offer to bring music in that greets a first start was answered.
+    pub welcomed: bool,
 }
 
 /// The order the library lists what is not pinned in.
@@ -242,6 +292,16 @@ pub enum Lyrics {
     Failed { message: String, retry_at: Instant },
 }
 
+/// The lyrics of a track in another language, a line for each of theirs.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Translation {
+    Asking,
+    Lines(Vec<String>),
+    /// They already are in the language asked for.
+    Same,
+    Failed,
+}
+
 /// How many tracks a shelf of the home page holds.
 pub const SHELF: usize = 12;
 
@@ -250,7 +310,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false }
     }
 }
 
@@ -283,6 +343,11 @@ const SAME_LENGTH_MS: u64 = 2000;
 /// the home page asks the catalog what goes with them.
 const HEARD_KEPT: usize = 100;
 const SEEDS: usize = 5;
+
+/// How many songs a playlist's recommendations show at a time, and how few of them still to
+/// come make it ask for more, as Spotify's.
+pub const SUGGESTED_SHOWN: usize = 10;
+const SUGGESTED_LOW: usize = 20;
 
 /// How many recent entries the home page offers.
 const RECENT_KEPT: usize = 8;
@@ -505,6 +570,9 @@ pub struct State {
     pub library_search_slide: ScalarTransition,
     /// A field the window is to put the keyboard in, once.
     pub focus: Option<String>,
+    /// The desktop's search field holds the keyboard: with nothing typed, the recent
+    /// searches drop down from it.
+    pub search_focused: bool,
     /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
     pub library_open: bool,
     pub library_slide: ScalarTransition,
@@ -588,6 +656,8 @@ pub struct State {
     pub paste: Option<String>,
     /// Covers already asked for, arrived or not.
     covers: HashSet<String>,
+    /// The covers asked for that could not be had.
+    missing_covers: HashSet<String>,
     /// The tracks kept on disk, newest first, and the ids on their way there.
     pub saved: Vec<Track>,
     pub saving: HashSet<String>,
@@ -607,6 +677,17 @@ pub struct State {
     pub picked_albums: Vec<AlbumRef>,
     /// The artists the picks were last asked for.
     picked_for: Option<Vec<String>>,
+    /// Which of the picks, the tracks, the artists and the albums, are on their way.
+    pub picks_coming: [bool; 3],
+    /// The offer to bring music in stands over the window, as it does at a first start.
+    pub welcome: bool,
+    /// The lyrics of what plays in the app's language: whose, into which language, and them.
+    pub translation: Option<(String, String, Translation)>,
+    /// What goes with the playlist last opened.
+    pub suggested: Option<Suggested>,
+    /// The versions published and what each says of itself; none while they are asked for.
+    pub patches: Option<Result<Vec<Patch>, String>>,
+    patches_asked: bool,
     /// The footage asked for, with the song it belongs to; none yet while it is fetched,
     /// and still none when the song has no video of its own.
     pub clip: Option<(String, Option<Arc<Footage>>)>,
@@ -845,6 +926,7 @@ impl Default for State {
             copy: None,
             paste: None,
             covers: HashSet::new(),
+            missing_covers: HashSet::new(),
             saved: Vec::new(),
             saving: HashSet::new(),
             save_error: None,
@@ -854,6 +936,13 @@ impl Default for State {
             picked_artists: Vec::new(),
             picked_albums: Vec::new(),
             picked_for: None,
+            picks_coming: [false; 3],
+            welcome: false,
+            search_focused: false,
+            translation: None,
+            suggested: None,
+            patches: None,
+            patches_asked: false,
             clip: None,
             about: None,
             update: None,
@@ -1337,6 +1426,11 @@ impl State {
             self.open_url = link.splitn(3, ':').nth(2).filter(|address| address.starts_with("https://") || address.starts_with("http://")).map(str::to_owned);
             return Vec::new();
         }
+        // A click away from the recent searches puts them away with the keyboard.
+        if id == "search-recent-close" {
+            self.mobile_ui.blur = true;
+            return Vec::new();
+        }
         if let Some(index) = id.strip_prefix("recent-search-remove:").and_then(|value| value.parse::<usize>().ok()) {
             if index < self.collection.searches.len() { self.collection.searches.remove(index); }
             return Vec::new();
@@ -1376,6 +1470,9 @@ impl State {
         if let Some((action, row)) = id.strip_prefix("do:").and_then(|rest| rest.split_once(':')) {
             self.menu = None;
             return self.act(action, row);
+        }
+        if id.starts_with("suggested") {
+            return self.suggestion_action(id);
         }
         let indexed = |prefix: &str| id.strip_prefix(prefix).and_then(|index| index.parse::<usize>().ok());
         // The row of what plays pauses it and takes it up again; any other row starts its track.
@@ -1520,6 +1617,25 @@ impl State {
             }
             // The bell opens what is new, and leaves it for the page before. Opened, it has
             // all been looked at; what was still to be stays apart while the page shows.
+            "lyrics-translate" => {
+                self.settings.translate_lyrics = !self.settings.translate_lyrics;
+                // Turned on again after a failure, it is asked for anew.
+                if matches!(self.translation, Some((_, _, Translation::Failed))) {
+                    self.translation = None;
+                }
+                self.ask_translation()
+            }
+            "patches" | "patches-retry" => {
+                if self.page != Page::Patches {
+                    self.go(Page::Patches);
+                }
+                // Asked once while they come, and again only after they could not be had.
+                if self.patches_asked && !matches!(self.patches, Some(Err(_))) {
+                    return Vec::new();
+                }
+                (self.patches, self.patches_asked) = (None, true);
+                vec![Command::Patches]
+            }
             "news" => {
                 self.update_toast = false;
                 if self.page == Page::News {
@@ -1640,6 +1756,12 @@ impl State {
             }
             "share-close" => {
                 self.sharing = None;
+                Vec::new()
+            }
+            part if part.starts_with("settings-part:") => {
+                if let Some(part) = SettingsPart::ALL.into_iter().find(|known| part.strip_prefix("settings-part:") == Some(known.slug())) {
+                    self.go(Page::SettingsPart(part));
+                }
                 Vec::new()
             }
             "settings" => {
@@ -1779,6 +1901,10 @@ impl State {
             "import-missed-copy" => {
                 self.copy = self.imported.as_ref().map(|(_, missed)| missed.join("\n"));
                 Vec::new()
+            }
+            "welcome-close" | "welcome-import" => {
+                (self.welcome, self.settings.welcomed) = (false, true);
+                if id == "welcome-import" { self.click("import-open") } else { Vec::new() }
             }
             "import-open" => {
                 self.importing = Some(String::new());
@@ -2031,16 +2157,38 @@ impl State {
                 self.resound()
             }
             Event::Discovered(Picks::Tracks { mix, because }) => {
+                self.picks_coming[0] = false;
                 let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
                 (self.mix, self.because) = (mix, because);
                 covers
             }
+            Event::ArtworkMissing(url) => {
+                self.missing_covers.insert(url);
+                Vec::new()
+            }
+            Event::Patches(patches) => {
+                let pictures: Vec<Option<String>> = patches.iter().flatten().flat_map(|patch| &patch.notes)
+                    .filter_map(|note| if let Note::Picture(address) = note { Some(Some(address.clone())) } else { None }).collect();
+                self.patches = Some(patches);
+                cover_requests(&mut self.covers, &pictures)
+            }
+            Event::Suggested { playlist, tracks } => {
+                let Some(suggested) = self.suggested.as_mut().filter(|suggested| suggested.playlist == playlist) else { return Vec::new() };
+                suggested.asking = false;
+                let fresh: Vec<Track> = tracks.into_iter().filter(|track| suggested.offered.insert(track.id.clone())).collect();
+                // Out of new songs: what was offered may come round again, as on Spotify.
+                if fresh.is_empty() { suggested.offered.clear(); }
+                suggested.tracks.extend(fresh);
+                self.suggested_covers()
+            }
             Event::Discovered(Picks::Artists(artists)) => {
+                self.picks_coming[1] = false;
                 let covers = cover_requests(&mut self.covers, artists.iter().map(|artist| &artist.artwork_url));
                 self.picked_artists = artists;
                 covers
             }
             Event::Discovered(Picks::Albums(albums)) => {
+                self.picks_coming[2] = false;
                 let covers = cover_requests(&mut self.covers, albums.iter().map(|album| &album.artwork_url));
                 self.picked_albums = albums;
                 covers
@@ -2049,6 +2197,14 @@ impl State {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
                     if *asked == track_id && (lines.is_some() || !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. })) {
                         *lyrics = lines.map_or(Lyrics::Missing, Lyrics::Lines);
+                    }
+                }
+                Vec::new()
+            }
+            Event::Translated { track_id, to, lines } => {
+                if let Some((asked, into, translation)) = &mut self.translation {
+                    if *asked == track_id && *into == to {
+                        *translation = match lines { Ok(Some(lines)) => Translation::Lines(lines), Ok(None) => Translation::Same, Err(_) => Translation::Failed };
                     }
                 }
                 Vec::new()
@@ -2282,8 +2438,125 @@ impl State {
         let anything = !taste.seeds.is_empty() || !taste.artist_ids.is_empty();
         if anything && self.picked_for.as_ref() != Some(&artists) {
             self.picked_for = Some(artists);
+            self.picks_coming = [true; 3];
             commands.push(Command::Discover(taste));
         }
+        commands
+    }
+
+    /// Whether a cover is on its way: asked for, and neither in nor known to be missing.
+    pub fn cover_coming(&self, url: &str) -> bool {
+        self.covers.contains(url) && !self.artwork.contains_key(url) && !self.missing_covers.contains(url)
+    }
+
+    /// Whether the recent searches drop down from the desktop's search field.
+    pub fn recent_searches_shown(&self) -> bool {
+        !self.mobile && self.search_focused && self.query.is_empty() && !self.collection.searches.is_empty()
+    }
+
+    /// Asks for the translation of what plays once its lyrics are in, while translating is on.
+    pub fn ask_translation(&mut self) -> Vec<Command> {
+        let Some(track) = self.current().filter(|_| self.settings.translate_lyrics) else { return Vec::new() };
+        let to = crate::i18n::current().tag().to_owned();
+        if self.translation.as_ref().is_some_and(|(asked, into, _)| *asked == track.id && *into == to) {
+            return Vec::new();
+        }
+        let lines: Vec<String> = match self.lines() {
+            [] => self.plain_lyrics().to_vec(),
+            lines => lines.iter().map(|line| line.text.clone()).collect(),
+        };
+        if lines.is_empty() {
+            return Vec::new();
+        }
+        let track_id = track.id.clone();
+        self.translation = Some((track_id.clone(), to.clone(), Translation::Asking));
+        vec![Command::Translate { track_id, lines, to }]
+    }
+
+    /// The translation of the `index`-th line of what plays, while translating is on; none for
+    /// a blank line or one that reads the same.
+    pub fn translated(&self, index: usize, line: &str) -> Option<&str> {
+        let track = self.current().filter(|_| self.settings.translate_lyrics)?;
+        match &self.translation {
+            Some((asked, _, Translation::Lines(lines))) if *asked == track.id => lines.get(index).map(String::as_str).filter(|said| !said.is_empty() && *said != line.trim()),
+            _ => None,
+        }
+    }
+
+    /// Whether the lyrics of what plays can be translated: they are in, and in another language
+    /// as far as is known.
+    pub fn translatable(&self) -> bool {
+        let known_same = self.current().is_some_and(|track| matches!(&self.translation, Some((asked, _, Translation::Same)) if *asked == track.id));
+        !known_same && (!self.lines().is_empty() || !self.plain_lyrics().is_empty())
+    }
+
+    /// The songs the playlist on screen is offered, the ones shown first; none on any other page.
+    pub fn suggestions(&self) -> Vec<&Track> {
+        let Page::Playlist(id) = self.page else { return Vec::new() };
+        let (Some(playlist), Some(suggested)) = (self.collection.playlist(id), self.suggested.as_ref().filter(|suggested| suggested.playlist == id)) else { return Vec::new() };
+        suggested.tracks.iter().filter(|track| !playlist.tracks.iter().any(|held| held.id == track.id)).collect()
+    }
+
+    /// Asks for what goes with a playlist the first time its page is on screen.
+    pub fn ask_suggested(&mut self) -> Vec<Command> {
+        let Page::Playlist(id) = self.page else { return Vec::new() };
+        if self.suggested.as_ref().is_some_and(|suggested| suggested.playlist == id) || self.collection.playlist(id).is_none() {
+            return Vec::new();
+        }
+        self.suggested = Some(Suggested { playlist: id, ..Suggested::default() });
+        self.ask_more_suggested()
+    }
+
+    /// Asks for more of what goes with the playlist once few are left to show. Each time
+    /// other songs of it lead, its latest first; an empty one goes by what the user plays.
+    fn ask_more_suggested(&mut self) -> Vec<Command> {
+        let left = self.suggestions().len();
+        let Some(suggested) = self.suggested.as_ref().filter(|suggested| !suggested.asking && left < SUGGESTED_LOW) else { return Vec::new() };
+        let Some(playlist) = self.collection.playlist(suggested.playlist) else { return Vec::new() };
+        let tracks = &playlist.tracks;
+        let seeds: Vec<Track> = if tracks.is_empty() {
+            discover::seeds(&self.collection.heard, &self.collection.liked, SEEDS)
+        } else {
+            (0..SEEDS.min(tracks.len())).map(|k| tracks[tracks.len() - 1 - (suggested.round * SEEDS + k) % tracks.len()].clone()).collect()
+        };
+        if seeds.is_empty() {
+            return Vec::new();
+        }
+        let mut known = suggested.offered.clone();
+        known.extend(tracks.iter().map(|track| track.id.clone()));
+        let playlist = suggested.playlist;
+        let suggested = self.suggested.as_mut().unwrap();
+        suggested.round += 1;
+        suggested.asking = true;
+        vec![Command::Suggest { playlist, seeds, known }]
+    }
+
+    fn suggested_covers(&mut self) -> Vec<Command> {
+        let urls: Vec<Option<String>> = self.suggestions().into_iter().take(SUGGESTED_SHOWN).map(|track| track.artwork_url.clone()).collect();
+        cover_requests(&mut self.covers, &urls)
+    }
+
+    /// A recommendation played, added to the playlist, or the ones shown traded for the next.
+    fn suggestion_action(&mut self, id: &str) -> Vec<Command> {
+        let shown: Vec<Track> = self.suggestions().into_iter().take(SUGGESTED_SHOWN).cloned().collect();
+        let picked = |prefix: &str| id.strip_prefix(prefix).and_then(|index| index.parse::<usize>().ok()).and_then(|index| shown.get(index));
+        if let Some(track) = picked("suggested:") {
+            if self.current().is_some_and(|current| current.id == track.id) {
+                return vec![Command::PlayPause];
+            }
+            return vec![Command::PlayList { tracks: vec![track.clone()], index: 0 }];
+        }
+        let Some(suggested) = self.suggested.as_mut() else { return Vec::new() };
+        if let Some(track) = picked("suggested-add:") {
+            // It goes to the end of the list, and the next one takes its place on the shelf.
+            self.collection.add(suggested.playlist, track.clone());
+        } else if id == "suggested-refresh" {
+            suggested.tracks.retain(|track| !shown.iter().any(|gone| gone.id == track.id));
+        } else {
+            return Vec::new();
+        }
+        let mut commands = self.ask_more_suggested();
+        commands.extend(self.suggested_covers());
         commands
     }
 
@@ -3183,6 +3456,38 @@ mod tests {
     }
 
     #[test]
+    fn a_playlist_is_offered_ten_songs_at_a_time_to_add_or_trade_for_others() {
+        let mut state = State::default();
+        state.collection.playlists.push(Playlist { id: 1, name: "Lista".into(), collaborative: false, tracks: vec![track("a"), track("b")] });
+        assert!(state.ask_suggested().is_empty(), "only on the playlist's page");
+        state.page = Page::Playlist(1);
+        let Some(Command::Suggest { playlist, seeds, known }) = state.ask_suggested().pop() else { panic!("they are asked for") };
+        assert_eq!((playlist, seeds.iter().map(|seed| seed.id.as_str()).collect::<Vec<_>>()), (1, vec!["b", "a"]), "its latest songs lead");
+        assert!(known.contains("a") && known.contains("b"));
+        assert!(state.ask_suggested().is_empty(), "asked once");
+        state.apply(Event::Suggested { playlist: 7, tracks: vec![track("x")] });
+        assert!(state.suggestions().is_empty(), "an answer for another list is not this one's");
+        state.apply(Event::Suggested { playlist: 1, tracks: (0..25).map(|index| track(&format!("s{index}"))).collect() });
+        assert_eq!(state.suggestions().len(), 25);
+
+        assert!(click(&mut state, "suggested-add:0").iter().all(|command| !matches!(command, Command::Suggest { .. })), "enough are left");
+        assert_eq!(state.collection.playlist(1).unwrap().tracks.last().unwrap().id, "s0", "added at the end");
+        assert_eq!(state.suggestions()[0].id, "s1", "and the next takes its place");
+
+        let asked = click(&mut state, "suggested-refresh");
+        assert_eq!(state.suggestions()[0].id, "s11", "the ten shown give way to the next ten");
+        let Some(Command::Suggest { seeds, known, .. }) = asked.into_iter().find(|command| matches!(command, Command::Suggest { .. })) else { panic!("few are left: more are asked for") };
+        assert!(known.contains("s1") && known.contains("s24") && known.contains("s0"), "nothing offered is offered again");
+        assert_ne!(seeds[0].id, "s0", "other songs of the list lead");
+        assert_eq!(click(&mut state, "suggested:0"), vec![Command::PlayList { tracks: vec![track("s11")], index: 0 }]);
+
+        state.apply(Event::Suggested { playlist: 1, tracks: vec![track("s5"), track("n")] });
+        assert_eq!(state.suggestions().last().unwrap().id, "n", "what was offered before is left out");
+        state.page = Page::Library;
+        assert!(state.suggestions().is_empty());
+    }
+
+    #[test]
     fn what_was_heard_is_offered_again_and_seeds_what_the_catalog_suggests() {
         let playing = |id: &str| PlayerView { current: Some(track(id)), playing: true, ..PlayerView::default() };
         let mut state = State::default();
@@ -3223,6 +3528,41 @@ mod tests {
         assert!(commands.iter().any(|command| matches!(command, Command::About(_))));
         let commands = state.show(PlayerView { position: 1.0, ..playing });
         assert!(!commands.iter().any(|command| matches!(command, Command::Lyrics(_) | Command::About(_))));
+    }
+
+    #[test]
+    fn a_cover_pulses_only_while_it_is_on_its_way() {
+        let mut state = State::default();
+        let url = "https://img/a".to_owned();
+        assert!(!state.cover_coming(&url), "not asked for, it is not coming");
+        cover_requests(&mut state.covers, std::iter::once(&Some(url.clone())));
+        assert!(state.cover_coming(&url));
+        state.apply(Event::ArtworkMissing(url.clone()));
+        assert!(!state.cover_coming(&url), "one that could not be had leaves its placeholder");
+    }
+
+    #[test]
+    fn lyrics_are_translated_a_line_each_once_for_what_plays_while_it_is_on() {
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
+        state.lyrics = Some(("a".into(), Lyrics::Lines(vec![Line { at_ms: 0, text: "I still see you".into() }, Line { at_ms: 900, text: String::new() }, Line { at_ms: 1800, text: "OK".into() }])));
+        assert!(state.ask_translation().is_empty(), "off until it is asked for");
+        assert!(state.translatable());
+        let asked = click(&mut state, "lyrics-translate");
+        assert_eq!(asked, vec![Command::Translate { track_id: "a".into(), lines: vec!["I still see you".into(), String::new(), "OK".into()], to: "es".into() }]);
+        assert!(state.ask_translation().is_empty(), "asked once");
+        state.apply(Event::Translated { track_id: "b".into(), to: "es".into(), lines: Ok(Some(vec!["otra".into()])) });
+        assert_eq!(state.translated(0, "I still see you"), None, "an answer for another song is not this one's");
+        state.apply(Event::Translated { track_id: "a".into(), to: "es".into(), lines: Ok(Some(vec!["Todavía te veo".into(), String::new(), "OK".into()])) });
+        assert_eq!(state.translated(0, "I still see you"), Some("Todavía te veo"));
+        assert_eq!((state.translated(1, ""), state.translated(2, "OK")), (None, None), "a blank line, and one that reads the same, have none");
+        click(&mut state, "lyrics-translate");
+        assert_eq!(state.translated(0, "I still see you"), None, "turned off, the lines stand alone");
+        assert!(click(&mut state, "lyrics-translate").is_empty(), "turned on again, what was had is kept");
+        state.translation = None;
+        state.ask_translation();
+        state.apply(Event::Translated { track_id: "a".into(), to: "es".into(), lines: Ok(None) });
+        assert!(!state.translatable(), "lyrics already in the app's language have nothing to translate");
     }
 
     #[test]
