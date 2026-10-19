@@ -1163,9 +1163,11 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         while tiles.peek().is_some() {
             rows.push(Element::row(tiles.by_ref().take(columns).collect()).gap(GAP));
         }
-        ScrollArea::new("library", Element::column(rows).gap(GAP)).render().flex(1.0)
+        let rows = Element::column(rows).gap(GAP);
+        if state.mobile { ScrollArea::new("library", rows) } else { panel_scroll("library", rows) }.render().flex(1.0)
     } else {
-        ScrollArea::new("library", Element::column(shown).gap(2.0)).render().flex(1.0)
+        let rows = Element::column(shown).gap(2.0);
+        if state.mobile { ScrollArea::new("library", rows) } else { panel_scroll("library", rows) }.render().flex(1.0)
     };
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
@@ -1379,10 +1381,26 @@ fn washed(state: &State, artwork: &Option<String>, content: Element) -> Element 
 /// A page of the middle panel. Its bar floats over the page, as Spotify's does, so a
 /// page's wash runs under it to the panel's edge instead of stopping short of a rail.
 fn page_scroll(id: &str, content: Element) -> Element {
-    // Its bar shows while the pointer is over the page or it moves, and fades after, as Spotify's.
-    ScrollArea::new(id, content).appearance(ScrollbarAppearance::overlay()).render()
-        .scrollbar_visibility(limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 300 })
-        .flex(1.0)
+    panel_scroll(id, content).render().flex(1.0)
+}
+
+/// A desktop panel's scroll area with Spotify's bar, as its client draws it: a thumb 12 wide
+/// over the content, white at 30%, 50% under the pointer and 70% held, at least 30 long, with
+/// no track. It shows while the pointer is over the panel or it moves, and fades in 0.2 s.
+fn panel_scroll(id: &str, content: Element) -> ScrollArea {
+    let bar = ScrollbarAppearance {
+        rail_width: 14.0,
+        thumb_width: 12.0,
+        min_thumb_length: 30.0,
+        tint: Some(Color::rgb(255, 255, 255)),
+        idle_thumb_opacity: 77,
+        hover_thumb_opacity: 128,
+        active_thumb_opacity: 179,
+        hover_track_opacity: 0,
+        buttons: false,
+        ..ScrollbarAppearance::overlay()
+    };
+    ScrollArea::new(id, content).appearance(bar).visibility(limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 200 })
 }
 
 fn centered(element: Element) -> Element {
@@ -2706,7 +2724,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
                 // Under its header the panel scrolls: on a short window the artist is below the fold.
                 playing.push(Element::spacer().size(None, Some(PANEL_PAD - 12.0)));
                 let below = Element::column(playing).gap(12.0);
-                vec![panel_header(&t!("desktop-now-playing"), track.album.as_deref().unwrap_or(&track.artist), palette), ScrollArea::new("playing", below).render().flex(1.0)]
+                vec![panel_header(&t!("desktop-now-playing"), track.album.as_deref().unwrap_or(&track.artist), palette), panel_scroll("playing", below).render().flex(1.0)]
             }
             None => vec![
                 panel_header(&t!("desktop-now-playing"), &t!("desktop-nothing-yet"), palette),
@@ -2879,7 +2897,7 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
     }
     // The rows carry half the margin in themselves.
     let list = Element::column(rows).keep_leaving("upcoming-rows");
-    ScrollArea::new("queue-list", Element::column(vec![list]).padding(PANEL_PAD / 2.0)).render().flex(1.0)
+    panel_scroll("queue-list", Element::column(vec![list]).padding(PANEL_PAD / 2.0)).render().flex(1.0)
 }
 
 fn cover(state: &State, artwork: &Option<String>, side: f32, palette: ComponentPalette) -> Element {
