@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1
+
+### Fixed
+
+- On iOS, the lyrics' Translate button lights a circle when pressed, not a square.
+- A sheet's rows on iOS light a faint pad with room around them when pressed.
+- On iOS a song's own page no longer fades out at its bottom, and the fade behind the tab
+  bar is darker.
+
 ## 0.9.0
 
 ### Added
