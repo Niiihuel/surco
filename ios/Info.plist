@@ -23,6 +23,20 @@
     <!-- Only standard algorithms (rustls, HMAC, SHA-256): exempt outside France, so TestFlight skips the compliance question. -->
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <!-- The code another device shows opens Surco on the account it serves. -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>surco</string>
+            </array>
+        </dict>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Surco usa tu red local para pasar tu cuenta entre tus dispositivos.</string>
     <key>LSRequiresIPhoneOS</key>
     <true/>
     <key>UIBackgroundModes</key>

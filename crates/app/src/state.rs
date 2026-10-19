@@ -1403,6 +1403,14 @@ impl State {
         commands
     }
 
+    /// Opens the handoff on what another device serves at `link`, as the code a phone's camera
+    /// reads hands it over, and asks for it.
+    #[cfg(any(target_os = "ios", test))]
+    pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
+        self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
+        self.click("handoff-fetch")
+    }
+
     /// The parts a bundle that came has something of.
     fn parts_of(bundle: &Bundle) -> Parts {
         Parts {
@@ -3732,6 +3740,14 @@ mod tests {
         click(&mut state, "handoff-take");
         assert!(state.handoff.is_none() && state.collection.liked.len() == 1);
         assert_eq!(click(&mut state, "handoff-close"), vec![Command::StopServing]);
+    }
+
+    #[test]
+    fn a_code_read_by_the_camera_opens_the_handoff_on_what_it_names() {
+        let mut state = State::default();
+        let commands = state.receive_from("surco://receive?from=http%3A%2F%2F10.0.0.2%3A4000%2Fabc1");
+        assert_eq!(commands, vec![Command::Fetch("http://10.0.0.2:4000/abc1".into())]);
+        assert!(state.handoff.as_ref().is_some_and(|handoff| handoff.receiving && handoff.fetching));
     }
 
     #[test]

@@ -104,6 +104,17 @@ mod native {
         fn surco_ui_take_memory_warning() -> i32;
         fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
         fn surco_ui_take_surface_events(handle: *mut c_void) -> *mut c_char;
+        fn surco_take_opened_link() -> *mut c_char;
+    }
+
+    /// The link Surco was last opened with, once: the code of an account another device
+    /// serves, as the camera hands it over.
+    pub fn take_opened_link() -> Option<String> {
+        let link = unsafe { surco_take_opened_link() };
+        if link.is_null() { return None; }
+        let text = unsafe { CStr::from_ptr(link) }.to_string_lossy().into_owned();
+        unsafe { surco_ui_free_string(link) };
+        Some(text)
     }
 
     /// Read the system preference on UIKit's main thread; the host combines it with its setting.
@@ -320,7 +331,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled, take_memory_warning};
+pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled, take_memory_warning, take_opened_link};
 
 #[cfg(test)]
 mod tests {

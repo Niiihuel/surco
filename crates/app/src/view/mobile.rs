@@ -172,7 +172,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
-    let tree = playlist_dialog(state, tree, window.width, palette);
+    let tree = super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
     confirm_dialog(state, tree, palette)
 }

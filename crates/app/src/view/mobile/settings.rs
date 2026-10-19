@@ -255,6 +255,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     ], "");
     let bring = group(&t!("common-settings-bring"), vec![
         action("import-open", &t!("mobile-import-music"), None, Some(chevron()), true, false),
+        action("account-handoff", &t!("desktop-handoff"), None, Some(chevron()), true, false),
     ], "");
 
     let about = group(&t!("mobile-about"), vec![

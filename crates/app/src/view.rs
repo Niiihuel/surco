@@ -456,7 +456,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     use mobile::settings::switch;
     let Some(handoff) = &state.handoff else { return window_tree };
     let palette = dialog_palette();
-    let _dense = mobile::settings::Dense::on();
+    let _dense = (!state.mobile).then(mobile::settings::Dense::on);
     let dialog = Modal::fit_width(width, 560.0).max(280.0);
     let form = Modal::fitted_body_width(dialog);
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
@@ -535,6 +535,13 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         Some(confirm) => dialog_footer(cancel, confirm),
         None => ButtonGroup::new(vec![cancel]).align_end().render(),
     };
+    if state.mobile {
+        return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
+            .max_height(640.0)
+            .body(Element::column(body).gap(10.0))
+            .footer(footer)
+            .render();
+    }
     Modal::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
         .width(dialog)
         .body(ScrollArea::new("handoff", Element::column(body).gap(10.0)).render())
@@ -2768,6 +2775,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     ], "");
     let bring = group(&t!("common-settings-bring"), vec![
         action("import-open", &t!("desktop-import-settings"), Some(&t!("desktop-import-settings-detail")), Some(chevron()), true, false),
+        action("account-handoff", &t!("desktop-handoff"), Some(&t!("desktop-handoff-about")), Some(chevron()), true, false),
     ], "");
 
     let about = group(&t!("desktop-about"), vec![

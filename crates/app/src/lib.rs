@@ -367,6 +367,12 @@ impl eframe::App for Host {
         // Decoded covers are only a cache: short of memory, they are decoded again when seen.
         #[cfg(target_os = "ios")]
         if ios_ui::take_memory_warning() { limn_egui::clear_image_cache(); }
+        // A code read by the camera opens the account another device serves.
+        #[cfg(target_os = "ios")]
+        if let Some(link) = ios_ui::take_opened_link() {
+            let commands = self.state.receive_from(&link);
+            self.send(commands);
+        }
         self.tree.set_reduced_motion(still);
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
