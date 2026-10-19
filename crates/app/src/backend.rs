@@ -175,6 +175,8 @@ pub struct Taste {
     pub artist_ids: Vec<String>,
     /// The ids of the albums already kept.
     pub albums: HashSet<String>,
+    /// The latest plays, one for each artist: what goes with them is today's.
+    pub recent: Vec<Track>,
 }
 
 /// What the catalog picked for the home page, a part at a time as each is ready.
@@ -186,6 +188,12 @@ pub enum Picks {
     Artists(Vec<ArtistRef>),
     /// Albums of those artists and of the ones the user plays.
     Albums(Vec<AlbumRef>),
+    /// What goes with the latest plays: today's.
+    Recent(Vec<Track>),
+    /// For each of the artists played most, the albums of the ones their radio plays.
+    FansOf(Vec<(ArtistRef, Vec<AlbumRef>)>),
+    /// The artist played most, with their releases.
+    MoreOf(ArtistRef, Vec<AlbumRef>),
 }
 
 /// What comes back. Every answer names what it answers, because answers arrive late and out of
@@ -1258,6 +1266,12 @@ const PICKED_ARTISTS: usize = 8;
 const PICKED_ALBUMS: usize = 12;
 /// How many of the artists found, and of the ones already played, lend their albums.
 const ALBUM_ARTISTS: usize = 4;
+/// How many of the artists played most get a shelf for their fans, and how many artists
+/// like them lend it an album.
+const FANS_OF: usize = 2;
+const FAN_ARTISTS: usize = 8;
+/// The most releases of the artist played most the home offers.
+const MORE_OF: usize = 12;
 
 /// The home page's picks, out of the radios of what the user plays. Each part is sent as
 /// soon as it is ready, and a part the catalog fails is a shelf less.
@@ -1286,8 +1300,40 @@ async fn discover(shared: &Shared, taste: Taste) {
     }
     albums.truncate(PICKED_ALBUMS);
     (shared.reply)(Event::Discovered(Picks::Albums(albums)));
+
+    // Today's: what goes with the latest plays, past what the user has and the mix.
+    let latest: Vec<Vec<Track>> = join_all(taste.recent.iter().map(|track| async { shared.youtube.radio(&track.id).await.unwrap_or_default() })).await;
+    (shared.reply)(Event::Discovered(Picks::Recent(discover::blend(&latest, &shown, MIX))));
+
+    // For the fans of each artist played most, as Spotify's "For fans of".
+    let fans = join_all(taste.seeds.iter().zip(&radios).take(FANS_OF).map(|(seed, radio)| fans_of(shared, &taste, seed, radio))).await;
+    (shared.reply)(Event::Discovered(Picks::FansOf(fans.into_iter().flatten().collect())));
+
+    // More of the artist played most: their releases, the ones not kept yet.
+    if let Some(seed) = taste.seeds.first() {
+        if let Ok(Some(artist)) = shared.youtube.artist_named(&seed.artist).await {
+            let mut releases = shared.youtube.albums_of(&artist.id).await.unwrap_or_default();
+            releases.retain(|album| !taste.albums.contains(&album.id));
+            releases.truncate(MORE_OF);
+            if !releases.is_empty() {
+                (shared.reply)(Event::Discovered(Picks::MoreOf(artist, releases)));
+            }
+        }
+    }
 }
 
+
+/// For the fans of `seed`'s artist: an album of each of the artists its radio plays that the
+/// user does not, none the user keeps. None when the artist or all of the albums are not found.
+async fn fans_of(shared: &Shared, taste: &Taste, seed: &Track, radio: &Vec<Track>) -> Option<(ArtistRef, Vec<AlbumRef>)> {
+    let artist = shared.youtube.artist_named(&seed.artist).await.ok().flatten()?;
+    let names = discover::newcomers(std::slice::from_ref(radio), &taste.artists, FAN_ARTISTS);
+    let found = join_all(names.iter().map(|name| shared.youtube.artist_named(name))).await;
+    let ids: Vec<String> = found.into_iter().filter_map(|artist| artist.ok().flatten()).map(|artist| artist.id).collect();
+    let pages = join_all(ids.iter().map(|id| async move { shared.youtube.albums_of(id).await.unwrap_or_default() })).await;
+    let albums: Vec<AlbumRef> = pages.into_iter().filter_map(|page| page.into_iter().find(|album| !taste.albums.contains(&album.id))).collect();
+    (!albums.is_empty()).then_some((artist, albums))
+}
 
 /// Downloads a track whole and keeps it, with its cover, in the library.
 async fn save(shared: &Arc<Shared>, track: &Track) -> Result<(), String> {

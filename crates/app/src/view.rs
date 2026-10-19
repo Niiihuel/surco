@@ -1275,16 +1275,28 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment).map(|(index, mix)| mix_tile(state, index, mix, palette)).collect();
     if !cards.is_empty() {
         // Picks arrive after the page: they settle in rather than appear.
-        sections.push(headed_shelf(state, "home-mixes", Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
+        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
     } else if state.picks_coming[0] {
-        sections.push(headed_shelf(state, "home-mixes", Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), coming_tiles(state, false, palette), palette));
+        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), coming_tiles(state, false, palette), palette));
+    }
+    // Today's: what goes with the latest plays, as Spotify's "Recommended for today".
+    let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
+    let today: Vec<Element> = state.recent_picks.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("today:{index}"), track)).collect();
+    if !today.is_empty() {
+        sections.push(headed_shelf(state, "home-today", None, Some(&t!("desktop-inspired-recent")), &t!("desktop-recommended-today"), today, palette));
     }
     // What was played, a click from playing again.
-    let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
     let heard: Vec<Element> = collection.heard.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("heard:{index}"), track)).collect();
     if !heard.is_empty() {
         sections.push(shelf(state, "home-heard", &t!("desktop-listen-again"), heard, palette));
     }
+    // For the fans of an artist played most: the albums of artists like them, under their face.
+    let fans = |shelf: usize| state.fans_of.get(shelf).map(|(artist, albums)| {
+        let face = Element::clickable(format!("fans-{shelf}"), cover(state, &artist.artwork_url, FACE, palette).radius(FACE / 2.0));
+        let tiles = release_tiles(state, &format!("fans-{shelf}-album"), albums, palette);
+        headed_shelf(state, &format!("home-fans:{shelf}"), Some(face), Some(&t!("desktop-for-fans-of")), &artist.name, tiles, palette)
+    });
+    sections.extend(fans(0));
     let artists: Vec<Element> = state
         .picked_artists
         .iter()
@@ -1296,10 +1308,35 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     } else if state.picks_coming[1] {
         sections.push(shelf(state, "home-pick-artists", &t!("desktop-artists-to-discover"), coming_tiles(state, true, palette), palette));
     }
+    // More of the artist played most: their releases the user does not keep.
+    if let Some((artist, albums)) = &state.more_of {
+        let face = Element::clickable("more-artist", cover(state, &artist.artwork_url, FACE, palette).radius(FACE / 2.0));
+        let tiles = release_tiles(state, "more-album", albums, palette);
+        sections.push(headed_shelf(state, "home-more", Some(face), Some(&t!("desktop-more-of")), &artist.name, tiles, palette));
+    }
+    // What the artists followed released since, as Spotify's "Release Radar".
+    let news: Vec<AlbumRef> = collection.news.iter().map(|(release, _)| release.clone()).take(SHELF).collect();
+    if !news.is_empty() {
+        sections.push(shelf(state, "home-news", &t!("desktop-news-from-followed"), release_tiles(state, "news", &news, palette), palette));
+    }
+    sections.extend(fans(1));
     if !state.picked_albums.is_empty() {
         sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), release_tiles(state, "pick-album", &state.picked_albums, palette), palette));
     } else if state.picks_coming[2] {
         sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), coming_tiles(state, false, palette), palette));
+    }
+    // What the user likes, a click from playing it.
+    let liked: Vec<Element> = collection.liked.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("liked-track:{index}"), track)).collect();
+    if !liked.is_empty() {
+        sections.push(shelf(state, "home-liked", &t!("common-liked-songs"), liked, palette));
+    }
+    // Where else to go: the genres to browse, two rows of them.
+    if !state.mobile {
+        let room = width - 24.0;
+        let columns = ((room / 200.0) as usize).clamp(2, 6);
+        let side = (room - 12.0 * (columns - 1) as f32) / columns as f32;
+        let genres = mobile::search::browse(columns * 2, room, columns, (side * 0.5).clamp(84.0, 120.0), palette);
+        sections.push(Element::column(vec![Element::row(vec![Element::spacer().size(Some(TILE_PAD), None), heading(&t!("desktop-explore-genres"), palette)]), genres]).gap(12.0));
     }
 
     let albums: Vec<Element> = collection
@@ -1328,6 +1365,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
 
 /// How far down the home its wash reaches.
 const HOME_WASH: f32 = 320.0;
+/// The face beside the heading of a shelf for an artist's fans, as Spotify's.
+const FACE: f32 = 48.0;
 
 /// What was searched lately, dropped down from the desktop's field while it holds the
 /// keyboard with nothing typed, as Spotify's: a row each to search again, its cross under the
@@ -1417,18 +1456,21 @@ fn heading(title: &str, palette: ComponentPalette) -> Element {
 /// A heading over a row of tiles that scrolls sideways inside the page: by dragging it, or
 /// by the trackpad.
 fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
-    headed_shelf(state, id, None, title, tiles, palette)
+    headed_shelf(state, id, None, None, title, tiles, palette)
 }
 
-/// A shelf whose heading is said in two parts, as "Hecho para vos" over "Tus mixes".
-fn headed_shelf(state: &State, id: &str, eyebrow: Option<&str>, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
+/// A shelf whose heading is said in two parts, as "Hecho para vos" over "Tus mixes", and may
+/// stand beside a picture, as "Para fans de" an artist does beside them.
+fn headed_shelf(state: &State, id: &str, leading: Option<Element>, eyebrow: Option<&str>, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
     // The heading lines up with the covers, inside their cards' padding.
     let pad = || Element::spacer().size(Some(if state.mobile { 0.0 } else { TILE_PAD }), None);
     let heading = match eyebrow {
         Some(eyebrow) => Element::column(vec![Text::new(eyebrow, palette).role(TextRole::Caption).muted().render(), heading(title, palette)]).gap(2.0),
         None => heading(title, palette),
     };
-    let header = vec![pad(), heading.flex(1.0), pad()];
+    let mut header = vec![pad()];
+    header.extend(leading.map(|picture| picture.centered_y()));
+    header.extend([heading.flex(1.0).centered_y(), pad()]);
     let strip = if state.mobile {
         // A phone's touch has its own pan; under the tiles, room for the strip's bar.
         let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
@@ -1438,7 +1480,7 @@ fn headed_shelf(state: &State, id: &str, eyebrow: Option<&str>, title: &str, til
         // Threads' rows; a tile dragged is not opened. The cards' padding is the space between.
         Carousel::new(id, tiles, palette).gap(0.0).render()
     };
-    Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
+    Element::column(vec![Element::row(header).gap(12.0), strip]).gap(8.0)
 }
 
 /// A shelf's tiles while what fills them is on its way: the shape of each, a picture and two

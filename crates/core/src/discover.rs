@@ -59,6 +59,21 @@ pub fn blend(lists: &[Vec<Track>], known: &HashSet<String>, len: usize) -> Vec<T
     picked
 }
 
+/// The latest plays of `heard` (newest first), one for each artist, the latest first: what
+/// the user has been listening to lately, however much of it.
+pub fn latest_by_artist(heard: &[Track], count: usize) -> Vec<Track> {
+    let mut latest: Vec<&Track> = Vec::new();
+    for track in heard {
+        if latest.len() == count {
+            break;
+        }
+        if latest.iter().all(|known| plain(&known.artist) != plain(&track.artist)) {
+            latest.push(track);
+        }
+    }
+    latest.into_iter().cloned().collect()
+}
+
 /// The tracks `heard` (newest first) holds more than once, the ones played most first and,
 /// between two played as much, the one played last.
 pub fn on_repeat(heard: &[Track], len: usize) -> Vec<Track> {
@@ -124,6 +139,14 @@ mod tests {
 
     fn ids(tracks: &[Track]) -> Vec<&str> {
         tracks.iter().map(|track| track.id.as_str()).collect()
+    }
+
+    #[test]
+    fn the_latest_plays_are_one_for_each_artist_newest_first() {
+        let heard = [track("a1", "Ana"), track("a2", "ANA"), track("b1", "Beto"), track("c1", "Caro"), track("b2", "Beto")];
+        assert_eq!(ids(&latest_by_artist(&heard, 5)), ["a1", "b1", "c1"]);
+        assert_eq!(ids(&latest_by_artist(&heard, 2)), ["a1", "b1"]);
+        assert!(latest_by_artist(&[], 3).is_empty());
     }
 
     #[test]

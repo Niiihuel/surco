@@ -400,6 +400,8 @@ const HEARD_KEPT: usize = 100;
 const SEEDS: usize = 5;
 /// The most tracks the mix of what was played again holds, and the fewest it takes to be one.
 const REPEAT: usize = 20;
+/// How many of the latest plays, each by another artist, today's picks grow from.
+const RECENT_SEEDS: usize = 3;
 const REPEAT_FEWEST: usize = 4;
 
 /// How many songs a playlist's recommendations show at a time, and how few of them still to
@@ -738,6 +740,12 @@ pub struct State {
     pub because: Vec<(Track, Vec<Track>)>,
     pub picked_artists: Vec<ArtistRef>,
     pub picked_albums: Vec<AlbumRef>,
+    /// What goes with the latest plays: today's picks.
+    pub recent_picks: Vec<Track>,
+    /// For the fans of each of the artists played most, albums of artists like them.
+    pub fans_of: Vec<(ArtistRef, Vec<AlbumRef>)>,
+    /// The artist played most, with the releases of theirs the user does not keep.
+    pub more_of: Option<(ArtistRef, Vec<AlbumRef>)>,
     /// The artists the picks were last asked for.
     picked_for: Option<Vec<String>>,
     /// Which of the picks, the tracks, the artists and the albums, are on their way.
@@ -1034,6 +1042,9 @@ impl Default for State {
             because: Vec::new(),
             picked_artists: Vec::new(),
             picked_albums: Vec::new(),
+            recent_picks: Vec::new(),
+            fans_of: Vec::new(),
+            more_of: None,
             picked_for: None,
             picks_coming: [false; 3],
             welcome: false,
@@ -1301,6 +1312,18 @@ impl State {
             ("news", Some(index), _) => self.collection.news.get(index).map(|(release, _)| album(release)),
             ("pick-artist", Some(index), _) => self.picked_artists.get(index).map(|artist| Target::Artist(artist.id.clone())),
             ("pick-album", Some(index), _) => self.picked_albums.get(index).map(album),
+            ("more-album", Some(index), _) => self.more_of.as_ref().and_then(|(_, albums)| albums.get(index)).map(album),
+            ("more-artist", None, _) => self.more_of.as_ref().map(|(artist, _)| Target::Artist(artist.id.clone())),
+            (fans, index, _) if fans.starts_with("fans-") => {
+                // fans-2-album:4 is the fifth album for the fans of the third artist; fans-2 is that artist.
+                let (shelf, part) = fans["fans-".len()..].split_once('-').unwrap_or((&fans["fans-".len()..], ""));
+                let (artist, albums) = self.fans_of.get(shelf.parse::<usize>().ok()?)?;
+                match (part, index) {
+                    ("album", Some(index)) => albums.get(index).map(album),
+                    ("", None) => Some(Target::Artist(artist.id.clone())),
+                    _ => None,
+                }
+            }
             ("now-artist", None, _) => self.current().map(artist_of),
             ("now-album", None, _) => self.current().and_then(|track| track.album_id.clone()).map(Target::Album),
             _ => None,
@@ -1319,6 +1342,8 @@ impl State {
             "page-track" => self.page_tracks().get(index),
             "upcoming" => self.player.upcoming.get(index),
             "heard" => self.collection.heard.get(index),
+            "today" => self.recent_picks.get(index),
+            "liked-track" => self.collection.liked.get(index),
             _ => None,
         }
     }
@@ -1771,6 +1796,14 @@ impl State {
             _ if id.starts_with("heard:") => {
                 let index = id["heard:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.heard.len());
                 index.map(|index| Command::PlayList { tracks: self.collection.heard.clone(), index }).into_iter().collect()
+            }
+            _ if id.starts_with("today:") => {
+                let index = id["today:".len()..].parse::<usize>().ok().filter(|index| *index < self.recent_picks.len());
+                index.map(|index| Command::PlayList { tracks: self.recent_picks.clone(), index }).into_iter().collect()
+            }
+            _ if id.starts_with("liked-track:") => {
+                let index = id["liked-track:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.liked.len());
+                index.map(|index| Command::PlayList { tracks: self.collection.liked.clone(), index }).into_iter().collect()
             }
             _ if id.starts_with("made:") => {
                 if let Some(mix) = self.mix_at(id) { self.go(Page::Mix(mix)); }
@@ -2390,6 +2423,22 @@ impl State {
                 self.picked_albums = albums;
                 covers
             }
+            Event::Discovered(Picks::Recent(tracks)) => {
+                let covers = cover_requests(&mut self.covers, covers_of(&tracks));
+                self.recent_picks = tracks;
+                covers
+            }
+            Event::Discovered(Picks::FansOf(shelves)) => {
+                let pictures = shelves.iter().flat_map(|(artist, albums)| std::iter::once(&artist.artwork_url).chain(albums.iter().map(|album| &album.artwork_url)));
+                let covers = cover_requests(&mut self.covers, pictures);
+                self.fans_of = shelves;
+                covers
+            }
+            Event::Discovered(Picks::MoreOf(artist, albums)) => {
+                let covers = cover_requests(&mut self.covers, std::iter::once(&artist.artwork_url).chain(albums.iter().map(|album| &album.artwork_url)));
+                self.more_of = Some((artist, albums));
+                covers
+            }
             Event::Lyrics { track_id, lines } => {
                 if let Some((asked, lyrics)) = &mut self.lyrics {
                     if *asked == track_id && (lines.is_some() || !matches!(lyrics, Lyrics::Lines(_) | Lyrics::Plain { .. })) {
@@ -2620,6 +2669,7 @@ impl State {
             artists: credited.chain(followed).map(discover::plain).collect(),
             artist_ids,
             albums: collection.albums().map(|(_, album)| album.id.clone()).collect(),
+            recent: discover::latest_by_artist(&collection.heard, RECENT_SEEDS),
             seeds,
         }
     }
@@ -3714,6 +3764,18 @@ mod tests {
         state.apply(Event::Discovered(Picks::Albums(vec![album])));
         assert_eq!(click(&mut state, "pick-album:0"), vec![Command::Open(Target::Album("lp".into()))]);
         assert_eq!(click(&mut state, "pick-artist:0"), vec![Command::Open(Target::Artist("who".into()))]);
+        // Today's picks play as a list; the fans' shelves open their albums and, from the face, the artist.
+        state.apply(Event::Discovered(Picks::Recent(vec![track("t"), track("u")])));
+        assert_eq!(click(&mut state, "today:1"), vec![Command::PlayList { tracks: vec![track("t"), track("u")], index: 1 }]);
+        let fan = ArtistRef { id: "fan".into(), name: "Fan".into(), subscribers: None, artwork_url: None };
+        let theirs = AlbumRef { id: "theirs".into(), title: "Theirs".into(), artist: Some("Like".into()), year: String::new(), artwork_url: None };
+        state.apply(Event::Discovered(Picks::FansOf(vec![(fan.clone(), vec![theirs.clone()])])));
+        assert_eq!(click(&mut state, "fans-0-album:0"), vec![Command::Open(Target::Album("theirs".into()))]);
+        assert_eq!(click(&mut state, "fans-0"), vec![Command::Open(Target::Artist("fan".into()))]);
+        assert!(click(&mut state, "fans-1").is_empty() && click(&mut state, "fans-0-album:3").is_empty() && click(&mut state, "fans-x").is_empty());
+        state.apply(Event::Discovered(Picks::MoreOf(fan, vec![theirs])));
+        assert_eq!(click(&mut state, "more-album:0"), vec![Command::Open(Target::Album("theirs".into()))]);
+        assert_eq!(click(&mut state, "more-artist"), vec![Command::Open(Target::Artist("fan".into()))]);
         assert_eq!(click(&mut state, "heard:1"), vec![Command::PlayList { tracks: vec![track("b"), track("a")], index: 1 }]);
     }
 
