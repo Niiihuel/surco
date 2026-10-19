@@ -774,6 +774,9 @@ pub struct State {
     pub page_more_open: bool,
     /// The footage whose frames are on screen already, by the name `screening` gives it.
     pub clip_ready: Option<String>,
+    /// How far the name of the song in the right panel reaches past its room, by the song's
+    /// id, and since when it shows: a long one slides along it.
+    pub title_reach: Option<(String, f32, Instant)>,
     /// The dialog that takes the account to another device, while it is open.
     pub handoff: Option<Handoff>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
@@ -957,6 +960,12 @@ fn desktop_alias(action: &UiAction) -> Option<UiAction> {
         "panel-peek" => Some("toggle-panel-open"),
         "library-rail:expand" => Some("toggle-library-open"),
         "library-rail:create" => Some("playlist-new"),
+        // The panel of what plays has the bar's own controls; its ids are its own.
+        "panel-like" => Some("like"),
+        "panel-cinema" => Some("cinema"),
+        "panel-share" | "panel-go:share" => Some("now-share"),
+        "panel-go:album" => Some("now-album"),
+        "panel-go:artist" => Some("now-artist"),
         _ => None,
     };
     match action {
@@ -966,6 +975,22 @@ fn desktop_alias(action: &UiAction) -> Option<UiAction> {
         _ => None,
     }
 }
+
+/// Where a name that reaches `reach` past its room stands `elapsed` after it showed, as
+/// Spotify's: still a while, along to its end at an even pace, still again, and back.
+pub fn marquee(elapsed: Duration, reach: f32) -> f32 {
+    let travel = reach / MARQUEE_SPEED;
+    let pause = MARQUEE_PAUSE.as_secs_f32();
+    let at = elapsed.as_secs_f32() % (2.0 * (pause + travel));
+    if at < pause { 0.0 }
+    else if at < pause + travel { (at - pause) * MARQUEE_SPEED }
+    else if at < 2.0 * pause + travel { reach }
+    else { reach - (at - 2.0 * pause - travel) * MARQUEE_SPEED }
+}
+
+/// How fast a long name slides, in points a second, and how long it rests at either end.
+const MARQUEE_SPEED: f32 = 30.0;
+const MARQUEE_PAUSE: Duration = Duration::from_millis(2500);
 
 /// How long the home's wash takes to change colour, and how strong it is at the top.
 const WASH_FADE: Duration = Duration::from_millis(1000);
@@ -1138,6 +1163,7 @@ impl Default for State {
             account_open: false,
             page_more_open: false,
             clip_ready: None,
+            title_reach: None,
             handoff: None,
             wide: false,
             panel_more_open: false,
@@ -1761,7 +1787,7 @@ impl State {
         if let UiAction::Clicked { id } = action {
             if id.starts_with("account-") || id == "settings" { self.account_open = false; }
             if id.starts_with("playlist-") { self.page_more_open = false; }
-            if matches!(id.as_str(), "now-album" | "now-artist" | "now-share") { self.panel_more_open = false; }
+            if id.starts_with("panel-go:") { self.panel_more_open = false; }
         }
         // limn's top bar and the closed panel's strip name their controls after themselves;
         // here they are the controls they stand for.
@@ -3044,6 +3070,17 @@ impl State {
     /// The song that plays, also while its video's own sound has its place.
     fn song(&self) -> Option<&Track> {
         self.swapped.as_ref().or(self.player.current.as_ref())
+    }
+
+    /// The song whose name the right panel shows large, while it does.
+    pub fn panel_title(&self) -> Option<&str> {
+        self.current().filter(|_| self.shows_playing()).map(|track| track.id.as_str())
+    }
+
+    /// Whether the name in the right panel is long and slides along its room.
+    pub fn title_moves(&self) -> bool {
+        self.motion && !self.settings.reduce_motion
+            && self.title_reach.as_ref().is_some_and(|(id, reach, _)| *reach > 1.0 && self.panel_title() == Some(id))
     }
 
     /// Whether the right panel is shut to the strip that peeks at what plays, as Spotify's,

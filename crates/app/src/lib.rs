@@ -160,6 +160,28 @@ fn follow_lyric_card(state: &mut State, tree: &mut UiTree, window: Size, seen: &
     state.follow_lyric_card(to, Instant::now()).then(|| layout_with_notice(state, tree, window, seen))
 }
 
+/// Slides a long song name in the right panel along its room: how far it reaches is measured
+/// once a song, by asking its strip for more than it has, as it stops at its end; then the
+/// clock moves it, laying out again when it moved.
+fn follow_title(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    let song = state.panel_title()?.to_owned();
+    if state.title_reach.as_ref().is_none_or(|(id, ..)| *id != song) {
+        tree.set_horizontal_scroll_offset(view::PANEL_TITLE, f32::MAX);
+        layout_with_notice(state, tree, window, seen);
+        let reach = tree.horizontal_scroll_offset(view::PANEL_TITLE);
+        state.title_reach = Some((song, if reach.is_finite() { reach } else { 0.0 }, Instant::now()));
+        tree.set_horizontal_scroll_offset(view::PANEL_TITLE, 0.0);
+        return Some(layout_with_notice(state, tree, window, seen));
+    }
+    if !state.title_moves() { return None; }
+    let (_, reach, since) = state.title_reach.as_ref()?;
+    let at = state::marquee(since.elapsed(), *reach);
+    ((tree.horizontal_scroll_offset(view::PANEL_TITLE) - at).abs() >= 0.5).then(|| {
+        tree.set_horizontal_scroll_offset(view::PANEL_TITLE, at);
+        layout_with_notice(state, tree, window, seen)
+    })
+}
+
 fn layout_view(state: &mut State, tree: &mut UiTree, window: Size) -> limn::Frame {
     tree.set_root(view::view(state, window));
     let frame = tree.layout(window);
@@ -654,6 +676,7 @@ impl eframe::App for Host {
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
         let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
+        let frame = follow_title(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         #[cfg(target_os = "ios")]
         let frame = {
             let mut frame = frame;
@@ -725,7 +748,7 @@ impl eframe::App for Host {
             // Behind the lock screen nothing animates; the next frame waits for the return.
         } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) {
             ctx.request_repaint();
-        } else if let Some(after) = match (self.tree.animation_repaint_after(), self.state.ambient().then_some(AMBIENT_FRAME)) {
+        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves()).then_some(AMBIENT_FRAME)) {
             (Some(own), Some(ambient)) => Some(own.min(ambient)),
             (own, ambient) => own.or(ambient),
         } {
@@ -968,6 +991,39 @@ fn ios_logging() {
 mod lyrics_viewport_tests {
     use super::*;
     use surco_core::{Track, lyrics::Line};
+
+    #[test]
+    fn a_long_song_name_in_the_right_panel_is_measured_once_and_slides_from_its_start() {
+        let mut state = State::default();
+        let mut view = song("a", 10.0);
+        view.current.as_mut().unwrap().title = "Un nombre de canción demasiado largo para el panel de la derecha".into();
+        state.show(view);
+        let size = Size::new(1400.0, 900.0);
+        let mut tree = UiTree::new(view::view(&state, size));
+        tree.layout(size);
+        let mut seen = None;
+        assert!(follow_title(&mut state, &mut tree, size, &mut seen).is_some(), "measured, and laid out again from its start");
+        let reach = state.title_reach.as_ref().map(|(_, reach, _)| *reach).unwrap();
+        assert!(reach > 40.0, "it reaches past its room: {reach}");
+        assert_eq!(tree.horizontal_scroll_offset(view::PANEL_TITLE), 0.0);
+        assert!(follow_title(&mut state, &mut tree, size, &mut seen).is_none(), "still at first");
+
+        state.show(song("b", 0.0));
+        follow_title(&mut state, &mut tree, size, &mut seen);
+        assert!(state.title_reach.as_ref().is_some_and(|(id, reach, _)| id == "b" && *reach == 0.0), "a short name stays put");
+        assert!(!state.title_moves());
+    }
+
+    #[test]
+    fn a_long_name_rests_slides_rests_and_comes_back() {
+        let reach = 60.0;
+        let at = |seconds: f32| state::marquee(Duration::from_secs_f32(seconds), reach);
+        assert_eq!(at(1.0), 0.0);
+        assert!((at(3.5) - 30.0).abs() < 0.01, "a second along at 30 a second");
+        assert_eq!(at(5.0), reach);
+        assert!((at(8.0) - 30.0).abs() < 0.01, "and back");
+        assert_eq!(at(9.0 + 1.0), 0.0, "around again");
+    }
 
     fn song(id: &str, position: f64) -> PlayerView {
         PlayerView {

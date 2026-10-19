@@ -202,6 +202,7 @@ mod glyph {
     pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
     pub const PENCIL: &str = include_str!("../assets/icons/glyph/pencil.svg");
     pub const PLUS: &str = include_str!("../assets/icons/glyph/plus.svg");
+    pub const PANEL_RIGHT: &str = include_str!("../assets/icons/glyph/panel-right.svg");
     pub const CLOSE: &str = include_str!("../assets/icons/glyph/close.svg");
     pub const CHEVRON_RIGHT: &str = include_str!("../assets/icons/glyph/chevron-right.svg");
     pub const CHEVRON_LEFT: &str = include_str!("../assets/icons/glyph/chevron-left.svg");
@@ -3170,7 +3171,7 @@ fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalett
 fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Element {
     let copy = Element::column(vec![Text::new(title, palette).font_size(20.0).truncate().render(), Text::new(subtitle, palette).muted().truncate().render()]).gap(2.0);
     // A panel is shut from its own header.
-    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new(t!("desktop-hide-panel")), palette).render();
+    let shut = header_button("toggle-panel", Icon::Custom(glyph::PANEL_RIGHT), TooltipSpec::new(t!("desktop-hide-panel")), palette).render();
     inset(Element::row(vec![copy.flex(1.0), shut]))
 }
 
@@ -3327,6 +3328,9 @@ pub fn canvas_height(width: f32, window: Size) -> f32 {
     (width * 14.5 / 9.0).min(panel * 2.0 / 3.0).max(width.min(panel))
 }
 
+/// The strip the song's name in the right panel slides along in.
+pub(crate) const PANEL_TITLE: &str = "panel-title";
+
 /// The right panel's own margin. Its lists do without it: they run to the panel's edge, so
 /// their scrollbar sits where the middle panel's does, and set their rows in themselves.
 const PANEL_PAD: f32 = 16.0;
@@ -3374,12 +3378,15 @@ fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPal
     let link = |id: &str, action: &str, text: Element| Element::clickable(id, text).dispatch_as(action);
     let liked = state.is_liked(&track.id);
     let names = Element::column(vec![
-        link("panel-album", "now-album", Text::new(&track.title, palette).font_size(24.0).truncate().render().font_family(FontFamily::SansBold)),
+        // A name longer than its room slides along it, as Spotify's; the window moves the strip.
+        link("panel-album", "now-album", Element::horizontal_scroll_2d(PANEL_TITLE, Element::text(&track.title).font_size(24.0).font_family(FontFamily::SansBold).foreground(palette.text))
+            .foreground(Color::rgba(0, 0, 0, 0))
+            .horizontal_edge_fade(PANEL_FLOOR, 16.0)),
         link("panel-artist", "now-artist", Text::new(&track.artist, palette).font_size(16.0).ink(SUBDUED).truncate().render()),
     ]).gap(2.0).flex(1.0).centered_y();
-    let share = IconButton::new("now-share", Icon::Custom(include_str!("../assets/icons/share-2.svg")), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
-        .tooltip(t!("desktop-share")).render().reveal_on_hover("now-share").centered_y();
-    let like = IconButton::new("like", like_glyph(liked), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+    let share = IconButton::new("panel-share", Icon::Custom(include_str!("../assets/icons/share-2.svg")), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+        .tooltip(t!("desktop-share")).render().reveal_on_hover("panel-share-shown").centered_y();
+    let like = IconButton::new("panel-like", like_glyph(liked), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
         .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") }).render().centered_y();
     let title = Element::row(vec![names, share, like]).gap(8.0);
 
@@ -3414,13 +3421,17 @@ fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPal
     // The header: what the song is from, the way to shut the panel and, under the pointer,
     // whether to see its video and the way to see it large.
     let context = track.album.as_deref().unwrap_or(&track.artist);
-    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new(t!("desktop-hide-panel")), palette).render().reveal_on_hover("panel-shut");
-    let large = header_button("cinema", Icon::Custom(glyph::FULLSCREEN), TooltipSpec::new(t!("desktop-fullscreen")), palette).render();
+    let shut = header_button("toggle-panel", Icon::Custom(glyph::PANEL_RIGHT), TooltipSpec::new(t!("desktop-hide-panel")), palette).render().reveal_on_hover("panel-shut");
+    let large = header_button("panel-cinema", Icon::Custom(glyph::FULLSCREEN), TooltipSpec::new(t!("desktop-fullscreen")), palette).render();
     // As Spotify's: the rest of what can be done with the song waits behind the dots.
-    let item = |id: &str, label: std::borrow::Cow<'static, str>| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label));
+    // With the glyphs a song's menu has everywhere else.
+    let item = |id: &str, label: std::borrow::Cow<'static, str>, icon: &'static str| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(Icon::Custom(icon)));
     let mut entries = Vec::new();
-    if track.album_id.is_some() { entries.push(item("now-album", t!("desktop-go-to-album"))); }
-    entries.extend([item("now-artist", t!("desktop-go-to-artist")), item("now-share", t!("desktop-share"))]);
+    if track.album_id.is_some() { entries.push(item("panel-go:album", t!("desktop-go-to-album"), include_str!("../assets/icons/disc-3.svg"))); }
+    entries.extend([
+        item("panel-go:artist", t!("desktop-go-to-artist"), include_str!("../assets/icons/user-round.svg")),
+        item("panel-go:share", t!("desktop-share"), include_str!("../assets/icons/share-2.svg")),
+    ]);
     let dots = header_button("panel-more", Icon::More, TooltipSpec::new(t!("desktop-options-of", name = track.title.as_str())), palette).active(state.panel_more_open).render();
     let more = DropdownMenu::new(dots, entries, state.panel_more_open, "panel-more-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render();
     // The video or the cover: the glyph is the one it turns to.
@@ -4188,6 +4199,22 @@ mod tests {
         assert!(query.width > 80.0 && query.x + query.width <= sort.x && sort.x + sort.width <= state.left_width + 16.0 && query.y + query.height <= list.y, "{query:?} {sort:?} {list:?}");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
+    }
+
+    #[test]
+    fn no_two_controls_of_a_busy_window_answer_to_one_id() {
+        let mut state = State::default();
+        state.show(PlayerView { current: Some(track("a")), upcoming: vec![track("b")], duration: 200.0, playing: true, ..PlayerView::default() });
+        state.collection.playlists.push(Playlist { id: 1, name: "Lista".into(), collaborative: false, picture: None, tracks: vec![track("a"), track("b")] });
+        state.collection.liked.push(track("b"));
+        state.page = Page::Playlist(1);
+        state.panel_more_open = true;
+        for width in [1100.0, 1600.0] {
+            let found = ids(&state, Size::new(width, 900.0));
+            let mut seen = std::collections::HashSet::new();
+            let twice: Vec<&String> = found.iter().filter(|id| !seen.insert(*id)).collect();
+            assert!(twice.is_empty(), "at {width}, more than one control answers to {twice:?}");
+        }
     }
 
     #[test]
