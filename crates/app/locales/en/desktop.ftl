@@ -306,3 +306,26 @@ desktop-equalizer-custom = Custom
 desktop-equalizer-gain = Gain
 desktop-equalizer-preamp = Preamp
 desktop-equalizer-reset = Reset
+
+## Profile
+desktop-profile = Profile
+desktop-profile-playlists = { $count ->
+    [one] 1 playlist
+   *[other] { $count } playlists
+}
+desktop-profile-following = { $count ->
+    [one] 1 artist followed
+   *[other] { $count } artists followed
+}
+desktop-profile-liked = { $count ->
+    [one] 1 liked song
+   *[other] { $count } liked songs
+}
+desktop-profile-only-you = Only visible to you
+desktop-top-artists = Top artists
+desktop-top-tracks = Top tracks
+desktop-your-playlists = Your playlists
+desktop-profile-details = Profile details
+desktop-profile-details-detail = Your account's name. It stays on this computer.
+desktop-profile-name = Name
+desktop-profile-edit = Change the name

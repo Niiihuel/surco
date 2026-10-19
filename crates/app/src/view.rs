@@ -7,7 +7,7 @@ pub(crate) use mobile::route_key as mobile_route_key;
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
 
 use surco_audio::equalizer::BAND_HZ;
-use surco_core::{Album, AlbumRef, Artist, Repeat, Track};
+use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
@@ -276,7 +276,7 @@ pub fn view(state: &State, window: Size) -> Element {
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
-    let created = playlist_dialog(state, shared, window.width, palette);
+    let created = profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width, palette);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     let whole = update_dialog(state, confirm_dialog(state, welcome_dialog(state, imported, window.width), palette), palette);
     Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
@@ -373,6 +373,21 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .footer(dialog_footer(cancel, create))
         .initial_focus("playlist-name")
         .return_focus("playlist-new")
+        .render()
+}
+
+/// Changing the account's name.
+fn profile_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let Some(draft) = &state.profile_draft else { return window_tree };
+    let name = TextField::new("profile-name", draft, "Surco", palette).size(ControlSize::Regular).render();
+    let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).render();
+    Modal::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
+        .width(Modal::fit_width(width, 440.0).max(240.0))
+        .body(Element::column(FormField::new(t!("desktop-profile-name"), name, palette).sizing(DIALOG_FIELD).rows()).gap(8.0))
+        .footer(dialog_footer(cancel, save))
+        .initial_focus("profile-name")
+        .return_focus("profile-edit")
         .render()
 }
 
@@ -957,19 +972,77 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
 /// The account's face at the end of the top bar, as Spotify's: its initial on its colour, and
 /// under it the menu of whose Surco this is and where to go from there.
 fn account(state: &State, palette: ComponentPalette) -> Element {
-    let colour = MIX_STRIPES[state.profile.shown().bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()];
-    let face = Element::panel(Element::text(state.profile.initial()).font_size(14.0).font_family(FontFamily::SansBold).foreground(palette.surface).centered())
-        .background(colour).radius(ACCOUNT_FACE / 2.0).size(Some(ACCOUNT_FACE), Some(ACCOUNT_FACE));
+    let face = profile_face(state, ACCOUNT_FACE, palette);
     // A ring of the bar's own ground, as the face of Spotify's stands on a dark disc.
     let face = Element::panel(face.centered()).background(CHOSEN).radius(ACCOUNT_RING / 2.0).size(Some(ACCOUNT_RING), Some(ACCOUNT_RING));
     let anchor = Element::clickable("account", face).accessible(limn::Access::new(limn::Role::Button).name(state.profile.shown()));
     let item = |id: &str, label: std::borrow::Cow<'static, str>| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label));
     let entries = vec![
-        DropdownMenuEntry::Heading(state.profile.shown().to_owned().into()),
+        DropdownMenuEntry::Heading(state.profile.shown().to_owned()),
+        item("account-profile", t!("desktop-profile")),
         item("settings", t!("common-settings")),
     ];
     DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", SCHEME.menu()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
 }
+
+/// The account's initial on its colour, the same for a name wherever it shows.
+fn profile_face(state: &State, side: f32, palette: ComponentPalette) -> Element {
+    Element::panel(Element::text(state.profile.initial()).font_size(side * 0.44).font_family(FontFamily::SansBold).foreground(palette.surface).centered())
+        .background(profile_colour(state))
+        .radius(side / 2.0)
+        .size(Some(side), Some(side))
+}
+
+fn profile_colour(state: &State) -> Color {
+    MIX_STRIPES[state.profile.shown().bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()]
+}
+
+/// The local account's page, as Spotify's profile: its face and name over its colour, what it
+/// keeps, and what its user plays most, which only they see.
+fn profile_page(state: &State, palette: ComponentPalette) -> Element {
+    let collection = &state.collection;
+    let side = if state.mobile { PROFILE_FACE / 2.0 } else { PROFILE_FACE };
+    let mut counts = vec![t!("desktop-profile-playlists", count = collection.playlists.len()).into_owned()];
+    let following = collection.artists().count();
+    if following > 0 { counts.push(t!("desktop-profile-following", count = following).into_owned()); }
+    if !collection.liked.is_empty() { counts.push(t!("desktop-profile-liked", count = collection.liked.len()).into_owned()); }
+    let name = Text::new(state.profile.shown(), palette).font_size(if state.mobile { HERO_TITLE * 0.75 } else { PROFILE_NAME }).truncate().render();
+    let name = Element::clickable("profile-edit", name).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile-edit")));
+    let about = Element::column(vec![
+        Text::eyebrow(t!("desktop-profile"), palette).render(),
+        name,
+        Text::new(counts.join(" · "), palette).muted().truncate().render(),
+    ])
+    .gap(10.0)
+    .flex(1.0)
+    .centered_y();
+    let header = Element::row(vec![profile_face(state, side, palette), about]).gap(24.0);
+    let mut sections = vec![header];
+    let artists: Vec<Element> = discover::top_artists(&collection.heard, crate::state::TOP_ARTISTS).iter().enumerate()
+        .map(|(index, track)| tile(state, format!("top-artist:{index}"), &track.artist, Some(t!("common-artist").into_owned()), &track.artwork_url, true, palette))
+        .collect();
+    if !artists.is_empty() {
+        sections.push(headed_shelf(state, "profile-artists", None, Some(&t!("desktop-profile-only-you")), &t!("desktop-top-artists"), artists, palette));
+    }
+    let tracks: Vec<Element> = state.top_tracks().iter().enumerate()
+        .map(|(index, track)| tile(state, format!("top-track:{index}"), &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette))
+        .collect();
+    if !tracks.is_empty() {
+        sections.push(headed_shelf(state, "profile-tracks", None, Some(&t!("desktop-profile-only-you")), &t!("desktop-top-tracks"), tracks, palette));
+    }
+    let playlists: Vec<Element> = collection.playlists.iter().enumerate()
+        .map(|(index, playlist)| tile(state, format!("playlist:{index}"), &playlist.name, Some(songs(playlist.tracks.len())), &playlist.tracks.first().and_then(|track| track.artwork_url.clone()), false, palette))
+        .collect();
+    if !playlists.is_empty() {
+        sections.push(shelf(state, "profile-playlists", &t!("desktop-your-playlists"), playlists, palette));
+    }
+    let content = Element::column(sections).gap(24.0).padding(if state.mobile { 16.0 } else { 24.0 });
+    page_scroll("profile", content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH))
+}
+
+/// The side of the profile's face, and the size of its name, as Spotify's.
+const PROFILE_FACE: f32 = 232.0;
+const PROFILE_NAME: f32 = 72.0;
 
 /// The side of the account's face, and of the dark disc it stands on.
 const ACCOUNT_FACE: f32 = 32.0;
@@ -2049,6 +2122,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Patches => "page:patches".to_owned(),
         Page::Browse => "page:browse".to_owned(),
         Page::Mix(mix) => format!("page:mix:{}", mix.key()),
+        Page::Profile => "page:profile".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     let page = page(state, width, palette).animate_enter(entering);
@@ -2135,6 +2209,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Patches => patches_page(state, width, palette),
         Page::Browse => browse_page(width, palette),
         Page::Mix(mix) => mix_page(state, mix, width, palette),
+        Page::Profile => profile_page(state, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),

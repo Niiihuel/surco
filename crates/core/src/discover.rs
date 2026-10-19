@@ -59,6 +59,21 @@ pub fn blend(lists: &[Vec<Track>], known: &HashSet<String>, len: usize) -> Vec<T
     picked
 }
 
+/// The artists `heard` (newest first) holds most, each by their latest track, the most
+/// played first and, between two played as much, the one played last.
+pub fn top_artists(heard: &[Track], count: usize) -> Vec<Track> {
+    let mut plays: Vec<(String, &Track, usize)> = Vec::new();
+    for track in heard {
+        let artist = plain(&track.artist);
+        match plays.iter_mut().find(|(known, ..)| *known == artist) {
+            Some((.., times)) => *times += 1,
+            None => plays.push((artist, track, 1)),
+        }
+    }
+    plays.sort_by_key(|(.., times)| std::cmp::Reverse(*times));
+    plays.into_iter().take(count).map(|(_, track, _)| track.clone()).collect()
+}
+
 /// The latest plays of `heard` (newest first), one for each artist, the latest first: what
 /// the user has been listening to lately, however much of it.
 pub fn latest_by_artist(heard: &[Track], count: usize) -> Vec<Track> {
@@ -139,6 +154,14 @@ mod tests {
 
     fn ids(tracks: &[Track]) -> Vec<&str> {
         tracks.iter().map(|track| track.id.as_str()).collect()
+    }
+
+    #[test]
+    fn top_artists_are_the_most_played_each_by_their_latest_track() {
+        let heard = [track("c1", "Caro"), track("b1", "Beto"), track("b2", "BETO"), track("a1", "Ana"), track("b3", "Beto"), track("a2", "Ana")];
+        assert_eq!(ids(&top_artists(&heard, 5)), ["b1", "a1", "c1"], "three plays, then two, then one");
+        assert_eq!(ids(&top_artists(&heard, 1)), ["b1"]);
+        assert!(top_artists(&[], 3).is_empty());
     }
 
     #[test]

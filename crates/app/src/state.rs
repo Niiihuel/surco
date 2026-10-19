@@ -61,6 +61,8 @@ pub enum Page {
     Browse,
     /// One of the lists the home makes out of what the user plays, as it was when opened.
     Mix(Mix),
+    /// The local account: who uses this Surco, and what they play most.
+    Profile,
 }
 
 /// A list the home makes out of what the user plays, opened and played as a playlist is.
@@ -420,6 +422,10 @@ const HEARD_KEPT: usize = 100;
 const SEEDS: usize = 5;
 /// The most tracks the mix of what was played again holds, and the fewest it takes to be one.
 const REPEAT: usize = 20;
+/// How many artists and songs the profile names as the most played, and the longest name.
+pub const TOP_ARTISTS: usize = 10;
+const TOP_TRACKS: usize = 10;
+const PROFILE_NAME_MOST: usize = 40;
 /// How many of the latest plays, each by another artist, today's picks grow from.
 const RECENT_SEEDS: usize = 3;
 const REPEAT_FEWEST: usize = 4;
@@ -677,6 +683,8 @@ pub struct State {
     pub profile: Profile,
     /// The account's menu, at the end of the top bar.
     pub account_open: bool,
+    /// The account's name while it is being changed.
+    pub profile_draft: Option<String>,
     pub filter: Filter,
     /// What the library's rows are searched for.
     pub library_search: String,
@@ -1028,6 +1036,7 @@ impl Default for State {
             collection: Collection::default(),
             profile: Profile::default(),
             account_open: false,
+            profile_draft: None,
             filter: Filter::All,
             library_search: String::new(),
             library_searching: false,
@@ -1219,6 +1228,11 @@ impl State {
         slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
     }
 
+    /// What the user plays most: what was played again, the most played first.
+    pub fn top_tracks(&self) -> Vec<Track> {
+        discover::on_repeat(&self.collection.heard, TOP_TRACKS)
+    }
+
     /// Whether the home is shown, with nothing searched.
     pub fn at_home(&self) -> bool {
         self.page == Page::Search && self.submitted.is_none() && !self.searching
@@ -1348,6 +1362,7 @@ impl State {
             ("pick-album", Some(index), _) => self.picked_albums.get(index).map(album),
             ("more-album", Some(index), _) => self.more_of.as_ref().and_then(|(_, albums)| albums.get(index)).map(album),
             ("more-artist", None, _) => self.more_of.as_ref().map(|(artist, _)| Target::Artist(artist.id.clone())),
+            ("top-artist", Some(index), _) => discover::top_artists(&self.collection.heard, TOP_ARTISTS).get(index).map(artist_of),
             (fans, index, _) if fans.starts_with("fans-") => {
                 // fans-2-album:4 is the fifth album for the fans of the third artist; fans-2 is that artist.
                 let (shelf, part) = fans["fans-".len()..].split_once('-').unwrap_or((&fans["fans-".len()..], ""));
@@ -1557,6 +1572,11 @@ impl State {
                 }
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "profile-name" => {
+                self.profile_draft = Some(value.clone());
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "profile-name" => self.click("profile-save"),
             UiAction::InputChanged { id, value } if id == "playlist-name" => {
                 if let Some(draft) = &mut self.creating {
                     draft.name = value.clone();
@@ -1687,7 +1707,8 @@ impl State {
             if let Some(mix) = self.mix_at(tile) {
                 return if self.plays_from(&mix.tracks) { vec![Command::PlayPause] } else { vec![Command::PlayList { tracks: mix.tracks, index: 0 }] };
             }
-            if let Some(track) = self.track_at(tile) {
+            let top = || tile.strip_prefix("top-track:")?.parse::<usize>().ok().and_then(|index| self.top_tracks().into_iter().nth(index));
+            if let Some(track) = self.track_at(tile).cloned().or_else(top) {
                 if self.current().is_some_and(|current| current.id == track.id) { return vec![Command::PlayPause]; }
                 return self.click(tile);
             }
@@ -2066,6 +2087,29 @@ impl State {
             "account-dismiss" => {
                 self.account_open = false;
                 Vec::new()
+            }
+            "account-profile" => {
+                if self.page != Page::Profile { self.go(Page::Profile); }
+                Vec::new()
+            }
+            "profile-edit" => {
+                self.profile_draft = Some(self.profile.name.clone());
+                Vec::new()
+            }
+            "profile-cancel" => {
+                self.profile_draft = None;
+                Vec::new()
+            }
+            "profile-save" => {
+                if let Some(name) = self.profile_draft.take() {
+                    self.profile.name = name.trim().chars().take(PROFILE_NAME_MOST).collect();
+                }
+                Vec::new()
+            }
+            _ if id.starts_with("top-track:") => {
+                let tracks = self.top_tracks();
+                let index = id["top-track:".len()..].parse::<usize>().ok().filter(|index| *index < tracks.len());
+                index.map(|index| Command::PlayList { tracks, index }).into_iter().collect()
             }
             "now-playing-view" => {
                 let showing = self.panel_open && !self.queue_open;
@@ -3260,6 +3304,21 @@ mod tests {
         assert!(state.is_sliding(Instant::now()), "with motion it travels");
         state.restore_sides(false, true);
         assert!(!state.library_open && state.panel_open && !state.is_sliding(Instant::now()));
+    }
+
+    #[test]
+    fn the_profile_opens_from_the_account_and_its_name_is_saved_trimmed() {
+        let mut state = State::default();
+        click(&mut state, "account-profile");
+        assert_eq!(state.page, Page::Profile);
+        click(&mut state, "profile-edit");
+        state.update(&UiAction::InputChanged { id: "profile-name".into(), value: format!("  Nihuel{}  ", "x".repeat(60)) });
+        click(&mut state, "profile-save");
+        assert!(state.profile_draft.is_none());
+        assert!(state.profile.name.starts_with("Nihuel") && state.profile.name.chars().count() == PROFILE_NAME_MOST);
+        click(&mut state, "profile-edit");
+        click(&mut state, "profile-cancel");
+        assert!(state.profile_draft.is_none() && state.profile.name.starts_with("Nihuel"), "cancelling keeps the name");
     }
 
     #[test]
