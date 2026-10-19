@@ -26,7 +26,8 @@ pub enum Showing {
 /// gets a glow of the frame behind it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Fit {
-    Square(f32),
+    /// Filling a box of this width and height: the frame's middle at its proportions.
+    Cover { width: f32, height: f32 },
     Whole { width: f32, room: (f32, f32) },
 }
 
@@ -66,7 +67,7 @@ impl Shared {
     fn show(&self, frame: &Frame, repaint: &impl Fn()) {
         let fit = *self.fit.lock().unwrap();
         let laid = match fit {
-            Fit::Square(side) => squared(frame, side),
+            Fit::Cover { width, height } => covered(frame, width, height),
             Fit::Whole { width, room } => {
                 *self.backdrop.lock().unwrap() = glow(frame, room);
                 SurfaceFrame::from_rgba([frame.width, frame.height], &frame.rgba, frame.width as f32 / width.max(1.0))
@@ -279,15 +280,19 @@ fn glow(frame: &Frame, room: (f32, f32)) -> Option<SurfaceFrame> {
 
 /// The middle square of a frame, said to be as dense as it takes to fill `side`: the
 /// backend draws pixels at their own density, so that is what makes them cover the square.
-fn squared(frame: &Frame, side: f32) -> Option<SurfaceFrame> {
-    let edge = frame.width.min(frame.height);
-    let (left, top) = ((frame.width - edge) / 2, (frame.height - edge) / 2);
-    let mut rgba = Vec::with_capacity(edge * edge * 4);
-    for row in top..top + edge {
+fn covered(frame: &Frame, width: f32, height: f32) -> Option<SurfaceFrame> {
+    let aspect = width / height.max(1.0);
+    // The whole height of a frame wider than the box, the whole width of one narrower.
+    let across = ((frame.height as f32 * aspect).round() as usize).clamp(1, frame.width.max(1));
+    let down = ((frame.width as f32 / aspect).round() as usize).clamp(1, frame.height.max(1));
+    let (across, down) = if across < frame.width { (across, frame.height) } else { (frame.width, down) };
+    let (left, top) = ((frame.width - across) / 2, (frame.height - down) / 2);
+    let mut rgba = Vec::with_capacity(across * down * 4);
+    for row in top..top + down {
         let start = (row * frame.width + left) * 4;
-        rgba.extend_from_slice(frame.rgba.get(start..start + edge * 4)?);
+        rgba.extend_from_slice(frame.rgba.get(start..start + across * 4)?);
     }
-    SurfaceFrame::from_rgba([edge, edge], &rgba, edge as f32 / side.max(1.0))
+    SurfaceFrame::from_rgba([across, down], &rgba, across as f32 / width.max(1.0))
 }
 
 #[cfg(test)]
@@ -295,12 +300,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_wide_frame_gives_its_middle_square_at_the_density_that_fills_the_side() {
+    fn a_frame_gives_its_middle_at_the_boxs_proportions() {
         // Four by two, each pixel carrying its column in red.
         let rgba: Vec<u8> = (0..2).flat_map(|_| (0..4u8).flat_map(|column| [column, 0, 0, 255])).collect();
-        let frame = squared(&Frame { width: 4, height: 2, rgba }, 100.0).unwrap();
-        assert_eq!(frame.size(), [2, 2]);
-        assert!(squared(&Frame { width: 4, height: 2, rgba: vec![0; 3] }, 100.0).is_none(), "a frame with rows missing");
+        let wide = Frame { width: 4, height: 2, rgba };
+        assert_eq!(covered(&wide, 100.0, 100.0).unwrap().size(), [2, 2]);
+        assert_eq!(covered(&wide, 90.0, 145.0).unwrap().size(), [1, 2], "a tall box takes a narrow middle");
+        assert_eq!(covered(&wide, 400.0, 100.0).unwrap().size(), [4, 1], "a wider box takes the middle rows");
+        assert!(covered(&Frame { width: 4, height: 2, rgba: vec![0; 3] }, 100.0, 100.0).is_none(), "a frame with rows missing");
     }
 
     #[test]

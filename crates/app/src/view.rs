@@ -38,8 +38,9 @@ pub const SCHEME: Scheme = Scheme {
     text: Color::rgb(255, 255, 255),
     muted: Color::rgb(179, 179, 179),
     muted_on_raised: Color::rgb(179, 179, 179),
-    menu: Color::rgb(36, 36, 38),
-    menu_hover: Color::rgb(52, 52, 54),
+    // Spotify's menu: a grey lifted off the panels, its row a step lighter under the pointer.
+    menu: Color::rgb(40, 40, 40),
+    menu_hover: Color::rgb(62, 62, 62),
     menu_muted: Color::rgb(179, 179, 179),
     shadow: Color::rgba(0, 0, 0, 140),
     control: ControlColors {
@@ -111,7 +112,13 @@ fn pill(size: ControlSize) -> f32 {
 
 fn menu_sizing(state: &State) -> SelectorSizing {
     if state.mobile { SelectorSizing { row_height: 44.0, detail_row_height: 60.0, label_size: 15.0, ..SelectorSizing::COMPACT } }
-    else { SelectorSizing::COMPACT }
+    // Spotify's rows: 40 high, the label at 14.
+    else { SelectorSizing { row_height: 40.0, label_size: 14.0, ..SelectorSizing::COMPACT } }
+}
+
+/// A menu as Spotify's: no rule round it nor between its groups, which its gaps tell apart.
+fn menu_palette() -> ComponentPalette {
+    ComponentPalette { border: Color::rgba(0, 0, 0, 0), ..SCHEME.menu() }
 }
 
 /// The window is laid out as Spotify's: a bar with the search across the top, three rounded
@@ -159,16 +166,56 @@ const SHELF_BAR_ROOM: f32 = 12.0;
 const COVER: f32 = 40.0;
 const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
+/// The column of a row's like, as wide as its button.
+const LIKE_WIDTH: f32 = 32.0;
 const MENU_WIDTH: f32 = 272.0;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
 /// The dot under a control of the playback bar that is on.
 const ACTIVE_DOT: f32 = 4.0;
-/// The way to what plays, in the right panel: a square with a play in it.
-const NOW_PLAYING_VIEW: &str = include_str!("../assets/icons/square-play.svg");
 /// What the bar's start keeps beside the title and artist: the cover, the heart and the gaps.
 const NOW_PLAYING_ROOM: f32 = 140.0;
 /// limn's shuffle with a spark over where its arrows cross.
 const SMART_SHUFFLE: &str = include_str!("../assets/icons/shuffle-spark.svg");
+
+/// Surco's own glyphs for the desktop, drawn on a 16 grid the way Spotify's are: thin straight
+/// strokes, a filled shape only where something is on. A phone keeps the platform's.
+mod glyph {
+    pub const SHUFFLE: &str = include_str!("../assets/icons/glyph/shuffle.svg");
+    pub const SMART_SHUFFLE: &str = include_str!("../assets/icons/glyph/shuffle-smart.svg");
+    pub const PREVIOUS: &str = include_str!("../assets/icons/glyph/previous.svg");
+    pub const NEXT: &str = include_str!("../assets/icons/glyph/next.svg");
+    pub const REPEAT: &str = include_str!("../assets/icons/glyph/repeat.svg");
+    pub const REPEAT_ONE: &str = include_str!("../assets/icons/glyph/repeat-one.svg");
+    pub const NOW_PLAYING_VIEW: &str = include_str!("../assets/icons/glyph/now-playing-view.svg");
+    pub const LYRICS: &str = include_str!("../assets/icons/glyph/microphone.svg");
+    pub const QUEUE: &str = include_str!("../assets/icons/glyph/queue.svg");
+    pub const DEVICE: &str = include_str!("../assets/icons/glyph/connect-device.svg");
+    pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
+    pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
+    pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
+    pub const VOLUME_HIGH: &str = include_str!("../assets/icons/glyph/volume-high.svg");
+    pub const FULLSCREEN: &str = include_str!("../assets/icons/glyph/fullscreen.svg");
+    pub const VIDEO: &str = include_str!("../assets/icons/glyph/video.svg");
+    pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
+    /// Liking, and liked: a circled plus, and the circle filled with the check cut out of it.
+    pub const ADD: &str = include_str!("../assets/icons/glyph/add-circle.svg");
+    pub const ADDED: &str = include_str!("../assets/icons/glyph/added-circle.svg");
+}
+
+/// The like of a song, as Spotify's: a circled plus that becomes a filled circle with a check,
+/// in the app's own ink rather than a colour.
+fn like_glyph(liked: bool) -> Icon {
+    Icon::Custom(if liked { glyph::ADDED } else { glyph::ADD })
+}
+
+/// The glyph of the volume, in three steps.
+fn volume_glyph(volume: f32) -> Icon {
+    Icon::Custom(match volume {
+        level if level <= 0.0 => glyph::VOLUME_OFF,
+        level if level < 0.5 => glyph::VOLUME_LOW,
+        _ => glyph::VOLUME_HIGH,
+    })
+}
 /// An entry of the library: 64 high around a 48 tile.
 const LIBRARY_ROW: ListRowSizing = ListRowSizing {
     height: Some(64.0),
@@ -256,16 +303,16 @@ pub fn view(state: &State, window: Size) -> Element {
     if right_slide > 0.0 {
         content -= right + GAP;
         columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
-        columns.extend([handle(Side::Right, right_slide == 1.0), sliding(panel(state, palette), right_whole, right)]);
+        columns.extend([handle(Side::Right, right_slide == 1.0), sliding(panel(state, window, palette), right_whole, right)]);
     } else if state.queue_open && window.width < PANEL_FROM {
-        columns.push(surface(panel(state, palette)).flex(1.0));
+        columns.push(surface(panel(state, window, palette)).flex(1.0));
     } else {
         // A page's wash runs to the pane's edges: the mask keeps its corners round.
         columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
     }
     columns.push(gap());
     if peek {
-        let strip = PeekPanel::new("panel-peek", panel(state, palette), palette)
+        let strip = PeekPanel::new("panel-peek", panel(state, window, palette), palette)
             .side(limn::Side::Right)
             .width(PEEK_WIDTH)
             .content_width(right_whole)
@@ -982,7 +1029,7 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
         item("account-profile", t!("desktop-profile")),
         item("settings", t!("common-settings")),
     ];
-    DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", SCHEME.menu()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
+    DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
 }
 
 /// The account's initial on its colour, the same for a name wherever it shows.
@@ -1201,7 +1248,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let picker = if state.mobile { picker.size(None, Some(44.0)).radius(22.0) } else { picker };
     // All of its choices at once: past eight a menu becomes a list that scrolls, with a rail's room beside it.
     let all = choices.len();
-    tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", SCHEME.menu()).sizing(menu_sizing(state)).width(LIBRARY_MENU_WIDTH).max_visible_items(all).placement(PopoverPlacement::BottomEnd).render().centered_y());
+    tools.push(DropdownMenu::new(picker, choices, state.library_menu, "library-menu-close", menu_palette()).sizing(menu_sizing(state)).width(LIBRARY_MENU_WIDTH).max_visible_items(all).placement(PopoverPlacement::BottomEnd).render().centered_y());
     let tools = Element::row(tools).gap(8.0).size(None, Some(if state.mobile { 44.0 } else { ControlSize::Compact.height() }));
 
     let wanted = state.library_search.trim().to_lowercase();
@@ -1244,10 +1291,10 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                 let entry = if view == LibraryView::Grid {
                     Element::stack(vec![entry, Element::row(vec![Element::spacer().flex(1.0), dots.background(SCHEME.raised).radius(22.0)]).padding(4.0)])
                 } else { Element::row(vec![entry.flex(1.0), dots.centered_y()]).gap(4.0) };
-                return ContextMenu::new(format!("library-context:{key}"), entry, Vec::new(), SCHEME.menu()).open_action(more).render();
+                return ContextMenu::new(format!("library-context:{key}"), entry, Vec::new(), menu_palette()).open_action(more).render();
             }
             let pin = ContextMenuItem::new(format!("pin:{key}"), if held { t!("desktop-unpin") } else { t!("desktop-pin") });
-            ContextMenu::new(format!("library-context:{key}"), entry, vec![ContextMenuEntry::Item(pin)], SCHEME.menu()).render()
+            ContextMenu::new(format!("library-context:{key}"), entry, vec![ContextMenuEntry::Item(pin)], menu_palette()).render()
         })
         .collect();
     let list = if shown.is_empty() {
@@ -1792,7 +1839,7 @@ fn mobile_card_context(state: &State, row: &str, element: Element) -> Element {
     // tap target clear. UIKit supplies the iOS menu, with this retained target
     // also serving keyboard and non-iOS context requests.
     ContextMenu::new(target, element,
-        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, t!("common-options")))], SCHEME.menu())
+        vec![ContextMenuEntry::Item(ContextMenuItem::new(&action, t!("common-options")))], menu_palette())
         .open_action(action).render()
 }
 
@@ -1830,10 +1877,10 @@ pub(crate) fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Opti
         item("queue", t!("desktop-add-to-queue"), include_str!("../assets/icons/list-plus.svg"), None),
         item("next", t!("desktop-play-next"), include_str!("../assets/icons/list-start.svg"), None),
         item("share", t!("desktop-share"), include_str!("../assets/icons/share-2.svg"), None),
-        Some(if state.is_liked(&track.id) {
-            Action { id: format!("do:like:{row}"), label: t!("desktop-remove-like"), icon: Icon::HeartFill, detail: None }
-        } else {
-            Action { id: format!("do:like:{row}"), label: t!("common-like"), icon: Icon::Heart, detail: None }
+        Some({
+            let liked = state.is_liked(&track.id);
+            let icon = match (state.mobile, liked) { (true, true) => Icon::HeartFill, (true, false) => Icon::Heart, (false, _) => like_glyph(liked) };
+            Action { id: format!("do:like:{row}"), label: if liked { t!("desktop-remove-like") } else { t!("common-like") }, icon, detail: None }
         }),
         None,
         item("add-new", t!("desktop-add-to-new-playlist"), include_str!("../assets/icons/list-plus.svg"), None),
@@ -1913,7 +1960,7 @@ fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) 
         .tooltip(t!("common-options"))
         .active(open)
         .render();
-    let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", SCHEME.menu())
+    let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", menu_palette())
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::BottomEnd)
         .render();
@@ -1959,7 +2006,7 @@ fn track_row(state: &State, row: String, track: &Track, subtitle: &str, palette:
     // action sits flush with the row's edge: the row's own padding keeps them off it.
     let dots = Element::row(vec![menu, Element::spacer().size(Some(TRACK_ROW.padding), None)]).reveal_on_hover(format!("dots:{row}"));
     let element = list_row.trailing_action(format!("more:{row}"), middle(dots)).render().hover_region();
-    ContextMenu::new(format!("context:{row}"), element, pressed, SCHEME.menu()).render()
+    ContextMenu::new(format!("context:{row}"), element, pressed, menu_palette()).render()
 }
 
 /// The width a page's table has in a pane `width` wide: the pane's, less the page's margins
@@ -2026,6 +2073,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
     if album {
         columns.push(TableColumn::fixed("album", t!("common-album"), state.album_width).sortable().resizable(ALBUM_FROM - TITLE_MIN - 280.0).optional(state.album_shown).hide_below(ALBUM_FROM));
     }
+    columns.push(TableColumn::fixed("like", "", LIKE_WIDTH));
     columns.push(TableColumn::fixed("duration", t!("desktop-duration"), DURATION_WIDTH + 22.0).icon(Icon::Clock).sortable().align_end().optional(state.duration_shown));
     columns.push(TableColumn::fixed("more", "", MORE_WIDTH));
     let mut menus = Vec::new();
@@ -2056,23 +2104,28 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             if album {
                 cells.push(Text::new(track.album.as_deref().unwrap_or_default(), palette).muted().truncate().render());
             }
+            // As Spotify's: a song liked keeps its check; the others offer the plus under the pointer.
+            let liked = state.is_liked(&track.id);
+            let like = IconButton::new(format!("do:like:{row}"), like_glyph(liked), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+                .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") }).ink(if liked { palette.text } else { palette.muted }).hover_ink(palette.text).render();
+            cells.push(Element::row(vec![if liked { like } else { like.reveal_on_hover(format!("like:{row}")) }]).centered_y());
             cells.push(Element::row(row_facts(state, &row, track, palette)).gap(8.0));
             let (menu, pressed) = row_menu(state, &row, track, palette);
             menus.push(pressed);
             cells.push(menu.reveal_on_hover(format!("dots:{row}")));
-            TableRow::new(&row, cells).controls([format!("more:{row}")])
+            TableRow::new(&row, cells).controls([format!("more:{row}"), format!("do:like:{row}")])
         })
         .collect();
     let sizing = TableSizing { row_height: TRACK_TABLE_ROW, ..TableSizing::ROOMY };
     let (header, built) = Table::new("tracks", columns, width, palette)
         .rows(listed)
         .sort(state.page_sort.clone())
-        .menu_palette(SCHEME.menu())
+        .menu_palette(menu_palette())
         .radius(RadiusRole::Card)
         .sizing(sizing)
         .into_parts();
     let body = built.into_iter().zip(menus).zip(rows).map(|((element, pressed), (place, track))| {
-        let element = ContextMenu::new(format!("context:page-track:{place}"), element.hover_region(), pressed, SCHEME.menu()).render();
+        let element = ContextMenu::new(format!("context:page-track:{place}"), element.hover_region(), pressed, menu_palette()).render();
         match &leaving {
             Some(list) => Element::column(vec![element]).animate_height(format!("{list}:{}", track.id), false),
             None => element,
@@ -2240,18 +2293,29 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
             .radius(limn::tokens().radius.control)
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
-    // Icons, as the play and the shuffle beside them: the row has to fit a narrow pane.
-    let own = |id: &str, icon: Icon, hint: std::borrow::Cow<'static, str>| IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).tooltip(hint).render();
+    // What else a list can do waits behind its dots, as Spotify's.
+    let item = |id: &str, label: std::borrow::Cow<'static, str>, icon: Icon| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(icon));
     let copied = state.list_copied == Some(playlist.id);
-    let share = own("playlist-share", if copied { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/share-2.svg")) }, if copied { t!("common-link-copied") } else { t!("desktop-share") });
     let exported = state.list_exported == Some(playlist.id);
-    let export = own("playlist-export", if exported { Icon::Check } else { Icon::Custom(include_str!("../assets/icons/upload.svg")) }, if exported { t!("desktop-songs-copied") } else { t!("desktop-copy-songs") });
-    let delete = own("playlist-delete", Icon::Trash, t!("common-delete"));
+    let mut entries = Vec::new();
+    if !playlist.tracks.is_empty() {
+        entries.extend([
+            item("playlist-share", if copied { t!("common-link-copied") } else { t!("desktop-share") }, Icon::Custom(include_str!("../assets/icons/share-2.svg"))),
+            item("playlist-export", if exported { t!("desktop-songs-copied") } else { t!("desktop-copy-songs") }, Icon::Custom(include_str!("../assets/icons/upload.svg"))),
+            DropdownMenuEntry::Separator,
+        ]);
+    }
+    entries.push(item("playlist-delete", t!("common-delete"), Icon::Trash));
+    let more = DropdownMenu::new(page_glyph("page-more", Icon::More, &t!("desktop-options-of", name = playlist.name.as_str()), false, palette), entries, state.page_more_open, "page-more-dismiss", menu_palette())
+        .sizing(menu_sizing(state))
+        .width(MENU_WIDTH)
+        .placement(PopoverPlacement::BottomStart)
+        .render();
     let actions = if playlist.tracks.is_empty() {
-        // Nothing to play, to share or to search yet.
-        Element::row(vec![delete])
+        // Nothing to play or to search yet.
+        Element::row(vec![more])
     } else {
-        page_actions(state, vec![share, export, delete], palette)
+        page_actions(state, vec![more], palette)
     };
     let missed = state.imported.as_ref().filter(|(id, missed)| *id == playlist.id && !missed.is_empty()).map(|(_, missed)| {
         let said = t!("desktop-missed-count", count = missed.len());
@@ -2394,7 +2458,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         None => system_output.as_str(),
     };
     let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", SCHEME.on_raised())
-        .menu_palette(SCHEME.menu())
+        .menu_palette(menu_palette())
         .accessibility_label(t!("desktop-output-device"))
         .size(ControlSize::Spacious)
         .width(span)
@@ -2511,10 +2575,11 @@ fn results(state: &State, palette: ComponentPalette) -> Element {
 /// The shuffle's three steps as its button shows them: the icon of the one it is on, and
 /// what a press does next.
 fn shuffle_step(state: &State) -> (Icon, std::borrow::Cow<'static, str>) {
+    let (plain, smart) = if state.mobile { (Icon::Shuffle, Icon::Custom(SMART_SHUFFLE)) } else { (Icon::Custom(glyph::SHUFFLE), Icon::Custom(glyph::SMART_SHUFFLE)) };
     match (state.player.shuffle, state.player.smart) {
-        (false, _) => (Icon::Shuffle, t!("desktop-shuffle-on")),
-        (true, false) => (Icon::Shuffle, t!("desktop-smart-shuffle-on")),
-        (true, true) => (Icon::Custom(SMART_SHUFFLE), t!("desktop-shuffle-off")),
+        (false, _) => (plain, t!("desktop-shuffle-on")),
+        (true, false) => (plain, t!("desktop-smart-shuffle-on")),
+        (true, true) => (smart, t!("desktop-shuffle-off")),
     }
 }
 
@@ -2526,14 +2591,20 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
     let play = if state.mobile {
         mobile::controls::playback("page-play", false, 56.0, 28.0, palette)
     } else {
-        IconButton::new("page-play", Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip(t!("common-play")).render().center_content()
+        // A glyph of 20, a step up from a button's own, as the disc is.
+        let glyph = Element::icon(Icon::PlayFill).large_icon(20.0).foreground(round.text).size(Some(20.0), Some(20.0)).centered();
+        let button = Element::clickable("page-play", glyph)
+            .background(round.surface).hover_background(round.hover).pressed_background(round.selected)
+            .radius(PAGE_PLAY / 2.0).size(Some(PAGE_PLAY), Some(PAGE_PLAY))
+            .accessible(limn::Access::new(limn::Role::Button).name(t!("common-play")));
+        limn::Tooltip::new(button, "page-play", t!("common-play"), palette).render()
     };
     let (icon, hint) = shuffle_step(state);
     let shuffle = if state.mobile {
         let action = mobile::controls::action("page-shuffle", icon, &hint, 22.0, palette);
         if state.player.shuffle { action.background(palette.selected) } else { action }
     } else {
-        IconButton::new("page-shuffle", icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(hint).active(state.player.shuffle).render()
+        page_glyph("page-shuffle", icon, &hint, state.player.shuffle, palette)
     };
     let mut actions = vec![play, shuffle.centered_y()];
     actions.extend(own.into_iter().map(Element::centered_y));
@@ -2548,11 +2619,41 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
 /// The actions of a page the library can hold: `keep` names keeping it, before and after.
 fn play_buttons(state: &State, keep: Option<(&str, &str)>, palette: ComponentPalette) -> Element {
     let keep = keep.map(|(keep, kept)| {
-        let (label, icon) = if state.keeps_page() { (kept, Icon::Check) } else { (keep, Icon::Add) };
-        Button::new("keep", label, palette).icon(icon).variant(ButtonVariant::Ghost).render()
+        let held = state.keeps_page();
+        let label = if held { kept } else { keep };
+        // An artist is followed by name, in an outlined pill; a record is kept with the glyph
+        // a song is liked with.
+        if matches!(state.page, Page::Artist(_)) {
+            Button::new("keep", label, palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render()
+        } else {
+            page_glyph("keep", like_glyph(held), label, held, palette)
+        }
     });
     page_actions(state, keep.into_iter().collect(), palette)
 }
+
+/// A page's action: a glyph of 24 on its own in full ink, a disc of light under the pointer,
+/// and the dot of the playback bar under it while it is on.
+fn page_glyph(id: &str, icon: Icon, hint: &str, on: bool, palette: ComponentPalette) -> Element {
+    // A button's glyph is drawn at 16; this one is an icon of its own.
+    let glyph = Element::icon(icon).large_icon(PAGE_GLYPH).foreground(palette.text).size(Some(PAGE_GLYPH), Some(PAGE_GLYPH)).centered();
+    let side = PAGE_GLYPH + 16.0;
+    let button = Element::clickable(id.to_owned(), glyph)
+        .hover_background(GLYPH_HOVER)
+        .pressed_background(GLYPH_HELD)
+        .radius(side / 2.0)
+        .size(Some(side), Some(side))
+        .accessible(limn::Access::new(limn::Role::Button).name(hint));
+    let button = limn::Tooltip::new(button, id, hint, palette).render();
+    if !on { return button; }
+    let dot = Element::spacer().size(Some(ACTIVE_DOT), Some(ACTIVE_DOT)).background(palette.text).radius(ACTIVE_DOT / 2.0);
+    Element::stack(vec![button, Element::column(vec![Element::spacer().flex(1.0), dot.centered_x()])])
+}
+
+const PAGE_GLYPH: f32 = 24.0;
+const PAGE_PLAY: f32 = 48.0;
+const GLYPH_HOVER: Color = Color::rgba(255, 255, 255, 26);
+const GLYPH_HELD: Color = Color::rgba(255, 255, 255, 46);
 
 /// The search of the page's tracks, at the far end of its actions: a magnifier that grows
 /// into a field, with the cross that shuts it where the magnifier was.
@@ -2570,10 +2671,13 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             .width(width)
             .render();
         let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field.radius(ControlSize::Compact.height() / 2.0) };
-        let field = field.centered_y()
+        // The cross that shuts it stands inside its end, as Spotify's.
+        let shut = toggle(Icon::Close, &t!("desktop-close-search"));
+        let field = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), shut])])
+            .centered_y()
             // In a narrow pane it makes do with what the row has left.
             .shrink_to_fit();
-        parts.extend([field, toggle(Icon::Close, &t!("desktop-close-search"))]);
+        parts.push(field);
     } else {
         parts.push(toggle(Icon::Search, &t!("desktop-search-page")));
     }
@@ -2583,7 +2687,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
     let orders = vec![order("own", &t!("desktop-sort-list-order")), order("title", &t!("common-title")), order("album", &t!("common-album")), order("duration", &t!("desktop-duration"))];
     let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette).radius(22.0) }
         else { header_button("page-sort", Icon::Sort, TooltipSpec::new(t!("desktop-sort-button")), palette).active(state.sort_open).render() };
-    parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", SCHEME.menu()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
+    parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", menu_palette()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
     parts
 }
 
@@ -2832,6 +2936,14 @@ fn cinema(state: &State, window: Size, palette: ComponentPalette) -> Element {
     Element::panel(Element::column(vec![stage.size(Some(room.width), Some(room.height)), player(state, window.width, palette)])).background(CANVAS).size(Some(window.width), Some(window.height))
 }
 
+/// How tall the song's video stands at the top of a panel `width` wide, as Spotify's Canvas:
+/// 9 by 14.5, though no more than two thirds of the panel, so what follows shows under it,
+/// and never less than square.
+pub fn canvas_height(width: f32, window: Size) -> f32 {
+    let panel = window.height - TOP_BAR_HEIGHT - PLAYER_HEIGHT;
+    (width * 14.5 / 9.0).min(panel * 2.0 / 3.0).max(width.min(panel))
+}
+
 /// The right panel's own margin. Its lists do without it: they run to the panel's edge, so
 /// their scrollbar sits where the middle panel's does, and set their rows in themselves.
 const PANEL_PAD: f32 = 16.0;
@@ -2842,12 +2954,12 @@ fn inset(part: Element) -> Element {
 }
 
 /// The right-hand column: what plays, or what comes after it while the queue is open.
-fn panel(state: &State, palette: ComponentPalette) -> Element {
+fn panel(state: &State, window: Size, palette: ComponentPalette) -> Element {
     let content = if state.queue_open {
         vec![panel_header(&t!("desktop-up-next"), &t!("desktop-queue-detail"), palette), upcoming(state, palette)]
     } else {
         match state.current() {
-            Some(track) => return now_playing(state, track, palette),
+            Some(track) => return now_playing(state, track, window, palette),
             None => vec![
                 panel_header(&t!("desktop-now-playing"), &t!("desktop-nothing-yet"), palette),
                 centered(Empty::new(t!("desktop-nothing-playing"), t!("desktop-nothing-playing-detail"), palette).icon(Icon::MusicNote).render()),
@@ -2872,7 +2984,7 @@ const PANEL_HEADER: f32 = 64.0;
 /// its name over the foot of it; with no video its cover stands square under the header.
 /// Under them, the cards: the lyrics, who sings it, and what comes next. The header floats
 /// over it all, and takes the floor once the panel is scrolled.
-fn now_playing(state: &State, track: &Track, palette: ComponentPalette) -> Element {
+fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPalette) -> Element {
     let width = state.right_width;
     let side = width - 2.0 * PANEL_PAD;
     let video = state.screening().is_some();
@@ -2884,19 +2996,20 @@ fn now_playing(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
     ]).gap(2.0).flex(1.0).centered_y();
     let share = IconButton::new("now-share", Icon::Custom(include_str!("../assets/icons/share-2.svg")), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
         .tooltip(t!("desktop-share")).render().reveal_on_hover("now-share").centered_y();
-    let like = IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+    let like = IconButton::new("like", like_glyph(liked), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
         .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") }).render().centered_y();
     let title = Element::row(vec![names, share, like]).gap(8.0);
 
     let media = if video {
-        // Full-bleed and square from the top: the cover until the first frame, then the
-        // video, darkened at the top for the header and at the foot for the name over it.
-        let picture = cover(state, &largest(state, track), width, palette).radius(0.0);
+        // Full-bleed and tall from the top: the cover until the first frame, then the video,
+        // darkened at the top for the header and at the foot for the name over it.
+        let tall = canvas_height(width, window);
+        let picture = cover(state, &largest(state, track), width, palette).size(Some(width), Some(tall)).radius(0.0);
         let top = Element::spacer().size(None, Some(width * 0.25)).vertical_gradient(vec![Color { a: 161, ..PANEL_FLOOR }, Color { a: 0, ..PANEL_FLOOR }]);
         let foot = Element::spacer().size(None, Some(width * 0.45)).vertical_gradient(vec![Color { a: 0, ..PANEL_FLOOR }, Color { a: 115, ..PANEL_FLOOR }, Color { a: 230, ..PANEL_FLOOR }, PANEL_FLOOR]);
         let scrims = Element::column(vec![top, Element::spacer().flex(1.0), foot]);
         let over = Element::column(vec![Element::spacer().flex(1.0), title.padding(PANEL_PAD)]);
-        Element::stack(vec![picture, Element::surface(CLIP_SURFACE, t!("desktop-song-video")), scrims, over]).size(Some(width), Some(width)).clip_children()
+        Element::stack(vec![picture, Element::surface(CLIP_SURFACE, t!("desktop-song-video")), scrims, over]).size(Some(width), Some(tall)).clip_children()
     } else {
         // Square under the header, a margin from each side; a click opens its release.
         let picture = link("panel-cover", "now-album", cover(state, &largest(state, track), side, palette).radius(RadiusRole::Card.px()));
@@ -2913,8 +3026,20 @@ fn now_playing(state: &State, track: &Track, palette: ComponentPalette) -> Eleme
     // whether to see its video and the way to see it large.
     let context = track.album.as_deref().unwrap_or(&track.artist);
     let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new(t!("desktop-hide-panel")), palette).render().reveal_on_hover("panel-shut");
-    let large = header_button("cinema", Icon::Fullscreen, TooltipSpec::new(t!("desktop-fullscreen")), palette).render();
-    let tools = Element::row(vec![footage_switch(state, palette), large]).gap(8.0).reveal_on_hover("panel-tools");
+    let large = header_button("cinema", Icon::Custom(glyph::FULLSCREEN), TooltipSpec::new(t!("desktop-fullscreen")), palette).render();
+    // As Spotify's: the rest of what can be done with the song waits behind the dots.
+    let item = |id: &str, label: std::borrow::Cow<'static, str>| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label));
+    let mut entries = Vec::new();
+    if track.album_id.is_some() { entries.push(item("now-album", t!("desktop-go-to-album"))); }
+    entries.extend([item("now-artist", t!("desktop-go-to-artist")), item("now-share", t!("desktop-share"))]);
+    let dots = header_button("panel-more", Icon::More, TooltipSpec::new(t!("desktop-options-of", name = track.title.as_str())), palette).active(state.panel_more_open).render();
+    let more = DropdownMenu::new(dots, entries, state.panel_more_open, "panel-more-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render();
+    // The video or the cover: the glyph is the one it turns to.
+    let (glyph, hint) = if state.settings.clips { (glyph::PICTURE, t!("desktop-show-cover")) } else { (glyph::VIDEO, t!("desktop-show-video")) };
+    let footage = header_button("cover-clips", Icon::Custom(glyph), TooltipSpec::new(hint), palette).render();
+    // The menu open keeps them in view.
+    let tools = Element::row(vec![footage, more, large]).gap(8.0);
+    let tools = if state.panel_more_open { tools } else { tools.reveal_on_hover("panel-tools") };
     let header = Element::row(vec![
         shut.centered_y(),
         Element::clickable("panel-context", Text::new(context, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold)).dispatch_as("now-album").flex(1.0).centered_y(),
@@ -3065,7 +3190,7 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
             // A finger pans the queue; desktop pointers can reorder its rows.
             let row = if state.mobile { row } else { row.draggable().drop_target() };
             let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), t!("desktop-remove-from-queue")).icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
-            let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], SCHEME.menu()).render();
+            let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], menu_palette()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.
             Element::column(vec![row]).animate_height(format!("upcoming-row:{}", track.id), false)
         })
@@ -3170,10 +3295,12 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .centered_y(),
             {
                 let liked = state.is_liked(&track.id);
-                IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette).round()
+                IconButton::new("like", like_glyph(liked), palette).round()
                     .variant(ButtonVariant::Ghost)
                     .size(ControlSize::Compact)
                     .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") })
+                    .ink(if liked { palette.text } else { palette.muted })
+                    .hover_ink(palette.text)
                     .render()
                     .centered_y()
             },
@@ -3182,7 +3309,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .gap(12.0),
         None => Element::spacer(),
     };
-    let repeat_icon = if state.player.repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat };
+    let repeat_icon = Icon::Custom(if state.player.repeat == Repeat::One { glyph::REPEAT_ONE } else { glyph::REPEAT });
     // Play is the one filled control of the bar: a white circle.
     let round = if has_track {
         ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette }
@@ -3199,15 +3326,15 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .center_content();
     let buttons = Element::row(vec![
         transport("shuffle", shuffle_step(state).0, &shuffle_step(state).1).active(state.player.shuffle).render(),
-        transport("previous", Icon::SkipBack, &t!("desktop-previous")).render(),
+        transport("previous", Icon::Custom(glyph::PREVIOUS), &t!("desktop-previous")).render(),
         play,
-        transport("next", Icon::SkipForward, &t!("desktop-next")).render(),
+        transport("next", Icon::Custom(glyph::NEXT), &t!("desktop-next")).render(),
         transport("repeat", repeat_icon, &t!("desktop-repeat")).active(state.player.repeat != Repeat::Off).render(),
     ])
     .gap(8.0)
     .centered_x();
     let time = |seconds: f64| {
-        Element::text(clock(seconds)).font_family(FontFamily::Monospace).font_size(11.0).foreground(palette.muted).centered_y()
+        Element::text(clock(seconds)).font_family(FontFamily::Sans).font_size(12.0).foreground(palette.muted).centered_y()
     };
     let seek = Element::row(vec![
         time(f64::from(state.progress()) * state.player.duration),
@@ -3225,11 +3352,11 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         marked.centered_y()
     };
     let equalizer = Popover::new(
-        side("equalizer", Icon::Sliders, &t!("common-equalizer"), state.equalizer_open),
-        equalizer::popover(state, SCHEME.menu()),
+        side("equalizer", Icon::Custom(glyph::EQUALIZER), &t!("common-equalizer"), state.equalizer_open),
+        equalizer::popover(state, menu_palette()),
         state.equalizer_open,
         "equalizer-close",
-        SCHEME.menu(),
+        menu_palette(),
     )
     .placement(PopoverPlacement::TopEnd)
     .width(EQUALIZER_WIDTH)
@@ -3252,31 +3379,33 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         devices.push(DropdownMenuEntry::Loading { id: "device-loading".into(), rows: 2 });
     }
     devices.extend(state.outputs.iter().filter(|output| !output.is_default).map(|output| device(&output.id, &output.name)));
-    let devices = DropdownMenu::new(side("device", Icon::Custom(AUDIO_ROUTE), &t!("desktop-connect-device"), state.device_open), devices, state.device_open, "device-dismiss", SCHEME.menu())
+    let devices = DropdownMenu::new(side("device", Icon::Custom(glyph::DEVICE), &t!("desktop-connect-device"), state.device_open), devices, state.device_open, "device-dismiss", menu_palette())
         .sizing(menu_sizing(state))
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::TopEnd)
         .render()
         .centered_y();
     if width >= PANEL_FROM {
-        controls.push(side("now-playing-view", Icon::Custom(NOW_PLAYING_VIEW), &t!("desktop-now-playing-view"), showing));
+        controls.push(side("now-playing-view", Icon::Custom(glyph::NOW_PLAYING_VIEW), &t!("desktop-now-playing-view"), showing));
     }
     controls.extend([
-        side("lyrics", Icon::Custom(LYRICS), &t!("desktop-lyrics"), state.lyrics_open()),
-        side("queue", Icon::Playlist, &t!("desktop-queue"), state.queue_open),
+        side("lyrics", Icon::Custom(glyph::LYRICS), &t!("desktop-lyrics"), state.lyrics_open()),
+        side("queue", Icon::Custom(glyph::QUEUE), &t!("desktop-queue"), state.queue_open),
         devices,
         equalizer,
-        IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette).round()
+        IconButton::new("mute", volume_glyph(state.volume), palette).round()
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Compact)
             .tooltip(if state.volume > 0.0 { t!("desktop-mute") } else { t!("desktop-unmute") })
+            .ink(palette.muted)
+            .hover_ink(palette.text)
             .render()
             .centered_y(),
         Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).thumb_on_hover().render().centered_y(),
     ]);
     // Where there is room for the right panel there is room for the whole window's button.
     if has_track && width >= PANEL_FROM {
-        controls.push(side("cinema", Icon::Fullscreen, &t!("desktop-fullscreen"), state.cinema));
+        controls.push(side("cinema", Icon::Custom(glyph::FULLSCREEN), &t!("desktop-fullscreen"), state.cinema));
     }
     let controls = Element::row(controls).gap(6.0).centered_y();
     let middle = Element::column(vec![buttons, seek]).gap(2.0).centered_y();
@@ -3356,7 +3485,8 @@ mod tests {
             let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap();
             let (keep, field, shut, pane) = (rect("keep"), rect("page-query"), rect("page-search"), rect("album"));
             assert!(field.width >= 120.0, "room to type at {width}: {field:?}");
-            assert!(keep.x + keep.width <= field.x && field.x + field.width <= shut.x, "side by side at {width}: {keep:?} {field:?} {shut:?}");
+            assert!(keep.x + keep.width <= field.x, "side by side at {width}: {keep:?} {field:?}");
+            assert!(shut.x > field.x + field.width / 2.0 && shut.x + shut.width <= field.x + field.width, "the cross inside the field's end at {width}: {field:?} {shut:?}");
             assert!(shut.x + shut.width <= pane.x + pane.width - 12.0, "inside the pane at {width}: {shut:?}");
         }
     }
@@ -3691,8 +3821,11 @@ mod tests {
         has(&state, &["playlist-name", "playlist-kind:normal", "playlist-kind:collaborative", "playlist-create", "playlist-cancel"]);
         click(&mut state, "playlist-kind:collaborative");
         click(&mut state, "playlist-create");
-        has(&state, &["playlist:0", "playlist-delete"]);
+        has(&state, &["playlist:0", "page-more"]);
+        click(&mut state, "page-more");
+        has(&state, &["playlist-delete"]);
         click(&mut state, "playlist-delete");
+        assert!(!state.page_more_open, "a choice closes the menu");
         has(&state, &["confirm-yes", "confirm-cancel"]);
         click(&mut state, "confirm-cancel");
 

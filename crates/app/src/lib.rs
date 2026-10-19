@@ -495,8 +495,8 @@ impl eframe::App for Host {
                         let room = view::cinema_room(window);
                         clip::Fit::Whole { width: view::cinema_picture(&footage.large.0, window).width, room: (room.width, room.height) }
                     }
-                    // Full-bleed across the panel, as Spotify's Canvas.
-                    _ => clip::Fit::Square(self.state.right_width),
+                    // Full-bleed across the panel, and tall, as Spotify's Canvas.
+                    _ => clip::Fit::Cover { width: self.state.right_width, height: view::canvas_height(self.state.right_width, window) },
                 };
                 if self.clip.as_ref().is_none_or(|screen| screen.key != name) {
                     limn_egui::forget_surface(view::CLIP_SURFACE);

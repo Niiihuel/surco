@@ -683,6 +683,10 @@ pub struct State {
     pub profile: Profile,
     /// The account's menu, at the end of the top bar.
     pub account_open: bool,
+    /// Whether the menu behind a page's dots is open.
+    pub page_more_open: bool,
+    /// Whether the menu behind the dots of the panel of what plays is open.
+    pub panel_more_open: bool,
     /// The account's name while it is being changed.
     pub profile_draft: Option<String>,
     pub filter: Filter,
@@ -1036,6 +1040,8 @@ impl Default for State {
             collection: Collection::default(),
             profile: Profile::default(),
             account_open: false,
+            page_more_open: false,
+            panel_more_open: false,
             profile_draft: None,
             filter: Filter::All,
             library_search: String::new(),
@@ -1543,6 +1549,8 @@ impl State {
         // A choice in the account's menu closes it.
         if let UiAction::Clicked { id } = action {
             if id.starts_with("account-") || id == "settings" { self.account_open = false; }
+            if id.starts_with("playlist-") { self.page_more_open = false; }
+            if matches!(id.as_str(), "now-album" | "now-artist" | "now-share") { self.panel_more_open = false; }
         }
         // limn's top bar and the closed panel's strip name their controls after themselves;
         // here they are the controls they stand for.
@@ -2086,6 +2094,22 @@ impl State {
             }
             "account-dismiss" => {
                 self.account_open = false;
+                Vec::new()
+            }
+            "panel-more" => {
+                self.panel_more_open = !self.panel_more_open;
+                Vec::new()
+            }
+            "panel-more-dismiss" => {
+                self.panel_more_open = false;
+                Vec::new()
+            }
+            "page-more" => {
+                self.page_more_open = !self.page_more_open;
+                Vec::new()
+            }
+            "page-more-dismiss" => {
+                self.page_more_open = false;
                 Vec::new()
             }
             "account-profile" => {
