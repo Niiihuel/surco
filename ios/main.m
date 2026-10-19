@@ -182,14 +182,15 @@ void surco_scan_code(const char *hint, const char *close, const char *denied_tit
             }]];
             [SurcoTopController() presentViewController:alert animated:YES completion:nil];
         };
-        switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo]) {
-            case AVAuthorizationStatusAuthorized: present(); break;
-            case AVAuthorizationStatusNotDetermined:
-                [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
-                    dispatch_async(dispatch_get_main_queue(), granted ? present : refused);
-                }];
-                break;
-            default: refused(); break;
+        AVAuthorizationStatus status = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeVideo];
+        if (status == AVAuthorizationStatusAuthorized) {
+            present();
+        } else if (status == AVAuthorizationStatusNotDetermined) {
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo completionHandler:^(BOOL granted) {
+                dispatch_async(dispatch_get_main_queue(), granted ? present : refused);
+            }];
+        } else {
+            refused();
         }
     });
 }
