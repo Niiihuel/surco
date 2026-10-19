@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.11.0
+
+![The first run](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/welcome.jpg)
+
+### Added
+
+- A first run in steps, as Spotify's sign-up: start fresh with a name, the genres you like
+  and three or more artists picked from round faces, with a search and others like each
+  one coming in after it. The artists picked are followed, so the home is yours from the
+  first day. Settings open the genres and artists again.
+
+![Choosing artists](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/artists.jpg)
+
+- Or bring the account from another device in the first run's own step: the address the
+  other device shows, or, on an iPhone, its code read with the camera inside Surco.
+
+![Bringing your account](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/bring.jpg)
+
+- On an iPhone: the account's face on Home and Library opens the profile, its name changes
+  in a sheet, and its picture and a playlist's come from Photos.
+- Importing is guided by the app a list comes from, Spotify, Apple Music or YouTube Music,
+  with its way of copying the link; a link pasted chooses the app by itself. A fresh start
+  ends on the offer to bring your music in.
+
+![Importing from another app](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/import.jpg)
+
+### Changed
+
+- The profile shows the artists you follow before anything is played, and a card to make
+  or bring a first playlist instead of an empty page.
+- On a phone, the search tab is the genres to browse and what was searched lately shows
+  once the field is in use; the library's chips are Spotify's and the header's edge is a
+  short fade.
+- The desktop's library no longer carries a card to import.
+
+![On a phone](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/phone.jpg)
+
 ## 0.10.2
 
 ![The panel of what plays and its menu](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.2/docs/releases/0.10.2/panel-menu.jpg)
