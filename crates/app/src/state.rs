@@ -772,6 +772,8 @@ pub struct State {
     pub account_open: bool,
     /// Whether the menu behind a page's dots is open.
     pub page_more_open: bool,
+    /// The footage whose frames are on screen already, by the name `screening` gives it.
+    pub clip_ready: Option<String>,
     /// The dialog that takes the account to another device, while it is open.
     pub handoff: Option<Handoff>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
@@ -1135,6 +1137,7 @@ impl Default for State {
             profile: Profile::default(),
             account_open: false,
             page_more_open: false,
+            clip_ready: None,
             handoff: None,
             wide: false,
             panel_more_open: false,
@@ -1601,6 +1604,10 @@ impl State {
             "heard" => self.collection.heard.get(index),
             "today" => self.recent_picks.get(index),
             "liked-track" => self.collection.liked.get(index),
+            "recent-search" => match self.collection.searches.get(index) {
+                Some(Searched::Track { track }) => Some(track),
+                _ => None,
+            },
             _ => None,
         }
     }

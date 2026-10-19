@@ -498,7 +498,8 @@ impl eframe::App for Host {
         }
         // The footage of what plays goes where its cover is, or over the whole window, for
         // as long as that is on screen.
-        match self.state.screening() {
+        // Its own handle on the footage, so the state can be told what is on screen meanwhile.
+        match self.state.screening().map(|(name, footage, showing)| (name, footage.clone(), showing)) {
             Some((name, footage, showing)) => {
                 let fit = match showing {
                     clip::Showing::Large => {
@@ -511,8 +512,9 @@ impl eframe::App for Host {
                 if self.clip.as_ref().is_none_or(|screen| screen.key != name) {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
                     limn_egui::forget_surface(view::CLIP_BACKDROP);
+                    self.state.clip_ready = None;
                     let wake = ctx.clone();
-                    self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint_after(backend::SOON)));
+                    self.clip = Some(clip::Screen::start(name, footage, showing, fit, move || wake.request_repaint_after(backend::SOON)));
                 }
                 if let Some(screen) = &self.clip {
                     // Behind the shut panel's strip a few frames a second will do.
@@ -520,6 +522,8 @@ impl eframe::App for Host {
                     screen.follow(self.state.player.playing, self.state.player.position, fit, pace);
                     if let Some(frame) = screen.take() {
                         limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
+                        // From its first frame on, the video fades in over the cover.
+                        if self.state.clip_ready.as_deref() != Some(screen.key.as_str()) { self.state.clip_ready = Some(screen.key.clone()); }
                     }
                     if let Some(glow) = screen.take_backdrop() {
                         limn_egui::present_surface(&ctx, view::CLIP_BACKDROP, glow);
@@ -530,6 +534,7 @@ impl eframe::App for Host {
                 if self.clip.take().is_some() {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
                     limn_egui::forget_surface(view::CLIP_BACKDROP);
+                    self.state.clip_ready = None;
                 }
             }
         }

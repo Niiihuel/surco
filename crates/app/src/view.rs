@@ -202,6 +202,7 @@ mod glyph {
     pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
     pub const PENCIL: &str = include_str!("../assets/icons/glyph/pencil.svg");
     pub const PLUS: &str = include_str!("../assets/icons/glyph/plus.svg");
+    pub const CLOSE: &str = include_str!("../assets/icons/glyph/close.svg");
     pub const CHEVRON_RIGHT: &str = include_str!("../assets/icons/glyph/chevron-right.svg");
     pub const CHEVRON_LEFT: &str = include_str!("../assets/icons/glyph/chevron-left.svg");
     pub const BELL: &str = include_str!("../assets/icons/glyph/bell.svg");
@@ -321,7 +322,8 @@ pub fn view(state: &State, window: Size) -> Element {
     if right_slide > 0.0 {
         content -= right + GAP;
         columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
-        columns.extend([handle(Side::Right, right_slide == 1.0), sliding(panel(state, window, palette), right_whole, right)]);
+        // Its corners stay round over the song's video, which is drawn edge to edge.
+        columns.extend([handle(Side::Right, right_slide == 1.0), sliding(panel(state, window, palette), right_whole, right).corner_mask(CANVAS)]);
     } else if state.queue_open && window.width < PANEL_FROM {
         columns.push(surface(panel(state, window, palette)).flex(1.0));
     } else {
@@ -1713,22 +1715,45 @@ fn recent_searches(state: &State, palette: ComponentPalette) -> Option<Element> 
     let raised = ComponentPalette { surface: SCHEME.raised, ..palette };
     let rows: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, searched)| {
         let (title, subtitle, artwork, round) = remembered(searched);
-        let picture = match artwork {
+        let row = format!("recent-search:{index}");
+        let picture = || match artwork {
             Some(artwork) => cover(state, artwork, 48.0, palette).radius(if round { 24.0 } else { 4.0 }),
-            None => Element::panel(Element::icon(Icon::Search).foreground(palette.muted).size(Some(20.0), Some(20.0)).centered())
+            None => Element::panel(Element::icon(Icon::Custom(glyph::SEARCH)).foreground(palette.muted).size(Some(20.0), Some(20.0)).centered())
                 .background(CHOSEN).radius(4.0).size(Some(48.0), Some(48.0)),
         };
-        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, raised).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round()
+        let song = match searched { Searched::Track { track } => Some(track), _ => None };
+        // A song's cover says what a click does, as a list's rows: play or pause under the
+        // pointer, and its wave while it sounds.
+        let leading = match song {
+            Some(track) => {
+                let sounding = state.player.playing && state.current().is_some_and(|current| current.id == track.id);
+                let veiled = |over: Element| Element::stack(vec![picture(), Element::panel(over.centered()).background(COVER_SCRIM).radius(4.0).size(Some(48.0), Some(48.0))]);
+                let at_rest = if sounding { veiled(wave(state, format!("wave:{row}"), palette)) } else { picture() };
+                let does = veiled(Element::icon(if sounding { Icon::PauseFill } else { Icon::PlayFill }).foreground(palette.text).size(Some(16.0), Some(16.0)));
+                Element::stack(vec![at_rest.conceal_on_hover(format!("rest:{row}")), does.reveal_on_hover(format!("does:{row}"))])
+            }
+            None => picture(),
+        };
+        let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Custom(glyph::CLOSE), raised).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round()
             .tooltip(t!("desktop-forget-search", query = title)).render().reveal_on_hover(format!("forget:{index}"));
-        ListRow::new(format!("recent-search:{index}"), title, raised)
+        let mut list_row = ListRow::new(&row, title, raised)
             .sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), gap: 12.0, leading_width: 48.0, ..TRACK_ROW })
-            .leading(picture).subtitle(subtitle).title_fade(true).radius(RadiusRole::Card)
-            .trailing_action(format!("recent-search-remove:{index}"), middle(forget)).render().hover_region()
+            .leading(leading).subtitle(subtitle).title_fade(true).radius(RadiusRole::Card);
+        // A song has the options of any other, behind its dots, as Spotify's.
+        let mut pressed = Vec::new();
+        if let Some(track) = song {
+            let (menu, options) = row_menu(state, &row, track, raised);
+            pressed = options;
+            list_row = list_row.trailing_action(format!("more:{row}"), middle(menu.reveal_on_hover(format!("dots:{row}"))));
+        }
+        let element = list_row.trailing_action(format!("recent-search-remove:{index}"), middle(forget)).render().hover_region();
+        if pressed.is_empty() { element } else { ContextMenu::new(format!("context:{row}"), element, pressed, menu_palette()).render() }
     }).collect();
     let heading = Text::new(t!("desktop-recent-searches"), raised).font_size(16.0).render().font_family(FontFamily::SansBold).padding(8.0);
-    let clear = Button::new("recent-search-clear", t!("common-clear-recent-searches"), raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
+    // A word in the middle, lit under the pointer.
+    let clear = Button::new("recent-search-clear", t!("common-clear-recent-searches"), raised).variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render();
     let list = ScrollArea::new("recent-searches", Element::column(rows).gap(2.0)).render().max_height(398.0);
-    let panel = Element::panel(Element::column(vec![heading, list, Element::row(vec![clear]).padding(8.0)]).gap(4.0))
+    let panel = Element::panel(Element::column(vec![heading, list, Element::row(vec![Element::spacer().flex(1.0), clear, Element::spacer().flex(1.0)]).padding(8.0)]).gap(4.0))
         .padding(8.0).background(SCHEME.raised).radius(8.0)
         .shadow(Color::rgba(0, 0, 0, 77), limn::Point::new(0.0, 16.0), 24.0, 0.0)
         .size(Some(SEARCH_MAX_WIDTH.min(560.0)), None);
@@ -2996,6 +3021,8 @@ fn page_glyph(id: &str, icon: Icon, hint: &str, on: bool, palette: ComponentPale
 }
 
 const PAGE_GLYPH: f32 = 24.0;
+/// The cross inside a field's end.
+const FIELD_CROSS: f32 = 24.0;
 const PAGE_PLAY: f32 = 48.0;
 const GLYPH_HOVER: Color = Color::rgba(255, 255, 255, 26);
 const GLYPH_HELD: Color = Color::rgba(255, 255, 255, 46);
@@ -3021,8 +3048,13 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             parts.push(field.size(Some(width), Some(44.0)).centered_y().shrink_to_fit());
         } else {
             let field = field.radius(ControlSize::Compact.height() / 2.0);
-            // The cross that shuts it stands inside its end, as Spotify's.
-            let shut = toggle(Icon::Close, &t!("desktop-close-search"));
+            // The cross that shuts it stands inside its end, as Spotify's: its ink lights under
+            // the pointer, with no disc of its own over the field.
+            let cross = Element::icon_button("page-search".to_owned(), Icon::Custom(glyph::CLOSE), "")
+                .foreground(palette.muted).hover_foreground(palette.text).pressed_foreground(palette.text)
+                .size(Some(FIELD_CROSS), Some(FIELD_CROSS))
+                .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-close-search")));
+            let shut = Element::row(vec![limn::Tooltip::new(cross, "page-search", t!("desktop-close-search"), palette).render(), Element::spacer().size(Some(4.0), None)]).centered_y();
             let field = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), shut])])
                 .centered_y()
                 // In a narrow pane it makes do with what the row has left.
@@ -3360,7 +3392,13 @@ fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPal
         let foot = Element::spacer().size(None, Some(width * 0.45)).vertical_gradient(vec![Color { a: 0, ..PANEL_FLOOR }, Color { a: 115, ..PANEL_FLOOR }, Color { a: 230, ..PANEL_FLOOR }, PANEL_FLOOR]);
         let scrims = Element::column(vec![top, Element::spacer().flex(1.0), foot]);
         let over = Element::column(vec![Element::spacer().flex(1.0), title.padding(PANEL_PAD)]);
-        Element::stack(vec![picture, Element::surface(CLIP_SURFACE, t!("desktop-song-video")), scrims, over]).size(Some(width), Some(tall)).clip_children()
+        // The cover until the video's first frame, which then fades in over it rather than
+        // taking its place at once.
+        let ready = state.screening().map(|(name, ..)| name).filter(|name| state.clip_ready.as_ref() == Some(name));
+        let mut layers = vec![picture];
+        layers.extend(ready.map(|name| Element::surface(CLIP_SURFACE, t!("desktop-song-video")).animate_enter(format!("clip:{name}"))));
+        layers.extend([scrims, over]);
+        Element::stack(layers).size(Some(width), Some(tall)).clip_children()
     } else {
         // Square under the header, a margin from each side; a click opens its release.
         let picture = link("panel-cover", "now-album", cover(state, &largest(state, track), side, palette).radius(RadiusRole::Card.px()));
@@ -4150,6 +4188,19 @@ mod tests {
         assert!(query.width > 80.0 && query.x + query.width <= sort.x && sort.x + sort.width <= state.left_width + 16.0 && query.y + query.height <= list.y, "{query:?} {sort:?} {list:?}");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(!has(&at(&state, 1400.0), "resize:right"), "a closed panel leaves no handle");
+    }
+
+    #[test]
+    fn a_song_among_the_recent_searches_has_its_options_and_the_list_its_clear() {
+        let mut state = State::default();
+        state.search_focused = true;
+        state.collection.searches = vec![Searched::Track { track: track("a") }, Searched::Query("cafe".into())];
+        let found = ids(&state, Size::new(1400.0, 900.0));
+        for id in ["recent-search:0", "more:recent-search:0", "recent-search-remove:0", "recent-search:1", "recent-search-clear"] {
+            assert!(found.iter().any(|found| found == id), "{id} among {found:?}");
+        }
+        assert!(!found.iter().any(|found| found == "more:recent-search:1"), "what was typed has no song's options");
+        assert_eq!(state.track_at("recent-search:0").map(|track| track.id.as_str()), Some("a"), "its options act on the song");
     }
 
     #[test]
