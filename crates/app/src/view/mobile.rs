@@ -185,6 +185,7 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Album(album) if state.mobile_ui.compact_header => Cow::Borrowed(&album.title),
         Page::Artist(artist) if state.mobile_ui.compact_header => Cow::Borrowed(&artist.name),
         Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),
+        Page::Mix(mix) if state.mobile_ui.compact_header => Cow::Owned(super::mix_name(mix)),
         _ => t!("mobile-your-music"),
     }
 }
@@ -540,17 +541,17 @@ mod tests {
     fn home_track_tiles_keep_the_cover_clear_and_hold_the_correct_song() {
         let mut state = playing_state();
         let track = state.current().unwrap().clone();
-        state.because.push((track.clone(), vec![track.clone()]));
-        let tile = tile(&state, "rec:0:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
+        state.collection.heard.insert(0, track.clone());
+        let tile = tile(&state, "heard:0".into(), &track.title, Some(track.artist.clone()), &None, false, SCHEME.palette());
         let mut tree = UiTree::new(tile);
         tree.set_reduced_motion(true);
         let frame = tree.layout(Size::new(TILE_WIDTH, 240.0));
         assert!(!frame.access.iter().any(|node| node.id.starts_with("more:")),
             "the artwork has no permanent overflow button");
         let point = limn::Point::new(30.0, 60.0);
-        assert_eq!(frame.context_menu_at(point), Some("tile-context:rec:0:0:song"));
+        assert_eq!(frame.context_menu_at(point), Some("tile-context:heard:0:song"));
         let actions = tree.handle_event(limn::UiEvent::ContextMenu { position: point });
-        assert_eq!(actions, vec![UiAction::Clicked { id: "more:rec:0:0".into() }]);
+        assert_eq!(actions, vec![UiAction::Clicked { id: "more:heard:0".into() }]);
         state.update(&actions[0]);
         assert_eq!(state.mobile_ui.context.as_ref().unwrap().track.id, track.id);
     }

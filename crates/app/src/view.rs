@@ -21,7 +21,7 @@ use crate::backend::{Release, Target};
 use crate::clip::Showing;
 use crate::i18n::{t, Language};
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, SUGGESTED_SHOWN, Entry, Filter, LibraryView, Lyrics, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, SUGGESTED_SHOWN, Entry, Filter, LibraryView, Lyrics, Mix, MixKind, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
 };
 use crate::update::Note;
 
@@ -70,10 +70,18 @@ pub const CLIP_BACKDROP: &str = "now-clip-glow";
 const LYRICS: &str = include_str!("../assets/icons/message-square-quote.svg");
 // A route chooser is distinct from a waveform; UIKit supplies airplay.audio on iOS.
 const AUDIO_ROUTE: &str = include_str!("../assets/icons/airplay-audio.svg");
-/// A shelf with more tiles than this gets arrows to move along it.
-const SHELF_FITS: usize = 4;
 /// What dims a cover under what is drawn over it.
 const COVER_SCRIM: Color = Color::rgba(0, 0, 0, 150);
+/// The stripe along the foot of a mix's picture, one a mix, as each series of records has
+/// a band of its own.
+const MIX_STRIPES: [Color; 6] = [
+    Color::rgb(255, 99, 72),
+    Color::rgb(245, 179, 34),
+    Color::rgb(24, 181, 168),
+    Color::rgb(151, 92, 232),
+    Color::rgb(62, 148, 240),
+    Color::rgb(232, 72, 152),
+];
 /// A bar of the playing row's wave, and the space between two.
 const WAVE_BAR: f32 = 3.0;
 const WAVE_GAP: f32 = 2.0;
@@ -143,11 +151,9 @@ const TILE_WIDTH: f32 = 148.0;
 /// stand side by side, their padding the space between the covers.
 const TILE_PAD: f32 = 12.0;
 const CARD_WIDTH: f32 = TILE_WIDTH + 2.0 * TILE_PAD;
-/// The space between two tiles of a shelf, the room under them for the shelf's bar, and
-/// how far an arrow carries the shelf: three tiles.
+/// The space between two tiles of a shelf, and the room under them for the shelf's bar.
 const TILE_GAP: f32 = 12.0;
 const SHELF_BAR_ROOM: f32 = 12.0;
-pub const SHELF_STEP: f32 = 3.0 * CARD_WIDTH;
 const COVER: f32 = 40.0;
 const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
@@ -170,7 +176,11 @@ const LIBRARY_ROW: ListRowSizing = ListRowSizing {
     ..ListRowSizing::COMPACT
 };
 const LIBRARY_TILE: f32 = 48.0;
-/// A quick-access entry of the home page: a short row around the same tile.
+/// The most entries quick access offers, the corner of each, and its fill under the pointer.
+const QUICK_MOST: usize = 8;
+const QUICK_RADIUS: f32 = 4.0;
+const QUICK_HOVER: Color = Color::rgb(56, 56, 56);
+/// A quick-access entry of the home page on a phone: a short row around the same tile.
 const QUICK_ROW: ListRowSizing = ListRowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..ListRowSizing::COMPACT };
 /// A track's row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
 const TRACK_ROW: ListRowSizing = ListRowSizing {
@@ -1178,25 +1188,67 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let hour = chrono::Timelike::hour(&chrono::Local::now());
     let mut sections = if state.mobile { Vec::new() } else { vec![Text::new(greeting(hour), palette).font_size(PAGE_TITLE).render()] };
 
-    // Quick access: a grid of short rows, each a step above the page.
-    let columns = if width >= 720.0 { 3 } else { 2 };
+    // Quick access, as Spotify's: up to eight short rows a step above the page, in rows of
+    // two, three or four as the room allows and as many as there are fill. The rows grow
+    // with the room, and their pictures with them.
+    let count = (collection.recent.len() + usize::from(!state.saved.is_empty())).min(QUICK_MOST);
+    let count = if count < QUICK_MOST && count % 2 == 1 && count > 1 { count - 1 } else { count };
+    let columns = match width {
+        _ if state.mobile => 2,
+        width if width < 700.0 => 2,
+        _ if count % 4 == 0 => 4,
+        _ => 3,
+    };
     let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
+    let height = if state.mobile { LIBRARY_TILE } else if width >= 1599.0 { 80.0 } else if width >= 1141.0 { 64.0 } else { 48.0 };
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let quick = |id: String, name: &str, picture: Element| {
-        let element = ListRow::new(&id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render();
-        mobile_card_context(state, &id, element)
+    let quick = |id: String, name: &str, picture: Element, sounding: bool| {
+        if state.mobile {
+            let element = ListRow::new(&id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render();
+            return mobile_card_context(state, &id, element);
+        }
+        // What plays shows its sound at the row's end; the others, their play under the pointer.
+        let end = if sounding {
+            wave(state, format!("wave:{id}"), palette)
+        } else {
+            let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+            IconButton::new(format!("tile-play:{id}"), Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round()
+                .tooltip(t!("common-play")).render().reveal_on_hover(format!("quick-play:{id}"))
+        };
+        let said = limn::Access::new(limn::Role::Button).name(name);
+        let label = Text::new(name, palette).font_size(if height >= 64.0 { 16.0 } else { 13.0 }).truncate().render().font_family(FontFamily::SansBold);
+        let row = Element::row(vec![picture.size(Some(height), Some(height)), label.flex(1.0).centered_y(), end.centered_y(), Element::spacer().size(Some(8.0), None)]).gap(12.0);
+        Element::clickable(&id, row)
+            .accessible(said)
+            .background(CHOSEN)
+            .hover_background(QUICK_HOVER)
+            .transition_ms(300)
+            .radius(QUICK_RADIUS)
+            .clip_children()
+            .hover_region()
+            .size(Some(side), Some(height))
     };
     let mut tiles = Vec::new();
     if !state.saved.is_empty() {
         // The library lists the same entries: here they keep ids of their own and report the library's.
-        tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette)).dispatch_as("downloads"));
+        let sounding = state.player.playing && state.plays_from(&state.saved);
+        tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette), sounding).dispatch_as("downloads"));
     }
     for (index, entry) in collection.recent.iter().enumerate() {
-        let picture = cover(state, entry.artwork(), LIBRARY_TILE, palette);
-        let picture = if matches!(entry, Entry::Artist(_)) { picture.radius(LIBRARY_TILE / 2.0) } else { picture };
-        tiles.push(quick(format!("recent:{index}"), entry.title(), picture));
+        let picture = cover(state, entry.artwork(), height, palette);
+        let picture = match entry {
+            Entry::Artist(_) if state.mobile => picture.radius(LIBRARY_TILE / 2.0),
+            _ if state.mobile => picture,
+            // Flush with the row's edge: its rounding is the row's.
+            _ => picture.radius(0.0),
+        };
+        let sounding = state.player.playing && state.current().is_some_and(|current| match entry {
+            Entry::Album(album) => current.album_id.as_deref() == Some(album.id.as_str()),
+            Entry::Artist(artist) => current.artist_id.as_deref() == Some(artist.id.as_str()),
+        });
+        tiles.push(quick(format!("recent:{index}"), entry.title(), picture, sounding));
     }
-    if state.mobile { tiles.truncate(8); }
+    tiles.truncate(count);
     let mut tiles = tiles.into_iter().peekable();
     let mut grid = Vec::new();
     while tiles.peek().is_some() {
@@ -1204,19 +1256,24 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     }
     sections.push(Element::column(grid).gap(GAP));
 
-    // What was played, and what the catalog would play after the last of it.
+    // The catalog's picks as lists, Spotify's mixes: the time of day's leads, large, and the
+    // rest are the cards of a shelf.
+    let mixes = state.mixes();
+    if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment) {
+        sections.push(moment_card(state, index, mix, width, palette).animate_enter("home-moment"));
+    }
+    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment).map(|(index, mix)| mix_tile(state, index, mix, palette)).collect();
+    if !cards.is_empty() {
+        // Picks arrive after the page: they settle in rather than appear.
+        sections.push(headed_shelf(state, "home-mixes", Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
+    } else if state.picks_coming[0] {
+        sections.push(headed_shelf(state, "home-mixes", Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), coming_tiles(state, false, palette), palette));
+    }
+    // What was played, a click from playing again.
     let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
     let heard: Vec<Element> = collection.heard.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("heard:{index}"), track)).collect();
     if !heard.is_empty() {
         sections.push(shelf(state, "home-heard", &t!("desktop-listen-again"), heard, palette));
-    }
-    // The catalog's picks: a mix across what goes with everything played, then who and what
-    // to open next, then what goes with each of the latest favourites.
-    let mix: Vec<Element> = state.mix.iter().enumerate().map(|(index, track)| pick(format!("mix:{index}"), track)).collect();
-    if !mix.is_empty() {
-        sections.push(shelf(state, "home-mix", &t!("desktop-made-for-you"), mix, palette));
-    } else if state.picks_coming[0] {
-        sections.push(shelf(state, "home-mix", &t!("desktop-made-for-you"), coming_tiles(state, false, palette), palette));
     }
     let artists: Vec<Element> = state
         .picked_artists
@@ -1233,12 +1290,6 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
         sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), release_tiles(state, "pick-album", &state.picked_albums, palette), palette));
     } else if state.picks_coming[2] {
         sections.push(shelf(state, "home-pick-albums", &t!("desktop-albums-for-you"), coming_tiles(state, false, palette), palette));
-    }
-    for (shelf_index, (seed, tracks)) in state.because.iter().enumerate() {
-        let picks: Vec<Element> = tracks.iter().enumerate().map(|(index, track)| pick(format!("rec:{shelf_index}:{index}"), track)).collect();
-        if !picks.is_empty() {
-            sections.push(shelf(state, &format!("home-rec:{shelf_index}"), &t!("desktop-because-you-played", title = seed.title.as_str()), picks, palette));
-        }
     }
 
     let albums: Vec<Element> = collection
@@ -1259,8 +1310,14 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !artists.is_empty() {
         sections.push(shelf(state, "home-artists", &t!("desktop-your-artists"), artists, palette));
     }
-    page_scroll("home", Element::column(sections).gap(16.0).padding(12.0))
+    // The colour of the entry under the pointer washes down from the top, as Spotify's.
+    let content = Element::column(sections).gap(16.0).padding(12.0);
+    let wash = state.home_wash(std::time::Instant::now());
+    page_scroll("home", if wash.a == 0 || state.mobile { content } else { content.top_background_fade(wash, HOME_WASH) })
 }
+
+/// How far down the home its wash reaches.
+const HOME_WASH: f32 = 320.0;
 
 /// What was searched lately, dropped down from the desktop's field while it holds the
 /// keyboard with nothing typed, as Spotify's: a row each to search again, its cross under the
@@ -1326,24 +1383,26 @@ fn heading(title: &str, palette: ComponentPalette) -> Element {
     Text::new(title, palette).role(TextRole::Heading).render()
 }
 
-/// A heading over a row of tiles that scrolls sideways inside the page: by dragging it, by
-/// the trackpad, or a few tiles at a time with the arrows beside the heading.
+/// A heading over a row of tiles that scrolls sideways inside the page: by dragging it, or
+/// by the trackpad.
 fn shelf(state: &State, id: &str, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
-    let arrow = |way: &str, icon: Icon, hint: &str| {
-        IconButton::new(format!("shelf-{way}:{id}"), icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(hint).render().centered_y()
-    };
+    headed_shelf(state, id, None, title, tiles, palette)
+}
+
+/// A shelf whose heading is said in two parts, as "Hecho para vos" over "Tus mixes".
+fn headed_shelf(state: &State, id: &str, eyebrow: Option<&str>, title: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
     // The heading lines up with the covers, inside their cards' padding.
     let pad = || Element::spacer().size(Some(if state.mobile { 0.0 } else { TILE_PAD }), None);
-    let mut header = vec![pad(), heading(title, palette).flex(1.0)];
-    // A shelf that fits has nowhere to go.
-    if !state.mobile && tiles.len() > SHELF_FITS {
-        header.extend([arrow("back", Icon::ArrowLeft, &t!("desktop-shelf-back")), arrow("on", Icon::ArrowRight, &t!("desktop-shelf-on"))]);
-    }
-    header.push(pad());
+    let heading = match eyebrow {
+        Some(eyebrow) => Element::column(vec![Text::new(eyebrow, palette).role(TextRole::Caption).muted().render(), heading(title, palette)]).gap(2.0),
+        None => heading(title, palette),
+    };
+    let header = vec![pad(), heading.flex(1.0), pad()];
     // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
     let tiles = Element::column(vec![Element::row(tiles).gap(if state.mobile { TILE_GAP } else { 0.0 }), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
-    let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted);
-    let strip = if state.mobile { strip.scrollbar_visibility(mobile::SCROLL_INDICATOR) } else { strip };
+    // Moved by dragging it, or sideways on a touchpad, as Threads' rows: its bar shows only
+    // while it moves.
+    let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted).scrollbar_visibility(mobile::SCROLL_INDICATOR);
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 
@@ -1380,6 +1439,174 @@ fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwor
     }
     .render();
     mobile_card_context(state, &row, element)
+}
+
+/// The part of the day an hour falls in: morning, afternoon, evening or the small hours.
+fn day_part(hour: u32) -> usize {
+    match hour {
+        6..=11 => 0,
+        12..=19 => 1,
+        20..=23 => 2,
+        _ => 3,
+    }
+}
+
+/// "Tu domingo por la tarde".
+fn moment_title(now: chrono::DateTime<chrono::Local>) -> String {
+    use chrono::{Datelike, Timelike, Weekday};
+    let day = match now.weekday() {
+        Weekday::Mon => t!("desktop-day-monday"),
+        Weekday::Tue => t!("desktop-day-tuesday"),
+        Weekday::Wed => t!("desktop-day-wednesday"),
+        Weekday::Thu => t!("desktop-day-thursday"),
+        Weekday::Fri => t!("desktop-day-friday"),
+        Weekday::Sat => t!("desktop-day-saturday"),
+        Weekday::Sun => t!("desktop-day-sunday"),
+    };
+    let part = match day_part(now.hour()) {
+        0 => t!("desktop-moment-morning"),
+        1 => t!("desktop-moment-afternoon"),
+        2 => t!("desktop-moment-evening"),
+        _ => t!("desktop-moment-late"),
+    };
+    t!("desktop-moment-title", day = day.as_ref(), part = part.as_ref()).into_owned()
+}
+
+/// What a mix is called on its card and its page.
+fn mix_name(mix: &Mix) -> String {
+    match &mix.kind {
+        MixKind::Moment => moment_title(chrono::Local::now()),
+        MixKind::Artist(seed) => t!("desktop-mix-of", artist = seed.artist.as_str()).into_owned(),
+        MixKind::Repeat => t!("desktop-mix-repeat").into_owned(),
+    }
+}
+
+/// The line under its name: who else it plays.
+fn mix_detail(mix: &Mix) -> String {
+    let artists = mix.artists(3).join(", ");
+    match &mix.kind {
+        MixKind::Repeat => t!("desktop-mix-repeat-detail").into_owned(),
+        _ if artists.is_empty() => songs(mix.tracks.len()),
+        MixKind::Moment => t!("desktop-moment-detail", artists = artists.as_str()).into_owned(),
+        MixKind::Artist(_) => t!("desktop-mix-with", artists = artists.as_str()).into_owned(),
+    }
+}
+
+/// The same stripe for a mix wherever it shows, and a different one beside it.
+fn mix_stripe(mix: &Mix) -> Color {
+    let key = mix.key();
+    MIX_STRIPES[key.bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()]
+}
+
+/// `color` taken toward black by `share`.
+fn shade(color: Color, share: f32) -> Color {
+    let keep = |channel: u8| (f32::from(channel) * (1.0 - share)) as u8;
+    Color::rgb(keep(color.r), keep(color.g), keep(color.b))
+}
+
+/// A mix's picture, made here where Spotify makes its own on its servers: the covers it
+/// gathers (an artist's mix wears that artist's), what it is over a band of their colour,
+/// and its stripe along the foot.
+fn mix_cover(state: &State, mix: &Mix, side: f32, named: bool, palette: ComponentPalette) -> Element {
+    let covers = mix.covers();
+    let piece = |url: &String, side: f32| picture(state, &Some(url.clone()), side, false, palette).radius(0.0);
+    let base = match (&mix.kind, covers.as_slice()) {
+        (_, [a, b, c, d]) if !matches!(mix.kind, MixKind::Artist(_)) => {
+            let half = side / 2.0;
+            Element::column(vec![Element::row(vec![piece(a, half), piece(b, half)]), Element::row(vec![piece(c, half), piece(d, half)])])
+        }
+        (_, [first, ..]) => piece(first, side),
+        _ => Element::panel(Element::spacer()).background(palette.selected),
+    };
+    let band = shade(covers.first().and_then(|url| state.tints.get(*url)).copied().unwrap_or(CHOSEN), 0.45);
+    let (label, name) = match &mix.kind {
+        MixKind::Moment => (t!("desktop-moment").into_owned(), mix_name(mix)),
+        MixKind::Artist(seed) => (t!("desktop-mix").into_owned(), seed.artist.clone()),
+        MixKind::Repeat => (t!("desktop-mix").into_owned(), t!("desktop-mix-repeat").into_owned()),
+    };
+    let words = Element::column(vec![
+        Text::new(label.to_uppercase(), palette).font_size((side * 0.07).round().max(9.0)).truncate().render().font_family(FontFamily::SansBold),
+        Text::new(name, palette).font_size((side * 0.1).round().max(12.0)).line_height((side * 0.12).round().max(14.0)).render().font_family(FontFamily::SansBold),
+    ]).gap(2.0);
+    let words = if named { words } else { Element::spacer() };
+    let foot = Element::column(vec![Element::spacer().flex(1.0), words]).padding((side * 0.07).round())
+        .vertical_gradient(vec![Color { a: 0, ..band }, Color { a: 200, ..band }, Color { a: 240, ..band }])
+        .size(None, Some((side * 0.6).round()));
+    let stripe = Element::spacer().size(None, Some((side * 0.04).round().max(3.0))).background(mix_stripe(mix));
+    let over = Element::column(vec![Element::spacer().flex(1.0), foot, stripe]);
+    Element::stack(vec![base, over]).size(Some(side), Some(side)).radius(limn::tokens().radius.control).clip_children()
+}
+
+/// A mix as a card of its shelf: its picture, its name, and who it plays.
+fn mix_tile(state: &State, index: usize, mix: &Mix, palette: ComponentPalette) -> Element {
+    let row = format!("made:{index}");
+    let (width, inset) = if state.mobile { (TILE_WIDTH, 0.0) } else { (CARD_WIDTH, TILE_PAD) };
+    let tile = MediaTile::new(&row, mix_name(mix), palette).width(width).artwork(mix_cover(state, mix, width - 2.0 * inset, true, palette)).subtitle(mix_detail(mix));
+    let tile = if state.mobile { tile } else {
+        let sounding = state.player.playing && state.plays_from(&mix.tracks);
+        tile.padding(TILE_PAD).play(format!("tile-play:{row}"), t!("common-play")).playing(sounding)
+    };
+    tile.render()
+}
+
+/// The colours of each part of the day, from the left of the time of day's card to its right.
+const MOMENT_COLOURS: [[Color; 3]; 4] = [
+    [Color::rgb(232, 146, 52), Color::rgb(214, 88, 82), Color::rgb(108, 74, 168)],
+    [Color::rgb(222, 84, 74), Color::rgb(196, 58, 128), Color::rgb(78, 62, 170)],
+    [Color::rgb(74, 52, 168), Color::rgb(160, 48, 132), Color::rgb(28, 34, 92)],
+    [Color::rgb(22, 30, 78), Color::rgb(64, 38, 128), Color::rgb(12, 78, 104)],
+];
+
+/// The time of day's mix, leading the home as a wide card: its picture, what it is called
+/// and who it plays over the colours of the hour, and the play at its end.
+fn moment_card(state: &State, index: usize, mix: &Mix, width: f32, palette: ComponentPalette) -> Element {
+    let row = format!("made:{index}");
+    let side = if state.mobile { 96.0 } else { 136.0 };
+    let sounding = state.player.playing && state.plays_from(&mix.tracks);
+    let copy = Element::column(vec![
+        Text::new(t!("desktop-moment").to_uppercase(), palette).font_size(12.0).render().font_family(FontFamily::SansBold),
+        Text::new(mix_name(mix), palette).font_size(if state.mobile { 22.0 } else { 28.0 }).truncate().render().font_family(FontFamily::SansBold),
+        Text::new(mix_detail(mix), palette).ink(Color::rgba(255, 255, 255, 200)).truncate().render(),
+    ]).gap(6.0).flex(1.0).centered_y();
+    let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+    let play = IconButton::new(format!("tile-play:{row}"), if sounding { Icon::PauseFill } else { Icon::PlayFill }, round)
+        .variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip(if sounding { t!("common-pause") } else { t!("common-play") }).render();
+    let mut parts = vec![mix_cover(state, mix, side, false, palette), copy];
+    // While it plays, it shows what it sounds like.
+    if sounding && !state.settings.reduce_motion && !state.mobile {
+        let bars = LevelBars { id: "moment-wave".into(), levels: state.levels.to_vec(), bar: 5.0, gap: 4.0, color: palette.text, rest: Color::rgba(255, 255, 255, 110) };
+        let width = state.levels.len() as f32 * 9.0 - 4.0;
+        parts.push(Element::level_bars(bars).size(Some(width), Some(36.0)).centered_y());
+    }
+    parts.push(play.centered_y());
+    let content = Element::row(parts).gap(if state.mobile { 12.0 } else { 20.0 }).padding(if state.mobile { 12.0 } else { 16.0 });
+    Element::clickable(&row, content)
+        .horizontal_gradient(moment_colours(state))
+        .radius(RadiusRole::Card.px())
+        .size(Some(width - 24.0), None)
+}
+
+/// How long a sheen takes to cross the time of day's card, and how much it lights it.
+const MOMENT_SWAY_MS: u128 = 9_000;
+const MOMENT_SHEEN: f32 = 0.22;
+
+/// The colours across the time of day's card: the hour's three, blended in steps, with a soft
+/// sheen drifting across them while the home is shown. Still for a screenshot and under
+/// reduced motion.
+fn moment_colours(state: &State) -> Vec<Color> {
+    const STOPS: usize = 7;
+    let [a, b, c] = MOMENT_COLOURS[day_part(chrono::Timelike::hour(&chrono::Local::now()))];
+    let sheen = state.ambient().then(|| {
+        let millis = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis();
+        // From just off the left edge to just off the right, then round again.
+        (millis % MOMENT_SWAY_MS) as f32 / MOMENT_SWAY_MS as f32 * 1.6 - 0.3
+    });
+    (0..STOPS).map(|stop| {
+        let at = stop as f32 / (STOPS - 1) as f32;
+        let base = if at < 0.5 { crate::state::blend(a, b, at * 2.0) } else { crate::state::blend(b, c, at * 2.0 - 1.0) };
+        let light = sheen.map_or(0.0, |sheen| MOMENT_SHEEN * (1.0 - ((at - sheen) / 0.3).powi(2)).max(0.0));
+        crate::state::blend(base, Color::rgb(255, 255, 255), light)
+    }).collect()
 }
 
 fn mobile_card_context(state: &State, row: &str, element: Element) -> Element {
@@ -1720,6 +1947,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::News => "page:news".to_owned(),
         Page::Patches => "page:patches".to_owned(),
         Page::Browse => "page:browse".to_owned(),
+        Page::Mix(mix) => format!("page:mix:{}", mix.key()),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     let page = page(state, width, palette).animate_enter(entering);
@@ -1753,6 +1981,7 @@ fn stuck_bar(state: &State, palette: ComponentPalette) -> Option<Element> {
         }
         Page::Liked => (t!("common-liked-songs").into_owned(), None),
         Page::Downloads => (t!("common-downloads").into_owned(), None),
+        Page::Mix(mix) => (mix_name(mix), mix.covers().first().map(|url| (*url).clone())),
         _ => return None,
     };
     let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
@@ -1804,6 +2033,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::News => news_page(state, width, palette),
         Page::Patches => patches_page(state, width, palette),
         Page::Browse => browse_page(width, palette),
+        Page::Mix(mix) => mix_page(state, mix, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
@@ -1871,6 +2101,25 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     sections.extend(suggested(state, playlist, width, palette));
     let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
     page_scroll("playlist", washed(state, &cover, Element::column(sections).gap(16.0).padding(12.0)))
+}
+
+/// A mix the home made: its picture, what it is and who it plays, and its songs in order.
+fn mix_page(state: &State, mix: &Mix, width: f32, palette: ComponentPalette) -> Element {
+    if state.mobile { return mobile::details::mix(state, mix, width, palette); }
+    let length = length(mix.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000);
+    let about = Element::column(vec![
+        Text::eyebrow(if mix.kind == MixKind::Moment { t!("desktop-moment") } else { t!("desktop-mix") }, palette).render(),
+        Text::new(mix_name(mix), palette).font_size(HERO_TITLE).truncate().render(),
+        Text::new(mix_detail(mix), palette).muted().truncate().render(),
+        Text::new(format!("{} · {length}", songs(mix.tracks.len())), palette).muted().render(),
+    ])
+    .gap(10.0)
+    .flex(1.0)
+    .centered_y();
+    let header = Element::row(vec![mix_cover(state, mix, ALBUM_COVER, true, palette), about]).gap(20.0);
+    let list = track_table(state, &state.page_rows(), true, None, table_width(width), palette);
+    let cover = mix.covers().first().map(|url| (*url).clone());
+    page_scroll("mix", washed(state, &cover, Element::column(vec![header, play_buttons(state, None, palette), list]).gap(16.0).padding(12.0)))
 }
 
 /// What goes with a playlist, ten at a time under it as Spotify offers it: a row plays its

@@ -59,6 +59,21 @@ pub fn blend(lists: &[Vec<Track>], known: &HashSet<String>, len: usize) -> Vec<T
     picked
 }
 
+/// The tracks `heard` (newest first) holds more than once, the ones played most first and,
+/// between two played as much, the one played last.
+pub fn on_repeat(heard: &[Track], len: usize) -> Vec<Track> {
+    let mut plays: Vec<(&Track, usize)> = Vec::new();
+    for track in heard {
+        match plays.iter_mut().find(|(known, _)| known.id == track.id) {
+            Some((_, times)) => *times += 1,
+            None => plays.push((track, 1)),
+        }
+    }
+    // Stable, so the order of the latest plays settles a tie.
+    plays.sort_by_key(|(_, times)| std::cmp::Reverse(*times));
+    plays.into_iter().filter(|(_, times)| *times > 1).take(len).map(|(track, _)| track.clone()).collect()
+}
+
 /// The artists in `lists` that are not among `artists` (written as `plain` writes them),
 /// the ones named most first, each as the lists name it.
 pub fn newcomers(lists: &[Vec<Track>], artists: &HashSet<String>, count: usize) -> Vec<String> {
@@ -109,6 +124,14 @@ mod tests {
 
     fn ids(tracks: &[Track]) -> Vec<&str> {
         tracks.iter().map(|track| track.id.as_str()).collect()
+    }
+
+    #[test]
+    fn on_repeat_is_what_was_played_again_the_most_played_first() {
+        let heard = [track("a", "Ana"), track("b", "Beto"), track("a", "Ana"), track("c", "Caro"), track("b", "Beto"), track("b", "Beto"), track("d", "Dani"), track("d", "Dani")];
+        assert_eq!(ids(&on_repeat(&heard, 5)), ["b", "a", "d"], "three plays first, then the tie in the order last played; once is not a repeat");
+        assert_eq!(ids(&on_repeat(&heard, 1)), ["b"]);
+        assert!(on_repeat(&[track("a", "Ana")], 5).is_empty());
     }
 
     #[test]

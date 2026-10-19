@@ -59,8 +59,6 @@ struct Host {
     fullscreen: bool,
     /// Who draws the window's frame.
     chrome: window::Chrome,
-    /// The shelf an arrow is carrying along, and where it is on its way.
-    glide: Option<(String, limn::ScalarSpring)>,
     opened: Instant,
     /// When something other than the song going on last happened to the window.
     stirred: Instant,
@@ -294,6 +292,8 @@ const SETTLED_AFTER: Duration = Duration::from_millis(500);
 // A phone's battery is worth more than its bars' smoothness: fifteen frames there.
 const SETTLED_FRAME: Duration = Duration::from_millis(if cfg!(target_os = "ios") { 66 } else { 33 });
 const SETTLED_FRAME_BESIDE_VIDEO: Duration = Duration::from_millis(100);
+/// What drifts by itself, slowly, needs few frames: fifteen a second.
+const AMBIENT_FRAME: Duration = Duration::from_millis(66);
 
 /// Its own id, and with it its own settings folder.
 const APP_ID: &str = "surco";
@@ -514,25 +514,6 @@ impl eframe::App for Host {
                 }
             }
         }
-        // An arrow of a shelf carries it a few tiles along, on a spring.
-        if let Some((shelf, way)) = self.state.shelf_push.take() {
-            let now = Instant::now();
-            let from = self.glide.as_ref().filter(|(gliding, _)| *gliding == shelf).map_or_else(|| self.tree.horizontal_scroll_offset(&shelf), |(_, spring)| spring.target());
-            let to = (from + way * view::SHELF_STEP).max(0.0);
-            let mut spring = limn::ScalarSpring::new(if still { to } else { self.tree.horizontal_scroll_offset(&shelf) }, now)
-                .motion(limn::SpringMotion::settling_in(Duration::from_millis(u64::from(limn::tokens().motion.move_ms) * 2)));
-            spring.retarget(to, now);
-            self.glide = Some((shelf, spring));
-        }
-        if let Some((shelf, spring)) = &self.glide {
-            let now = Instant::now();
-            self.tree.set_horizontal_scroll_offset(shelf, spring.value(now));
-            if spring.is_active(now) {
-                ctx.request_repaint();
-            } else {
-                self.glide = None;
-            }
-        }
         // Measure this page before using its bars to follow the active lyric.
         let mut input_frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
         if let Some(frame) = follow_lyrics(&mut self.state, &mut self.tree, window, &mut self.notice) {
@@ -595,6 +576,9 @@ impl eframe::App for Host {
             self.state.search_focused = focused;
             acted = true;
         }
+        if !self.state.mobile && self.state.point_at(self.tree.hovered_id()) {
+            acted = true;
+        }
         if let Some(text) = self.state.copy.take() {
             #[cfg(target_os = "ios")]
             {
@@ -623,7 +607,7 @@ impl eframe::App for Host {
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); acted = true; }
         let now = Instant::now();
-        let moving = self.motion.active(now) || self.state.is_sliding(now);
+        let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient();
         let commands = self.motion.advance(&mut self.state, window, now);
         acted |= !commands.is_empty();
         self.send(commands);
@@ -703,8 +687,11 @@ impl eframe::App for Host {
             // Behind the lock screen nothing animates; the next frame waits for the return.
         } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) {
             ctx.request_repaint();
-        } else if let Some(after) = self.tree.animation_repaint_after() {
-            let settled = self.stirred.elapsed() > SETTLED_AFTER && self.glide.is_none();
+        } else if let Some(after) = match (self.tree.animation_repaint_after(), self.state.ambient().then_some(AMBIENT_FRAME)) {
+            (Some(own), Some(ambient)) => Some(own.min(ambient)),
+            (own, ambient) => own.or(ambient),
+        } {
+            let settled = self.stirred.elapsed() > SETTLED_AFTER;
             let frame = if self.clip.is_some() && self.state.player.playing { SETTLED_FRAME_BESIDE_VIDEO } else { SETTLED_FRAME };
             // egui draws a frame's length ahead of the time it is asked for.
             let ahead = Duration::try_from_secs_f32(ctx.input(|input| input.predicted_dt)).unwrap_or_default();
@@ -868,7 +855,6 @@ pub fn run() -> eframe::Result {
                 clip: None,
                 fullscreen: false,
                 chrome,
-                glide: None,
                 opened: Instant::now(),
                 stirred: Instant::now(),
                 script,

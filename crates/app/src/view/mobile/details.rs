@@ -188,6 +188,20 @@ pub(in crate::view) fn artist(
     scroll("mobile-artist", sections)
 }
 
+/// A mix the home made, as a playlist reads: its picture, what it is and who it plays, and
+/// its songs.
+pub(in crate::view) fn mix(state: &State, mix: &Mix, width: f32, palette: ComponentPalette) -> Element {
+    let about = Element::column(vec![
+        Text::eyebrow(t!("desktop-mix"), palette).render(),
+        title(&crate::view::mix_name(mix), palette),
+        Text::new(crate::view::mix_detail(mix), palette).font_size(13.0).muted().render(),
+        Text::new(format!("{} · {}", songs(mix.tracks.len()), duration(&mix.tracks)), palette).font_size(13.0).muted().render(),
+    ])
+    .gap(4.0);
+    let cover = crate::view::mix_cover(state, mix, cover_side(width), true, palette).centered_x();
+    scroll("mobile-mix", vec![cover, about, page_actions(state, Vec::new(), palette), tracks(state, palette)])
+}
+
 pub(in crate::view) fn playlist(
     state: &State,
     playlist: &Playlist,
@@ -524,9 +538,5 @@ mod tests {
             .access
             .iter()
             .any(|node| node.id == "page-single:0"));
-        assert!(!rendered
-            .access
-            .iter()
-            .any(|node| node.id.starts_with("shelf-on:")));
     }
 }

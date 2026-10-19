@@ -1250,10 +1250,10 @@ async fn translate(shared: &Shared, lines: &[String], to: &str) -> Result<Option
 /// How many songs a playlist's recommendations hold, a few refreshes' worth.
 const SUGGESTIONS: usize = 50;
 
-/// How many tracks the mix has, how many seeds get a shelf of their own, and how many
+/// How many tracks the mix has, how many seeds get a mix of their own, and how many
 /// artists and albums are picked.
 const MIX: usize = 20;
-const BECAUSE: usize = 2;
+const BECAUSE: usize = 5;
 const PICKED_ARTISTS: usize = 8;
 const PICKED_ALBUMS: usize = 12;
 /// How many of the artists found, and of the ones already played, lend their albums.
@@ -1264,10 +1264,10 @@ const ALBUM_ARTISTS: usize = 4;
 async fn discover(shared: &Shared, taste: Taste) {
     let radios: Vec<Vec<Track>> = join_all(taste.seeds.iter().map(|seed| async { shared.youtube.radio(&seed.id).await.unwrap_or_default() })).await;
     let mix = discover::blend(&radios, &taste.tracks, MIX);
-    // A seed's own shelf goes further into its radio than the mix did.
+    // A seed's own mix goes further into its radio than the blend of them all did.
     let mut shown = taste.tracks.clone();
     shown.extend(mix.iter().map(|track| track.id.clone()));
-    let own = |(seed, radio): (&Track, &Vec<Track>)| (seed.clone(), discover::blend(std::slice::from_ref(radio), &shown, crate::state::SHELF));
+    let own = |(seed, radio): (&Track, &Vec<Track>)| (seed.clone(), discover::blend(std::slice::from_ref(radio), &shown, MIX));
     let because = taste.seeds.iter().zip(&radios).take(BECAUSE).map(own).collect();
     (shared.reply)(Event::Discovered(Picks::Tracks { mix, because }));
 

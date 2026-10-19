@@ -59,6 +59,61 @@ pub enum Page {
     Equalizer,
     /// Where a search starts on the desktop: what was searched lately, and genres to browse.
     Browse,
+    /// One of the lists the home makes out of what the user plays, as it was when opened.
+    Mix(Mix),
+}
+
+/// A list the home makes out of what the user plays, opened and played as a playlist is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mix {
+    pub kind: MixKind,
+    pub tracks: Vec<Track>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum MixKind {
+    /// What goes with everything played lately, named after the time of day.
+    Moment,
+    /// What goes with this track, the latest of one of the artists played most.
+    Artist(Track),
+    /// What was played again and again lately.
+    Repeat,
+}
+
+impl Mix {
+    /// Which mix it is, the same while the picks are asked for again.
+    pub fn key(&self) -> String {
+        match &self.kind {
+            MixKind::Moment => "moment".to_owned(),
+            MixKind::Artist(seed) => format!("artist-{}", seed.id),
+            MixKind::Repeat => "repeat".to_owned(),
+        }
+    }
+
+    /// The artists it plays most, after the one it is named after: what its card says it is.
+    pub fn artists(&self, count: usize) -> Vec<&str> {
+        let named = match &self.kind { MixKind::Artist(seed) => discover::plain(&seed.artist), _ => String::new() };
+        let mut artists: Vec<&str> = Vec::new();
+        for track in &self.tracks {
+            let plain = discover::plain(&track.artist);
+            if !plain.is_empty() && plain != named && artists.iter().all(|known| discover::plain(known) != plain) {
+                artists.push(&track.artist);
+            }
+        }
+        artists.truncate(count);
+        artists
+    }
+
+    /// Up to four covers, each of a different release, for a picture made of them.
+    pub fn covers(&self) -> Vec<&String> {
+        let mut covers: Vec<&String> = Vec::new();
+        for url in self.tracks.iter().filter_map(|track| track.artwork_url.as_ref()) {
+            if covers.len() < 4 && !covers.contains(&url) {
+                covers.push(url);
+            }
+        }
+        covers
+    }
 }
 
 /// The settings in parts, each a page of its own under their list, as Spotify's.
@@ -343,6 +398,9 @@ const SAME_LENGTH_MS: u64 = 2000;
 /// the home page asks the catalog what goes with them.
 const HEARD_KEPT: usize = 100;
 const SEEDS: usize = 5;
+/// The most tracks the mix of what was played again holds, and the fewest it takes to be one.
+const REPEAT: usize = 20;
+const REPEAT_FEWEST: usize = 4;
 
 /// How many songs a playlist's recommendations show at a time, and how few of them still to
 /// come make it ask for more, as Spotify's.
@@ -580,6 +638,11 @@ pub struct State {
     pub panel_open: bool,
     /// How far open the right panel is drawn, from 0 to 1, on its way to `panel_open`.
     pub panel_slide: ScalarTransition,
+    /// The quick-access entry of the home under the pointer, whose colour the page's wash takes.
+    pub quick_hovered: Option<String>,
+    /// The wash's colour when it last set off for another, and how far it has gone.
+    pub wash_from: limn::Color,
+    pub wash: ScalarTransition,
     /// Whether what the app moves by itself travels or jumps. Off for a screenshot, which
     /// wants the final picture.
     pub motion: bool,
@@ -644,8 +707,6 @@ pub struct State {
     /// The track whose share card is open, and whether its link was just copied.
     pub sharing: Option<Track>,
     pub copied: bool,
-    /// A shelf whose arrow was pressed and which way, back or on, until the window moves it.
-    pub shelf_push: Option<(String, f32)>,
     /// The playlist whose link was just copied, while its page says so, and the one whose
     /// songs were, as text for another app.
     pub list_copied: Option<u64>,
@@ -740,6 +801,17 @@ const ARTWORK_KEPT: usize = 400;
 fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item = &'a Option<String>>) -> Vec<Command> {
     let urls = urls.into_iter().flatten();
     urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
+}
+
+/// How long the home's wash takes to change colour, and how strong it is at the top.
+const WASH_FADE: Duration = Duration::from_millis(1000);
+const WASH_ALPHA: u8 = 150;
+
+/// `a` taken `share` of the way to `b`, alpha and all.
+pub fn blend(a: limn::Color, b: limn::Color, share: f32) -> limn::Color {
+    let share = share.clamp(0.0, 1.0);
+    let channel = |a: u8, b: u8| (f32::from(a) + (f32::from(b) - f32::from(a)) * share).round() as u8;
+    limn::Color::rgba(channel(a.r, b.r), channel(a.g, b.g), channel(a.b, b.b), channel(a.a, b.a))
 }
 
 fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
@@ -889,6 +961,9 @@ impl Default for State {
             library_slide: ScalarTransition::new(1.0, Instant::now()),
             panel_open: true,
             panel_slide: ScalarTransition::new(1.0, Instant::now()),
+            quick_hovered: None,
+            wash_from: limn::Color::rgba(0, 0, 0, 0),
+            wash: ScalarTransition::new(1.0, Instant::now()),
             motion: false,
             queue_open: false,
             collection: Collection::default(),
@@ -922,7 +997,6 @@ impl Default for State {
             copied: false,
             list_copied: None,
             list_exported: None,
-            shelf_push: None,
             copy: None,
             paste: None,
             covers: HashSet::new(),
@@ -1074,6 +1148,42 @@ impl State {
         slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
     }
 
+    /// Whether the home is shown, with nothing searched.
+    pub fn at_home(&self) -> bool {
+        self.page == Page::Search && self.submitted.is_none() && !self.searching
+    }
+
+    /// Whether something on the page moves by itself, slowly, for as long as it is shown: the
+    /// colours of the time of day's mix. Never in a screenshot or under reduced motion.
+    pub fn ambient(&self) -> bool {
+        self.motion && !self.settings.reduce_motion && self.at_home() && !self.mix.is_empty()
+    }
+
+    /// Follows the pointer over the home's quick access: the page's wash takes the colour of
+    /// the entry under it, over a second as Spotify's, and gives it back when it leaves. Says
+    /// whether that changed.
+    pub fn point_at(&mut self, hovered: Option<&str>) -> bool {
+        let entry = hovered.map(|id| id.strip_prefix("tile-play:").unwrap_or(id)).filter(|id| id.starts_with("recent:")).map(str::to_owned);
+        if entry == self.quick_hovered {
+            return false;
+        }
+        let now = Instant::now();
+        self.wash_from = self.home_wash(now);
+        self.quick_hovered = entry;
+        self.wash = ScalarTransition::new(0.0, now);
+        self.wash.retarget_with_motion(1.0, now, WASH_FADE, !self.motion || self.settings.reduce_motion);
+        true
+    }
+
+    /// The colour washing down from the top of the home at `now`: the cover of the entry
+    /// under the pointer, or the first one's while none is.
+    pub fn home_wash(&self, now: Instant) -> limn::Color {
+        let index = self.quick_hovered.as_deref().and_then(|id| id.strip_prefix("recent:")?.parse::<usize>().ok()).unwrap_or(0);
+        let tint = self.collection.recent.get(index).and_then(|entry| entry.artwork().as_ref()).and_then(|url| self.tints.get(url));
+        let to = tint.map_or(limn::Color::rgba(0, 0, 0, 0), |tint| limn::Color { a: WASH_ALPHA, ..*tint });
+        blend(self.wash_from, to, self.wash.value(now))
+    }
+
     /// Puts the panels where a saved session left them, with no travel.
     pub fn restore_sides(&mut self, library_open: bool, panel_open: bool) {
         let now = Instant::now();
@@ -1086,6 +1196,7 @@ impl State {
     /// Whether a side panel, or the page's search, is on its way open or shut.
     pub fn is_sliding(&self, now: Instant) -> bool {
         self.library_slide.is_active(now) || self.panel_slide.is_active(now) || self.page_search_slide.is_active(now) || self.library_search_slide.is_active(now)
+            || self.wash.is_active(now)
             || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
             || self.lyric_card.is_active(now)
     }
@@ -1174,9 +1285,6 @@ impl State {
         if row == "current" {
             return self.current();
         }
-        if let Some((shelf, index)) = row.strip_prefix("rec:").and_then(|row| row.split_once(':')) {
-            return self.because.get(shelf.parse::<usize>().ok()?)?.1.get(index.parse::<usize>().ok()?);
-        }
         let (list, index) = row.split_once(':')?;
         let index = index.parse::<usize>().ok()?;
         match list {
@@ -1184,9 +1292,35 @@ impl State {
             "page-track" => self.page_tracks().get(index),
             "upcoming" => self.player.upcoming.get(index),
             "heard" => self.collection.heard.get(index),
-            "mix" => self.mix.get(index),
             _ => None,
         }
+    }
+
+    /// The lists the home makes: what goes with the time of day, one for each of the artists
+    /// played most, opening with the song it grew from, and what was played again and again.
+    pub fn mixes(&self) -> Vec<Mix> {
+        let moment = (!self.mix.is_empty()).then(|| Mix { kind: MixKind::Moment, tracks: self.mix.clone() });
+        let artists = self.because.iter().filter(|(_, tracks)| !tracks.is_empty()).map(|(seed, tracks)| {
+            Mix { kind: MixKind::Artist(seed.clone()), tracks: std::iter::once(seed).chain(tracks).cloned().collect() }
+        });
+        let repeat = discover::on_repeat(&self.collection.heard, REPEAT);
+        let repeat = (repeat.len() >= REPEAT_FEWEST).then_some(Mix { kind: MixKind::Repeat, tracks: repeat });
+        moment.into_iter().chain(artists).chain(repeat).collect()
+    }
+
+    /// The home's mix a card's id names, as `made:2`.
+    pub fn mix_at(&self, row: &str) -> Option<Mix> {
+        let index = row.strip_prefix("made:")?.parse::<usize>().ok()?;
+        self.mixes().into_iter().nth(index)
+    }
+
+    /// Whether what plays came from `tracks` as a list: the song is one of them, and so is the
+    /// one due after it. A song that is in it by chance, played alone, is not the list playing.
+    // shortcut: the player keeps no record of the list it was handed, so its last song reads as
+    // not from it; keep that list in PlayerView if a card's button must know it there too.
+    pub fn plays_from(&self, tracks: &[Track]) -> bool {
+        let has = |track: &Track| tracks.iter().any(|known| known.id == track.id);
+        self.current().is_some_and(has) && self.player.upcoming.get(self.player.queued).is_some_and(has)
     }
 
     /// One of the actions of a row's menu.
@@ -1260,6 +1394,7 @@ impl State {
             Page::Downloads => &self.saved,
             Page::Liked => &self.collection.liked,
             Page::Playlist(id) => self.collection.playlist(*id).map_or(&[], |playlist| &playlist.tracks),
+            Page::Mix(mix) => &mix.tracks,
             _ => &[],
         }
     }
@@ -1442,6 +1577,10 @@ impl State {
         // played where the user is, as Spotify's cards do.
         if let Some(tile) = id.strip_prefix("tile-play:") {
             let tile = tile.strip_prefix("home-").unwrap_or(tile);
+            // A mix plays from its start, or pauses if it is what plays.
+            if let Some(mix) = self.mix_at(tile) {
+                return if self.plays_from(&mix.tracks) { vec![Command::PlayPause] } else { vec![Command::PlayList { tracks: mix.tracks, index: 0 }] };
+            }
             if let Some(track) = self.track_at(tile) {
                 if self.current().is_some_and(|current| current.id == track.id) { return vec![Command::PlayPause]; }
                 return self.click(tile);
@@ -1586,24 +1725,13 @@ impl State {
                 });
                 if retry { self.lyrics = None; self.ask_lyrics() } else { Vec::new() }
             }
-            _ if id.starts_with("shelf-back:") || id.starts_with("shelf-on:") => {
-                let (way, shelf) = id.split_once(':').unwrap_or_default();
-                self.shelf_push = Some((shelf.to_owned(), if way == "shelf-on" { 1.0 } else { -1.0 }));
-                Vec::new()
-            }
             _ if id.starts_with("heard:") => {
                 let index = id["heard:".len()..].parse::<usize>().ok().filter(|index| *index < self.collection.heard.len());
                 index.map(|index| Command::PlayList { tracks: self.collection.heard.clone(), index }).into_iter().collect()
             }
-            _ if id.starts_with("mix:") => {
-                let index = id["mix:".len()..].parse::<usize>().ok().filter(|index| *index < self.mix.len());
-                index.map(|index| Command::PlayList { tracks: self.mix.clone(), index }).into_iter().collect()
-            }
-            _ if id.starts_with("rec:") => {
-                // A pick plays, and the rest of its shelf follows it.
-                let place = id["rec:".len()..].split_once(':').and_then(|(shelf, index)| Some((shelf.parse::<usize>().ok()?, index.parse::<usize>().ok()?)));
-                let shelf = place.and_then(|(shelf, index)| Some((&self.because.get(shelf)?.1, index)));
-                shelf.filter(|(tracks, index)| *index < tracks.len()).map(|(tracks, index)| Command::PlayList { tracks: tracks.clone(), index }).into_iter().collect()
+            _ if id.starts_with("made:") => {
+                if let Some(mix) = self.mix_at(id) { self.go(Page::Mix(mix)); }
+                Vec::new()
             }
             _ if id.starts_with("lyric:") => {
                 // A line that is clicked is sung from its start.
@@ -2153,7 +2281,9 @@ impl State {
             }
             Event::Discovered(Picks::Tracks { mix, because }) => {
                 self.picks_coming[0] = false;
-                let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
+                // A seed's cover is its mix's picture.
+                let seeds = because.iter().map(|(seed, _)| &seed.artwork_url);
+                let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(seeds).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
                 (self.mix, self.because) = (mix, because);
                 covers
             }
@@ -2423,10 +2553,11 @@ impl State {
     }
 
     /// Asks for the home page's picks, once for each set of artists the user plays most,
-    /// and for the covers of what was heard.
+    /// and for the covers of what was heard and of what was heard again, the picture of its mix.
     pub fn ask_picks(&mut self) -> Vec<Command> {
         let heard = &self.collection.heard;
-        let mut commands = cover_requests(&mut self.covers, covers_of(&heard[..heard.len().min(SHELF)]));
+        let repeat = discover::on_repeat(heard, REPEAT);
+        let mut commands = cover_requests(&mut self.covers, covers_of(&heard[..heard.len().min(SHELF)]).chain(covers_of(&repeat)));
         let taste = self.taste();
         let mut artists: Vec<String> = taste.seeds.iter().map(|seed| discover::plain(&seed.artist)).collect();
         artists.sort();
@@ -3498,9 +3629,13 @@ mod tests {
         assert!(click(&mut state, "home").iter().all(|command| !matches!(command, Command::Discover(_))), "asked once");
 
         state.apply(Event::Discovered(Picks::Tracks { mix: vec![track("m")], because: vec![(track("b"), vec![track("x"), track("y")])] }));
-        assert_eq!(click(&mut state, "mix:0"), vec![Command::PlayList { tracks: vec![track("m")], index: 0 }]);
-        assert_eq!(click(&mut state, "rec:0:1"), vec![Command::PlayList { tracks: vec![track("x"), track("y")], index: 1 }]);
-        assert!(click(&mut state, "rec:0:9").is_empty() && click(&mut state, "rec:3:0").is_empty() && click(&mut state, "mix:4").is_empty());
+        // The picks come as lists: the time of day's, then one for each seed, opening with it.
+        assert_eq!(state.mixes().iter().map(Mix::key).collect::<Vec<_>>(), ["moment", "artist-b"]);
+        let seeded = vec![track("b"), track("x"), track("y")];
+        assert_eq!(click(&mut state, "tile-play:home-made:1"), vec![Command::PlayList { tracks: seeded.clone(), index: 0 }]);
+        assert!(click(&mut state, "made:1").is_empty() && matches!(&state.page, Page::Mix(mix) if mix.key() == "artist-b"), "a card opens its list");
+        assert_eq!(click(&mut state, "page-track:2"), vec![Command::PlayList { tracks: seeded, index: 2 }]);
+        assert!(click(&mut state, "made:9").is_empty() && click(&mut state, "tile-play:made:9").is_empty());
         let artist = ArtistRef { id: "who".into(), name: "Who".into(), subscribers: None, artwork_url: None };
         let album = AlbumRef { id: "lp".into(), title: "LP".into(), artist: Some("Who".into()), year: String::new(), artwork_url: None };
         state.apply(Event::Discovered(Picks::Artists(vec![artist])));
