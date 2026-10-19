@@ -570,8 +570,8 @@ pub struct State {
     pub library_search_slide: ScalarTransition,
     /// A field the window is to put the keyboard in, once.
     pub focus: Option<String>,
-    /// The desktop's search field holds the keyboard: with nothing typed, the recent
-    /// searches drop down from it.
+    /// The desktop's search field, or one of the recent searches it drops down, holds the
+    /// keyboard: with nothing typed, they show.
     pub search_focused: bool,
     /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
     pub library_open: bool,
@@ -1424,11 +1424,6 @@ impl State {
         // A link in what a release says of itself: its address comes last in its id.
         if let Some(link) = id.strip_prefix(RELEASE_LINK) {
             self.open_url = link.splitn(3, ':').nth(2).filter(|address| address.starts_with("https://") || address.starts_with("http://")).map(str::to_owned);
-            return Vec::new();
-        }
-        // A click away from the recent searches puts them away with the keyboard.
-        if id == "search-recent-close" {
-            self.mobile_ui.blur = true;
             return Vec::new();
         }
         if let Some(index) = id.strip_prefix("recent-search-remove:").and_then(|value| value.parse::<usize>().ok()) {

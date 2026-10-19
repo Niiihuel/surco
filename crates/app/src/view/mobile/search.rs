@@ -71,9 +71,17 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     }
     if rows.is_empty() {
         if pending {
-            // The shape of the rows to come, pulsing in step with the covers on their way.
+            // The shape of the rows to come, a result's own: its cover and its two lines,
+            // pulsing in step with the covers on their way.
             let pulse = ComponentPalette { raised: palette.selected, ..palette };
-            rows.extend(limn::SkeletonGroup::rows("cover-coming", pulse, 8).row_height(64.0).icon(true).into_rows());
+            rows.extend([(190.0, 110.0), (150.0, 90.0), (210.0, 130.0), (170.0, 100.0)].into_iter().cycle().take(8).map(|(title, subtitle)| {
+                let lines = Element::column(vec![
+                    limn::Skeleton::line("cover-coming", pulse, title).height(14.0).render(),
+                    limn::Skeleton::line("cover-coming", pulse, subtitle).height(11.0).render(),
+                ]).gap(8.0).centered_y();
+                Element::row(vec![limn::Skeleton::block("cover-coming", pulse, 48.0, 48.0).radius(4.0).render().centered_y(), lines])
+                    .gap(12.0).padding(8.0).size(None, Some(64.0))
+            }));
         } else {
             rows.push(if state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
                 else { Empty::new(t!("common-no-results"), t!("mobile-no-results-detail"), palette).icon(Icon::Search).render().padding(20.0) });
@@ -93,7 +101,8 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
                 .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         ]).gap(8.0).padding(8.0)
     } else {
-        let copy = if pending { Text::new(t!("mobile-searching"), palette).font_size(12.0).muted().render() }
+        // Searching says so by the rows' shape, not in words.
+        let copy = if pending { Element::spacer() }
             else if state.submitted.is_none() && has_results {
                 Text::new(if state.query.contains("://") { t!("mobile-search-open-link") } else { t!("mobile-previous-results") }, palette)
                     .font_size(12.0).muted().render()
@@ -357,7 +366,7 @@ mod tests {
             assert_eq!(tree.scroll_offset("mobile-search-results"), offset);
             let current = frame.regions.iter().find(|region| region.id == "track:3" && region.kind == HitKind::Button).unwrap().rect;
             assert_eq!(current, held, "status changes must not move the retained result rows");
-            assert!(text(&frame, "Buscando…"));
+            assert!(!text(&frame, "Buscando…"), "the rows say it is searching, not words");
             assert!(!text(&frame, "Sin resultados"));
         }
         state.searching = false;
@@ -389,7 +398,7 @@ mod tests {
         let mut state = phone();
         state.mobile_query("nueva", Instant::now());
         let frame = UiTree::new(results(&state)).layout(Size::new(390.0, 500.0));
-        assert!(text(&frame, "Buscando…"));
+        assert!(!text(&frame, "Buscando…"), "the shape of the rows to come says it, not words");
         assert!(!text(&frame, "Sin resultados"));
         assert!(frame.regions.iter().any(|region| region.id == "mobile-search-results" && region.kind == HitKind::Scroll));
         state.mobile_ui.pending = None;

@@ -1264,7 +1264,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
 
 /// What was searched lately, dropped down from the desktop's field while it holds the
 /// keyboard with nothing typed, as Spotify's: a row each to search again, its cross under the
-/// pointer, and a way to forget them all below. A click away puts it away.
+/// pointer, and a way to forget them all below. It goes when the keyboard leaves them.
 fn recent_searches(state: &State, field: Element, palette: ComponentPalette) -> Element {
     if !state.recent_searches_shown() {
         return field;
@@ -1287,7 +1287,8 @@ fn recent_searches(state: &State, field: Element, palette: ComponentPalette) -> 
         .padding(8.0).background(SCHEME.raised).radius(8.0)
         .shadow(Color::rgba(0, 0, 0, 77), limn::Point::new(0.0, 16.0), 24.0, 0.0)
         .size(Some(SEARCH_MAX_WIDTH.min(560.0)), None);
-    Element::popover(field, panel, "search-recent-close", PopoverPlacement::BottomStart).popover_backdrop_dismiss(true)
+    // Non-modal, so the field keeps the keyboard while it is open and typing goes on in it.
+    Element::popover(field, panel, "recent-searches", PopoverPlacement::BottomStart).popover_non_modal()
 }
 
 /// Where a search starts: every genre to browse; what was searched lately drops down from
@@ -1933,6 +1934,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     use mobile::settings::{action, arrange, cell, chevron, group, line, segmented, stacked, switch, value, GUTTER};
     use crate::state::SettingsPart;
     if state.mobile { return mobile::settings::page(state, width); }
+    // The desktop's rows and words are the size of its other pages', not the phone's.
+    let _dense = mobile::settings::Dense::on();
     let across = width.min(SETTINGS_WIDTH);
     let inner = (across - GUTTER * 4.0).max(0.0);
     let wide = inner >= 560.0;
@@ -3059,8 +3062,30 @@ mod tests {
         state.query = "C".into();
         assert!(!has(&state, "recent-search:0"), "typing puts them away");
         state.query.clear();
-        state.update(&limn::UiAction::Clicked { id: "search-recent-close".into() });
-        assert!(state.mobile_ui.blur, "a click away takes the keyboard from the field");
+        // As the window does each frame: the field takes the keyboard, they open, and they
+        // leave the keyboard in the field, frame after frame, with no flicker.
+        state.search_focused = false;
+        let mut tree = UiTree::new(view(&state, size));
+        let field = tree.layout(size).access.iter().find(|node| node.id == "search").unwrap().rect;
+        let point = limn::Point::new(field.x + 40.0, field.y + field.height / 2.0);
+        let frame = |state: &mut State, tree: &mut UiTree, event: Option<limn::UiEvent>| {
+            for action in event.map(|event| tree.handle_event(event)).unwrap_or_default() { state.update(&action); }
+            state.search_focused = tree.focused_id().is_some_and(|id| id == "search" || id.starts_with("recent-search"));
+            if std::mem::take(&mut state.mobile_ui.blur) { tree.clear_focus(); }
+            tree.set_root(view(state, size));
+            tree.layout(size);
+        };
+        frame(&mut state, &mut tree, Some(limn::UiEvent::PointerDown(point)));
+        frame(&mut state, &mut tree, Some(limn::UiEvent::PointerUp(point)));
+        frame(&mut state, &mut tree, None);
+        assert!(state.recent_searches_shown() && tree.focused_id() == Some("search"), "{:?}", tree.focused_id());
+        // A click away, on the page's heading, takes the keyboard and them with it.
+        let heading = tree.layout(size).text_layouts().into_iter().find(|block| block.source == "Explorar todo").unwrap().runs[0].rect;
+        let away = limn::Point::new(heading.x + 4.0, heading.y + heading.height / 2.0);
+        frame(&mut state, &mut tree, Some(limn::UiEvent::PointerDown(away)));
+        frame(&mut state, &mut tree, Some(limn::UiEvent::PointerUp(away)));
+        assert!(!state.recent_searches_shown(), "{:?}", tree.focused_id());
+
         assert!(matches!(state.update(&limn::UiAction::Clicked { id: "browse:Rock argentino".into() }).as_slice(), [crate::backend::Command::Search(query)] if query == "Rock argentino"));
         assert_eq!(state.collection.searches, ["Rock argentino", "Cerati"]);
         state.update(&limn::UiAction::Clicked { id: "recent-search-remove:1".into() });

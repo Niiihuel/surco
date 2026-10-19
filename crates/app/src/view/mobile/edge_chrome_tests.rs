@@ -377,6 +377,13 @@ fn scrolled_song_pages_join_the_header_tone_with_short_fades_outside_the_bars() 
             "the header transition stays short instead of darkening a large content band"
         );
         let footer = surface(&frame, "mobile-footer-bar");
+        if page == Page::Playing {
+            // The player has no bar below, only the home indicator's room: nothing fades there.
+            assert!(!frame.commands.iter().any(|command| matches!(command,
+                DrawCommand::FillVerticalGradient { rect, .. } if *rect == footer || (rect.y + rect.height - footer.y).abs() < 0.1)),
+                "the player runs clear to the bottom");
+            continue;
+        }
         let footer_ink = frame.commands.iter().find_map(|command| match command {
             DrawCommand::FillVerticalGradient { rect, top, bottom } if *rect == footer => {
                 assert_eq!(*bottom, page_surface(&state).1);

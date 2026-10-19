@@ -99,7 +99,6 @@ mobile-clear-search = Clear search
 mobile-no-results-detail = Try another name or change the filter.
 mobile-search-failed = Couldn't update
 mobile-search-failed-detail = Try again in a moment.
-mobile-searching = Searching…
 mobile-search-open-link = Tap Search to open the link.
 mobile-previous-results = Previous results
 mobile-recent-searches = Recent searches

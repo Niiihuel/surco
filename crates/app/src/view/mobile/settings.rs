@@ -10,10 +10,36 @@ use limn::Separator;
 pub(in crate::view) const GUTTER: f32 = 16.0;
 /// The least height of a row, above the 44-point touch minimum.
 const ROW_HEIGHT: f32 = 52.0;
+
+/// The sizes of the settings' words and rows: the phone's are touch-sized, the desktop's
+/// those of the rest of its pages.
+#[derive(Clone, Copy)]
+struct Scale { title: f32, detail: f32, heading: f32, page: f32, row: f32, part: f32, glyph: f32 }
+const TOUCH: Scale = Scale { title: 17.0, detail: 14.0, heading: 22.0, page: 28.0, row: ROW_HEIGHT, part: 56.0, glyph: 26.0 };
+const DENSE: Scale = Scale { title: 15.0, detail: 13.0, heading: 18.0, page: 28.0, row: 44.0, part: 44.0, glyph: 22.0 };
+
+thread_local! {
+    static DENSE_PAGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// While it lives, the settings are drawn at the desktop's sizes.
+pub(in crate::view) struct Dense;
+impl Dense {
+    pub(in crate::view) fn on() -> Self {
+        DENSE_PAGE.set(true);
+        Self
+    }
+}
+impl Drop for Dense {
+    fn drop(&mut self) { DENSE_PAGE.set(false); }
+}
+
+fn scale() -> Scale {
+    if DENSE_PAGE.get() { DENSE } else { TOUCH }
+}
 /// A row's inside: 10 above and below, 16 at the sides once `cell` adds its 6.
 const ROW_PAD: f32 = 10.0;
-/// A part's glyph in the list of them, and the room between it and its words.
-const GLYPH: f32 = 26.0;
+/// The room between a part's glyph and its words.
 const ROW_GAP: f32 = 16.0;
 /// What a row under the pointer or the finger shows: the rows themselves are on the page.
 const PRESSED: f32 = 8.0;
@@ -24,16 +50,16 @@ const DESTRUCTIVE: Color = Color::rgb(255, 69, 58);
 
 /// The name over an optional line about it, and what sits at the end.
 pub(in crate::view) fn line(title: &str, detail: Option<&str>, trailing: Option<Element>, ink: Color) -> Element {
-    let palette = SCHEME.palette();
-    let mut copy = vec![Text::new(title, palette).font_size(17.0).ink(ink).render()];
-    if let Some(detail) = detail { copy.push(Text::new(detail, palette).font_size(14.0).muted().render()); }
+    let (palette, scale) = (SCHEME.palette(), scale());
+    let mut copy = vec![Text::new(title, palette).font_size(scale.title).ink(ink).render()];
+    if let Some(detail) = detail { copy.push(Text::new(detail, palette).font_size(scale.detail).muted().render()); }
     let mut children = vec![Element::column(copy).gap(4.0).centered_y().flex(1.0)];
     children.extend(trailing.map(Element::centered_y));
     Element::row(children).gap(ROW_GAP)
 }
 
 pub(in crate::view) fn cell(content: Element) -> Element {
-    horizontal_inset(content.min_size(0.0, ROW_HEIGHT).padding(ROW_PAD), GUTTER - ROW_PAD, GUTTER - ROW_PAD)
+    horizontal_inset(content.min_size(0.0, scale().row).padding(ROW_PAD), GUTTER - ROW_PAD, GUTTER - ROW_PAD)
 }
 
 pub(in crate::view) fn value(text: &str) -> Element {
@@ -84,7 +110,7 @@ pub(in crate::view) fn group(title: &str, rows: Vec<Element>, footer: &str) -> E
     let rows = Element::column(rows).gap(4.0)
         .accessible(limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title));
     let caption = |text: Element| horizontal_inset(text, GUTTER, GUTTER);
-    let heading = Text::new(title, palette).role(TextRole::Heading).font_size(22.0).render().font_family(FontFamily::SansBold);
+    let heading = Text::new(title, palette).role(TextRole::Heading).font_size(scale().heading).render().font_family(FontFamily::SansBold);
     let mut parts = vec![caption(heading), rows];
     if !footer.is_empty() { parts.push(caption(Text::new(footer, palette).font_size(13.0).muted().render())); }
     Element::column(parts).gap(10.0)
@@ -132,13 +158,14 @@ fn part_glyph(part: SettingsPart) -> Icon {
 /// groups apart by hairlines. `sections` are every group with the part it belongs to. The
 /// desktop titles the page itself; the phone's header does.
 pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Element)>, titled: bool, palette: ComponentPalette) -> Vec<Element> {
-    let title = |text: &str| horizontal_inset(Text::new(text, palette).role(TextRole::Heading).font_size(28.0).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
+    let scale = scale();
+    let title = |text: &str| horizontal_inset(Text::new(text, palette).role(TextRole::Heading).font_size(scale.page).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let Page::SettingsPart(shown) = state.page else {
         let rows = SettingsPart::ALL.into_iter().map(|part| {
             let (name, about) = (part_title(part), part_about(part));
-            let glyph = Element::icon(part_glyph(part)).large_icon(GLYPH).foreground(Color::WHITE).size(Some(GLYPH), Some(GLYPH));
+            let glyph = Element::icon(part_glyph(part)).large_icon(scale.glyph).foreground(Color::WHITE).size(Some(scale.glyph), Some(scale.glyph));
             let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(ROW_GAP);
-            pressable(&format!("settings-part:{}", part.slug()), &name, Some(&about), cell(row.min_size(0.0, 56.0)), true)
+            pressable(&format!("settings-part:{}", part.slug()), &name, Some(&about), cell(row.min_size(0.0, scale.part)), true)
         });
         let mut page: Vec<Element> = titled.then(|| title(&t!("common-settings"))).into_iter().collect();
         page.push(Element::column(rows.collect()).gap(4.0));

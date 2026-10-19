@@ -194,13 +194,15 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
-    // A sheet sized to its rows follows them as they change.
+    // The rows are measured here, after their own layout, and never while the presentation
+    // asks for the height: that would lay the sheet out inside its own presentation. A sheet
+    // on screen follows its rows as they change; one being presented takes them on arrival.
     if (@available(iOS 16.0, *)) {
-        CGFloat height = self.fittingHeight;
+        [_scroll layoutIfNeeded];
+        CGFloat height = CGRectGetWidth(self.view.bounds) > 40 ? ceil(_scroll.contentSize.height) : 0;
         if (height != _fittedHeight) {
             _fittedHeight = height;
-            UISheetPresentationController *presentation = self.sheetPresentationController;
-            [presentation animateChanges:^{ [presentation invalidateDetents]; }];
+            if (self.view.window && !self.isBeingPresented) [self refit];
         }
     }
     CGSize viewport = _scroll.bounds.size;
@@ -213,9 +215,20 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 
 - (CGFloat)fittingHeight {
     // Before UIKit gives the sheet its width, the rows have no height to report.
-    if (!self.isViewLoaded || CGRectGetWidth(self.view.bounds) <= 40) return 0;
-    [self.view layoutIfNeeded];
-    return ceil(_scroll.contentSize.height);
+    return _fittedHeight;
+}
+
+- (void)viewDidAppear:(BOOL)animated {
+    [super viewDidAppear:animated];
+    [self refit];
+}
+
+/// Asks the sheet's detents again, so the one that fits its rows follows them.
+- (void)refit {
+    if (@available(iOS 16.0, *)) {
+        UISheetPresentationController *presentation = self.sheetPresentationController;
+        [presentation animateChanges:^{ [presentation invalidateDetents]; }];
+    }
 }
 
 - (UIButton *)actionButton {

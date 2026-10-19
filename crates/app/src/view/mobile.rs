@@ -135,14 +135,16 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let footer_edge = if song_surface {
         mix(surface.0, surface.1, ((window.height - bottom_height) / window.height.max(1.0)).clamp(0.0, 1.0))
     } else { SCHEME.canvas };
-    // Natively, rows pass beneath a blurred header and fade out behind the transport.
+    // Natively, rows pass beneath a blurred header and fade out behind the transport. The
+    // player has no bar below, only the home indicator's room: it runs clear to the bottom.
+    let player = state.page == Page::Playing;
     let (header_edge, footer_edge) = if native_chrome { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
-    let content = chrome::under_bars(content, top_height, bottom_height, header_edge, footer_edge);
+    let content = chrome::under_bars(content, top_height, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge });
     let top = Element::column(top);
     let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
     let footer = Element::column(bottom);
-    // The scrim is the tab bar's: a song's own page has none, and runs clear to the bottom.
-    let footer = if native_chrome && song_surface { footer }
+    // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
+    let footer = if player { footer }
         else if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
         else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
         else { footer.background(footer_edge) }.block_pointer("mobile-footer-bar");

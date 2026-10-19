@@ -588,8 +588,9 @@ impl eframe::App for Host {
             self.tree.set_input_value("search", self.state.query.clone());
             acted = true;
         }
-        // The recent searches drop down from the field while it holds the keyboard.
-        let focused = !self.state.mobile && self.tree.focused_id() == Some("search");
+        // The recent searches drop down from the field while it holds the keyboard, and stay
+        // while one of them does: a press on a row takes the keyboard before its click lands.
+        let focused = !self.state.mobile && self.tree.focused_id().is_some_and(|id| id == "search" || id.starts_with("recent-search"));
         if focused != self.state.search_focused {
             self.state.search_focused = focused;
             acted = true;

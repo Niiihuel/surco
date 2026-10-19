@@ -99,7 +99,6 @@ mobile-clear-search = Borrar búsqueda
 mobile-no-results-detail = Probá con otro nombre o cambiá el filtro.
 mobile-search-failed = No pudimos actualizar
 mobile-search-failed-detail = Intentá de nuevo en un momento.
-mobile-searching = Buscando…
 mobile-search-open-link = Tocá Buscar para abrir el enlace.
 mobile-previous-results = Resultados anteriores
 mobile-recent-searches = Búsquedas recientes
