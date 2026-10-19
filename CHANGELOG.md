@@ -2,6 +2,8 @@
 
 ## 0.10.1
 
+![What plays, its video tall at the top of the right panel](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.1/docs/screenshots/playing.jpg)
+
 ### Changed
 
 - A song among the recent searches plays or pauses from its cover, shows its wave while it
@@ -13,6 +15,8 @@
 - A song's video fades in over its cover instead of replacing it at once.
 - The right panel keeps its corners round over the song's video.
 - The cross inside a page's search no longer draws a disc over the field.
+
+![Synced lyrics with their translation](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.1/docs/screenshots/lyrics.jpg)
 
 ## 0.10.0
 

@@ -4,14 +4,16 @@ A native music player for the desktop, written entirely in Rust. The interface i
 with [limn](https://github.com/Niiihuel/limn); there is no web view. *Surco* is the
 groove of a record: where the needle travels.
 
-![The home page: what was played, and picks made from it](docs/screenshots/home.jpg)
+![The home page: mixes and picks made from what is played](docs/screenshots/home.jpg)
 
 It plays without an account. What is liked, kept and listed stays on the machine that
 plays it; a playlist is shared as a link that carries it whole.
 
 ## What it does
 
-- Search, artist and album pages, and a home page of picks made from what is played.
+- Search as you type, artist and album pages, and a home page that grows with what is
+  played: mixes of the artists played most, a card for the time of day, what is played
+  again and again, picks for fans of an artist and news from the ones followed.
 - Gapless playback with crossfade, a ten-band equaliser, even loudness and a choice of
   output device and quality.
 - Synced lyrics, the song's own video beside it or over the whole window, the queue,
@@ -23,10 +25,15 @@ plays it; a playlist is shared as a link that carries it whole.
   as artist-and-title text to paste into a playlist transfer service. Spotify imports
   read up to 100 tracks; songs that cannot be matched are reported after the import.
 - A bell for what the artists followed release, and for later versions of the app.
+- A local profile with a picture of its own, and the account moved to a phone or another
+  computer on the same network: the phone's camera reads a code, a computer types an
+  address.
 
 | | |
 |---|---|
-| ![An artist's page, with its tracks as a table](docs/screenshots/artist.jpg) | ![Synced lyrics beside the song's own video](docs/screenshots/lyrics.jpg) |
+| ![What plays, its video tall at the top of the right panel](docs/screenshots/playing.jpg) | ![Synced lyrics with their translation](docs/screenshots/lyrics.jpg) |
+| ![A playlist and a song's menu](docs/screenshots/playlist.jpg) | ![Search results as they are typed](docs/screenshots/search.jpg) |
+| ![The local profile](docs/screenshots/profile.jpg) | ![Moving the account to another device](docs/screenshots/handoff.jpg) |
 
 ## Crates
 
