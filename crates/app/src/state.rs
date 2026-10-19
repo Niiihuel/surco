@@ -3778,8 +3778,7 @@ mod tests {
 
     #[test]
     fn back_keeps_the_page_left_for_forward_until_another_is_opened() {
-        let mut state = State::default();
-        state.page = Page::Liked;
+        let mut state = State { page: Page::Liked, ..State::default() };
         click(&mut state, "downloads");
         assert_eq!(state.page, Page::Downloads);
         assert!(!state.can_go_forward());
@@ -4649,8 +4648,7 @@ mod tests {
 
     #[test]
     fn lyric_card_appears_in_place_then_springs_to_each_new_line() {
-        let mut state = State::default();
-        state.motion = true;
+        let mut state = State { motion: true, ..State::default() };
         let now = Instant::now();
         assert!(state.follow_lyric_card(Some(48.0), now), "a card that appears is placed");
         assert_eq!(state.lyric_card_offset(now), 48.0);
