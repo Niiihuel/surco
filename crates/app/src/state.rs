@@ -631,6 +631,8 @@ pub struct State {
     /// The desktop's search field, or one of the recent searches it drops down, holds the
     /// keyboard: with nothing typed, they show.
     pub search_focused: bool,
+    /// The panel of what plays is scrolled from its top: its header takes the panel's floor.
+    pub panel_scrolled: bool,
     /// Whether the library shows, and how far open it is drawn, from 0 to 1, on its way there.
     pub library_open: bool,
     pub library_slide: ScalarTransition,
@@ -1036,6 +1038,7 @@ impl Default for State {
             picks_coming: [false; 3],
             welcome: false,
             search_focused: false,
+            panel_scrolled: false,
             translation: None,
             suggested: None,
             patches: None,
@@ -1966,6 +1969,12 @@ impl State {
                 Vec::new()
             }
             // What plays, in the right panel: shown if it was not, or the panel shut.
+            // What plays, handed around from its own panel.
+            "now-share" => {
+                self.sharing = self.current().cloned();
+                self.copied = false;
+                Vec::new()
+            }
             "now-playing-view" => {
                 let showing = self.panel_open && !self.queue_open;
                 self.queue_open = false;

@@ -63,6 +63,8 @@ struct Host {
     /// When something other than the song going on last happened to the window.
     stirred: Instant,
     script: Script,
+    /// The song the panel of what plays was last scrolled for.
+    panel_song: Option<String>,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
     /// The notice already revealed; ordinary repaints preserve manual scrolling.
@@ -489,7 +491,8 @@ impl eframe::App for Host {
                         let room = view::cinema_room(window);
                         clip::Fit::Whole { width: view::cinema_picture(&footage.large.0, window).width, room: (room.width, room.height) }
                     }
-                    _ => clip::Fit::Square(self.state.right_width - 32.0),
+                    // Full-bleed across the panel, as Spotify's Canvas.
+                    _ => clip::Fit::Square(self.state.right_width),
                 };
                 if self.clip.as_ref().is_none_or(|screen| screen.key != name) {
                     limn_egui::forget_surface(view::CLIP_SURFACE);
@@ -579,6 +582,18 @@ impl eframe::App for Host {
             acted = true;
         }
         if !self.state.mobile && self.state.point_at(self.tree.hovered_id()) {
+            acted = true;
+        }
+        // The panel of what plays starts at its top for each song, and its header takes the
+        // panel's floor once it is scrolled from there.
+        let current = self.state.current().map(|track| track.id.clone());
+        if current != self.panel_song {
+            self.panel_song = current;
+            self.tree.set_scroll_offset("playing", 0.0);
+        }
+        let scrolled = self.tree.scroll_offset("playing") > 8.0;
+        if scrolled != self.state.panel_scrolled {
+            self.state.panel_scrolled = scrolled;
             acted = true;
         }
         if let Some(text) = self.state.copy.take() {
@@ -879,6 +894,7 @@ pub fn run() -> eframe::Result {
                 surfaces: native_surfaces::Controller::default(),
                 #[cfg(target_os = "ios")]
                 keyboard_inset: limn::ScalarTransition::new(0.0, Instant::now()),
+                panel_song: None,
             }))
         }),
     )

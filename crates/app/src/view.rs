@@ -2548,7 +2548,7 @@ fn panel_header(title: &str, subtitle: &str, palette: ComponentPalette) -> Eleme
 
 /// A card of the panel of what plays: a step above it, with a margin of its own.
 fn panel_card(parts: Vec<Element>, width: f32) -> Element {
-    Element::panel(Element::column(parts).gap(8.0).padding(12.0)).background(CHOSEN).radius(RadiusRole::Panel.px()).size(Some(width), None)
+    Element::panel(Element::column(parts).gap(8.0).padding(16.0)).background(CHOSEN).radius(RadiusRole::Card.px()).size(Some(width), None)
 }
 
 /// How many lines of the lyrics the panel of what plays shows, how tall each is and the space between two.
@@ -2596,36 +2596,43 @@ fn next_up(state: &State, width: f32, palette: ComponentPalette) -> Option<Eleme
     Some(panel_card(vec![head, row], width))
 }
 
-/// The height of the artist's picture in the card that presents them, and how much of
-/// what their page says of them the card quotes.
-const ABOUT_PICTURE: f32 = 150.0;
-const ABOUT_WORDS: usize = 220;
+/// How much of what their page says of the artist the card quotes: some three lines.
+const ABOUT_WORDS: usize = 150;
 
-/// Who plays what plays, as their own page presents them, with the way to follow them.
+/// Who plays what plays, as Spotify's card presents them: their picture three by two with
+/// the card's name over it, then their name, how many follow them beside the way to follow
+/// them, and the opening of what their page says of them.
 fn about_artist(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
     let (artist, words) = state.about_artist()?;
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
     let follows = state.is_followed(artist);
-    let follow = Button::new("about-follow", if follows { t!("common-following") } else { t!("common-follow") }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).render();
-    let name = Element::clickable("about-artist", Text::new(&artist.name, raised).font_size(16.0).truncate().render());
-    let mut copy = vec![Text::eyebrow(t!("desktop-about-artist-eyebrow"), raised).render(), Element::row(vec![name.flex(1.0).centered_y(), follow.centered_y()]).gap(8.0)];
-    if let Some(subscribers) = &artist.subscribers {
-        copy.push(Text::new(t!("desktop-subscribers", subscribers = subscribers.as_str()), raised).muted().render());
+    let follow = Button::new("about-follow", if follows { t!("common-following") } else { t!("common-follow") }, raised).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
+    let label = Text::new(t!("desktop-about-artist"), raised).font_size(16.0).truncate().render().font_family(FontFamily::SansBold);
+    let mut parts = Vec::new();
+    match artist.artwork_url.as_ref().and_then(|url| state.artwork.get(url)) {
+        Some(image) => {
+            let height = (width * 2.0 / 3.0).round();
+            let scrim = Element::spacer().size(None, Some(height * 0.4)).vertical_gradient(vec![Color::rgba(0, 0, 0, 140), Color::rgba(0, 0, 0, 0)]);
+            let over = Element::column(vec![label.padding(PANEL_PAD), Element::spacer().flex(1.0)]);
+            let picture = Element::stack(vec![Element::raster_image(image.clone().cover()).size(Some(width), Some(height)), Element::column(vec![scrim, Element::spacer().flex(1.0)]), over]);
+            parts.push(Element::clickable("about-picture", picture.size(Some(width), Some(height))).dispatch_as("about-artist"));
+        }
+        None => parts.push(label.padding(PANEL_PAD)),
     }
+    let name = Element::clickable("about-artist", Text::new(&artist.name, raised).font_size(16.0).truncate().render().font_family(FontFamily::SansBold));
+    let mut copy = vec![name];
+    let followers = artist.subscribers.as_ref().map(|subscribers| Text::new(t!("desktop-subscribers", subscribers = subscribers.as_str()), raised).ink(SUBDUED).render());
+    copy.push(Element::row(vec![followers.unwrap_or_else(Element::spacer).flex(1.0).centered_y(), follow.centered_y()]).gap(8.0));
     if let Some(words) = words.as_deref().map(str::trim).filter(|words| !words.is_empty()) {
         // The opening of it, cut at a word.
         let quoted = match words.char_indices().nth(ABOUT_WORDS) {
             Some((end, _)) => format!("{}…", words[..end].rsplit_once(char::is_whitespace).map_or(&words[..end], |(kept, _)| kept)),
             None => words.to_owned(),
         };
-        copy.push(Text::new(quoted, raised).role(TextRole::Caption).muted().render());
+        copy.push(Text::new(quoted, raised).ink(SUBDUED).render());
     }
-    let mut parts = Vec::new();
-    if let Some(image) = artist.artwork_url.as_ref().and_then(|url| state.artwork.get(url)) {
-        parts.push(Element::raster_image(image.clone().cover()).size(Some(width), Some(ABOUT_PICTURE)));
-    }
-    parts.push(Element::column(copy).gap(6.0).padding(12.0));
-    Some(Element::panel(Element::column(parts)).background(CHOSEN).radius(RadiusRole::Panel.px()).clip_children().size(Some(width), None))
+    parts.push(Element::column(copy).gap(8.0).padding(PANEL_PAD));
+    Some(Element::panel(Element::column(parts)).background(CHOSEN).radius(RadiusRole::Card.px()).clip_children().size(Some(width), None))
 }
 
 /// A round button that stands on a picture, over a scrim of its own.
@@ -2699,36 +2706,7 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
         vec![panel_header(&t!("desktop-up-next"), &t!("desktop-queue-detail"), palette), upcoming(state, palette)]
     } else {
         match state.current() {
-            Some(track) => {
-                let side = state.right_width - 32.0;
-                let link = |id: &str, action: &str, text: Element| inset(Element::clickable(id, text).dispatch_as(action));
-                let picture = {
-                        // Not whole: a release's pictures beside it would make three.
-                        let cover = cover(state, &largest(state, track), side, palette).radius(RadiusRole::Panel.px());
-                        // The song's own video goes over its cover, which stays until the first frame;
-                        // under the pointer, what to see there and the way to see it large.
-                        let mut layers = vec![cover];
-                        if state.screening().is_some() {
-                            layers.push(Element::surface(CLIP_SURFACE, t!("desktop-song-video")));
-                        }
-                        let controls = Element::row(vec![Element::spacer().flex(1.0), footage_switch(state, palette), on_picture("cinema", Icon::Fullscreen, t!("desktop-fullscreen"), palette)]).gap(6.0).padding(8.0);
-                        layers.push(Element::column(vec![controls, Element::spacer().flex(1.0)]).reveal_on_hover("cover-controls"));
-                        let cover = Element::stack(layers).size(Some(side), Some(side)).radius(RadiusRole::Panel.px()).corner_mask(palette.surface).hover_region();
-                        Element::row(vec![Element::spacer().size(Some(PANEL_PAD), None), cover])
-                };
-                let mut playing = vec![
-                    picture,
-                    link("panel-album", "now-album", Text::new(&track.title, palette).font_size(18.0).truncate().render()),
-                    link("panel-artist", "now-artist", Text::new(&track.artist, palette).muted().truncate().render()),
-                ];
-                playing.extend(lyrics_preview(state, side, palette).map(inset));
-                playing.extend(about_artist(state, side, palette).map(inset));
-                playing.extend(next_up(state, side, palette).map(inset));
-                // Under its header the panel scrolls: on a short window the artist is below the fold.
-                playing.push(Element::spacer().size(None, Some(PANEL_PAD - 12.0)));
-                let below = Element::column(playing).gap(12.0);
-                vec![panel_header(&t!("desktop-now-playing"), track.album.as_deref().unwrap_or(&track.artist), palette), panel_scroll("playing", below).render().flex(1.0)]
-            }
+            Some(track) => return now_playing(state, track, palette),
             None => vec![
                 panel_header(&t!("desktop-now-playing"), &t!("desktop-nothing-yet"), palette),
                 centered(Empty::new(t!("desktop-nothing-playing"), t!("desktop-nothing-playing-detail"), palette).icon(Icon::MusicNote).render()),
@@ -2739,6 +2717,73 @@ fn panel(state: &State, palette: ComponentPalette) -> Element {
     // The column's gap, plus this, is the margin over the header.
     let top = Element::spacer().size(None, Some(PANEL_PAD - 12.0));
     Element::column(std::iter::once(top).chain(content).collect()).gap(12.0).animate_enter(face)
+}
+
+/// The panel's own ink for what is said under a title, as Spotify's: white at 70%.
+const SUBDUED: Color = Color::rgba(255, 255, 255, 179);
+/// The panel's floor, which its scrims fade the video into.
+const PANEL_FLOOR: Color = Color::rgb(18, 18, 18);
+/// The height of the panel's header, which stays over what scrolls under it.
+const PANEL_HEADER: f32 = 64.0;
+
+/// What plays, as Spotify's Now Playing view lays it out. The song's own video fills the
+/// panel's width from its very top, under the header and under scrims of the panel's floor,
+/// its name over the foot of it; with no video its cover stands square under the header.
+/// Under them, the cards: the lyrics, who sings it, and what comes next. The header floats
+/// over it all, and takes the floor once the panel is scrolled.
+fn now_playing(state: &State, track: &Track, palette: ComponentPalette) -> Element {
+    let width = state.right_width;
+    let side = width - 2.0 * PANEL_PAD;
+    let video = state.screening().is_some();
+    let link = |id: &str, action: &str, text: Element| Element::clickable(id, text).dispatch_as(action);
+    let liked = state.is_liked(&track.id);
+    let names = Element::column(vec![
+        link("panel-album", "now-album", Text::new(&track.title, palette).font_size(24.0).truncate().render().font_family(FontFamily::SansBold)),
+        link("panel-artist", "now-artist", Text::new(&track.artist, palette).font_size(16.0).ink(SUBDUED).truncate().render()),
+    ]).gap(2.0).flex(1.0).centered_y();
+    let share = IconButton::new("now-share", Icon::Custom(include_str!("../assets/icons/share-2.svg")), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+        .tooltip(t!("desktop-share")).render().reveal_on_hover("now-share").centered_y();
+    let like = IconButton::new("like", if liked { Icon::HeartFill } else { Icon::Heart }, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact)
+        .tooltip(if liked { t!("desktop-remove-like") } else { t!("common-like") }).render().centered_y();
+    let title = Element::row(vec![names, share, like]).gap(8.0);
+
+    let media = if video {
+        // Full-bleed and square from the top: the cover until the first frame, then the
+        // video, darkened at the top for the header and at the foot for the name over it.
+        let picture = cover(state, &largest(state, track), width, palette).radius(0.0);
+        let top = Element::spacer().size(None, Some(width * 0.25)).vertical_gradient(vec![Color { a: 161, ..PANEL_FLOOR }, Color { a: 0, ..PANEL_FLOOR }]);
+        let foot = Element::spacer().size(None, Some(width * 0.45)).vertical_gradient(vec![Color { a: 0, ..PANEL_FLOOR }, Color { a: 115, ..PANEL_FLOOR }, Color { a: 230, ..PANEL_FLOOR }, PANEL_FLOOR]);
+        let scrims = Element::column(vec![top, Element::spacer().flex(1.0), foot]);
+        let over = Element::column(vec![Element::spacer().flex(1.0), title.padding(PANEL_PAD)]);
+        Element::stack(vec![picture, Element::surface(CLIP_SURFACE, t!("desktop-song-video")), scrims, over]).size(Some(width), Some(width)).clip_children()
+    } else {
+        // Square under the header, a margin from each side; a click opens its release.
+        let picture = link("panel-cover", "now-album", cover(state, &largest(state, track), side, palette).radius(RadiusRole::Card.px()));
+        Element::column(vec![Element::spacer().size(None, Some(PANEL_HEADER)), inset(picture), inset(title)]).gap(16.0)
+    };
+    let mut parts = vec![media];
+    parts.extend(lyrics_preview(state, side, palette).map(inset));
+    parts.extend(about_artist(state, side, palette).map(inset));
+    parts.extend(next_up(state, side, palette).map(inset));
+    parts.push(Element::spacer().size(None, Some(PANEL_PAD)));
+    let scroll = panel_scroll("playing", Element::column(parts).gap(16.0)).render().flex(1.0);
+
+    // The header: what the song is from, the way to shut the panel and, under the pointer,
+    // whether to see its video and the way to see it large.
+    let context = track.album.as_deref().unwrap_or(&track.artist);
+    let shut = header_button("toggle-panel", Icon::PanelRightClose, TooltipSpec::new(t!("desktop-hide-panel")), palette).render().reveal_on_hover("panel-shut");
+    let large = header_button("cinema", Icon::Fullscreen, TooltipSpec::new(t!("desktop-fullscreen")), palette).render();
+    let tools = Element::row(vec![footage_switch(state, palette), large]).gap(8.0).reveal_on_hover("panel-tools");
+    let header = Element::row(vec![
+        shut.centered_y(),
+        Element::clickable("panel-context", Text::new(context, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold)).dispatch_as("now-album").flex(1.0).centered_y(),
+        tools.centered_y(),
+    ]).gap(12.0).padding(PANEL_PAD).size(None, Some(PANEL_HEADER));
+    let header = if state.panel_scrolled || !video {
+        header.background(PANEL_FLOOR).shadow(if state.panel_scrolled { Color::rgba(0, 0, 0, 153) } else { Color::rgba(0, 0, 0, 0) }, limn::Point::new(0.0, 6.0), 10.0, 0.0)
+    } else { header };
+    let floating = Element::column(vec![header, Element::spacer().flex(1.0)]);
+    Element::stack(vec![scroll, floating]).hover_region().animate_enter("panel:playing")
 }
 
 /// How bright and how out of focus a line is `distance` lines after the one being sung,
