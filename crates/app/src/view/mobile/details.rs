@@ -28,12 +28,8 @@ fn duration(tracks: &[Track]) -> String {
 
 fn keep(state: &State, before: &str, after: &str, palette: ComponentPalette) -> Element {
     let kept = state.keeps_page();
-    icon(
-        "keep",
-        if kept { Icon::Check } else { Icon::Add },
-        if kept { after } else { before },
-        palette,
-    )
+    // The circled plus that fills with a check, as a song is liked with.
+    icon("keep", crate::view::like_glyph(kept), if kept { after } else { before }, palette)
 }
 
 fn tracks(state: &State, palette: ComponentPalette) -> Element {
@@ -261,9 +257,10 @@ pub(in crate::view) fn playlist(
         );
     }
     let mut sections = vec![picture.centered_x(), Element::column(about).gap(8.0)];
-    let delete = icon("playlist-delete", Icon::Trash, &t!("mobile-delete-playlist"), palette);
+    // As the desktop's: what else a list can do waits behind its dots.
+    let more = crate::view::playlist_menu(state, playlist, palette);
     if playlist.tracks.is_empty() {
-        sections.push(Element::row(vec![delete]));
+        sections.push(Element::row(vec![more]));
         sections.push(
             Empty::new(
                 t!("mobile-playlist-empty"),
@@ -275,55 +272,11 @@ pub(in crate::view) fn playlist(
             .padding(16.0),
         );
     } else {
-        sections.push(page_actions(state, Vec::new(), palette));
-        let copied = state.list_copied == Some(playlist.id);
-        let exported = state.list_exported == Some(playlist.id);
-        let share = icon(
-            "playlist-share",
-            if copied {
-                Icon::Check
-            } else {
-                Icon::Custom(include_str!("../../../assets/icons/share-2.svg"))
-            },
-            &if copied {
-                t!("common-link-copied")
-            } else {
-                t!("mobile-share-playlist")
-            },
-            palette,
-        );
-        let export = icon(
-            "playlist-export",
-            if exported {
-                Icon::Check
-            } else {
-                Icon::Custom(include_str!("../../../assets/icons/upload.svg"))
-            },
-            &if exported {
-                t!("mobile-songs-copied")
-            } else {
-                t!("mobile-copy-songs")
-            },
-            palette,
-        );
-        let mut tools = vec![Element::row(vec![share, export, delete]).gap(8.0)];
-        if copied {
-            tools.push(
-                Text::new(t!("common-link-copied"), palette)
-                    .font_size(13.0)
-                    .muted()
-                    .render(),
-            );
-        }
-        if exported {
-            tools.push(
-                Text::new(t!("mobile-songs-copied"), palette)
-                    .font_size(13.0)
-                    .muted()
-                    .render(),
-            );
-        }
-        sections.push(Element::column(tools).gap(8.0));
+        sections.push(page_actions(state, vec![more], palette));
+        // What the menu just did, said under it.
+        let copied = (state.list_copied == Some(playlist.id)).then(|| t!("common-link-copied"));
+        let exported = (state.list_exported == Some(playlist.id)).then(|| t!("mobile-songs-copied"));
+        sections.extend(copied.into_iter().chain(exported).map(|said| Text::new(said, palette).font_size(13.0).muted().render()));
         sections.push(tracks(state, palette));
     }
     sections.extend(crate::view::suggested(state, playlist, width, palette));
@@ -469,7 +422,7 @@ mod tests {
                     "more:page-track:1",
                 ];
                 if matches!(state.page, Page::Playlist(_)) {
-                    ids.extend(["playlist-share", "playlist-export", "playlist-delete", "suggested:0", "suggested-add:0", "suggested-refresh"]);
+                    ids.extend(["page-more", "page-download", "suggested:0", "suggested-add:0", "suggested-refresh"]);
                 } else {
                     ids.push("keep");
                 }

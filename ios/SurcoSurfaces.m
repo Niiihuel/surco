@@ -7,9 +7,9 @@ static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 
 static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
 static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
-// The soft edge below the header, where the blur fades into the page: a short band, so the
-// page shows right under the header rather than a long haze.
-static const CGFloat SurcoEdgeFade = 20;
+// The edge below the header where its material gives way to the page, as short as a system
+// navigation bar's.
+static const CGFloat SurcoEdgeFade = 12;
 // view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
 static const CGFloat SurcoHeaderHeight = 56;
 // mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
@@ -305,15 +305,14 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 - (void)updateBackdrop:(CGFloat)edge tint:(NSArray *)tint {
     if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
     if (!_backdrop) {
-        // iOS 26's soft scroll edge, from public parts: blurs stacked under masks that end
-        // at different depths, so rows blur more the nearer they are to the top of the
-        // screen, and a wash of the page's color that deepens the same way. (The system's
-        // own UIScrollEdgeEffect only blurs a UIScrollView's content, never this canvas.)
-        // https://developer.apple.com/documentation/uikit/uiscrolledgeeffect
+        // A system bar's background over the canvas: the bar material, ending in a short edge.
+        // (The system's own UIScrollEdgeEffect only blurs a UIScrollView's content, never this
+        // canvas.) https://developer.apple.com/documentation/uikit/uiblureffect/style
         _backdrop = [UIView new];
         NSMutableArray *masks = [NSMutableArray array];
-        for (NSUInteger index = 0; index < 3; index++) {
-            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
+        // One material, the system's own for a bar, as UINavigationBar and SwiftUI's toolbar draw.
+        for (NSUInteger index = 0; index < 1; index++) {
+            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
             SurcoGradientView *mask = [SurcoGradientView new];
             mask.gradient.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
             blur.maskView = mask;
@@ -337,8 +336,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
         UIView *blur = _backdrop.subviews[index];
         blur.frame = _backdrop.bounds;
         mask.frame = blur.bounds;
-        double end = MIN(1, (edge + SurcoEdgeFade * (1.0 - 0.4 * index)) / height);
-        double start = MAX(0, end - SurcoEdgeFade / height);
+        double end = 1;
+        double start = MAX(0, edge / height);
         mask.gradient.locations = @[@0, @(start), @(end)];
     }
     CGFloat channel[3] = {18, 18, 18};
@@ -352,7 +351,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
                                (id)[color colorWithAlphaComponent:0].CGColor];
     _shade.gradient.locations = @[@0, @(MAX(0, MIN(1, edge / frame.size.height))), @1];
     [self setChrome:_backdrop shown:YES];
-    [self setChrome:_shade shown:YES];
+    // The bar is the material alone, without a wash of the page's colour over it.
+    [self setChrome:_shade shown:NO];
 }
 - (UIButton *)chromeButton:(id)value {
     NSDictionary *item = SurcoDictionary(value);

@@ -1580,6 +1580,14 @@ impl State {
         self.saved.iter().any(|track| track.id == track_id)
     }
 
+    /// Whether every song of a list shown is kept for listening without a network, where the
+    /// page is a list that can be: an album, a playlist, a mix or the liked songs.
+    pub fn page_downloaded(&self) -> Option<bool> {
+        let list = matches!(self.page, Page::Album(_) | Page::Playlist(_) | Page::Mix(_) | Page::Liked);
+        let tracks = self.page_tracks();
+        (list && !tracks.is_empty()).then(|| tracks.iter().all(|track| self.is_saved(&track.id)))
+    }
+
     /// Leaves the current page for another. A page that never loaded is not one to return to.
     fn go(&mut self, page: Page) {
         self.list_copied = None;
@@ -2488,6 +2496,15 @@ impl State {
                     _ => Vec::new(),
                 }
             }
+            // A whole list kept for listening without a network, or let go once all of it is.
+            "page-download" => match self.page_downloaded() {
+                Some(true) => self.page_tracks().iter().map(|track| Command::Unsave(track.id.clone())).collect(),
+                Some(false) => {
+                    self.save_error = None;
+                    self.page_tracks().iter().filter(|track| !self.is_saved(&track.id) && !self.saving.contains(&track.id)).cloned().map(Command::Save).collect()
+                }
+                None => Vec::new(),
+            },
             "page-more" => {
                 self.page_more_open = !self.page_more_open;
                 Vec::new()
@@ -3860,6 +3877,22 @@ mod tests {
         let commands = state.receive_from("surco://receive?from=http%3A%2F%2F10.0.0.2%3A4000%2Fabc1");
         assert_eq!(commands, vec![Command::Fetch("http://10.0.0.2:4000/abc1".into())]);
         assert!(state.handoff.as_ref().is_some_and(|handoff| handoff.receiving && handoff.fetching));
+    }
+
+    #[test]
+    fn a_list_is_downloaded_whole_and_let_go_once_all_of_it_is() {
+        let mut state = State::default();
+        let list = Playlist { id: 1, name: "L".into(), collaborative: false, picture: None, tracks: vec![track("a"), track("b")] };
+        state.collection.playlists.push(list);
+        state.page = Page::Playlist(1);
+        state.saved = vec![track("a")];
+        assert_eq!(state.page_downloaded(), Some(false));
+        assert_eq!(click(&mut state, "page-download"), vec![Command::Save(track("b"))], "only what is not kept yet");
+        state.saved.push(track("b"));
+        assert_eq!(state.page_downloaded(), Some(true));
+        assert_eq!(click(&mut state, "page-download"), vec![Command::Unsave("a".into()), Command::Unsave("b".into())]);
+        state.page = Page::Settings;
+        assert_eq!(state.page_downloaded(), None, "only a list can be kept whole");
     }
 
     #[test]

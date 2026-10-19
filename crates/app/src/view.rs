@@ -203,6 +203,8 @@ mod glyph {
     pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
     pub const PENCIL: &str = include_str!("../assets/icons/glyph/pencil.svg");
     pub const PLUS: &str = include_str!("../assets/icons/glyph/plus.svg");
+    pub const DOWNLOAD_CIRCLE: &str = include_str!("../assets/icons/glyph/download-circle.svg");
+    pub const DOWNLOADED: &str = include_str!("../assets/icons/glyph/downloaded.svg");
     pub const PANEL_RIGHT: &str = include_str!("../assets/icons/glyph/panel-right.svg");
     pub const CLOSE: &str = include_str!("../assets/icons/glyph/close.svg");
     pub const CHEVRON_RIGHT: &str = include_str!("../assets/icons/glyph/chevron-right.svg");
@@ -225,7 +227,7 @@ mod glyph {
 
 /// The like of a song, as Spotify's: a circled plus that becomes a filled circle with a check,
 /// in the app's own ink rather than a colour.
-fn like_glyph(liked: bool) -> Icon {
+pub(in crate::view) fn like_glyph(liked: bool) -> Icon {
     Icon::Custom(if liked { glyph::ADDED } else { glyph::ADD })
 }
 
@@ -2639,28 +2641,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
     let picture = choosable("playlist-picture", picture, ALBUM_COVER, false, palette);
-    // What else a list can do waits behind its dots, as Spotify's.
-    let item = |id: &str, label: std::borrow::Cow<'static, str>, icon: Icon| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(icon));
-    let copied = state.list_copied == Some(playlist.id);
-    let exported = state.list_exported == Some(playlist.id);
-    let mut entries = vec![item("playlist-picture", t!("desktop-choose-photo"), Icon::Custom(glyph::PENCIL))];
-    if playlist.picture.is_some() {
-        entries.push(item("playlist-picture-remove", t!("desktop-remove-photo"), Icon::Close));
-    }
-    entries.push(DropdownMenuEntry::Separator);
-    if !playlist.tracks.is_empty() {
-        entries.extend([
-            item("playlist-share", if copied { t!("common-link-copied") } else { t!("desktop-share") }, Icon::Custom(include_str!("../assets/icons/share-2.svg"))),
-            item("playlist-export", if exported { t!("desktop-songs-copied") } else { t!("desktop-copy-songs") }, Icon::Custom(include_str!("../assets/icons/upload.svg"))),
-            DropdownMenuEntry::Separator,
-        ]);
-    }
-    entries.push(item("playlist-delete", t!("common-delete"), Icon::Trash));
-    let more = DropdownMenu::new(page_glyph("page-more", Icon::More, &t!("desktop-options-of", name = playlist.name.as_str()), false, palette), entries, state.page_more_open, "page-more-dismiss", menu_palette())
-        .sizing(menu_sizing(state))
-        .width(MENU_WIDTH)
-        .placement(PopoverPlacement::BottomStart)
-        .render();
+    let more = playlist_menu(state, playlist, palette);
     let actions = if playlist.tracks.is_empty() {
         // Nothing to play or to search yet.
         Element::row(vec![more])
@@ -2691,6 +2672,34 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     sections.extend(suggested(state, playlist, width, palette));
     let cover = playlist.cover().cloned();
     page_scroll("playlist", washed(state, &cover, Element::column(sections).gap(16.0).padding(12.0)))
+}
+
+/// What else a list can do, behind its dots as Spotify's: its picture, sharing it, its songs
+/// for another app, and deleting it.
+pub(in crate::view) fn playlist_menu(state: &State, playlist: &Playlist, palette: ComponentPalette) -> Element {
+    let item = |id: &str, label: std::borrow::Cow<'static, str>, icon: Icon| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(icon));
+    let copied = state.list_copied == Some(playlist.id);
+    let exported = state.list_exported == Some(playlist.id);
+    let mut entries = vec![item("playlist-picture", t!("desktop-choose-photo"), Icon::Custom(glyph::PENCIL))];
+    if playlist.picture.is_some() {
+        entries.push(item("playlist-picture-remove", t!("desktop-remove-photo"), Icon::Close));
+    }
+    entries.push(DropdownMenuEntry::Separator);
+    if !playlist.tracks.is_empty() {
+        entries.extend([
+            item("playlist-share", if copied { t!("common-link-copied") } else { t!("desktop-share") }, Icon::Custom(include_str!("../assets/icons/share-2.svg"))),
+            item("playlist-export", if exported { t!("desktop-songs-copied") } else { t!("desktop-copy-songs") }, Icon::Custom(include_str!("../assets/icons/upload.svg"))),
+            DropdownMenuEntry::Separator,
+        ]);
+    }
+    entries.push(item("playlist-delete", t!("common-delete"), Icon::Trash));
+    let label = t!("desktop-options-of", name = playlist.name.as_str());
+    let dots = if state.mobile { mobile::icon("page-more", Icon::More, &label, palette) } else { page_glyph("page-more", Icon::More, &label, false, palette) };
+    DropdownMenu::new(dots, entries, state.page_more_open, "page-more-dismiss", menu_palette())
+        .sizing(menu_sizing(state))
+        .width(MENU_WIDTH)
+        .placement(PopoverPlacement::BottomStart)
+        .render()
 }
 
 /// A mix the home made: its picture, what it is and who it plays, and its songs in order.
@@ -3054,6 +3063,11 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
         page_glyph("page-shuffle", icon, &hint, state.player.shuffle, palette)
     };
     let mut actions = vec![play, shuffle.centered_y()];
+    // The whole list kept for listening without a network, as Spotify's arrow in a circle.
+    if let Some(kept) = state.page_downloaded() {
+        let (glyph, hint) = if kept { (glyph::DOWNLOADED, t!("desktop-remove-download")) } else { (glyph::DOWNLOAD_CIRCLE, t!("desktop-download-offline")) };
+        actions.push(if state.mobile { mobile::icon("page-download", Icon::Custom(glyph), &hint, palette).centered_y() } else { page_glyph("page-download", Icon::Custom(glyph), &hint, kept, palette) });
+    }
     actions.extend(own.into_iter().map(Element::centered_y));
     if state.mobile {
         actions.push(Element::spacer().flex(1.0));
