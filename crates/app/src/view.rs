@@ -20,8 +20,9 @@ use limn::{
 use crate::backend::{Release, Target};
 use crate::clip::Showing;
 use crate::i18n::{t, Language};
+use crate::state::mobile::SearchFilter;
 use crate::state::{
-    clock, greeting, large_cover, share_link, Confirm, SUGGESTED_SHOWN, Entry, Filter, LibraryView, Lyrics, Mix, MixKind, Page, Playlist, Quality, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
+    clock, greeting, large_cover, share_link, Confirm, SUGGESTED_SHOWN, Entry, Filter, LibraryView, Lyrics, Mix, MixKind, Page, Playlist, Quality, Searched, Side, Sort, State, Updating, CROSSFADE_MAX, EQUALIZER_DB, RELEASE_LINK, SHELF,
 };
 use crate::update::Note;
 
@@ -1400,7 +1401,8 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         let grown = open.max(LIBRARY_SEARCH_SHUT);
         let field = SearchField::new("library-query", &state.library_search, looking.clone(), SCHEME.on_raised()).size(if state.mobile { ControlSize::Spacious } else { ControlSize::Compact }).render();
         if state.mobile {
-            vec![field.size(None, Some(44.0)).radius(22.0).centered_y().flex(grown), search_button(Icon::Close, &t!("desktop-close-search")), Element::spacer().flex(1.0 - grown)]
+            let field = mobile::inside_cross(field.size(None, Some(44.0)).radius(22.0), "library-search", &t!("desktop-close-search"), palette);
+            vec![field.size(None, Some(44.0)).centered_y().flex(grown), Element::spacer().flex(1.0 - grown)]
         } else {
             // The cross closes it from inside its end, as the window's search clears.
             let close = IconButton::new("library-search", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Dense).round()
@@ -1700,14 +1702,18 @@ fn recent_searches(state: &State, palette: ComponentPalette) -> Option<Element> 
         return None;
     }
     let raised = ComponentPalette { surface: SCHEME.raised, ..palette };
-    let rows: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
-        let picture = Element::panel(Element::icon(Icon::Search).foreground(palette.muted).size(Some(20.0), Some(20.0)).centered())
-            .background(CHOSEN).radius(4.0).size(Some(48.0), Some(48.0));
+    let rows: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, searched)| {
+        let (title, subtitle, artwork, round) = remembered(searched);
+        let picture = match artwork {
+            Some(artwork) => cover(state, artwork, 48.0, palette).radius(if round { 24.0 } else { 4.0 }),
+            None => Element::panel(Element::icon(Icon::Search).foreground(palette.muted).size(Some(20.0), Some(20.0)).centered())
+                .background(CHOSEN).radius(4.0).size(Some(48.0), Some(48.0)),
+        };
         let forget = IconButton::new(format!("recent-search-remove:{index}"), Icon::Close, raised).variant(ButtonVariant::Ghost).size(ControlSize::Dense).round()
-            .tooltip(t!("desktop-forget-search", query = query.as_str())).render().reveal_on_hover(format!("forget:{index}"));
-        ListRow::new(format!("recent-search:{index}"), query, raised)
+            .tooltip(t!("desktop-forget-search", query = title)).render().reveal_on_hover(format!("forget:{index}"));
+        ListRow::new(format!("recent-search:{index}"), title, raised)
             .sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), gap: 12.0, leading_width: 48.0, ..TRACK_ROW })
-            .leading(picture).subtitle(t!("desktop-search-tile")).title_fade(true).radius(RadiusRole::Card)
+            .leading(picture).subtitle(subtitle).title_fade(true).radius(RadiusRole::Card)
             .trailing_action(format!("recent-search-remove:{index}"), middle(forget)).render().hover_region()
     }).collect();
     let heading = Text::new(t!("desktop-recent-searches"), raised).font_size(16.0).render().font_family(FontFamily::SansBold).padding(8.0);
@@ -1719,6 +1725,20 @@ fn recent_searches(state: &State, palette: ComponentPalette) -> Option<Element> 
         .size(Some(SEARCH_MAX_WIDTH.min(560.0)), None);
     // The bar floats it non-modal, so the field keeps the keyboard and typing goes on in it.
     Some(panel)
+}
+
+/// A search remembered as its row shows it, as Spotify's: its title, what it is, its picture
+/// (none for what was typed) and whether that is round, as an artist's.
+pub(crate) fn remembered(searched: &Searched) -> (&str, String, Option<&Option<String>>, bool) {
+    match searched {
+        Searched::Query(query) => (query, t!("desktop-search-tile").into_owned(), None, false),
+        Searched::Track { track } => (&track.title, format!("{} • {}", t!("common-song"), track.artist), Some(&track.artwork_url), false),
+        Searched::Entry(Entry::Artist(artist)) => (&artist.name, t!("common-artist").into_owned(), Some(&artist.artwork_url), true),
+        Searched::Entry(Entry::Album(album)) => (&album.title, match &album.artist {
+            Some(artist) => format!("{} • {artist}", t!("common-album")),
+            None => t!("common-album").into_owned(),
+        }, Some(&album.artwork_url), false),
+    }
 }
 
 /// Where a search starts: every genre to browse; what was searched lately drops down from
@@ -2369,8 +2389,9 @@ fn loading(id: &str, palette: ComponentPalette) -> Element {
 /// settles when it takes the pane.
 fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let entering = match &state.page {
-        Page::Search if state.searching => "page:searching".to_owned(),
-        Page::Search => format!("page:search:{}", state.submitted.as_deref().unwrap_or_default()),
+        // The results stay one page while they follow what is typed.
+        Page::Search if state.at_home() => "page:home".to_owned(),
+        Page::Search => "page:search".to_owned(),
         Page::Loading(_) => "page:loading".to_owned(),
         Page::Failed(..) => "page:failed".to_owned(),
         Page::Artist(artist) => format!("page:artist:{}", artist.id),
@@ -2439,7 +2460,7 @@ fn stuck_bar(state: &State, palette: ComponentPalette) -> Option<Element> {
 fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
-        Page::Search => results(state, palette),
+        Page::Search => results(state, width, palette),
         // Each of its songs is looked for in the catalog, which takes a while.
         Page::Loading(Target::Import(_)) => {
             let (said, done) = match state.import_progress {
@@ -2759,35 +2780,120 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     page_scroll("settings", column)
 }
 
-fn results(state: &State, palette: ComponentPalette) -> Element {
-    if state.searching {
-        return loading("searching", palette);
+/// The results of a search, as Spotify's: chips that show all of them or one kind; all is the
+/// top result beside the first songs, then a shelf of artists and one of albums; one kind is
+/// the songs as a list's table, or the artists or albums as a grid. A chip with nothing found
+/// is left out. What was found stays while what is typed next is looked for; only the first
+/// search, with nothing to show yet, pulses in the shapes to come.
+fn results(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let chip = |key: &str, label: &str, value| Button::new(format!("search-filter:{key}"), label, palette)
+        .variant(if state.search_filter == value { ButtonVariant::Default } else { ButtonVariant::Secondary })
+        .sizing(ControlSize::Regular.button_sizing()).round().render();
+    let found = &state.found;
+    let coming = state.searching && found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty();
+    let mut filters = vec![chip("all", &t!("common-all"), SearchFilter::All)];
+    for (key, label, value, none) in [
+        ("tracks", t!("common-songs-heading"), SearchFilter::Tracks, found.tracks.is_empty()),
+        ("artists", t!("common-artists"), SearchFilter::Artists, found.artists.is_empty()),
+        ("albums", t!("common-albums"), SearchFilter::Albums, found.albums.is_empty()),
+    ] {
+        if coming || !none || state.search_filter == value { filters.push(chip(key, &label, value)); }
     }
-    if let Some(error) = &state.search_error {
+    let filters = Element::row(filters).gap(8.0);
+    let body = if let (Some(error), false) = (&state.search_error, coming) {
         // Without a network there is still what was kept for it.
         let empty = Empty::new(t!("desktop-search-failed"), error, palette).icon(Icon::WarningTriangle);
         let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", t!("desktop-see-downloads"), ButtonVariant::Secondary) };
-        return centered(empty.render());
-    }
-    let found = &state.found;
-    if found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
-        return centered(Empty::new(t!("common-no-results"), t!("desktop-try-other-words"), palette).icon(Icon::MusicNote).render());
-    }
-    let mut sections = Vec::new();
-    if !found.artists.is_empty() {
-        let tiles = found.artists.iter().enumerate().map(|(index, artist)| {
+        empty.render().centered_x().padding(48.0)
+    } else if !coming && found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
+        Empty::new(t!("common-no-results"), t!("desktop-try-other-words"), palette).icon(Icon::MusicNote).render().centered_x().padding(48.0)
+    } else {
+        let grid = |tiles: Vec<Element>| Element::row(tiles).wrap().gap(0.0);
+        let artists = || found.artists.iter().enumerate().map(|(index, artist)| {
             tile(state, format!("artist:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette)
-        });
-        sections.push(shelf(state, "found-artists", &t!("common-artists"), tiles.collect(), palette));
+        }).collect::<Vec<_>>();
+        match state.search_filter {
+            SearchFilter::All => {
+                let mut sections = vec![top_result(state, width, coming, palette)];
+                match (coming, found.artists.is_empty()) {
+                    (true, _) => sections.push(shelf(state, "found-artists", &t!("common-artists"), coming_tiles(state, true, palette), palette)),
+                    (false, false) => sections.push(shelf(state, "found-artists", &t!("common-artists"), artists(), palette)),
+                    (false, true) => {}
+                }
+                match (coming, found.albums.is_empty()) {
+                    (true, _) => sections.push(shelf(state, "found-albums", &t!("common-albums"), coming_tiles(state, false, palette), palette)),
+                    (false, false) => sections.push(shelf(state, "found-albums", &t!("common-albums"), release_tiles(state, "album", &found.albums, palette), palette)),
+                    (false, true) => {}
+                }
+                Element::column(sections).gap(24.0)
+            }
+            SearchFilter::Tracks if coming => loading("searching", palette).padding(0.0),
+            SearchFilter::Tracks => track_table(state, &state.page_rows(), true, None, table_width(width), palette),
+            SearchFilter::Artists if coming => grid(coming_tiles(state, true, palette)),
+            SearchFilter::Artists => grid(artists()),
+            SearchFilter::Albums if coming => grid(coming_tiles(state, false, palette)),
+            SearchFilter::Albums => grid(release_tiles(state, "album", &found.albums, palette)),
+        }
+    };
+    // The chips stay under the page's bar while the results pass beneath them.
+    let filters = Element::panel(filters.padding(12.0)).background(SCHEME.canvas).sticky_top();
+    page_scroll("results", Element::column(vec![filters, body.padding(12.0)]))
+}
+
+/// The top result beside the first songs: the first artist when their name holds the search, else
+/// the first song, else whatever was found first. A card as Spotify's, lighter under the
+/// pointer, with its picture, its name and what it is, and a play that rises there. In a
+/// narrow pane the songs go under it.
+fn top_result(state: &State, width: f32, coming: bool, palette: ComponentPalette) -> Element {
+    const PICTURE: f32 = 92.0;
+    const SONGS: usize = 4;
+    let found = &state.found;
+    let card = |content: Element| Element::panel(content.padding(20.0)).background(Color::rgb(24, 24, 24)).hover_background(Color::rgb(40, 40, 40))
+        .radius(8.0).size(None, Some(PICTURE + 40.0 + 76.0));
+    let (card, songs) = if coming {
+        let pulse = ComponentPalette { raised: palette.selected, ..palette };
+        let lines = Element::column(vec![
+            limn::Skeleton::line("cover-coming", pulse, 220.0).height(28.0).render(),
+            limn::Skeleton::line("cover-coming", pulse, 110.0).render(),
+        ]).gap(12.0);
+        let card = card(Element::column(vec![limn::Skeleton::block("cover-coming", pulse, PICTURE, PICTURE).radius(PICTURE / 2.0).render(), lines]).gap(20.0));
+        let rows = SkeletonGroup::rows("searching", palette, SONGS).row_height(TRACK_ROW.height.unwrap_or_default()).icon(true).into_rows();
+        (card, Element::column(rows).gap(2.0))
+    } else {
+        let query = state.submitted.as_deref().unwrap_or_default().to_lowercase();
+        let named = found.artists.first().filter(|artist| artist.name.to_lowercase().contains(&query));
+        let top = match (named, found.tracks.first()) {
+            (Some(artist), _) => Some(("artist:0".to_owned(), artist.name.as_str(), t!("common-artist").into_owned(), &artist.artwork_url, true)),
+            (None, Some(track)) => Some(("track:0".to_owned(), track.title.as_str(), format!("{} • {}", t!("common-song"), track.artist), &track.artwork_url, false)),
+            (None, None) => found.artists.first().map(|artist| ("artist:0".to_owned(), artist.name.as_str(), t!("common-artist").into_owned(), &artist.artwork_url, true))
+                .or_else(|| found.albums.first().map(|album| ("album:0".to_owned(), album.title.as_str(), t!("common-album").into_owned(), &album.artwork_url, false))),
+        };
+        let Some((id, title, kind, artwork, round)) = top else { return Element::spacer() };
+        let sounding = state.player.playing && state.track_at(&id).zip(state.current()).is_some_and(|(track, current)| track.id == current.id);
+        let play_palette = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+        let play = IconButton::new(format!("tile-play:{id}"), if sounding { Icon::PauseFill } else { Icon::PlayFill }, play_palette)
+            .variant(ButtonVariant::Subtle).size(ControlSize::Spacious).round().tooltip(t!("common-play")).render();
+        let play = if sounding { play } else { play.reveal_on_hover(format!("top-play:{id}")) };
+        let copy = Element::column(vec![
+            Text::new(title, palette).font_size(28.0).truncate().render().font_family(FontFamily::SansBold),
+            Text::new(kind, palette).muted().truncate().render(),
+        ]).gap(6.0);
+        let picture = cover(state, artwork, PICTURE, palette).radius(if round { PICTURE / 2.0 } else { 6.0 })
+            .shadow(Color::rgba(0, 0, 0, 128), limn::Point::new(0.0, 8.0), 24.0, 0.0);
+        let content = Element::column(vec![picture, Element::row(vec![copy.flex(1.0), play.centered_y()]).gap(12.0)]).gap(20.0);
+        let card = Element::clickable(id, card(content)).hover_region();
+        let rows = found.tracks.iter().take(SONGS).enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette));
+        (card, Element::column(rows.collect()).gap(2.0))
+    };
+    let top = Element::column(vec![heading(&t!("common-top-result"), palette), card]).gap(8.0);
+    if !coming && found.tracks.is_empty() {
+        return top;
     }
-    if !found.albums.is_empty() {
-        sections.push(shelf(state, "found-albums", &t!("common-albums"), release_tiles(state, "album", &found.albums, palette), palette));
+    let songs = Element::column(vec![heading(&t!("common-songs-heading"), palette), songs]).gap(8.0);
+    if width < 760.0 {
+        return Element::column(vec![top, songs]).gap(24.0);
     }
-    if !found.tracks.is_empty() {
-        let rows = found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette));
-        sections.extend([heading(&t!("common-songs-heading"), palette), Element::column(rows.collect()).gap(2.0)]);
-    }
-    page_scroll("results", Element::column(sections).gap(12.0).padding(12.0))
+    Element::row(vec![top.flex(2.0), songs.flex(3.0)]).gap(24.0)
 }
 
 /// The shuffle's three steps as its button shows them: the icon of the one it is on, and
@@ -2888,14 +2994,20 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             .size(ControlSize::Compact)
             .width(width)
             .render();
-        let field = if state.mobile { field.size(Some(width), Some(44.0)).radius(22.0) } else { field.radius(ControlSize::Compact.height() / 2.0) };
-        // The cross that shuts it stands inside its end, as Spotify's.
-        let shut = toggle(Icon::Close, &t!("desktop-close-search"));
-        let field = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), shut])])
-            .centered_y()
-            // In a narrow pane it makes do with what the row has left.
-            .shrink_to_fit();
-        parts.push(field);
+        if state.mobile {
+            // On a phone the cross that shuts it is a plain one inside its end, as the search's.
+            let field = mobile::inside_cross(field.size(Some(width), Some(44.0)).radius(22.0), "page-search", &t!("desktop-close-search"), palette);
+            parts.push(field.size(Some(width), Some(44.0)).centered_y().shrink_to_fit());
+        } else {
+            let field = field.radius(ControlSize::Compact.height() / 2.0);
+            // The cross that shuts it stands inside its end, as Spotify's.
+            let shut = toggle(Icon::Close, &t!("desktop-close-search"));
+            let field = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), shut])])
+                .centered_y()
+                // In a narrow pane it makes do with what the row has left.
+                .shrink_to_fit();
+            parts.push(field);
+        }
     } else {
         parts.push(toggle(if state.mobile { Icon::Search } else { Icon::Custom(glyph::SEARCH) }, &t!("desktop-search-page")));
     }

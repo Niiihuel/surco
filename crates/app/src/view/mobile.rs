@@ -31,6 +31,16 @@ pub(super) fn icon(id: &str, glyph: Icon, label: &str, palette: ComponentPalette
     controls::action(id, glyph, label, 22.0, palette)
 }
 
+/// A phone's search field with its cross inside its end, a plain one, whose `id` empties or
+/// shuts it.
+// shortcut: limn's own clear button squares the field's corners, so this one lies over its end
+// and a query longer than the field passes under it; use limn's once it keeps them.
+pub(super) fn inside_cross(field: Element, id: &str, label: &str, palette: ComponentPalette) -> Element {
+    let cross = Element::icon_button(id.to_owned(), Icon::Close, "").foreground(palette.muted).pressed_foreground(palette.text)
+        .accessible(limn::Access::new(limn::Role::Button).name(label)).size(Some(TAP), Some(TAP));
+    Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), cross])])
+}
+
 pub(super) fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
     let insets = state.mobile_ui.content_insets;
@@ -345,7 +355,13 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
         Text::new(&track.title, palette).font_size(16.0).truncate().render(),
         Text::new(subtitle, palette).font_size(13.0).muted().truncate().render(),
     ]).gap(5.0).centered_y().flex(1.0);
-    let body = Element::row(vec![cover(state, &track.artwork_url, 48.0, palette).radius(4.0), copy]).gap(12.0);
+    // The song that plays sounds over its cover, as on a desktop.
+    let picture = cover(state, &track.artwork_url, 48.0, palette).radius(4.0);
+    let picture = if state.current().is_some_and(|current| current.id == track.id) {
+        let sound = Element::panel(wave(state, format!("wave:{row}"), palette).centered()).background(COVER_SCRIM).radius(4.0).size(Some(48.0), Some(48.0));
+        Element::stack(vec![picture, sound])
+    } else { picture };
+    let body = Element::row(vec![picture, copy]).gap(12.0);
     let main = Element::clickable(&row, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {subtitle}", track.title))).flex(1.0);
     let row_element = Element::row(vec![main, dots.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0));
     ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,

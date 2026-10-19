@@ -3,10 +3,13 @@
 
 use super::*;
 use crate::state::mobile::SearchFilter;
+use crate::state::Searched;
 
 /// One height for the idle and the editing field. Only the header's collapse moves the
 /// native bar, so opening the keyboard never makes it jump or resize.
 pub(super) const FIELD_HEIGHT: f32 = TAP + 16.0;
+/// How many songs all the results show, as Spotify's; the chip shows the rest.
+const SONGS: usize = 4;
 
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
@@ -18,19 +21,19 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
             .padding(8.0);
         return horizontal_inset(slot, 8.0, 8.0).size(None, Some(FIELD_HEIGHT));
     }
+    // The cross that empties it is always inside the field, at its end.
     let field = if editing {
         SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)).round().flex(1.0)
+            .size(ControlSize::Spacious).render().size(None, Some(TAP)).round()
     } else {
         Button::new("mobile-search-edit", if state.query.is_empty() { t!("common-search-placeholder") } else { state.query.as_str().into() }, palette)
             .icon(Icon::Search).variant(if compact { ButtonVariant::Secondary } else { ButtonVariant::Default })
-            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().flex(1.0)
+            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render()
     };
+    let field = if state.query.is_empty() { field } else { inside_cross(field, "mobile-search-clear", &t!("mobile-clear-search"), palette) }.flex(1.0);
     let mut row = vec![field];
     if editing {
-        // The explicit control is useful for pasted links as well as one-letter queries.
-        if !state.query.is_empty() { row.push(icon("mobile-search-clear", Icon::Close, &t!("mobile-clear-search"), palette)); }
-        row.push(Button::new("mobile-search-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Spacious).render().size(None, Some(TAP)));
+        row.push(Button::new("mobile-search-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Spacious).round().render().size(None, Some(TAP)));
     }
     horizontal_inset(Element::row(row).gap(4.0).padding(8.0), 8.0, 8.0).size(None, Some(FIELD_HEIGHT))
 }
@@ -41,15 +44,23 @@ fn section(title: &str, palette: ComponentPalette) -> Element {
 }
 
 pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let pending = state.searching || state.mobile_ui.pending.is_some();
+    let pending = state.searching || state.search_due.is_some();
     let has_results = !state.found.tracks.is_empty() || !state.found.artists.is_empty() || !state.found.albums.is_empty();
     if state.submitted.is_none() && !pending && !has_results && state.search_error.is_none() {
         return idle(state, width, palette);
     }
-    let chosen = state.mobile_ui.search_filter;
-    let tab = |key: &str, label: &str, value| Button::new(format!("search-filter:{key}"), label, palette)
-        .variant(if chosen == value { ButtonVariant::Default } else { ButtonVariant::Secondary })
-        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
+    let chosen = state.search_filter;
+    // Spotify's chips: a 32pt pill, lit while chosen, on a touch target of full height.
+    let tab = |key: &str, label: &str, value| {
+        let on = chosen == value;
+        let copy = Text::new(label, palette).font_size(14.0).render().foreground(if on { SCHEME.canvas } else { palette.text }).centered_y();
+        let edge = || Element::spacer().size(Some(14.0), None);
+        let pill = Element::panel(Element::row(vec![edge(), copy, edge()]))
+            .background(if on { palette.text } else { Color::rgb(42, 42, 42) }).pressed_background(if on { ROUND_HELD } else { Color::rgb(62, 62, 62) })
+            .radius(16.0).size(None, Some(32.0));
+        Element::clickable(format!("search-filter:{key}"), pill.centered_y())
+            .accessible(limn::Access::new(limn::Role::Tab).name(label).selected(on)).size(None, Some(TAP))
+    };
     // The chips start on the page's 16pt margin and scroll out past both edges.
     let filters = Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(vec![
         tab("all", &t!("common-all"), SearchFilter::All), tab("tracks", &t!("common-songs-heading"), SearchFilter::Tracks),
@@ -57,17 +68,39 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     ]).gap(8.0), 8.0, 8.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR);
     let found = &state.found;
     let mut rows = Vec::new();
-    if matches!(chosen, SearchFilter::All | SearchFilter::Tracks) && !found.tracks.is_empty() {
-        rows.push(section(&t!("common-songs-heading"), palette).padding(8.0));
-        rows.extend(found.tracks.iter().enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette)));
-    }
-    if matches!(chosen, SearchFilter::All | SearchFilter::Artists) && !found.artists.is_empty() {
-        rows.push(section(&t!("common-artists"), palette).padding(8.0));
-        rows.extend(found.artists.iter().enumerate().map(|(index, artist)| result(state, format!("artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)));
-    }
-    if matches!(chosen, SearchFilter::All | SearchFilter::Albums) && !found.albums.is_empty() {
-        rows.push(section(&t!("common-albums"), palette).padding(8.0));
-        rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, &album.artist.as_deref().map_or_else(|| t!("common-album"), Cow::Borrowed), &album.artwork_url, false, palette)));
+    // Songs are played as a list's: the big play plays them all, and a song the ones after it.
+    let play_all = || {
+        let (glyph, hint) = shuffle_step(state);
+        let shuffle = controls::action("page-shuffle", glyph, &hint, 22.0, palette);
+        let shuffle = if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle };
+        Element::row(vec![shuffle.centered_y(), controls::playback("page-play", false, 48.0, 24.0, palette)]).gap(8.0)
+    };
+    match chosen {
+        SearchFilter::All => {
+            if !found.tracks.is_empty() {
+                rows.push(Element::row(vec![section(&t!("common-songs-heading"), palette).centered_y().flex(1.0), play_all()]).padding(8.0));
+                rows.extend(found.tracks.iter().take(SONGS).enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette)));
+                if found.tracks.len() > SONGS {
+                    rows.push(Button::new("search-filter:tracks", t!("mobile-see-all"), palette).variant(ButtonVariant::Ghost)
+                        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().padding(4.0));
+                }
+            }
+            // The other kinds are shelves to swipe, as on the home.
+            if !found.artists.is_empty() {
+                let tiles = found.artists.iter().enumerate().map(|(index, artist)| tile(state, format!("artist:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette));
+                rows.push(shelf(state, "found-artists", &t!("common-artists"), tiles.collect(), palette));
+            }
+            if !found.albums.is_empty() {
+                rows.push(shelf(state, "found-albums", &t!("common-albums"), release_tiles(state, "album", &found.albums, palette), palette));
+            }
+        }
+        SearchFilter::Tracks if !found.tracks.is_empty() => {
+            rows.push(Element::row(vec![Element::spacer().flex(1.0), play_all()]).padding(8.0));
+            rows.extend(state.page_rows().into_iter().map(|(place, track)| track_row(state, format!("page-track:{place}"), track, &track.artist, palette)));
+        }
+        SearchFilter::Artists => rows.extend(found.artists.iter().enumerate().map(|(index, artist)| result(state, format!("artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette))),
+        SearchFilter::Albums => rows.extend(found.albums.iter().enumerate().map(|(index, album)| result(state, format!("album:{index}"), &album.title, &album.artist.as_deref().map_or_else(|| t!("common-album"), Cow::Borrowed), &album.artwork_url, false, palette))),
+        SearchFilter::Tracks => {}
     }
     if rows.is_empty() {
         if pending {
@@ -101,13 +134,14 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
                 .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
         ]).gap(8.0).padding(8.0)
     } else {
-        // Searching says so by the rows' shape, not in words.
-        let copy = if pending { Element::spacer() }
-            else if state.submitted.is_none() && has_results {
-                Text::new(if state.query.contains("://") { t!("mobile-search-open-link") } else { t!("mobile-previous-results") }, palette)
-                    .font_size(12.0).muted().render()
-            } else { Element::spacer() };
-        copy.size(None, Some(20.0))
+        // Searching says so by the rows' shape, not in words; with nothing to say, the
+        // results start right under the chips.
+        let said = !pending && state.submitted.is_none() && has_results;
+        let copy = if said {
+            Text::new(if state.query.contains("://") { t!("mobile-search-open-link") } else { t!("mobile-previous-results") }, palette)
+                .font_size(12.0).muted().render()
+        } else { Element::spacer() };
+        copy.size(None, Some(if said { 20.0 } else { 0.0 }))
     };
     Element::column(vec![filters, status, list]).gap(8.0).padding(8.0).flex(1.0)
 }
@@ -125,7 +159,7 @@ fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !state.collection.searches.is_empty() {
         body.push(Element::row(vec![section(&t!("mobile-recent-searches"), palette).centered_y().flex(1.0),
             icon("recent-search-clear", Icon::Trash, &t!("mobile-clear-recent-searches"), palette)]).gap(8.0));
-        body.push(Element::column(state.collection.searches.iter().enumerate().map(|(index, query)| recent(index, query, palette)).collect()));
+        body.push(Element::column(state.collection.searches.iter().enumerate().map(|(index, searched)| recent(state, index, searched, palette)).collect()));
     }
     if state.query.contains("://") {
         body.push(Text::new(t!("mobile-pasted-link"), palette).muted().render());
@@ -137,15 +171,23 @@ fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {
     ScrollArea::new("mobile-search-idle", Element::column(body).gap(16.0).padding(16.0)).render().flex(1.0)
 }
 
-/// Figma "Item / Suggestion, Small": a 24pt glyph, the query, and an x that
-/// forgets this one search.
-fn recent(index: usize, query: &str, palette: ComponentPalette) -> Element {
-    let copy = Element::row(vec![Element::icon(Icon::Search).large_icon(24.0).foreground(palette.muted).centered_y(),
-        Text::new(query, palette).font_size(15.0).truncate().render().centered_y().flex(1.0)]).gap(12.0);
+/// Figma "Item / Suggestion, Small": a 24pt glyph and the query, or a result chosen with its
+/// picture and what it is, and an x that forgets this one search.
+fn recent(state: &State, index: usize, searched: &Searched, palette: ComponentPalette) -> Element {
+    let (title, subtitle, artwork, round) = crate::view::remembered(searched);
+    let copy = match artwork {
+        None => Element::row(vec![Element::icon(Icon::Search).large_icon(24.0).foreground(palette.muted).centered_y(),
+            Text::new(title, palette).font_size(15.0).truncate().render().centered_y().flex(1.0)]).gap(12.0),
+        Some(artwork) => Element::row(vec![cover(state, artwork, 48.0, palette).radius(if round { 24.0 } else { 4.0 }).centered_y(),
+            Element::column(vec![
+                Text::new(title, palette).font_size(15.0).truncate().render(),
+                Text::new(&subtitle, palette).font_size(13.0).muted().truncate().render(),
+            ]).gap(4.0).centered_y().flex(1.0)]).gap(12.0),
+    };
     let main = Element::clickable(format!("recent-search:{index}"), copy)
-        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-for", query = query))).flex(1.0);
-    let forget = icon(&format!("recent-search-remove:{index}"), Icon::Close, &t!("mobile-forget-search", query = query), palette);
-    Element::row(vec![main, forget.centered_y()]).gap(8.0).size(None, Some(56.0))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-for", query = title))).flex(1.0);
+    let forget = icon(&format!("recent-search-remove:{index}"), Icon::Close, &t!("mobile-forget-search", query = title), palette);
+    Element::row(vec![main, forget.centered_y()]).gap(8.0).size(None, Some(if artwork.is_some() { 64.0 } else { 56.0 }))
 }
 
 /// The genres to browse: the title on the card, what it searches for (the same in every
@@ -336,12 +378,19 @@ mod tests {
         state.mobile_ui.search_editing = true;
         assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "search");
         state.submitted = Some("consulta".into());
-        assert_capsule(&UiTree::new(results(&state)).layout(size), "search-filter:all");
+        // A chip paints Spotify's 32pt pill inside a touch target of full height.
+        let frame = UiTree::new(results(&state)).layout(size);
+        let target = frame.regions.iter().find(|region| region.id == "search-filter:all").unwrap().rect;
+        assert!(target.width >= TAP && target.height >= TAP);
+        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { rect, radius, .. }
+            if rect.height == 32.0 && *radius >= 16.0 && rect.y >= target.y && rect.y + rect.height <= target.y + target.height)));
     }
 
     #[test]
     fn debounce_and_loading_keep_the_same_scroll_offset_and_selectable_result() {
         let mut state = phone();
+        // All of them shows a few songs; their chip lists every one.
+        state.search_filter = SearchFilter::Tracks;
         state.query = "anterior".into();
         state.submitted = Some(state.query.clone());
         state.found.tracks = (0..30).map(|index| Track {
@@ -357,20 +406,20 @@ mod tests {
         let original = tree.layout(size);
         let offset = tree.scroll_offset("mobile-search-results");
         assert!(offset > 0.0);
-        let held = original.regions.iter().find(|region| region.id == "track:3" && region.kind == HitKind::Button).unwrap().rect;
+        let held = original.regions.iter().find(|region| region.id == "page-track:3" && region.kind == HitKind::Button).unwrap().rect;
         state.mobile_query("nueva", Instant::now());
         for loading in [false, true] {
             state.searching = loading;
             tree.set_root(results(&state));
             let frame = tree.layout(size);
             assert_eq!(tree.scroll_offset("mobile-search-results"), offset);
-            let current = frame.regions.iter().find(|region| region.id == "track:3" && region.kind == HitKind::Button).unwrap().rect;
+            let current = frame.regions.iter().find(|region| region.id == "page-track:3" && region.kind == HitKind::Button).unwrap().rect;
             assert_eq!(current, held, "status changes must not move the retained result rows");
             assert!(!text(&frame, "Buscando…"), "the rows say it is searching, not words");
             assert!(!text(&frame, "Sin resultados"));
         }
         state.searching = false;
-        state.mobile_ui.pending = None;
+        state.search_due = None;
         let diagnostic = "ytmdapi internal_parse_error: respuesta inesperada";
         state.search_error = Some(diagnostic.into());
         tree.set_root(results(&state));
@@ -381,7 +430,7 @@ mod tests {
             DrawCommand::Text { text, .. } if text.contains("ytmdapi") || text.contains("internal_parse_error"))),
             "provider diagnostics do not leak into the user-facing recovery copy");
         assert!(text(&frame, "Intentá de nuevo en un momento."));
-        assert!(frame.regions.iter().any(|region| region.id == "track:3" && region.kind == HitKind::Button));
+        assert!(frame.regions.iter().any(|region| region.id == "page-track:3" && region.kind == HitKind::Button));
         let retry = frame.regions.iter().find(|region| region.id == "search-submit" && region.kind == HitKind::Button)
             .expect("recovery remains visible even when the results are scrolled").rect;
         assert!(retry.width >= TAP && retry.height >= TAP);
@@ -401,7 +450,7 @@ mod tests {
         assert!(!text(&frame, "Buscando…"), "the shape of the rows to come says it, not words");
         assert!(!text(&frame, "Sin resultados"));
         assert!(frame.regions.iter().any(|region| region.id == "mobile-search-results" && region.kind == HitKind::Scroll));
-        state.mobile_ui.pending = None;
+        state.search_due = None;
         state.search_error = Some("Sin conexión".into());
         let failed = UiTree::new(results(&state)).layout(Size::new(390.0, 500.0));
         assert!(!text(&failed, "Sin resultados"), "an unavailable answer is not an empty catalog");

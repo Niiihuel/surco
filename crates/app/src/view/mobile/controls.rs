@@ -8,7 +8,8 @@ pub(in crate::view) fn action(id: &str, glyph: Icon, label: &str, glyph_size: f3
     Element::clickable(id, Element::icon(glyph).large_icon(glyph_size).foreground(palette.text).centered())
         .accessible(limn::Access::new(limn::Role::Button).name(label))
         .background(Color::TRANSPARENT).hover_background(palette.hover).pressed_background(palette.selected)
-        .transition_ms(limn::tokens().motion.hover_ms).radius(RadiusRole::Control.px())
+        // Round, as every touch on a phone lights: never a square around a glyph.
+        .transition_ms(limn::tokens().motion.hover_ms).radius(TAP / 2.0)
         .size(Some(TAP), Some(TAP))
 }
 

@@ -463,13 +463,13 @@ impl eframe::App for Host {
             self.send(commands);
         }
         self.run_script();
-        let commands = self.state.mobile_tick(Instant::now());
+        let commands = self.state.search_tick(Instant::now());
         self.send(commands);
         let commands = self.state.ask_suggested();
         self.send(commands);
         let commands = self.state.ask_translation();
         self.send(commands);
-        if let Some((_, due)) = &self.state.mobile_ui.pending {
+        if let Some((_, due)) = &self.state.search_due {
             ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
         }
         // The row of what plays draws its sound: a reading each frame keeps its bars moving.
@@ -846,7 +846,9 @@ pub fn run() -> eframe::Result {
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
             // A phone's covers are drawn at three pixels a point, a megabyte each: it keeps fewer.
             limn_egui::set_image_cache_entries(if cfg!(target_os = "ios") { 96 } else { 256 });
-            // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4.
+            // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4. A
+            // phone keeps limn's, so its menus and popovers are drawn as the desktop's are; what
+            // a finger lights is made round where it is drawn.
             if !mobile {
                 let tokens = limn::tokens();
                 limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, tooltip: Some(view::TOOLTIP), ..tokens });

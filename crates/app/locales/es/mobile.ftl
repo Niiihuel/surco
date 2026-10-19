@@ -102,6 +102,7 @@ mobile-search-failed-detail = Intentá de nuevo en un momento.
 mobile-search-open-link = Tocá Buscar para abrir el enlace.
 mobile-previous-results = Resultados anteriores
 mobile-recent-searches = Búsquedas recientes
+mobile-see-all = Ver todo
 mobile-clear-recent-searches = Borrar búsquedas recientes
 mobile-pasted-link = Pegaste un enlace. Tocá Buscar en el teclado para abrirlo.
 mobile-browse-all = Explorar todo

@@ -11,6 +11,7 @@ use surco_core::discover;
 use surco_core::transfer;
 use surco_core::lyrics::{active, Line};
 use std::sync::Arc;
+use mobile::SearchFilter;
 use surco_core::{Album, AlbumRef, Artist, ArtistRef, Found, Track};
 use serde::{Deserialize, Serialize};
 
@@ -182,15 +183,47 @@ impl Entry {
     }
 }
 
+/// A search remembered, as Spotify's: what was asked for, or a result chosen from it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Searched {
+    /// All a list kept before results were remembered holds.
+    Query(String),
+    Track { track: Track },
+    Entry(Entry),
+}
+
+impl Searched {
+    fn is(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Query(one), Self::Query(other)) => one.to_lowercase() == other.to_lowercase(),
+            (Self::Track { track: one }, Self::Track { track: other }) => one.id == other.id,
+            (Self::Entry(one), Self::Entry(other)) => one.is(other),
+            _ => false,
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<&str> for Searched {
+    fn from(query: &str) -> Self { Self::Query(query.to_owned()) }
+}
+
+#[cfg(test)]
+impl PartialEq<&str> for Searched {
+    fn eq(&self, query: &&str) -> bool { matches!(self, Self::Query(held) if held == query) }
+}
+
 /// What the user keeps and what they opened lately, newest first. It is kept with the
 /// settings of this machine until accounts carry it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Collection {
     pub kept: Vec<Entry>,
     pub recent: Vec<Entry>,
-    /// Explicit searches, newest first. Typing alone is not history.
+    /// Explicit searches and the results chosen from them, newest first. Typing alone is not
+    /// history.
     #[serde(default)]
-    pub searches: Vec<String>,
+    pub searches: Vec<Searched>,
     #[serde(default)]
     pub playlists: Vec<Playlist>,
     /// The tracks last played, newest first.
@@ -586,6 +619,13 @@ impl Collection {
         self.heard.truncate(HEARD_KEPT);
     }
 
+    /// Puts a search first among those remembered, once.
+    fn searched(&mut self, searched: Searched) {
+        self.searches.retain(|held| !held.is(&searched));
+        self.searches.insert(0, searched);
+        self.searches.truncate(SEARCH_HISTORY);
+    }
+
     fn visited(&mut self, entry: Entry) {
         self.recent.retain(|recent| !recent.is(&entry));
         self.recent.insert(0, entry);
@@ -679,6 +719,10 @@ pub struct State {
     /// The query whose results are shown or awaited. Answers for any other are stale.
     pub submitted: Option<String>,
     pub searching: bool,
+    /// What is typed, and when it is searched for if nothing more is typed by then.
+    pub search_due: Option<(String, Instant)>,
+    /// Which of the results show: all of them, or one kind.
+    pub search_filter: mobile::SearchFilter,
     pub found: Found,
     pub search_error: Option<String>,
     pub page: Page,
@@ -1062,6 +1106,8 @@ impl Default for State {
             query: String::new(),
             submitted: None,
             searching: false,
+            search_due: None,
+            search_filter: mobile::SearchFilter::All,
             found: Found::default(),
             search_error: None,
             page: Page::Search,
@@ -1197,9 +1243,9 @@ impl State {
         if query.is_empty() {
             return Vec::new();
         }
+        self.search_due = None;
         if self.mobile {
             self.mobile_search = true;
-            self.mobile_ui.pending = None;
         }
         // A link to a track is not searched for: it opens the track it shares.
         if let Some(id) = shared_song(&query) {
@@ -1214,13 +1260,21 @@ impl State {
             return self.open(Target::Import(query));
         }
         if !query.contains("://") {
-            self.collection.searches.retain(|held| held.to_lowercase() != query.to_lowercase());
-            self.collection.searches.insert(0, query.clone());
-            self.collection.searches.truncate(SEARCH_HISTORY);
+            self.collection.searched(Searched::Query(query.clone()));
         }
+        self.find(query)
+    }
+
+    /// Asks the catalog for `query`, whose answer the search page waits for.
+    fn find(&mut self, query: String) -> Vec<Command> {
         self.submitted = Some(query.clone());
         self.searching = true;
         self.search_error = None;
+        if self.page != Page::Search {
+            // The order and the search of the page left are not the results'.
+            if self.page_searching { self.search_page(false); }
+            (self.page_sort, self.sort_open, self.track_window) = (None, false, None);
+        }
         self.page = Page::Search;
         self.history.clear();
         self.ahead.clear();
@@ -1270,7 +1324,12 @@ impl State {
     pub fn collection_covers(&mut self) -> Vec<Command> {
         let collection = &self.collection;
         let pictures = collection.playlists.iter().map(|playlist| &playlist.picture).chain([&self.profile.picture]);
-        cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork).chain(pictures))
+        let searched = collection.searches.iter().filter_map(|searched| match searched {
+            Searched::Query(_) => None,
+            Searched::Track { track } => Some(&track.artwork_url),
+            Searched::Entry(entry) => Some(entry.artwork()),
+        });
+        cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork).chain(pictures).chain(searched))
     }
 
     /// Opens or closes a side panel, which slides to its place.
@@ -1507,6 +1566,18 @@ impl State {
         }
     }
 
+    /// The result of the search a row or tile shows, from its id.
+    fn result_at(&self, row: &str) -> Option<Searched> {
+        let (list, index) = row.split_once(':')?;
+        let index = index.parse::<usize>().ok()?;
+        match list {
+            "track" | "page-track" => self.found.tracks.get(index).map(|track| Searched::Track { track: track.clone() }),
+            "artist" => self.found.artists.get(index).map(|artist| Searched::Entry(Entry::Artist(artist.clone()))),
+            "album" => self.found.albums.get(index).map(|album| Searched::Entry(Entry::Album(album.clone()))),
+            _ => None,
+        }
+    }
+
     /// The track a row shows, from the row's id.
     pub fn track_at(&self, row: &str) -> Option<&Track> {
         if row == "current" {
@@ -1624,6 +1695,8 @@ impl State {
             Page::Liked => &self.collection.liked,
             Page::Playlist(id) => self.collection.playlist(*id).map_or(&[], |playlist| &playlist.tracks),
             Page::Mix(mix) => &mix.tracks,
+            // A song found plays the others after it, as a list's.
+            Page::Search => &self.found.tracks,
             _ => &[],
         }
     }
@@ -1688,7 +1761,7 @@ impl State {
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "search" => {
-                self.query = value.clone();
+                self.type_query(value, Instant::now());
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "library-query" => {
@@ -1826,9 +1899,32 @@ impl State {
             if index < self.collection.searches.len() { self.collection.searches.remove(index); }
             return Vec::new();
         }
-        if let Some(query) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()).and_then(|index| self.collection.searches.get(index)) {
-            self.query = query.clone();
-            return self.search();
+        if let Some(searched) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()).and_then(|index| self.collection.searches.get(index)).cloned() {
+            return match searched {
+                Searched::Query(query) => {
+                    self.query = query;
+                    self.search()
+                }
+                Searched::Track { track } => {
+                    self.collection.searched(Searched::Track { track: track.clone() });
+                    if self.current().is_some_and(|current| current.id == track.id) { vec![Command::PlayPause] } else { vec![Command::PlayList { tracks: vec![track], index: 0 }] }
+                }
+                Searched::Entry(entry) => {
+                    let target = entry.target();
+                    self.collection.searched(Searched::Entry(entry));
+                    self.open(target)
+                }
+            };
+        }
+        if let Some(filter) = id.strip_prefix("search-filter:") {
+            self.search_filter = match filter { "tracks" => SearchFilter::Tracks, "artists" => SearchFilter::Artists, "albums" => SearchFilter::Albums, _ => SearchFilter::All };
+            return Vec::new();
+        }
+        // A result chosen is remembered among the searches, as Spotify's.
+        if self.page == Page::Search {
+            if let Some(searched) = self.result_at(id.strip_prefix("tile-play:").unwrap_or(id)) {
+                self.collection.searched(searched);
+            }
         }
         if let Some(query) = id.strip_prefix("browse:") {
             self.query = query.to_owned();
@@ -2106,6 +2202,7 @@ impl State {
                 self.query.clear();
                 self.submitted = None;
                 self.searching = false;
+                self.search_due = None;
                 self.search_error = None;
                 self.found = Found::default();
                 self.ask_picks()
@@ -2444,7 +2541,7 @@ impl State {
                 Vec::new()
             }
             "search-clear" => {
-                self.query.clear();
+                self.type_query("", Instant::now());
                 self.focus = Some("search".to_owned());
                 Vec::new()
             }
@@ -3329,6 +3426,38 @@ mod tests {
 
     fn click(state: &mut State, id: &str) -> Vec<Command> {
         state.update(&UiAction::Clicked { id: id.into() })
+    }
+
+    #[test]
+    fn typing_searches_live_and_a_result_chosen_is_remembered_as_spotify_does() {
+        let mut state = State::default();
+        let now = Instant::now();
+        state.type_query("cer", now);
+        assert!(state.search_tick(now + Duration::from_millis(100)).is_empty());
+        assert_eq!(state.search_tick(now + Duration::from_millis(200)), vec![Command::Search("cer".into())]);
+        assert!(state.collection.searches.is_empty(), "typing alone is not history");
+        state.apply(Event::SearchResults { query: "cer".into(), found: found(&["a", "b"]) });
+        // Its songs play as a list's from the chosen one, and that one is remembered.
+        assert_eq!(click(&mut state, "page-track:1"), vec![Command::PlayList { tracks: vec![track("a"), track("b")], index: 1 }]);
+        assert_eq!(state.collection.searches, vec![Searched::Track { track: track("b") }]);
+        // A remembered song plays again from the recent searches, and goes first once more.
+        state.collection.searches.insert(0, "otra".into());
+        assert_eq!(click(&mut state, "recent-search:1"), vec![Command::PlayList { tracks: vec![track("b")], index: 0 }]);
+        assert_eq!(state.collection.searches[0], Searched::Track { track: track("b") });
+        // Emptied, the field goes back to where a search starts.
+        state.type_query("", now);
+        assert!(state.at_home() && state.search_due.is_none());
+    }
+
+    #[test]
+    fn searches_remembered_before_results_were_still_read() {
+        let old: Collection = serde_json::from_str(r#"{"kept":[],"recent":[],"searches":["Cerati"]}"#).unwrap();
+        assert_eq!(old.searches, vec!["Cerati"]);
+        let mut collection = old.clone();
+        collection.searched(Searched::Entry(Entry::Artist(ArtistRef { id: "x".into(), name: "Soda".into(), subscribers: None, artwork_url: None })));
+        collection.searched(Searched::Track { track: track("t") });
+        let again: Collection = serde_json::from_str(&serde_json::to_string(&collection).unwrap()).unwrap();
+        assert_eq!(again, collection);
     }
 
     /// The covers among what was asked for.

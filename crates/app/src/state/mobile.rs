@@ -2,7 +2,8 @@
 
 use super::*;
 
-const SEARCH_DELAY: Duration = Duration::from_millis(280);
+/// Spotify's pause before what is typed is searched for.
+const SEARCH_DELAY: Duration = Duration::from_millis(200);
 
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
@@ -73,8 +74,6 @@ pub(crate) struct MobileUi {
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,
-    pub search_filter: SearchFilter,
-    pub pending: Option<(String, Instant)>,
     /// The host consumes this once after changing the view.
     pub blur: bool,
     pub context: Option<TrackContext>,
@@ -167,32 +166,40 @@ impl State {
     }
 
     pub(crate) fn mobile_query(&mut self, value: &str, now: Instant) {
-        self.query = value.to_owned();
         self.mobile_ui.search_editing = true;
         self.submitted = None;
         self.searching = false;
         self.search_error = None;
+        self.type_query(value, now);
+    }
+
+    /// What the field holds: searched for once typing pauses, as Spotify's. Emptied, it goes back to where a search starts.
+    pub(crate) fn type_query(&mut self, value: &str, now: Instant) {
+        self.query = value.to_owned();
         let query = value.trim();
-        if query.is_empty() { self.found = Found::default(); }
+        if query.is_empty() && self.page == Page::Search {
+            (self.submitted, self.searching, self.search_error, self.found) = (None, false, None, Found::default());
+        }
         // Importing or opening a pasted link must be an explicit action.
         let link = query.contains("://") || transfer::source(query).is_some();
-        self.mobile_ui.pending = (query.chars().count() >= 2 && !link)
+        self.search_due = (!query.is_empty() && !link)
             .then(|| (query.to_owned(), now + SEARCH_DELAY));
     }
 
-    pub(crate) fn mobile_tick(&mut self, now: Instant) -> Vec<Command> {
-        if !self.mobile || self.mobile_ui.pending.as_ref().is_none_or(|(_, due)| *due > now) {
+    /// Searches for what was typed once its pause is over. Typing alone is not history.
+    pub(crate) fn search_tick(&mut self, now: Instant) -> Vec<Command> {
+        if self.search_due.as_ref().is_none_or(|(_, due)| *due > now) {
             return Vec::new();
         }
-        let (query, _) = self.mobile_ui.pending.take().unwrap();
-        if self.page != Page::Search || !self.mobile_search || self.query.trim() != query {
+        let (query, _) = self.search_due.take().unwrap();
+        if self.query.trim() != query || (self.mobile && (self.page != Page::Search || !self.mobile_search)) {
             return Vec::new();
         }
-        self.search()
+        self.find(query)
     }
 
     fn mobile_submit(&mut self) -> Vec<Command> {
-        self.mobile_ui.pending = None;
+        self.search_due = None;
         self.mobile_ui.search_editing = false;
         self.mobile_ui.blur = true;
         self.search()
@@ -296,13 +303,13 @@ impl State {
                     self.menu = None;
                     return Some(commands);
                 }
+                // A result remembered is played or opened as it is anywhere else.
                 if let Some(index) = id.strip_prefix("recent-search:").and_then(|value| value.parse::<usize>().ok()) {
-                    if let Some(query) = self.collection.searches.get(index).cloned() {
+                    if let Some(Searched::Query(query)) = self.collection.searches.get(index).cloned() {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.query = query;
                         return Some(self.mobile_submit());
                     }
-                    return Some(Vec::new());
                 }
                 if let Some(query) = id.strip_prefix("browse:") {
                     self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
@@ -311,10 +318,6 @@ impl State {
                     self.history.clear();
                     self.query = query.to_owned();
                     return Some(self.mobile_submit());
-                }
-                if let Some(filter) = id.strip_prefix("search-filter:") {
-                    self.mobile_ui.search_filter = match filter { "tracks" => SearchFilter::Tracks, "artists" => SearchFilter::Artists, "albums" => SearchFilter::Albums, _ => SearchFilter::All };
-                    return Some(Vec::new());
                 }
                 match id.as_str() {
                     "mobile-player-dismiss" => {
@@ -335,11 +338,11 @@ impl State {
                     }
                     "mobile-search-cancel" => {
                         self.mobile_ui.search_editing = false;
-                        self.mobile_ui.pending = None;
+                        self.search_due = None;
                         self.mobile_ui.blur = true;
                         self.focus = None;
                     }
-                    "mobile-search-clear" => {
+                    "mobile-search-clear" | "search:clear" => {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.mobile_query("", Instant::now());
                         self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
@@ -363,7 +366,7 @@ impl State {
                     // Navigation must cancel delayed requests from the search tab.
                     "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
                         self.mobile_ui.library = None;
-                        self.mobile_ui.pending = None;
+                        self.search_due = None;
                         self.mobile_ui.search_editing = false;
                         self.mobile_ui.context = None;
                         self.mobile_ui.blur = true;
@@ -397,16 +400,17 @@ mod tests {
         assert_eq!(state.focus.as_deref(), Some("search"));
         let now = Instant::now();
         state.mobile_query("Cerati", now);
-        assert!(state.mobile_tick(now + Duration::from_millis(200)).is_empty());
-        state.mobile_query("Cerati vivo", now + Duration::from_millis(200));
-        assert!(state.mobile_tick(now + Duration::from_millis(300)).is_empty());
-        assert_eq!(state.mobile_tick(now + Duration::from_millis(500)), vec![Command::Search("Cerati vivo".into())]);
+        assert!(state.search_tick(now + Duration::from_millis(150)).is_empty());
+        state.mobile_query("Cerati vivo", now + Duration::from_millis(150));
+        assert!(state.search_tick(now + Duration::from_millis(300)).is_empty());
+        assert_eq!(state.search_tick(now + Duration::from_millis(350)), vec![Command::Search("Cerati vivo".into())]);
+        assert!(state.collection.searches.is_empty(), "typing alone is not history");
         assert!(state.mobile_ui.search_editing);
         state.mobile_query("Soda", now + Duration::from_secs(1));
         assert!(state.submitted.is_none(), "old replies are invalidated as soon as typing changes");
         click(&mut state, "mobile-search-cancel");
         assert!(!state.mobile_ui.search_editing);
-        assert!(state.mobile_tick(now + Duration::from_secs(5)).is_empty());
+        assert!(state.search_tick(now + Duration::from_secs(5)).is_empty());
     }
 
     #[test]
@@ -454,13 +458,13 @@ mod tests {
         assert!(state.submitted.is_none(), "a reply for the former query is already stale during debounce");
         state.apply(Event::SearchResults { query: "anterior".into(), found: Found::default() });
         assert_eq!(state.found.tracks, vec![track.clone()]);
-        assert_eq!(state.mobile_tick(now + Duration::from_millis(300)), vec![Command::Search("nueva".into())]);
+        assert_eq!(state.search_tick(now + Duration::from_millis(300)), vec![Command::Search("nueva".into())]);
         assert_eq!(state.found.tracks, vec![track.clone()]);
         state.apply(Event::SearchFailed { query: "nueva".into(), message: "Sin conexión".into() });
         assert_eq!(state.found.tracks, vec![track]);
         assert!(state.search_error.is_some());
         state.mobile_query("", now);
-        assert!(state.found.tracks.is_empty() && state.mobile_ui.pending.is_none());
+        assert!(state.found.tracks.is_empty() && state.search_due.is_none());
     }
 
     #[test]
@@ -468,7 +472,7 @@ mod tests {
         let mut state = phone();
         let now = Instant::now();
         state.mobile_query("https://youtu.be/song", now);
-        assert!(state.mobile_tick(now + Duration::from_secs(2)).is_empty());
+        assert!(state.search_tick(now + Duration::from_secs(2)).is_empty());
         state.mobile_query("  Cerati  ", now);
         click(&mut state, "search-submit");
         assert_eq!(state.collection.searches, vec!["Cerati"]);
@@ -513,10 +517,10 @@ mod tests {
         let mut state = phone();
         click(&mut state, "ios-paste:search");
         assert!(state.update(&UiAction::InputChanged { id: "search".into(), value: "Cerati".into() }).is_empty());
-        assert_eq!(state.mobile_tick(Instant::now() + Duration::from_secs(2)), vec![Command::Search("Cerati".into())]);
+        assert_eq!(state.search_tick(Instant::now() + Duration::from_secs(2)), vec![Command::Search("Cerati".into())]);
         assert!(state.update(&UiAction::InputChanged { id: "search".into(), value: "https://youtu.be/song".into() }).is_empty());
-        assert!(state.mobile_ui.pending.is_none());
-        assert!(state.mobile_tick(Instant::now() + Duration::from_secs(2)).is_empty());
+        assert!(state.search_due.is_none());
+        assert!(state.search_tick(Instant::now() + Duration::from_secs(2)).is_empty());
         assert!(state.open_url.is_none());
         state.importing = Some(String::new());
         let link = "https://open.spotify.com/playlist/example";

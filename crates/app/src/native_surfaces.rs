@@ -730,7 +730,7 @@ mod tests {
         assert!(controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2,
             text: "https://youtu.be/a-song".into() }).is_empty());
         assert_eq!(state.query, "https://youtu.be/a-song");
-        assert!(state.mobile_ui.search_editing && state.mobile_ui.pending.is_none());
+        assert!(state.mobile_ui.search_editing && state.search_due.is_none());
         assert!(state.focus.is_none(), "the limn editor must not compete for the native keyboard");
         controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 1, text: "old".into() });
         assert_eq!(state.query, "https://youtu.be/a-song", "older native input cannot overwrite the editor");
@@ -759,7 +759,7 @@ mod tests {
         controller.apply(&mut state, Event::SearchEdit { session: first.clone(), revision: 1, text: "niñez".into() });
         controller.apply(&mut state, Event::SearchCancel { session: first.clone() });
         assert_eq!(state.query, "niñez");
-        assert!(!state.mobile_ui.search_editing && state.mobile_ui.pending.is_none());
+        assert!(!state.mobile_ui.search_editing && state.search_due.is_none());
         state.page = state::Page::Library;
         controller.payload(&state, &frame, Pos2::ZERO);
         controller.apply(&mut state, Event::SearchEdit { session: first.clone(), revision: 3, text: "late".into() });

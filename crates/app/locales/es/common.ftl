@@ -7,6 +7,7 @@ common-album = Álbum
 common-albums = Álbumes
 common-song = Canción
 common-songs-heading = Canciones
+common-top-result = Resultado más relevante
 common-songs = { $count ->
     [one] 1 canción
    *[other] { $count } canciones

@@ -105,6 +105,7 @@ fn host_reveals_new_or_changed_notices_once_without_undoing_manual_scrolling() {
         state.mobile_ui.content_insets = insets;
         state.page = if searching { Page::Search } else { Page::Playing };
         state.mobile_search = searching;
+        state.search_filter = crate::state::mobile::SearchFilter::Tracks;
         state.query = "consulta".into();
         state.submitted = Some("consulta".into());
         state.found.tracks = (0..60).map(|index| Track { id: format!("result-{index}"),
