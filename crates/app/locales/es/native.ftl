@@ -40,3 +40,7 @@ native-search-placeholder = Canciones, artistas o álbumes
 native-paste = Pegar
 native-audio-output = Salida de audio
 native-choose-audio-device = Elegir dispositivo de audio
+native-scan-hint = Apuntá al código que muestra el otro dispositivo.
+native-camera-denied = Surco no puede usar la cámara
+native-camera-denied-detail = Permitilo en Configuración para leer el código, o escribí la dirección que muestra el otro dispositivo.
+native-open-settings = Abrir Configuración

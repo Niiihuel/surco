@@ -41,6 +41,9 @@ pub(super) fn inside_cross(field: Element, id: &str, label: &str, palette: Compo
     Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), cross])])
 }
 
+/// The account's face in a tab's header.
+const ACCOUNT_FACE: f32 = 32.0;
+
 pub(super) fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
     let insets = state.mobile_ui.content_insets;
@@ -49,6 +52,12 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let searching = state.page == Page::Search && state.mobile_search;
     let title = title(state);
     let mut header = Vec::new();
+    // The account's face where a tab starts, as Spotify's on a phone: it opens the profile.
+    if !state.can_go_back() && matches!(state.page, Page::Search | Page::Library) && !state.mobile_search {
+        let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
+            .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
+        header.push(face.centered_y());
+    }
     if state.can_go_back() || state.page == Page::Playing {
         header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette));
     }
@@ -172,7 +181,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, window.width, palette);
-    let tree = super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width);
+    let tree = super::profile_dialog(state, super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width), window.width);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
     confirm_dialog(state, tree, palette)
 }

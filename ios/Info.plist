@@ -35,6 +35,8 @@
             </array>
         </dict>
     </array>
+    <key>NSCameraUsageDescription</key>
+    <string>Surco usa la cámara para leer el código de tu cuenta en otro dispositivo.</string>
     <key>NSLocalNetworkUsageDescription</key>
     <string>Surco usa tu red local para pasar tu cuenta entre tus dispositivos.</string>
     <key>LSRequiresIPhoneOS</key>

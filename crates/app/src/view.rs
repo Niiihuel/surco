@@ -463,6 +463,8 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
 fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     use mobile::settings::switch;
     let Some(handoff) = &state.handoff else { return window_tree };
+    // The first run brings an account in a step of its own.
+    if state.onboarding.as_ref().is_some_and(|steps| steps.step == crate::state::onboarding::Step::Bring) { return window_tree; }
     let palette = dialog_palette();
     let _dense = (!state.mobile).then(mobile::settings::Dense::on);
     let dialog = Modal::fit_width(width, 560.0).max(280.0);
@@ -507,25 +509,19 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     } else {
         let field = TextField::new("handoff-address", &handoff.address, "192.168.1.20:48213/…", palette).size(ControlSize::Regular).render().flex(1.0);
         let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
-        body.extend([
-            Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render(),
-            Element::row(vec![field, look]).gap(8.0),
-        ]);
+        body.push(Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render());
+        if cfg!(target_os = "ios") || state.mobile {
+            body.push(Button::new("handoff-scan", t!("common-scan-code"), palette).icon(Icon::Custom(include_str!("../assets/icons/scan-qr.svg"))).size(ControlSize::Regular).round().render());
+        }
+        body.push(Element::row(vec![field, look]).gap(8.0));
         if handoff.fetching {
             body.push(Element::row(vec![Spinner::new("handoff-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
         }
         match &handoff.fetched {
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
             Some(Ok(bundle)) => {
-                let parts = handoff.parts;
                 let mut rows = vec![Text::new(t!("desktop-handoff-came"), palette).muted().render()];
-                if let Some(profile) = &bundle.profile { rows.push(switch(&t!("desktop-handoff-profile"), Some(profile.shown()), "handoff-part:profile", parts.profile)); }
-                if !bundle.playlists.is_empty() { rows.push(switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = bundle.playlists.len())), "handoff-part:playlists", parts.playlists)); }
-                if !bundle.liked.is_empty() { rows.push(switch(&t!("common-liked-songs"), Some(&songs(bundle.liked.len())), "handoff-part:liked", parts.liked)); }
-                if !bundle.kept.is_empty() { rows.push(switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library)); }
-                if bundle.settings.is_some() { rows.push(switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings)); }
-                if bundle.equalizer.is_some() { rows.push(switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer)); }
-                if !bundle.heard.is_empty() { rows.push(switch(&t!("desktop-handoff-history"), Some(&songs(bundle.heard.len())), "handoff-part:history", parts.history)); }
+                rows.extend(came(bundle, handoff.parts));
                 let mode = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
                 rows.push(segments("handoff-mode", form, vec![mode("handoff-mode:add", &t!("desktop-handoff-add"), !handoff.replace), mode("handoff-mode:replace", &t!("desktop-handoff-replace"), handoff.replace)]));
                 rows.push(Text::new(if handoff.replace { t!("desktop-handoff-replace-detail") } else { t!("desktop-handoff-add-detail") }, palette).role(TextRole::Caption).muted().render());
@@ -558,6 +554,20 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         .render()
 }
 
+/// What came from another device, a switch a part: whether it is taken in.
+pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts) -> Vec<Element> {
+    use mobile::settings::switch;
+    let mut rows = Vec::new();
+    if let Some(profile) = &bundle.profile { rows.push(switch(&t!("desktop-handoff-profile"), Some(profile.shown()), "handoff-part:profile", parts.profile)); }
+    if !bundle.playlists.is_empty() { rows.push(switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = bundle.playlists.len())), "handoff-part:playlists", parts.playlists)); }
+    if !bundle.liked.is_empty() { rows.push(switch(&t!("common-liked-songs"), Some(&songs(bundle.liked.len())), "handoff-part:liked", parts.liked)); }
+    if !bundle.kept.is_empty() { rows.push(switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library)); }
+    if bundle.settings.is_some() { rows.push(switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings)); }
+    if bundle.equalizer.is_some() { rows.push(switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer)); }
+    if !bundle.heard.is_empty() { rows.push(switch(&t!("desktop-handoff-history"), Some(&songs(bundle.heard.len())), "handoff-part:history", parts.history)); }
+    rows
+}
+
 /// The side of the code a phone's camera reads.
 const HANDOFF_CODE: f32 = 168.0;
 
@@ -575,6 +585,14 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     }
     let face = Element::column(vec![profile_face(state, DIALOG_FACE, palette).centered_x(), Element::column(choices).gap(4.0)]).gap(8.0);
     let fields = Element::column(FormField::new(t!("desktop-profile-name"), name, palette).sizing(DIALOG_FIELD).rows()).gap(8.0).flex(1.0);
+    if state.mobile {
+        return limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
+            .max_height(560.0)
+            .body(Element::column(vec![face.centered_x(), fields]).gap(16.0))
+            .footer(dialog_footer(cancel, save))
+            .initial_focus("profile-name")
+            .render();
+    }
     Modal::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
         .width(Modal::fit_width(width, 480.0).max(240.0))
         .body(Element::row(vec![face, fields]).gap(16.0))
@@ -597,7 +615,8 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .size(ControlSize::Spacious)
         .render()
         .size(None, Some(44.0));
-        let mut fields = FormField::new(t!("desktop-import-link"), field, palette).sizing(DIALOG_FIELD).rows();
+        let mut fields = import_guide(state, width - 32.0, palette);
+        fields.extend(FormField::new(t!("desktop-import-link"), field, palette).sizing(DIALOG_FIELD).rows());
         if cfg!(any(target_os = "ios", test)) {
             fields.push(Button::new("ios-paste:import-link", t!("desktop-paste-link"), palette)
                 .variant(ButtonVariant::Secondary).sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render());
@@ -635,14 +654,42 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     let cancel = Button::new("import-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
     let go = Button::new("import-go", t!("common-import"), palette).size(ControlSize::Regular).round().render();
     let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
-    let mut fields: Vec<Element> = FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows();
+    let dialog = Modal::fit_width(width, 480.0).max(240.0);
+    let mut fields = import_guide(state, Modal::fitted_body_width(dialog), palette);
+    fields.extend(FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows());
     fields.push(out);
     Modal::new(window_tree, true, t!("desktop-import-title"), t!("desktop-import-detail"), "import-cancel", palette)
-        .width(Modal::fit_width(width, 460.0).max(240.0))
+        .width(dialog)
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, go))
         .initial_focus("import-link")
         .render()
+}
+
+/// Where a list is brought in from, and the way to copy its link there, step by step: the
+/// app chosen, or the one a link pasted is of.
+fn import_guide(state: &State, width: f32, palette: ComponentPalette) -> Vec<Element> {
+    use crate::state::ImportSource;
+    let chosen = state.import_source;
+    let tabs = ImportSource::ALL.into_iter().map(|source| Tab::new(format!("import-source:{}", source.slug()), source.name(), 0.0).active(source == chosen)).collect();
+    let copy = match chosen {
+        ImportSource::Spotify => t!("desktop-import-step-copy-spotify"),
+        ImportSource::Apple => t!("desktop-import-step-copy-apple"),
+        ImportSource::YouTube => t!("desktop-import-step-copy-youtube"),
+    };
+    let step = |number: usize, text: std::borrow::Cow<'static, str>| {
+        let badge = Element::panel(Element::text(number.to_string()).font_family(FontFamily::SansBold).font_size(12.0).foreground(SCHEME.canvas).centered())
+            .background(palette.text).radius(10.0).size(Some(20.0), Some(20.0));
+        Element::row(vec![badge, Text::new(text, palette).render().flex(1.0).centered_y()]).gap(10.0)
+    };
+    vec![
+        segments("import-source", width, tabs),
+        Element::column(vec![
+            step(1, t!("desktop-import-step-open", app = chosen.name())),
+            step(2, copy),
+            step(3, t!("desktop-import-step-paste")),
+        ]).gap(8.0).padding(4.0),
+    ]
 }
 
 /// The songs of a list brought in that the catalog does not have, to be looked for by hand.
@@ -699,24 +746,6 @@ fn import_picture() -> Option<limn::RasterImage> {
     };
     let (digest, encoded) = PICTURE.get_or_init(read);
     limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, BYTES.len() as u32, encoded.clone(), t!("desktop-import-picture"))
-}
-
-/// The library's offer to bring music in from another app, on a desktop: one of the panel's
-/// own cards, as Spotify's library offers a first playlist, with a white capsule to take it
-/// and a cross to put it away.
-fn library_offer(width: f32, palette: ComponentPalette) -> Element {
-    let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let title = Text::new(t!("desktop-import-card-title"), raised).font_size(16.0).render().font_family(FontFamily::SansBold);
-    let away = header_button("import-dismiss", Icon::Close, TooltipSpec::new(t!("desktop-import-dismiss")), raised).render();
-    let about = Text::new(t!("desktop-import-card-detail"), raised).font_size(14.0).render();
-    let white = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
-    let go = Button::new("import-open", t!("common-import"), white).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().render();
-    panel_card(vec![
-        Element::row(vec![title.flex(1.0), away]).gap(8.0),
-        about,
-        Element::spacer().size(None, Some(4.0)),
-        Element::row(vec![go]),
-    ], width)
 }
 
 /// The library's offer to bring music in from another app, until it is used or put away,
@@ -1245,7 +1274,8 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     if following > 0 { counts.push(t!("desktop-profile-following", count = following).into_owned()); }
     if !collection.liked.is_empty() { counts.push(t!("desktop-profile-liked", count = collection.liked.len()).into_owned()); }
     let name = Text::new(state.profile.shown(), palette).font_size(if state.mobile { HERO_TITLE * 0.75 } else { PROFILE_NAME }).truncate().render();
-    let name = Element::clickable("profile-edit", name).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile-edit")));
+    // A phone changes it from its button under the name.
+    let name = if state.mobile { name } else { Element::clickable("profile-edit", name).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile-edit"))) };
     let about = Element::column(vec![
         Text::eyebrow(t!("desktop-profile"), palette).render(),
         name,
@@ -1254,9 +1284,18 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(10.0)
     .flex(1.0)
     .centered_y();
-    let face = if state.mobile { profile_face(state, side, palette) } else { choosable("profile-picture", profile_face(state, side, palette), side, true, palette) };
+    let face = if state.mobile {
+        Element::clickable("profile-picture", profile_face(state, side, palette)).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-choose-photo")))
+    } else {
+        choosable("profile-picture", profile_face(state, side, palette), side, true, palette)
+    };
     let header = Element::row(vec![face, about]).gap(24.0);
     let mut sections = vec![header];
+    // A phone has no account menu: what it offers is here.
+    if state.mobile {
+        let action = |id: &str, label: std::borrow::Cow<'static, str>| Button::new(id, label, palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render();
+        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff"))]).gap(8.0).wrap().line_gap(8.0));
+    }
     let artists: Vec<Element> = discover::top_artists(&collection.heard, crate::state::TOP_ARTISTS).iter().enumerate()
         .map(|(index, track)| tile(state, format!("top-artist:{index}"), &track.artist, Some(t!("common-artist").into_owned()), &track.artwork_url, true, palette))
         .collect();
@@ -1269,10 +1308,32 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     if !tracks.is_empty() {
         sections.push(headed_shelf(state, "profile-tracks", None, Some(&t!("desktop-profile-only-you")), &t!("desktop-top-tracks"), tracks, palette));
     }
+    // Before anything is played, the artists followed say who the user is.
+    let followed: Vec<Element> = collection.artists()
+        .map(|(index, artist)| tile(state, format!("profile-kept:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette).dispatch_as(format!("kept:{index}")))
+        .collect();
+    if !followed.is_empty() {
+        sections.push(shelf(state, "profile-following", &t!("desktop-profile-following-title"), followed, palette));
+    }
     let playlists: Vec<Element> = collection.playlists.iter().enumerate()
         .map(|(index, playlist)| tile(state, format!("playlist:{index}"), &playlist.name, Some(songs(playlist.tracks.len())), &playlist.cover().cloned(), false, palette))
         .collect();
-    if !playlists.is_empty() {
+    if playlists.is_empty() {
+        // Never an empty page: the way to a first playlist, made or brought in, as Spotify's.
+        let white = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+        let raised = ComponentPalette { surface: CHOSEN, ..palette };
+        let actions = Element::row(vec![
+            Button::new("profile-playlist-new", t!("common-create-playlist"), white).dispatch_as("playlist-new").variant(ButtonVariant::Subtle).size(ControlSize::Regular).round().render(),
+            Button::new("profile-import", t!("common-import"), raised).dispatch_as("import-open").variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render(),
+        ]).gap(8.0);
+        let card = Element::column(vec![
+            Text::new(t!("desktop-profile-first-playlist"), raised).font_size(18.0).render().font_family(FontFamily::SansBold),
+            Text::new(t!("desktop-profile-first-playlist-detail"), raised).muted().render(),
+            Element::spacer().size(None, Some(4.0)),
+            actions,
+        ]).gap(8.0).padding(16.0);
+        sections.push(Element::panel(card).background(CHOSEN).radius(RadiusRole::Card.px()).max_width(PROFILE_CARD));
+    } else {
         sections.push(shelf(state, "profile-playlists", &t!("desktop-your-playlists"), playlists, palette));
     }
     let content = Element::column(sections).gap(24.0).padding(if state.mobile { 16.0 } else { 24.0 });
@@ -1281,6 +1342,9 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
 
 /// The face in the dialog of the profile's details.
 const DIALOG_FACE: f32 = 120.0;
+/// The widest the profile's card for a first playlist grows.
+const PROFILE_CARD: f32 = 520.0;
+
 /// The side of the profile's face, and the size of its name, as Spotify's.
 const PROFILE_FACE: f32 = 232.0;
 const PROFILE_NAME: f32 = 72.0;
@@ -1513,8 +1577,10 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     };
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
-    if !state.settings.import_dismissed && wanted.is_empty() {
-        if state.mobile {
+    // A phone keeps its card to bring music in, with the system's own paste in it; a desktop
+    // offers it when its first run ends, and from Settings.
+    if !state.settings.import_dismissed && wanted.is_empty() && state.mobile {
+        {
             let card = import_card(width - 16.0, palette, state.mobile_ui.native_surfaces);
             if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
                 let rows = std::mem::replace(child.as_mut(), Element::spacer());
@@ -1522,7 +1588,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             } else {
                 list = ScrollArea::new("library", Element::column(vec![card, list]).gap(16.0)).render().flex(1.0);
             }
-        } else { parts.push(library_offer(width - 16.0, palette)); }
+        }
     }
     parts.push(list);
     Element::column(parts).gap(6.0).padding(8.0)

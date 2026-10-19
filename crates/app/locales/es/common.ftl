@@ -117,3 +117,7 @@ common-onboarding-home = Ir al inicio
 common-onboarding-step = Ir al paso { $step }
 common-onboarding-taste = Volver a elegir artistas
 common-onboarding-taste-detail = Los géneros y artistas con los que se arma tu inicio.
+common-scan-code = Escanear código
+common-onboarding-bring-title = Traé tu cuenta
+common-onboarding-bring-detail = En el otro dispositivo, abrí Configuración › Pasar a otro dispositivo › Enviar.
+common-onboarding-bring-type = O escribí la dirección que muestra:

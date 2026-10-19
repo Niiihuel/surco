@@ -435,6 +435,37 @@ pub struct Handoff {
     pub replace: bool,
 }
 
+/// An app a list is brought in from.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ImportSource {
+    #[default]
+    Spotify,
+    Apple,
+    YouTube,
+}
+
+impl ImportSource {
+    pub const ALL: [ImportSource; 3] = [ImportSource::Spotify, ImportSource::Apple, ImportSource::YouTube];
+
+    /// The id after `import-source:`.
+    pub fn slug(self) -> &'static str {
+        match self { Self::Spotify => "spotify", Self::Apple => "apple", Self::YouTube => "youtube" }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self { Self::Spotify => "Spotify", Self::Apple => "Apple Music", Self::YouTube => "YouTube Music" }
+    }
+
+    /// The app a link is of.
+    fn of(link: &str) -> Option<Self> {
+        Some(match transfer::source(link.trim())? {
+            transfer::Source::Spotify(..) => Self::Spotify,
+            transfer::Source::Apple(_) => Self::Apple,
+            transfer::Source::YouTube(_) => Self::YouTube,
+        })
+    }
+}
+
 /// Who uses this Surco: an account that lives on the device, named as its user likes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -804,6 +835,8 @@ pub struct State {
     /// what was typed is no such link.
     pub importing: Option<String>,
     pub import_unknown: bool,
+    /// The app the list being brought in comes from, whose way of copying its link is shown.
+    pub import_source: ImportSource,
     /// The playlist just brought in and the songs of it that were not found, while its page
     /// says so, and whether the list of them is open.
     pub imported: Option<(u64, Vec<String>)>,
@@ -1182,6 +1215,7 @@ impl Default for State {
             creating: None,
             importing: None,
             import_unknown: false,
+            import_source: ImportSource::default(),
             imported: None,
             play_when: None,
             missed_open: false,
@@ -1442,7 +1476,9 @@ impl State {
     /// reads hands it over, and asks for it.
     #[cfg(any(target_os = "ios", test))]
     pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
-        self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
+        self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), replace: self.onboarding.is_some(), ..Handoff::default() });
+        // On the first run it is the step that brings an account.
+        if let Some(onboarding) = self.onboarding.as_mut() { onboarding.step = onboarding::Step::Bring; }
         self.click("handoff-fetch")
     }
 
@@ -1852,6 +1888,8 @@ impl State {
             UiAction::InputChanged { id, value } if id == "import-link" => {
                 self.importing = Some(value.clone());
                 self.import_unknown = false;
+                // A link pasted says which app it is of.
+                if let Some(source) = ImportSource::of(value) { self.import_source = source; }
                 Vec::new()
             }
             UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
@@ -2419,6 +2457,7 @@ impl State {
                 if let Some(handoff) = self.handoff.as_mut() { handoff.replace = id == "handoff-mode:replace"; }
                 Vec::new()
             }
+            "handoff-scan" => vec![Command::ScanCode],
             "handoff-copy" => {
                 self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.address.clone());
                 Vec::new()
@@ -2630,6 +2669,10 @@ impl State {
             }
             "import-cancel" => {
                 self.importing = None;
+                Vec::new()
+            }
+            _ if id.starts_with("import-source:") => {
+                if let Some(source) = ImportSource::ALL.into_iter().find(|source| id == format!("import-source:{}", source.slug())) { self.import_source = source; }
                 Vec::new()
             }
             "import-dismiss" => {

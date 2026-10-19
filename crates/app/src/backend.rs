@@ -80,6 +80,8 @@ pub enum Command {
     /// served already is replaced at the same address.
     Serve(Bundle),
     StopServing,
+    /// Open the phone's camera on the code of an account on another device.
+    ScanCode,
     /// Read an account served by another device, at this address.
     Fetch(String),
     /// Look for artists for the first run's picker: what these searches find, a turn each.
@@ -723,6 +725,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Serve(_), Err(message)) => reply(Event::Offered(Err(message.clone()))),
         (Command::Fetch(_), Err(message)) => reply(Event::Fetched(Err(message.clone()))),
         (Command::StopServing, Err(_)) => {}
+        (Command::ScanCode, _) => {
+            #[cfg(target_os = "ios")]
+            crate::ios_ui::scan_code(&t!("native-scan-hint"), &t!("common-close"), &t!("native-camera-denied"), &t!("native-camera-denied-detail"), &t!("native-open-settings"), &t!("common-cancel"));
+        }
         (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -1582,7 +1588,21 @@ async fn pick_picture() -> Option<Vec<u8>> {
     Some(file.read().await)
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+/// On a phone, from its photos, through the system's own picker.
+#[cfg(target_os = "ios")]
+async fn pick_picture() -> Option<Vec<u8>> {
+    crate::ios_ui::pick_photo();
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        match crate::ios_ui::take_picked_photo() {
+            crate::ios_ui::Picked::Open => continue,
+            crate::ios_ui::Picked::Photo(photo) => return Some(photo),
+            crate::ios_ui::Picked::Left => return None,
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "ios")))]
 async fn pick_picture() -> Option<Vec<u8>> {
     None
 }

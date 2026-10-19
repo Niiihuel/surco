@@ -5,6 +5,11 @@ use super::*;
 use crate::state::onboarding::{Onboarding, Step, PICKS_FEWEST};
 use surco_core::ArtistRef;
 
+thread_local! {
+    /// Whether the steps are drawn for a phone, for the frame being built.
+    static PHONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// The widest a step's column grows, and the picker's.
 const COLUMN: f32 = 480.0;
 const PICKER_COLUMN: f32 = 760.0;
@@ -19,12 +24,16 @@ const PILL: f32 = 48.0;
 pub(super) fn view(state: &State, onboarding: &Onboarding, window: Size) -> Element {
     let palette = SCHEME.palette();
     let phone = state.mobile || window.width < 600.0;
-    let margin = if phone { 16.0 } else { 32.0 };
+    PHONE.set(phone);
+    let margin = if phone { 24.0 } else { 32.0 };
+    let insets = if state.mobile { state.mobile_ui.content_insets } else { Default::default() };
     let most = if onboarding.step == Step::Artists { PICKER_COLUMN } else { COLUMN };
-    let width = (window.width - 2.0 * margin).min(most).max(200.0);
+    let width = (window.width - insets.left - insets.right - 2.0 * margin).min(most).max(200.0);
+    let height = (window.height - insets.top - insets.bottom - 2.0 * margin).max(200.0);
 
     let body = match onboarding.step {
         Step::Welcome => welcome(palette),
+        Step::Bring => bring(state, width, palette),
         Step::Name => name(onboarding, width, palette),
         Step::Genres => genres(onboarding, palette),
         Step::Artists => artists(state, onboarding, width, palette),
@@ -32,18 +41,19 @@ pub(super) fn view(state: &State, onboarding: &Onboarding, window: Size) -> Elem
     };
     // Each step comes in as the last leaves, as the steps of Spotify's.
     let body = body.animate_enter(format!("onboarding:{:?}", onboarding.step));
-    let column = Element::column(vec![header(onboarding, palette), body.flex(1.0)]).size(Some(width), None).flex(1.0);
-    let top = if state.mobile { state.mobile_ui.content_insets.top } else { 0.0 };
-    Element::panel(Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]).padding(margin))
-        .background(SCHEME.canvas)
-        .size(Some(window.width), Some(window.height))
-        .padding(top)
+    let column = Element::column(vec![header(onboarding, palette), body.flex(1.0)]).size(Some(width), Some(height));
+    // In the middle of the window, clear of a phone's notch and home bar.
+    let middle = Element::column(vec![
+        Element::spacer().size(None, Some(insets.top + margin)),
+        Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]),
+    ]);
+    Element::panel(middle).background(SCHEME.canvas).size(Some(window.width), Some(window.height))
 }
 
 /// The way back, where the steps are, and the way past one that can be left out.
 fn header(onboarding: &Onboarding, palette: ComponentPalette) -> Element {
     let step = onboarding.step;
-    let back = matches!(step, Step::Name | Step::Artists) || (step == Step::Genres && !onboarding.taste_only);
+    let back = matches!(step, Step::Bring | Step::Name | Step::Artists) || (step == Step::Genres && !onboarding.taste_only);
     let mut row = vec![if back {
         header_button("onboarding-back", Icon::Custom(glyph::CHEVRON_LEFT), TooltipSpec::new(t!("common-back")), palette).render().centered_y()
     } else {
@@ -60,8 +70,10 @@ fn header(onboarding: &Onboarding, palette: ComponentPalette) -> Element {
         row.push(Element::row(dots).gap(8.0).centered_y());
     }
     row.push(Element::spacer().flex(1.0));
+    // A word that lights under the pointer, as Spotify's.
     row.push(if matches!(step, Step::Genres | Step::Artists) {
-        Button::new("onboarding-skip", t!("common-onboarding-skip"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render().centered_y()
+        Element::button("onboarding-skip", t!("common-onboarding-skip")).font_family(FontFamily::SansBold).font_size(14.0)
+            .foreground(palette.muted).hover_foreground(palette.text).pressed_foreground(palette.text).padding(8.0).centered_y()
     } else {
         Element::spacer().size(Some(32.0), None)
     });
@@ -70,7 +82,9 @@ fn header(onboarding: &Onboarding, palette: ComponentPalette) -> Element {
 
 /// A step's question and what it is for.
 fn heading(title: &str, detail: Option<&str>, palette: ComponentPalette) -> Element {
-    let mut copy = vec![Text::new(title, palette).font_size(32.0).render().font_family(FontFamily::SansBold)];
+    // A phone's column is narrow: its question a step smaller, so its words fit.
+    let size = if PHONE.get() { 26.0 } else { 32.0 };
+    let mut copy = vec![Text::new(title, palette).font_size(size).render().font_family(FontFamily::SansBold)];
     copy.extend(detail.map(|detail| Text::new(detail, palette).font_size(16.0).muted().render()));
     Element::column(copy).gap(8.0)
 }
@@ -99,6 +113,41 @@ fn welcome(palette: ComponentPalette) -> Element {
     ]).gap(12.0)
 }
 
+/// An account from another device: by the phone's camera, or by the address the other
+/// device shows; then what of it comes.
+fn bring(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let mut parts = vec![
+        Element::spacer().size(None, Some(24.0)),
+        heading(&t!("common-onboarding-bring-title"), Some(&t!("common-onboarding-bring-detail")), palette),
+        Element::spacer().size(None, Some(16.0)),
+    ];
+    let Some(handoff) = &state.handoff else { return Element::column(parts) };
+    if state.mobile || cfg!(target_os = "ios") {
+        parts.push(go_on("handoff-scan", &t!("common-scan-code"), true, width.min(WELCOME_PILL), palette));
+        parts.push(Text::new(t!("common-onboarding-bring-type"), palette).muted().render());
+    }
+    let field = ComponentPalette { raised: CHOSEN, border: Color::rgb(124, 124, 124), ..palette };
+    let address = TextField::new("handoff-address", &handoff.address, "192.168.1.20:48213/…", field).size(ControlSize::Spacious).render().size(None, Some(PILL)).flex(1.0);
+    let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline)
+        .sizing(limn::ButtonSizing { height: PILL, font_size: 16.0, ..ControlSize::Spacious.button_sizing() }).round().enabled(!handoff.fetching).render();
+    parts.push(Element::row(vec![address, look]).gap(8.0));
+    if handoff.fetching {
+        parts.push(Element::row(vec![Spinner::new("onboarding-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
+    }
+    match &handoff.fetched {
+        Some(Err(message)) => parts.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
+        Some(Ok(bundle)) => {
+            parts.push(Element::spacer().size(None, Some(8.0)));
+            parts.push(Text::new(t!("desktop-handoff-came"), palette).muted().render());
+            let rows = Element::column(came(bundle, handoff.parts));
+            parts.push(ScrollArea::new("onboarding-came", rows).appearance(spotify_bar()).visibility(SPOTIFY_BAR_SHOWS).render().flex(1.0));
+            parts.push(Element::row(vec![Element::spacer().flex(1.0), go_on("handoff-take", &t!("desktop-handoff-take"), true, GO_ON, palette)]).padding(16.0));
+        }
+        None => {}
+    }
+    Element::column(parts).gap(8.0)
+}
+
 fn name(onboarding: &Onboarding, width: f32, palette: ComponentPalette) -> Element {
     // A field of Spotify's sign-up: a darker fill and a grey ring.
     let field = ComponentPalette { raised: CHOSEN, border: Color::rgb(124, 124, 124), ..palette };
@@ -117,6 +166,8 @@ fn genres(onboarding: &Onboarding, palette: ComponentPalette) -> Element {
     // Chips as the home's: chosen, they turn white and carry a check.
     let chips = mobile::search::genres().map(|(label, query)| {
         let chosen = onboarding.genres.iter().any(|genre| genre == query);
+        // The browse cards break a long genre over two lines; a chip keeps it on one.
+        let label = label.replace('\n', " ");
         let chip = Button::new(format!("onboarding-genre:{query}"), label, palette)
             .variant(if chosen { ButtonVariant::Default } else { ButtonVariant::Secondary })
             .size(ControlSize::Regular).round();

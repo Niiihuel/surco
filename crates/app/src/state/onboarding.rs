@@ -17,6 +17,8 @@ const DEFAULT_TASTE: [&str; 6] = ["Rock argentino", "Pop latino", "Trap argentin
 pub enum Step {
     #[default]
     Welcome,
+    /// The account comes from another device.
+    Bring,
     Name,
     Genres,
     Artists,
@@ -77,14 +79,18 @@ impl State {
                 self.focus = Some("onboarding-name".to_owned());
                 Vec::new()
             }
-            // The account comes from the other device, through the dialog that brings it.
+            // The account comes from the other device, as the dialog that moves it reads it,
+            // here a step of its own; nothing is here for it to join.
             "onboarding-bring" => {
+                onboarding.step = Step::Bring;
                 self.handoff = Some(Handoff { receiving: true, replace: true, ..Handoff::default() });
+                self.focus = Some("handoff-address".to_owned());
                 Vec::new()
             }
             "onboarding-back" => {
+                if onboarding.step == Step::Bring { self.handoff = None; }
                 onboarding.step = match (onboarding.step, onboarding.taste_only) {
-                    (Step::Name, _) => Step::Welcome,
+                    (Step::Bring | Step::Name, _) => Step::Welcome,
                     (Step::Genres, false) => Step::Name,
                     (Step::Artists, _) => Step::Genres,
                     (step, _) => step,
@@ -92,7 +98,7 @@ impl State {
                 Vec::new()
             }
             "onboarding-next" | "onboarding-skip" => match onboarding.step {
-                Step::Welcome => Vec::new(),
+                Step::Welcome | Step::Bring => Vec::new(),
                 Step::Name if onboarding.name.trim().is_empty() => Vec::new(),
                 Step::Name => {
                     onboarding.step = Step::Genres;
@@ -203,7 +209,10 @@ impl State {
             let entry = Entry::Artist(artist);
             if !self.collection.keeps(&entry) { self.collection.toggle(entry); }
         }
+        let fresh = !onboarding.taste_only;
         self.end_first_run();
+        // A fresh start is offered the user's music from their other apps, once.
+        self.welcome = fresh;
         let mut commands = self.collection_covers();
         commands.extend(self.ask_picks());
         commands
@@ -256,6 +265,47 @@ mod tests {
         assert_eq!(state.profile.name, "Nihuel");
         let followed: Vec<&str> = state.collection.artists().map(|(_, artist)| artist.id.as_str()).collect();
         assert_eq!(followed, ["b", "a", "x"], "followed in the order picked");
+    }
+
+    #[test]
+    fn a_fresh_start_is_offered_its_music_from_other_apps_once_and_the_link_says_which() {
+        let mut state = State::default();
+        state.begin_onboarding(true);
+        click(&mut state, "onboarding-skip");
+        click(&mut state, "onboarding-skip");
+        assert!(!state.welcome, "choosing artists again offers nothing");
+        state.begin_onboarding(false);
+        state.onboarding.as_mut().unwrap().step = Step::Done;
+        click(&mut state, "onboarding-done");
+        assert!(state.welcome, "a fresh start ends on the offer to bring music in");
+        click(&mut state, "welcome-import");
+        assert!(state.importing.is_some() && state.import_source == ImportSource::Spotify);
+        click(&mut state, "import-source:youtube");
+        assert_eq!(state.import_source, ImportSource::YouTube);
+        state.update(&UiAction::InputChanged { id: "import-link".into(), value: "https://music.apple.com/ar/playlist/viaje/pl.u-abc".into() });
+        assert_eq!(state.import_source, ImportSource::Apple, "a link pasted says which app it is of");
+    }
+
+    #[test]
+    fn an_account_brought_in_is_the_end_of_the_first_run() {
+        let mut state = State::default();
+        state.begin_onboarding(false);
+        click(&mut state, "onboarding-bring");
+        assert_eq!(state.onboarding.as_ref().unwrap().step, Step::Bring);
+        assert!(state.handoff.as_ref().is_some_and(|handoff| handoff.receiving && handoff.replace), "nothing here to join");
+        assert_eq!(click(&mut state, "handoff-scan"), vec![Command::ScanCode], "a phone reads the code with its camera");
+        click(&mut state, "onboarding-back");
+        assert!(state.handoff.is_none() && state.onboarding.as_ref().unwrap().step == Step::Welcome, "back where it started");
+
+        click(&mut state, "onboarding-bring");
+        state.update(&UiAction::InputChanged { id: "handoff-address".into(), value: "10.0.0.2:4000/abc1".into() });
+        click(&mut state, "handoff-fetch");
+        let profile = Profile { name: "Nihuel".into(), ..Profile::default() };
+        state.apply(Event::Fetched(Ok(crate::handoff::Bundle { version: 1, profile: Some(profile), liked: vec![Track { id: "a".into(), title: "A".into(), artist: "Ana".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 }], ..Default::default() })));
+        click(&mut state, "handoff-take");
+        assert!(state.onboarding.is_none() && state.settings.onboarded, "no steps after it");
+        assert_eq!(state.profile.name, "Nihuel");
+        assert_eq!(state.collection.liked.len(), 1);
     }
 
     #[test]

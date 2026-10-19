@@ -116,3 +116,7 @@ common-onboarding-home = Go to Home
 common-onboarding-step = Go to step { $step }
 common-onboarding-taste = Choose artists again
 common-onboarding-taste-detail = The genres and artists your Home is made from.
+common-scan-code = Scan code
+common-onboarding-bring-title = Bring your account
+common-onboarding-bring-detail = On the other device, open Settings › Move to another device › Send.
+common-onboarding-bring-type = Or type the address it shows:

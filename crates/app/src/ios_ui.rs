@@ -105,6 +105,43 @@ mod native {
         fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
         fn surco_ui_take_surface_events(handle: *mut c_void) -> *mut c_char;
         fn surco_take_opened_link() -> *mut c_char;
+        fn surco_scan_code(hint: *const c_char, close: *const c_char, denied_title: *const c_char, denied_body: *const c_char, settings: *const c_char, cancel: *const c_char);
+        fn surco_pick_photo();
+        fn surco_take_picked_photo(bytes: *mut *mut u8, length: *mut usize) -> i32;
+    }
+
+    /// Opens the camera, inside Surco, on the code of an account on another device; what it
+    /// reads comes back as a link Surco was opened with. Safe from any thread.
+    pub fn scan_code(hint: &str, close: &str, denied_title: &str, denied_body: &str, settings: &str, cancel: &str) {
+        let text = |value: &str| std::ffi::CString::new(value).unwrap_or_default();
+        let (hint, close, denied_title, denied_body, settings, cancel) = (text(hint), text(close), text(denied_title), text(denied_body), text(settings), text(cancel));
+        unsafe { surco_scan_code(hint.as_ptr(), close.as_ptr(), denied_title.as_ptr(), denied_body.as_ptr(), settings.as_ptr(), cancel.as_ptr()) };
+    }
+
+    /// Where the system's photo picker is.
+    pub enum Picked {
+        Open,
+        Photo(Vec<u8>),
+        Left,
+    }
+
+    /// Opens the system's photo picker. Safe from any thread.
+    pub fn pick_photo() {
+        unsafe { surco_pick_photo() };
+    }
+
+    /// The picture picked, once, or whether the picker is still open.
+    pub fn take_picked_photo() -> Picked {
+        let (mut bytes, mut length) = (std::ptr::null_mut(), 0usize);
+        match unsafe { surco_take_picked_photo(&mut bytes, &mut length) } {
+            0 => Picked::Open,
+            1 if !bytes.is_null() => {
+                let photo = unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec();
+                unsafe { surco_ui_free_string(bytes.cast()) };
+                Picked::Photo(photo)
+            }
+            _ => Picked::Left,
+        }
     }
 
     /// The link Surco was last opened with, once: the code of an account another device
@@ -331,7 +368,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi, on_screen, reduce_motion_enabled, take_memory_warning, take_opened_link};
+pub use native::{CurrentRoute, NativeUi, Picked, on_screen, pick_photo, reduce_motion_enabled, scan_code, take_memory_warning, take_opened_link, take_picked_photo};
 
 #[cfg(test)]
 mod tests {
