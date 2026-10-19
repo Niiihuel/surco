@@ -23,6 +23,9 @@ pub(crate) struct Payload {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct Chrome {
     pub edge: f32,
+    /// Whether the page has scrolled under the header: only then does its backdrop show, as a
+    /// system bar's at the top of its scroll view.
+    pub scrolled: bool,
     pub tint: [u8; 3],
     #[serde(skip_serializing_if = "Option::is_none")]
     pub header: Option<[f32; 4]>,
@@ -225,7 +228,7 @@ impl Controller {
         } else { Vec::new() };
         self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
         let tint = crate::view::surface_tint(state);
-        Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, tint: [tint.r, tint.g, tint.b], header,
+        Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, scrolled: state.mobile_ui.scrolled, tint: [tint.r, tint.g, tint.b], header,
             title: crate::view::mobile_title(state).into(), compact: state.mobile_ui.compact_header, leading, trailing, tabs, items })
     }
 

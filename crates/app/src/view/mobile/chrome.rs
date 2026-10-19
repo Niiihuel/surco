@@ -71,7 +71,8 @@ fn scroll_insets(scroll: &mut Element, top: f32, bottom: f32, header_edge: Color
         return;
     };
     let body = std::mem::replace(child.as_mut(), Element::spacer());
-    **child = Element::column(vec![space(top), body, space(bottom)]);
+    // The page's top, which tells the header whether anything has scrolled under it.
+    **child = Element::column(vec![space(top).anchor(crate::view::PAGE_TOP), body, space(bottom)]);
     // The whole transition must sit beside the opaque chrome. A gradient
     // spanning the bar's height spends most of its opacity behind the bar,
     // leaving only a faint sliver visible at the content edge.

@@ -261,7 +261,9 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         _ => None,
     };
     let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER);
-    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact
+    let scrolled = state.mobile && tree.anchor_offset(crate::view::PAGE_TOP).is_some_and(|top| top < -0.5);
+    let moved = std::mem::replace(&mut state.mobile_ui.scrolled, scrolled) != scrolled;
+    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved
 }
 
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {

@@ -71,6 +71,8 @@ pub(crate) struct MobileUi {
     pub search_header: Option<f32>,
     /// The shared chrome condenses only after the current title scrolls above it.
     pub compact_header: bool,
+    /// Whether the page has scrolled under the header.
+    pub scrolled: bool,
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,

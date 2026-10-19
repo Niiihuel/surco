@@ -1358,6 +1358,14 @@ const ACCOUNT_RING: f32 = 48.0;
 /// The id of the window's top bar; its search reports as `nav:search`.
 pub(crate) const TOP_BAR: &str = "nav";
 
+/// A phone's library row with its dots inside it, so that pressing the row lights them too.
+fn phone_dots(row: ListRow, state: &State, key: &str, name: &str, palette: ComponentPalette) -> ListRow {
+    if !state.mobile { return row; }
+    let more = format!("library-more:{key}");
+    let dots = mobile::icon(&more, Icon::More, &t!("desktop-options-of", name = name), palette);
+    row.trailing_action(more, dots.centered_y())
+}
+
 /// A square of the library's size for something with no picture of its own.
 fn library_tile(icon: Icon, palette: ComponentPalette) -> Element {
     Element::panel(Element::icon(icon).foreground(palette.text).centered())
@@ -1544,19 +1552,22 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                     let kind = about.rsplit(" · ").last().unwrap_or_default().to_owned();
                     let sizing = if state.mobile { ListRowSizing { height: Some(44.0), ..ListRowSizing::COMPACT } } else { ListRowSizing::COMPACT };
                     let row = ListRow::new(id, name, palette).sizing(sizing).trailing(Text::new(kind, palette).role(TextRole::Caption).muted().render()).title_fade(true).radius(RadiusRole::Card);
+                    let row = phone_dots(row, state, &key, name, palette);
                     if here { row.filled() } else { row }.render()
                 }
                 LibraryView::List => {
                     let row = ListRow::new(id, name, palette).sizing(LIBRARY_ROW).leading(picture).subtitle(about).title_fade(true).radius(RadiusRole::Card);
+                    let row = phone_dots(row, state, &key, name, palette);
                     if here { row.filled() } else { row }.render()
                 }
             };
             if state.mobile {
                 let more = format!("library-more:{key}");
                 let dots = mobile::icon(&more, Icon::More, &t!("desktop-options-of", name = name), palette);
+                // A row carries its dots on its own pressed surface; a tile, over its corner.
                 let entry = if view == LibraryView::Grid {
                     Element::stack(vec![entry, Element::row(vec![Element::spacer().flex(1.0), dots.background(SCHEME.raised).radius(22.0)]).padding(4.0)])
-                } else { Element::row(vec![entry.flex(1.0), dots.centered_y()]).gap(4.0) };
+                } else { entry };
                 return ContextMenu::new(format!("library-context:{key}"), entry, Vec::new(), menu_palette()).open_action(more).render();
             }
             let pin = ContextMenuItem::new(format!("pin:{key}"), if held { t!("desktop-unpin") } else { t!("desktop-pin") });
@@ -2535,6 +2546,8 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
 /// The top of a page's actions, as the Host measures it to know when they have scrolled
 /// away under the page's bar.
 pub(crate) const PAGE_ACTIONS: &str = "page-actions";
+/// The anchor at the top of a phone's page, under its header.
+pub(crate) const PAGE_TOP: &str = "mobile-page-top";
 /// The bar a page keeps at its top once its actions are gone, as Spotify's.
 const STUCK_BAR: f32 = 64.0;
 /// Where the actions' top is when their play button reaches the bar's: there the bar takes over.

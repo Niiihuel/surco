@@ -298,7 +298,9 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     CGRect tabs = live ? [self rect:model[@"tabs"]] : CGRectNull;
     double edge = live && [model[@"edge"] isKindOfClass:NSNumber.class] ? [model[@"edge"] doubleValue] : 0;
     edge = isfinite(edge) && edge > 0 ? edge * _scale : 0;
-    [self updateBackdrop:edge tint:SurcoArray(model[@"tint"])];
+    // As UINavigationBar's scroll edge appearance: clear while the page is at its top.
+    BOOL scrolled = [model[@"scrolled"] isKindOfClass:NSNumber.class] && [model[@"scrolled"] boolValue];
+    [self updateBackdrop:(scrolled ? edge : 0) tint:SurcoArray(model[@"tint"])];
     [self updateHeader:model rect:header];
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
 }
