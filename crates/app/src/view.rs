@@ -561,7 +561,24 @@ fn import_picture() -> Option<limn::RasterImage> {
     limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, BYTES.len() as u32, encoded.clone(), t!("desktop-import-picture"))
 }
 
-/// The library's offer to bring music in from another app, until it is used or put away.
+/// The library's offer to bring music in from another app, on a desktop: one of the panel's
+/// own cards, as Spotify's library offers a first playlist, with a white capsule to take it
+/// and a cross to put it away.
+fn library_offer(width: f32, palette: ComponentPalette) -> Element {
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let title = Text::new(t!("desktop-import-card-title"), raised).font_size(16.0).render().font_family(FontFamily::SansBold);
+    let away = header_button("import-dismiss", Icon::Close, TooltipSpec::new(t!("desktop-import-dismiss")), raised).render();
+    let about = Text::new(t!("desktop-import-card-detail"), raised).font_size(14.0).render();
+    let white = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+    let go = Button::new("import-open", t!("common-import"), white).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().render();
+    panel_card(vec![
+        Element::row(vec![title.flex(1.0), away]).gap(8.0),
+        about,
+        Element::spacer().size(None, Some(4.0)),
+        Element::row(vec![go]),
+    ], width)
+}
+
 /// The library's offer to bring music in from another app, until it is used or put away,
 /// after the Spotify kit's promotion cards: the picture edge to edge over a lifted surface,
 /// a bold title, a quiet line and white capsules.
@@ -1350,15 +1367,15 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let mut list = list;
     let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
     if !state.settings.import_dismissed && wanted.is_empty() {
-        let card = import_card(width - 16.0, palette, state.mobile_ui.native_surfaces);
         if state.mobile {
+            let card = import_card(width - 16.0, palette, state.mobile_ui.native_surfaces);
             if let limn::ElementKind::Scroll { child, .. } = &mut list.kind {
                 let rows = std::mem::replace(child.as_mut(), Element::spacer());
                 **child = Element::column(vec![card, rows]).gap(16.0);
             } else {
                 list = ScrollArea::new("library", Element::column(vec![card, list]).gap(16.0)).render().flex(1.0);
             }
-        } else { parts.push(card); }
+        } else { parts.push(library_offer(width - 16.0, palette)); }
     }
     parts.push(list);
     Element::column(parts).gap(6.0).padding(8.0)
