@@ -9,6 +9,7 @@
 
 mod backend;
 mod clip;
+mod handoff;
 mod i18n;
 mod import;
 #[cfg(any(target_os = "ios", test))]

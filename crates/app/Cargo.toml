@@ -22,7 +22,7 @@ fastrand = "2"
 surco-audio = { path = "../audio" }
 surco-youtube = { path = "../youtube" }
 surco-video = { path = "../video" }
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time", "net", "io-util"] }
 # A cover reaches limn as base64 with its digest.
 sha2 = "0.10"
 # Already in the tree: the code Spotify's web player proves itself with, for a long playlist.
@@ -42,6 +42,8 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 fluent-bundle = "0.16"
 unic-langid = "0.9"
 sys-locale = "0.3"
+# MIT/Apache-2.0. The code a phone's camera reads the address of an account handed over from.
+qrcode = { version = "0.14.1", default-features = false }
 
 # MIT/Apache-2.0. A later version is announced by the system's own notifications; on Linux
 # over the zbus already in the tree.

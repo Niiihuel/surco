@@ -335,7 +335,7 @@ pub fn view(state: &State, window: Size) -> Element {
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
-    let created = profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width, palette);
+    let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width, palette), window.width, palette);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     let whole = update_dialog(state, confirm_dialog(state, welcome_dialog(state, imported, window.width), palette), palette);
     Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
@@ -434,6 +434,103 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .return_focus("playlist-new")
         .render()
 }
+
+/// Taking the account to another device on the same network, as Spotify's devices dialog
+/// reads: sending it, with its code for a phone's camera, the address for another computer and
+/// the parts that go; or receiving one from the address another device shows, and choosing
+/// what of it comes and whether it joins what is here or takes its place.
+fn handoff_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    use mobile::settings::switch;
+    let Some(handoff) = &state.handoff else { return window_tree };
+    let _dense = mobile::settings::Dense::on();
+    let dialog = Modal::fit_width(width, 560.0).max(280.0);
+    let form = Modal::fitted_body_width(dialog);
+    let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
+    let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
+    let mut body = vec![tabs];
+    let collection = &state.collection;
+    let mut cancel = Button::new("handoff-close", t!("common-close"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let mut confirm = None;
+    if !handoff.receiving {
+        match &handoff.offer {
+            None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
+            Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
+            Some(Ok((offer, code))) => {
+                let code = Element::panel(Element::raster_image(code.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
+                    .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0);
+                let copy = Button::new("handoff-copy", t!("desktop-handoff-copy"), palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
+                let ways = Element::column(vec![
+                    Text::new(t!("desktop-handoff-phone"), palette).font_size(16.0).render().font_family(FontFamily::SansBold),
+                    Text::new(t!("desktop-handoff-phone-detail"), palette).muted().render(),
+                    Element::spacer().size(None, Some(8.0)),
+                    Text::new(t!("desktop-handoff-computer"), palette).font_size(16.0).render().font_family(FontFamily::SansBold),
+                    Text::new(t!("desktop-handoff-computer-detail"), palette).muted().render(),
+                    Element::text(&offer.address).font_family(FontFamily::Monospace).font_size(13.0).foreground(palette.text),
+                    Element::row(vec![copy]),
+                ]).gap(6.0).flex(1.0);
+                body.push(Element::row(vec![code, ways]).gap(20.0));
+            }
+        }
+        let parts = handoff.parts;
+        body.extend([
+            Text::new(t!("desktop-handoff-what"), palette).muted().render(),
+            switch(&t!("desktop-handoff-profile"), Some(state.profile.shown()), "handoff-part:profile", parts.profile),
+            switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = collection.playlists.len())), "handoff-part:playlists", parts.playlists),
+            switch(&t!("common-liked-songs"), Some(&songs(collection.liked.len())), "handoff-part:liked", parts.liked),
+            switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library),
+            switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings),
+            switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer),
+            switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
+        ]);
+    } else {
+        let field = TextField::new("handoff-address", &handoff.address, "192.168.1.20:48213/…", palette).size(ControlSize::Regular).render().flex(1.0);
+        let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
+        body.extend([
+            Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render(),
+            Element::row(vec![field, look]).gap(8.0),
+        ]);
+        if handoff.fetching {
+            body.push(Element::row(vec![Spinner::new("handoff-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
+        }
+        match &handoff.fetched {
+            Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
+            Some(Ok(bundle)) => {
+                let parts = handoff.parts;
+                let mut rows = vec![Text::new(t!("desktop-handoff-came"), palette).muted().render()];
+                if let Some(profile) = &bundle.profile { rows.push(switch(&t!("desktop-handoff-profile"), Some(profile.shown()), "handoff-part:profile", parts.profile)); }
+                if !bundle.playlists.is_empty() { rows.push(switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = bundle.playlists.len())), "handoff-part:playlists", parts.playlists)); }
+                if !bundle.liked.is_empty() { rows.push(switch(&t!("common-liked-songs"), Some(&songs(bundle.liked.len())), "handoff-part:liked", parts.liked)); }
+                if !bundle.kept.is_empty() { rows.push(switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library)); }
+                if bundle.settings.is_some() { rows.push(switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings)); }
+                if bundle.equalizer.is_some() { rows.push(switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer)); }
+                if !bundle.heard.is_empty() { rows.push(switch(&t!("desktop-handoff-history"), Some(&songs(bundle.heard.len())), "handoff-part:history", parts.history)); }
+                let mode = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
+                rows.push(segments("handoff-mode", form, vec![mode("handoff-mode:add", &t!("desktop-handoff-add"), !handoff.replace), mode("handoff-mode:replace", &t!("desktop-handoff-replace"), handoff.replace)]));
+                rows.push(Text::new(if handoff.replace { t!("desktop-handoff-replace-detail") } else { t!("desktop-handoff-add-detail") }, palette).role(TextRole::Caption).muted().render());
+                body.extend(rows);
+                confirm = Some(Button::new("handoff-take", t!("desktop-handoff-take"), palette).size(ControlSize::Regular).render());
+            }
+            None => {}
+        }
+    }
+    if confirm.is_none() {
+        // Sending, the dialog only closes: the other device does the rest.
+        cancel = Button::new("handoff-close", t!("common-close"), palette).size(ControlSize::Regular).render();
+    }
+    let footer = match confirm {
+        Some(confirm) => dialog_footer(cancel, confirm),
+        None => ButtonGroup::new(vec![cancel]).align_end().render(),
+    };
+    Modal::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
+        .width(dialog)
+        .body(ScrollArea::new("handoff", Element::column(body).gap(10.0)).render())
+        .footer(footer)
+        .return_focus("account")
+        .render()
+}
+
+/// The side of the code a phone's camera reads.
+const HANDOFF_CODE: f32 = 168.0;
 
 /// Changing the account's name.
 fn profile_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
@@ -1063,6 +1160,7 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
     let entries = vec![
         DropdownMenuEntry::Heading(state.profile.shown().to_owned()),
         item("account-profile", t!("desktop-profile")),
+        item("account-handoff", t!("desktop-handoff")),
         item("settings", t!("common-settings")),
     ];
     DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()

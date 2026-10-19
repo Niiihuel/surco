@@ -27,6 +27,7 @@ use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
 use crate::i18n::t;
+use crate::handoff::{self, Bundle, Offer};
 use crate::library::Library;
 use crate::state::{cover_at, COVER_SIDE};
 use crate::update;
@@ -75,6 +76,12 @@ pub enum Command {
     FetchArtwork(String),
     /// Ask the user for a picture of their own, from their files, for a list or the account.
     PickPicture(PictureFor),
+    /// Serve the account, or this part of it, to another device on the local network; one
+    /// served already is replaced at the same address.
+    Serve(Bundle),
+    StopServing,
+    /// Read an account served by another device, at this address.
+    Fetch(String),
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
     PlayPause,
@@ -211,6 +218,10 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// Where the account is served, and the code a phone reads that from.
+    Offered(Result<(Offer, RasterImage), String>),
+    /// An account read from another device, its pictures kept with the covers already.
+    Fetched(Result<Bundle, String>),
     SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
@@ -312,6 +323,9 @@ struct Shared {
     /// How many covers are fetched at once: a library opening asks for all of its own, and
     /// the stream of a song asked for meanwhile should not queue behind them.
     covers: tokio::sync::Semaphore,
+    /// The account being served to another device, while its dialog is open. Held across
+    /// starting one, so that two asked for at once make one.
+    serving: tokio::sync::Mutex<Option<handoff::Serving>>,
     #[cfg(target_os = "ios")]
     cached_loads: Mutex<Vec<CachedLoad>>,
 }
@@ -600,6 +614,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         library: Mutex::new(Library::open(library)),
         saving: Mutex::default(),
         covers: tokio::sync::Semaphore::new(COVERS_AT_ONCE),
+        serving: tokio::sync::Mutex::new(None),
         #[cfg(target_os = "ios")]
         cached_loads: Mutex::default(),
     })
@@ -634,13 +649,56 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 // Decoding and writing hold the library: off the runtime's two workers.
                 let kept = tokio::task::block_in_place(|| {
                     let jpeg = square_jpeg(&bytes)?;
-                    let name = format!("surco:picture:{:016x}", fastrand::u64(..));
+                    let name = format!("{PICTURE_NAME}{:016x}", fastrand::u64(..));
                     shared.library.lock().unwrap().keep_cover(&name, &jpeg).ok()?;
                     Some(name)
                 });
                 if let Some(name) = kept { (shared.reply)(Event::Picture { of, name }); }
             });
         }
+        (Command::Serve(mut bundle), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // The pictures of its own go along, from where they are kept.
+                bundle.pictures = tokio::task::block_in_place(|| {
+                    let library = shared.library.lock().unwrap();
+                    bundle.picture_names().into_iter().filter_map(|name| {
+                        let bytes = library.cover(&name)?;
+                        Some((name, base64::engine::general_purpose::STANDARD.encode(bytes)))
+                    }).collect()
+                });
+                let Ok(body) = serde_json::to_vec(&bundle) else { return };
+                let mut serving = shared.serving.lock().await;
+                if let Some(current) = serving.as_ref() {
+                    current.replace(body);
+                    return;
+                }
+                let offered = match handoff::serve(body).await {
+                    Ok(started) => {
+                        let offer = started.offer.clone();
+                        *serving = Some(started);
+                        code_image(&offer.link).map(|code| (offer, code)).ok_or_else(|| t!("backend-handoff-no-code").into_owned())
+                    }
+                    Err(message) => Err(message),
+                };
+                drop(serving);
+                (shared.reply)(Event::Offered(offered));
+            });
+        }
+        (Command::StopServing, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move { shared.serving.lock().await.take(); });
+        }
+        (Command::Fetch(url), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let fetched = fetch_bundle(&shared, &url).await;
+                (shared.reply)(Event::Fetched(fetched));
+            });
+        }
+        (Command::Serve(_), Err(message)) => reply(Event::Offered(Err(message.clone()))),
+        (Command::Fetch(_), Err(message)) => reply(Event::Fetched(Err(message.clone()))),
+        (Command::StopServing, Err(_)) => {}
         (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -1451,8 +1509,44 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
 
 const COVERS_AT_ONCE: usize = 6;
 
+/// How long another device has to answer, and the most an account from it may weigh.
+const HANDOFF_WAIT: Duration = Duration::from_secs(15);
+const HANDOFF_MOST: u64 = 64 * 1024 * 1024;
+/// The pixels a square of the code takes.
+const CODE_SCALE: u32 = 8;
+
+/// The code a phone's camera reads an account's address from, as a picture limn draws.
+fn code_image(link: &str) -> Option<RasterImage> {
+    let png = handoff::code(link, CODE_SCALE)?;
+    let digest: String = Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-handoff-code"))
+}
+
+/// An account served by another device: read, and its pictures kept with the covers. A
+/// picture is taken only under a picture's own name, and only as the picture it decodes to.
+async fn fetch_bundle(shared: &Shared, url: &str) -> Result<Bundle, String> {
+    let unreachable = || t!("backend-handoff-unreachable").into_owned();
+    let response = shared.youtube.http().get(url).timeout(HANDOFF_WAIT).send().await.map_err(|_| unreachable())?.error_for_status().map_err(|_| unreachable())?;
+    if response.content_length().is_none_or(|length| length > HANDOFF_MOST) {
+        return Err(t!("backend-handoff-unreadable").into_owned());
+    }
+    let mut bundle = handoff::read(&response.bytes().await.map_err(|_| unreachable())?)?;
+    let pictures = std::mem::take(&mut bundle.pictures);
+    tokio::task::block_in_place(|| {
+        let mut library = shared.library.lock().unwrap();
+        for (name, encoded) in pictures.into_iter().filter(|(name, _)| name.starts_with(PICTURE_NAME)) {
+            let picture = base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|bytes| square_jpeg(&bytes));
+            if let Some(jpeg) = picture { let _ = library.keep_cover(&name, &jpeg); }
+        }
+    });
+    Ok(bundle)
+}
+
 /// The side a picture of the user's own is kept at.
 const PICTURE_SIDE: u32 = 640;
+/// How the name of a picture of the user's own begins.
+const PICTURE_NAME: &str = "surco:picture:";
 
 /// A picture from the user's files, through the system's own dialog. A phone has its own way.
 #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]

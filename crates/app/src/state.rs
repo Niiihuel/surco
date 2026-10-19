@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
 
 use crate::backend::{Command, Content, Event, Footage, Known, Patch, Picks, PictureFor, Release, Target, Taste};
+use crate::handoff::{self, Bundle, Offer, Parts};
 use crate::update::Note;
 use crate::clip::Showing;
 use crate::player::PlayerView;
@@ -381,6 +382,22 @@ impl Default for Settings {
     }
 }
 
+/// The dialog that takes the account to another device: sending it, with the parts that go
+/// and the address and code it is served at, or receiving one, from the address typed.
+#[derive(Default)]
+pub struct Handoff {
+    pub receiving: bool,
+    pub parts: Parts,
+    /// The address another device reads it from, and the code of it, or why there is none.
+    pub offer: Option<Result<(Offer, limn::RasterImage), String>>,
+    pub address: String,
+    pub fetching: bool,
+    /// What came from the other device, or why nothing did.
+    pub fetched: Option<Result<Bundle, String>>,
+    /// Whether what comes takes the place of what is here rather than joining it.
+    pub replace: bool,
+}
+
 /// Who uses this Surco: an account that lives on the device, named as its user likes.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -493,6 +510,15 @@ impl Collection {
     /// The name a playlist takes when it is given none.
     pub fn default_name(&self) -> String {
         t!("state-default-playlist-name", number = self.playlists.len() + 1).into_owned()
+    }
+
+    /// Takes in a list from another device under an id of this one's, newest first, unless
+    /// one of its name and songs is here already.
+    fn adopt(&mut self, playlist: Playlist) {
+        if self.playlists.iter().any(|held| held.name == playlist.name && held.tracks == playlist.tracks) { return; }
+        // Past every id here, whatever the count says.
+        self.next_playlist = self.playlists.iter().map(|held| held.id).max().unwrap_or(0).max(self.next_playlist) + 1;
+        self.playlists.insert(0, Playlist { id: self.next_playlist, ..playlist });
     }
 
     /// Makes a playlist, newest first, and returns its id.
@@ -701,6 +727,8 @@ pub struct State {
     pub account_open: bool,
     /// Whether the menu behind a page's dots is open.
     pub page_more_open: bool,
+    /// The dialog that takes the account to another device, while it is open.
+    pub handoff: Option<Handoff>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
     /// The window says so each frame.
     pub wide: bool,
@@ -1060,6 +1088,7 @@ impl Default for State {
             profile: Profile::default(),
             account_open: false,
             page_more_open: false,
+            handoff: None,
             wide: false,
             panel_more_open: false,
             profile_draft: None,
@@ -1253,6 +1282,78 @@ impl State {
         *flag = open;
         let travel = Duration::from_millis(u64::from(limn::tokens().motion.move_ms));
         slide.retarget_with_motion(if open { 1.0 } else { 0.0 }, Instant::now(), travel, !self.motion);
+    }
+
+    /// What of the account travels: the parts chosen of it, as they are here.
+    pub fn bundle(&self, parts: Parts) -> Bundle {
+        let collection = &self.collection;
+        let part = |sent: bool, tracks: &Vec<Track>| if sent { tracks.clone() } else { Vec::new() };
+        Bundle {
+            version: handoff::VERSION,
+            profile: parts.profile.then(|| self.profile.clone()),
+            playlists: if parts.playlists { collection.playlists.clone() } else { Vec::new() },
+            liked: part(parts.liked, &collection.liked),
+            kept: if parts.library { collection.kept.clone() } else { Vec::new() },
+            heard: part(parts.history, &collection.heard),
+            settings: parts.settings.then_some(self.settings),
+            equalizer: parts.equalizer.then(|| equalizer_text(self.equalizer)),
+            pictures: Vec::new(),
+        }
+    }
+
+    /// Joins an account from another device to this one: each part chosen is added to what
+    /// is here, or takes its place when `replace`. The profile, the settings and the equaliser
+    /// take the place of these.
+    fn take_in(&mut self, bundle: Bundle, parts: Parts, replace: bool) -> Vec<Command> {
+        let collection = &mut self.collection;
+        if parts.playlists {
+            if replace { collection.playlists.clear(); }
+            // Each goes first: from the last, they keep their order.
+            bundle.playlists.into_iter().rev().for_each(|playlist| collection.adopt(playlist));
+        }
+        if parts.liked {
+            if replace { collection.liked.clear(); }
+            for track in bundle.liked {
+                if !collection.liked.iter().any(|held| held.id == track.id) { collection.liked.push(track); }
+            }
+        }
+        if parts.library {
+            if replace { collection.kept.clear(); }
+            for entry in bundle.kept {
+                if !collection.keeps(&entry) { collection.kept.push(entry); }
+            }
+        }
+        if parts.history {
+            if replace { collection.heard.clear(); }
+            collection.heard.extend(bundle.heard);
+            collection.heard.truncate(HEARD_KEPT);
+        }
+        let mut commands = Vec::new();
+        if let Some(profile) = bundle.profile.filter(|_| parts.profile) { self.profile = profile; }
+        if let Some(settings) = bundle.settings.filter(|_| parts.settings) {
+            self.settings = settings;
+            if let Some(language) = settings.language { crate::i18n::set(language); }
+            commands.extend([Command::Autoplay(settings.autoplay), Command::Crossfade(f64::from(settings.crossfade)), Command::Quality(settings.quality.bps()), Command::Mono(settings.mono), Command::Normalize(settings.normalize)]);
+        }
+        if let Some(equalizer) = bundle.equalizer.as_deref().filter(|_| parts.equalizer).and_then(equalizer_from) {
+            self.equalizer = equalizer;
+            commands.push(Command::Equalizer(equalizer));
+        }
+        commands.extend(self.collection_covers());
+        commands
+    }
+
+    /// The parts a bundle that came has something of.
+    fn parts_of(bundle: &Bundle) -> Parts {
+        Parts {
+            profile: bundle.profile.is_some(),
+            playlists: !bundle.playlists.is_empty(),
+            liked: !bundle.liked.is_empty(),
+            library: !bundle.kept.is_empty(),
+            history: !bundle.heard.is_empty(),
+            settings: bundle.settings.is_some(),
+            equalizer: bundle.equalizer.is_some(),
+        }
     }
 
     /// What the user plays most: what was played again, the most played first.
@@ -1601,6 +1702,11 @@ impl State {
                 }
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "handoff-address" => {
+                if let Some(handoff) = self.handoff.as_mut() { handoff.address = value.clone(); }
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "handoff-address" => self.click("handoff-fetch"),
             UiAction::InputChanged { id, value } if id == "profile-name" => {
                 self.profile_draft = Some(value.clone());
                 Vec::new()
@@ -2125,6 +2231,61 @@ impl State {
                 self.panel_more_open = false;
                 Vec::new()
             }
+            "account-handoff" => {
+                let handoff = Handoff::default();
+                let serve = Command::Serve(self.bundle(handoff.parts));
+                self.handoff = Some(handoff);
+                vec![serve]
+            }
+            "handoff-close" => {
+                self.handoff = None;
+                vec![Command::StopServing]
+            }
+            "handoff-tab:send" | "handoff-tab:receive" => {
+                let Some(handoff) = self.handoff.as_mut() else { return Vec::new() };
+                handoff.receiving = id == "handoff-tab:receive";
+                handoff.parts = Parts::default();
+                handoff.offer = None;
+                if handoff.receiving { return vec![Command::StopServing]; }
+                let parts = handoff.parts;
+                vec![Command::Serve(self.bundle(parts))]
+            }
+            _ if id.starts_with("handoff-part:") => {
+                let Some(handoff) = self.handoff.as_mut() else { return Vec::new() };
+                if let Some(part) = handoff.parts.by_name(&id["handoff-part:".len()..]) { *part = !*part; }
+                if handoff.receiving { return Vec::new(); }
+                let parts = handoff.parts;
+                vec![Command::Serve(self.bundle(parts))]
+            }
+            "handoff-mode:add" | "handoff-mode:replace" => {
+                if let Some(handoff) = self.handoff.as_mut() { handoff.replace = id == "handoff-mode:replace"; }
+                Vec::new()
+            }
+            "handoff-copy" => {
+                self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.address.clone());
+                Vec::new()
+            }
+            "handoff-fetch" => {
+                let Some(handoff) = self.handoff.as_mut() else { return Vec::new() };
+                match handoff::locate(&handoff.address) {
+                    Some(url) => {
+                        handoff.fetching = true;
+                        handoff.fetched = None;
+                        vec![Command::Fetch(url)]
+                    }
+                    None => {
+                        handoff.fetched = Some(Err(t!("state-handoff-bad-address").into_owned()));
+                        Vec::new()
+                    }
+                }
+            }
+            "handoff-take" => {
+                let Some(handoff) = self.handoff.take() else { return Vec::new() };
+                match handoff.fetched {
+                    Some(Ok(bundle)) => self.take_in(bundle, handoff.parts, handoff.replace),
+                    _ => Vec::new(),
+                }
+            }
             "page-more" => {
                 self.page_more_open = !self.page_more_open;
                 Vec::new()
@@ -2556,6 +2717,18 @@ impl State {
                 let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(seeds).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
                 (self.mix, self.because) = (mix, because);
                 covers
+            }
+            Event::Offered(offer) => {
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving) { handoff.offer = Some(offer); }
+                Vec::new()
+            }
+            Event::Fetched(fetched) => {
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.receiving) {
+                    handoff.fetching = false;
+                    if let Ok(bundle) = &fetched { handoff.parts = Self::parts_of(bundle); }
+                    handoff.fetched = Some(fetched);
+                }
+                Vec::new()
             }
             Event::Picture { of, name } => {
                 match of {
@@ -3379,6 +3552,52 @@ mod tests {
         assert!(state.is_sliding(Instant::now()), "with motion it travels");
         state.restore_sides(false, true);
         assert!(!state.library_open && state.panel_open && !state.is_sliding(Instant::now()));
+    }
+
+    #[test]
+    fn an_account_from_another_device_joins_this_one_or_takes_its_place() {
+        let list = |id: u64, name: &str, tracks: Vec<Track>| Playlist { id, name: name.into(), collaborative: false, picture: None, tracks };
+        let mut there = State::default();
+        there.profile.name = "Nihuel".into();
+        there.collection.playlists = vec![list(1, "Viaje", vec![track("a")]), list(2, "Noche", vec![track("b")])];
+        there.collection.liked = vec![track("a"), track("c")];
+        there.settings.autoplay = false;
+        let bundle = there.bundle(Parts::default());
+        assert!(bundle.heard.is_empty(), "what was played stays unless asked for");
+
+        let mut here = State::default();
+        here.collection.playlists = vec![list(1, "Mía", vec![track("z")]), list(9, "Viaje", vec![track("a")])];
+        here.collection.liked = vec![track("c")];
+        let commands = here.take_in(bundle.clone(), Parts::default(), false);
+        let names: Vec<&str> = here.collection.playlists.iter().map(|playlist| playlist.name.as_str()).collect();
+        assert_eq!(names, ["Noche", "Mía", "Viaje"], "a list already here is not taken twice, and another keeps its order");
+        let ids: HashSet<u64> = here.collection.playlists.iter().map(|playlist| playlist.id).collect();
+        assert_eq!(ids.len(), 3, "a list that came takes an id of this device's");
+        assert_eq!(here.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["c", "a"]);
+        assert_eq!(here.profile.name, "Nihuel");
+        assert!(!here.settings.autoplay && commands.contains(&Command::Autoplay(false)), "the settings take their place and reach the player");
+
+        let mut replaced = State::default();
+        replaced.collection.liked = vec![track("z")];
+        replaced.take_in(bundle, Parts { liked: true, ..Parts { profile: false, playlists: false, liked: false, library: false, history: false, settings: false, equalizer: false } }, true);
+        assert_eq!(replaced.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
+        assert!(replaced.profile.name.is_empty() && replaced.collection.playlists.is_empty(), "only what was chosen");
+    }
+
+    #[test]
+    fn the_handoff_dialog_serves_what_is_chosen_and_reads_what_is_typed() {
+        let mut state = State::default();
+        assert!(matches!(click(&mut state, "account-handoff").as_slice(), [Command::Serve(bundle)] if bundle.profile.is_some()));
+        assert!(matches!(click(&mut state, "handoff-part:profile").as_slice(), [Command::Serve(bundle)] if bundle.profile.is_none()), "another part, another bundle");
+        assert_eq!(click(&mut state, "handoff-tab:receive"), vec![Command::StopServing]);
+        state.update(&UiAction::InputChanged { id: "handoff-address".into(), value: "10.0.0.2:4000/abc1".into() });
+        assert_eq!(click(&mut state, "handoff-fetch"), vec![Command::Fetch("http://10.0.0.2:4000/abc1".into())]);
+        state.apply(Event::Fetched(Ok(Bundle { version: 1, liked: vec![track("a")], ..Bundle::default() })));
+        let handoff = state.handoff.as_ref().unwrap();
+        assert!(handoff.parts.liked && !handoff.parts.playlists && !handoff.fetching, "what came is chosen");
+        click(&mut state, "handoff-take");
+        assert!(state.handoff.is_none() && state.collection.liked.len() == 1);
+        assert_eq!(click(&mut state, "handoff-close"), vec![Command::StopServing]);
     }
 
     #[test]

@@ -27,3 +27,4 @@ state-import-nothing-found = No encontramos ninguna de las canciones de esa list
 state-window-minimize = Minimizar
 state-window-maximize = Maximizar
 state-window-restore = Restaurar
+state-handoff-bad-address = Esa no es una dirección de Surco. Copiala tal como la muestra el otro dispositivo.
