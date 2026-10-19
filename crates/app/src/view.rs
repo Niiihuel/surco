@@ -122,7 +122,8 @@ const CHOSEN: Color = Color::rgb(31, 31, 31);
 /// The lifted surface of a phone promotion card, as Spotify's.
 const PROMO: Color = Color::rgb(36, 36, 36);
 const GAP: f32 = 8.0;
-const PANEL_RADIUS: f32 = 8.0;
+/// Spotify's docks are nearly square: half the corner limn would give them.
+const PANEL_RADIUS: f32 = 4.0;
 pub(crate) const TOP_BAR_HEIGHT: f32 = 64.0;
 /// The widest the top bar's search grows, and the recent searches under it with it.
 const SEARCH_MAX_WIDTH: f32 = 546.0;
@@ -1398,6 +1399,8 @@ fn panel_scroll(id: &str, content: Element) -> ScrollArea {
         active_thumb_opacity: 179,
         hover_track_opacity: 0,
         buttons: false,
+        // Square, as it is on Windows and Linux.
+        thumb_radius: Some(0.0),
         ..ScrollbarAppearance::overlay()
     };
     ScrollArea::new(id, content).appearance(bar).visibility(limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 200 })

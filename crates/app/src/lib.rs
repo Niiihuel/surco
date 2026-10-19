@@ -821,6 +821,11 @@ pub fn run() -> eframe::Result {
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
             // A phone's covers are drawn at three pixels a point, a megabyte each: it keeps fewer.
             limn_egui::set_image_cache_entries(if cfg!(target_os = "ios") { 96 } else { 256 });
+            // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4.
+            if !mobile {
+                let tokens = limn::tokens();
+                limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, ..tokens });
+            }
             // Beside the settings; without a place of its own the library lasts the session.
             let data = data.join("offline");
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
