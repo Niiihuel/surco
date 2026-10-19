@@ -790,6 +790,8 @@ pub struct State {
     pub output_notice: Option<String>,
     pub output: Option<String>,
     pub output_open: bool,
+    /// The playback bar's menu of where it sounds.
+    pub device_open: bool,
 }
 
 /// How many covers a session holds, a few tens of megabytes of them.
@@ -1066,6 +1068,7 @@ impl Default for State {
             output_notice: None,
             output: None,
             output_open: false,
+            device_open: false,
         }
     }
 }
@@ -1949,12 +1952,35 @@ impl State {
                     vec![Command::Outputs]
                 } else { Vec::new() }
             }
+            // The bar's own way to where it sounds, as Spotify's "Connect to a device".
+            "device" => {
+                self.device_open = !self.device_open;
+                if self.device_open {
+                    self.outputs_loading = true;
+                    self.outputs_error = None;
+                    vec![Command::Outputs]
+                } else { Vec::new() }
+            }
+            "device-dismiss" => {
+                self.device_open = false;
+                Vec::new()
+            }
+            // What plays, in the right panel: shown if it was not, or the panel shut.
+            "now-playing-view" => {
+                let showing = self.panel_open && !self.queue_open;
+                self.queue_open = false;
+                self.open_side(Side::Right, !showing);
+                if showing { return Vec::new(); }
+                let mut commands = self.ask_clip();
+                commands.extend(self.ask_about());
+                commands
+            }
             "setting:output-dismiss" => {
                 self.output_open = false;
                 Vec::new()
             }
             _ if id.starts_with("setting:output:") => {
-                self.output_open = false;
+                (self.output_open, self.device_open) = (false, false);
                 let chosen = Some(id["setting:output:".len()..].to_owned()).filter(|device| !device.is_empty());
                 let retry = self.output_notice.take().is_some();
                 if chosen == self.output && !retry {

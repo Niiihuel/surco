@@ -160,6 +160,10 @@ const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
 const MENU_WIDTH: f32 = 272.0;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
+/// The way to what plays, in the right panel: a square with a play in it.
+const NOW_PLAYING_VIEW: &str = include_str!("../assets/icons/square-play.svg");
+/// What the bar's start keeps beside the title and artist: the cover, the heart and the gaps.
+const NOW_PLAYING_ROOM: f32 = 140.0;
 /// limn's shuffle with a spark over where its arrows cross.
 const SMART_SHUFFLE: &str = include_str!("../assets/icons/shuffle-spark.svg");
 /// An entry of the library: 64 high around a 48 tile.
@@ -2954,7 +2958,8 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
                 .render(),
             ])
             .gap(2.0)
-            .flex(1.0)
+            // As Spotify's, the heart stands right after the title, however short it is.
+            .max_width((width * 0.3 - NOW_PLAYING_ROOM).clamp(80.0, 360.0))
             .centered_y(),
             {
                 let liked = state.is_liked(&track.id);
@@ -2965,6 +2970,7 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
                     .render()
                     .centered_y()
             },
+            Element::spacer().flex(1.0),
         ])
         .gap(12.0),
         None => Element::spacer(),
@@ -3020,9 +3026,32 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if wide {
         controls.push(Element::spacer().flex(1.0));
     }
+    // In Spotify's order: what plays, its lyrics, what comes next, where it sounds, then the
+    // sound itself and the whole window.
+    let showing = state.panel_open && !state.queue_open && width >= PANEL_FROM;
+    let device = |id: &str, name: &str| {
+        DropdownMenuEntry::Item(DropdownMenuItem::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id))
+    };
+    let system = state.outputs.iter().find(|output| output.is_default)
+        .map_or_else(|| t!("desktop-system-output").into_owned(), |output| t!("desktop-system-output-named", name = output.name.as_str()).into_owned());
+    let mut devices = vec![DropdownMenuEntry::Heading(t!("desktop-connect-device").into()), device("", &system)];
+    if state.outputs.is_empty() && state.outputs_loading {
+        devices.push(DropdownMenuEntry::Loading { id: "device-loading".into(), rows: 2 });
+    }
+    devices.extend(state.outputs.iter().filter(|output| !output.is_default).map(|output| device(&output.id, &output.name)));
+    let devices = DropdownMenu::new(side("device", Icon::Custom(AUDIO_ROUTE), &t!("desktop-connect-device"), state.device_open), devices, state.device_open, "device-dismiss", SCHEME.menu())
+        .sizing(menu_sizing(state))
+        .width(MENU_WIDTH)
+        .placement(PopoverPlacement::TopEnd)
+        .render()
+        .centered_y();
+    if width >= PANEL_FROM {
+        controls.push(side("now-playing-view", Icon::Custom(NOW_PLAYING_VIEW), &t!("desktop-now-playing-view"), showing));
+    }
     controls.extend([
         side("lyrics", Icon::Custom(LYRICS), &t!("desktop-lyrics"), state.lyrics_open()),
         side("queue", Icon::Playlist, &t!("desktop-queue"), state.queue_open),
+        devices,
         equalizer,
         IconButton::new("mute", if state.volume > 0.0 { Icon::Volume } else { Icon::VolumeMuted }, palette).round()
             .variant(ButtonVariant::Ghost)
@@ -3032,6 +3061,10 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .centered_y(),
         Slider::new("volume", state.volume, palette).width(if wide { VOLUME_WIDTH } else { VOLUME_WIDTH_NARROW }).thumb_on_hover().render().centered_y(),
     ]);
+    // Where there is room for the right panel there is room for the whole window's button.
+    if has_track && width >= PANEL_FROM {
+        controls.push(side("cinema", Icon::Fullscreen, &t!("desktop-fullscreen"), state.cinema));
+    }
     let controls = Element::row(controls).gap(6.0).centered_y();
     let middle = Element::column(vec![buttons, seek]).gap(2.0).centered_y();
     // Wide, the three parts share the bar 3:4:3 and the transport sits in the middle of the
