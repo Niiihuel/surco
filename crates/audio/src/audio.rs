@@ -28,7 +28,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, atomic::{AtomicU64, Ordering}};
 use std::time::{Duration, Instant};
 
-use rodio::cpal::StreamError;
+use rodio::cpal::{Error as StreamError, ErrorKind};
 use rodio::stream::{DeviceSinkBuilder, MixerDeviceSink};
 use rodio::{DeviceTrait, Player, Source};
 use symphonia::core::io::MediaSource;
@@ -58,9 +58,6 @@ const READ_POLL: Duration = Duration::from_millis(10);
 const STREAM_RETRY_WINDOW: Duration = Duration::from_secs(10);
 
 const STREAM_LOST: &str = "the audio output stream failed";
-
-/// How often the system's default output is looked at, to follow it onto a device just plugged in.
-const DEFAULT_POLL: Duration = Duration::from_secs(1);
 
 /// A decoded stream ready to be handed to a deck. rodio resamples it to the device's rate.
 type BoxedSource = Box<dyn Source + Send>;
@@ -710,6 +707,17 @@ fn move_our_stream_to_pipewire_sink(sink_name: &str) {
     warn(format_args!("failed to move audio stream to pipewire sink sink={sink_name}"));
 }
 
+/// Lets our stream follow the server's default again. WirePlumber remembers the sink a choice
+/// moved it to and hands that to every stream we open after, across restarts too; moving to the
+/// default sink is how a PulseAudio client says to forget it.
+#[cfg(target_os = "linux")]
+fn follow_pipewire_default() {
+    // Without pactl there is nothing to tell the server with, and no waiting on it either.
+    if std::process::Command::new("pactl").arg("--version").output().is_ok() {
+        move_our_stream_to_pipewire_sink("@DEFAULT_SINK@");
+    }
+}
+
 /// The freshest sink-input opened by this executable — cpal opens a brand new PipeWire client
 /// on every device switch, so the highest index among ours is the one that was just opened.
 ///
@@ -768,7 +776,12 @@ fn open_device_sink(
         Some(device) => DeviceSinkBuilder::from_device(device)
             .and_then(|builder| builder.with_error_callback(on_error).open_stream())
             .map_err(|error| format!("failed to open audio output device: {error}")),
-        None => open_default_sink(on_error),
+        None => {
+            let stream = open_default_sink(on_error)?;
+            #[cfg(target_os = "linux")]
+            follow_pipewire_default();
+            Ok(stream)
+        }
     }
 }
 
@@ -788,10 +801,11 @@ fn stream_failure_reporter(
     generation: u64,
 ) -> impl FnMut(StreamError) + Send + 'static {
     let mut reported = false;
-    move |error| {
-        // cpal recovers underruns itself. Anything else leaves the stream dead, and on ALSA it
-        // reports that POLLERR in a tight loop until the stream is dropped.
-        if matches!(error, StreamError::BufferUnderrun) || reported {
+    move |error: StreamError| {
+        // A glitch, or cpal already moving a default stream to the new default, as on macOS:
+        // either way it plays on. Anything else leaves the stream dead, and a dead stream can
+        // go on reporting until it is dropped.
+        if matches!(error.kind(), ErrorKind::Xrun | ErrorKind::DeviceChanged | ErrorKind::RealtimeDenied) || reported {
             return;
         }
         reported = true;
@@ -870,7 +884,6 @@ fn run(
     }
 
     let mut next_tick = Instant::now() + TICK;
-    let mut next_follow = Instant::now() + DEFAULT_POLL;
     loop {
         let now = Instant::now();
         let until_tick = next_tick.saturating_duration_since(now);
@@ -900,10 +913,6 @@ fn run(
             next_tick = Instant::now() + TICK;
         } else if engine.is_ending() {
             engine.finish();
-        }
-        if Instant::now() >= next_follow {
-            engine.follow_default();
-            next_follow = Instant::now() + DEFAULT_POLL;
         }
     }
 }
@@ -1150,9 +1159,14 @@ impl Engine {
                 // Dropping it is what ends cpal's loop on the dead device.
                 self.stream = None;
                 self.fade = None;
-                // A device that went away, as headphones unplugged: the music goes on on the one
-                // to use now. One that dies right after opening is left to the backoff below.
-                if self.opened_at.elapsed() >= STREAM_RETRY_WINDOW && self.reroute() {
+                /*
+                 * A device that went away, as headphones unplugged, or a default that moved, as
+                 * headphones plugged in on Windows: the music goes on on the one to use now. One
+                 * that dies right after opening while still the one to use is left to the
+                 * backoff below.
+                 */
+                let moved = self.device_id.is_none() && default_output_id() != self.default_device;
+                if (moved || self.opened_at.elapsed() >= STREAM_RETRY_WINDOW) && self.reroute() {
                     return false;
                 }
                 if self.opened_at.elapsed() < STREAM_RETRY_WINDOW {
@@ -1191,20 +1205,6 @@ impl Engine {
         self.active = 0;
         self.playing = false;
         Ok(())
-    }
-
-    /// Moves onto the system's default output when it changes under a stream opened on it,
-    /// as when headphones are plugged in.
-    fn follow_default(&mut self) {
-        if self.device_id.is_some() || self.stream.is_none() || self.default_device.is_none() {
-            return;
-        }
-        let now = default_output_id();
-        if now.is_some() && now != self.default_device {
-            // Looked at once: a device that will not open is not tried again every second.
-            self.default_device = now;
-            self.reroute();
-        }
     }
 
     /// Reopens the output on the device to use now, for the caller to load its track again.
@@ -1375,14 +1375,12 @@ mod tests {
     fn stream_failure_is_reported_once_and_underruns_never() {
         let (tx, rx) = mpsc::channel();
         let mut report = stream_failure_reporter(tx, 7);
-        let pollerr = || StreamError::BackendSpecific {
-            err: rodio::cpal::BackendSpecificError {
-                description: "`alsa::poll()` returned POLLERR".to_string(),
-            },
-        };
+        let pollerr = || StreamError::with_message(ErrorKind::BackendError, "`alsa::poll()` returned POLLERR");
 
-        report(StreamError::BufferUnderrun);
+        report(ErrorKind::Xrun.into());
         assert!(rx.try_recv().is_err(), "an underrun is recovered by cpal, not by reopening");
+        report(ErrorKind::DeviceChanged.into());
+        assert!(rx.try_recv().is_err(), "a default stream cpal moved itself plays on");
 
         for _ in 0..1000 {
             report(pollerr());

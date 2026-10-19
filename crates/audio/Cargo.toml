@@ -8,7 +8,7 @@ repository.workspace = true
 description = "Audio engine for Surco: decode, two-deck output with gapless and crossfade, equaliser. No UI, no networking."
 
 [dependencies]
-rodio = { version = "0.22.2", default-features = false, features = ["playback", "symphonia-all"] }
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "symphonia-all"] }
 # Demuxing only, and pinned to the version rodio already pulls so the binary carries one copy
 # of the Matroska/Ogg readers rather than two.
 symphonia = { version = "0.5", default-features = false, features = ["mkv", "ogg"] }
