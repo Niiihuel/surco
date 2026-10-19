@@ -1452,10 +1452,13 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let header = Element::row(header)
     .gap(8.0)
     .size(None, Some(if state.mobile { 44.0 } else { 40.0 }));
-    let chip = |id: &str, label: &str, selected| Button::new(id, label, palette)
-        .variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
-        .sizing(if state.mobile { limn::ButtonSizing { height: 44.0, ..ControlSize::Regular.button_sizing() } } else { ControlSize::Regular.button_sizing() })
-        .round().render();
+    let chip = |id: &str, label: &str, selected| if state.mobile {
+        // A phone's as its search's: Spotify's 32pt pills.
+        mobile::chip(id.to_owned(), label, selected, limn::Role::Button, palette)
+    } else {
+        Button::new(id, label, palette).variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
+            .sizing(ControlSize::Regular.button_sizing()).round().render()
+    };
     // Pills, as Spotify's: the one chosen is filled light. A panel too narrow for them scrolls them sideways.
     let filters = Element::row(vec![
         chip("filter:all", &t!("common-all"), state.filter == Filter::All),
@@ -1576,7 +1579,8 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         if state.mobile { ScrollArea::new("library", rows) } else { panel_scroll("library", rows) }.render().flex(1.0)
     };
     let mut list = list;
-    let mut parts = vec![Element::panel(header).padding(8.0), filters, tools];
+    // A phone names the page in its own bar; the library starts at its chips.
+    let mut parts = if state.mobile { vec![filters, tools] } else { vec![Element::panel(header).padding(8.0), filters, tools] };
     // A phone keeps its card to bring music in, with the system's own paste in it; a desktop
     // offers it when its first run ends, and from Settings.
     if !state.settings.import_dismissed && wanted.is_empty() && state.mobile {

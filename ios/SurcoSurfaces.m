@@ -7,8 +7,9 @@ static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 
 static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
 static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
-// The soft edge below the header, where the blur fades into the page.
-static const CGFloat SurcoEdgeFade = 40;
+// The soft edge below the header, where the blur fades into the page: a short band, so the
+// page shows right under the header rather than a long haze.
+static const CGFloat SurcoEdgeFade = 20;
 // view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
 static const CGFloat SurcoHeaderHeight = 56;
 // mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
@@ -328,14 +329,17 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     CGRect bounds = _view.bounds;
     CGRect frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
     _backdrop.frame = frame;
-    // The first blur reaches below the header, the last only covers the status bar.
+    // Each blur is whole down to the header's edge and fades over the band below it, the
+    // first through all of it and the others sooner, so the page is clear just under it.
+    CGFloat height = MAX(1, frame.size.height);
     for (NSUInteger index = 0; index < _backdropMasks.count; index++) {
         SurcoGradientView *mask = _backdropMasks[index];
         UIView *blur = _backdrop.subviews[index];
         blur.frame = _backdrop.bounds;
         mask.frame = blur.bounds;
-        double end = 1.0 - 0.2 * index;
-        mask.gradient.locations = @[@0, @(MAX(0, end - 0.45)), @(end)];
+        double end = MIN(1, (edge + SurcoEdgeFade * (1.0 - 0.4 * index)) / height);
+        double start = MAX(0, end - SurcoEdgeFade / height);
+        mask.gradient.locations = @[@0, @(start), @(end)];
     }
     CGFloat channel[3] = {18, 18, 18};
     for (NSUInteger index = 0; index < 3 && index < tint.count; index++) {

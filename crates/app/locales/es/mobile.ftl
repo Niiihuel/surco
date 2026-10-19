@@ -193,3 +193,5 @@ mobile-eq-preamp = Previo
 mobile-eq-reset = Restablecer
 mobile-eq-reset-detail = Bandas y previo a 0 dB
 mobile-eq-preamp-note = El previo sube o baja todo antes de las bandas.
+mobile-search-start = Escuchá lo que te gusta
+mobile-search-start-detail = Buscá artistas, canciones o álbumes.

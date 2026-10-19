@@ -41,6 +41,17 @@ pub(super) fn inside_cross(field: Element, id: &str, label: &str, palette: Compo
     Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), cross])])
 }
 
+/// Spotify's chip on a phone: a 32pt pill, lit while chosen, on a touch target of full
+/// height, its words on one line.
+pub(in crate::view) fn chip(id: String, label: &str, on: bool, role: limn::Role, palette: ComponentPalette) -> Element {
+    let copy = Text::new(label, palette).font_size(14.0).render().foreground(if on { SCHEME.canvas } else { palette.text }).centered_y();
+    let edge = || Element::spacer().size(Some(14.0), None);
+    let pill = Element::panel(Element::row(vec![edge(), copy, edge()]))
+        .background(if on { palette.text } else { Color::rgb(42, 42, 42) }).pressed_background(if on { ROUND_HELD } else { Color::rgb(62, 62, 62) })
+        .radius(16.0).size(None, Some(32.0));
+    Element::clickable(id, pill.centered_y()).accessible(limn::Access::new(role).name(label).selected(on)).size(None, Some(TAP))
+}
+
 /// The account's face in a tab's header.
 const ACCOUNT_FACE: f32 = 32.0;
 
@@ -52,13 +63,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let searching = state.page == Page::Search && state.mobile_search;
     let title = title(state);
     let mut header = Vec::new();
-    // The account's face where a tab starts, as Spotify's on a phone: it opens the profile.
-    if !state.can_go_back() && matches!(state.page, Page::Search | Page::Library) && !state.mobile_search {
+    // Where a tab starts there is no way back, as Spotify's on a phone: the account's face is
+    // there instead, and opens the profile.
+    let tab = matches!(state.page, Page::Search | Page::Library) && !state.mobile_search;
+    if tab {
         let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
         header.push(face.centered_y());
     }
-    if state.can_go_back() || state.page == Page::Playing {
+    if (state.can_go_back() && !tab) || state.page == Page::Playing {
         header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette));
     }
     let compact_player = state.page == Page::Playing && !state.queue_open && state.mobile_ui.compact_header;

@@ -51,16 +51,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     }
     let chosen = state.search_filter;
     // Spotify's chips: a 32pt pill, lit while chosen, on a touch target of full height.
-    let tab = |key: &str, label: &str, value| {
-        let on = chosen == value;
-        let copy = Text::new(label, palette).font_size(14.0).render().foreground(if on { SCHEME.canvas } else { palette.text }).centered_y();
-        let edge = || Element::spacer().size(Some(14.0), None);
-        let pill = Element::panel(Element::row(vec![edge(), copy, edge()]))
-            .background(if on { palette.text } else { Color::rgb(42, 42, 42) }).pressed_background(if on { ROUND_HELD } else { Color::rgb(62, 62, 62) })
-            .radius(16.0).size(None, Some(32.0));
-        Element::clickable(format!("search-filter:{key}"), pill.centered_y())
-            .accessible(limn::Access::new(limn::Role::Tab).name(label).selected(on)).size(None, Some(TAP))
-    };
+    let tab = |key: &str, label: &str, value| super::chip(format!("search-filter:{key}"), label, chosen == value, limn::Role::Tab, palette);
     // The chips start on the page's 16pt margin and scroll out past both edges.
     let filters = Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(vec![
         tab("all", &t!("common-all"), SearchFilter::All), tab("tracks", &t!("common-songs-heading"), SearchFilter::Tracks),
@@ -156,18 +147,26 @@ fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Opti
 
 fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let mut body = Vec::new();
-    if !state.collection.searches.is_empty() {
-        body.push(Element::row(vec![section(&t!("mobile-recent-searches"), palette).centered_y().flex(1.0),
-            icon("recent-search-clear", Icon::Trash, &t!("mobile-clear-recent-searches"), palette)]).gap(8.0));
-        body.push(Element::column(state.collection.searches.iter().enumerate().map(|(index, searched)| recent(state, index, searched, palette)).collect()));
+    // As Spotify's, and as the desktop's: the tab is the genres to browse; what was searched
+    // lately is where a search starts, once the field is in use.
+    if state.mobile_ui.search_editing {
+        if state.collection.searches.is_empty() {
+            body.push(Element::column(vec![
+                Text::new(t!("mobile-search-start"), palette).font_size(17.0).render().font_family(FontFamily::SansBold).centered_x(),
+                Text::new(t!("mobile-search-start-detail"), palette).muted().render().centered_x(),
+            ]).gap(6.0).padding(32.0));
+        } else {
+            body.push(Element::row(vec![section(&t!("mobile-recent-searches"), palette).centered_y().flex(1.0),
+                icon("recent-search-clear", Icon::Trash, &t!("mobile-clear-recent-searches"), palette)]).gap(8.0));
+            body.push(Element::column(state.collection.searches.iter().enumerate().map(|(index, searched)| recent(state, index, searched, palette)).collect()));
+        }
+        if state.query.contains("://") {
+            body.push(Text::new(t!("mobile-pasted-link"), palette).muted().render());
+        }
+    } else {
+        body.push(section(&t!("mobile-browse-all"), palette));
+        body.push(browse(usize::MAX, width - 32.0, 2, 98.0, palette));
     }
-    if state.query.contains("://") {
-        body.push(Text::new(t!("mobile-pasted-link"), palette).muted().render());
-    }
-    // Focusing the field keeps this page as it is: the keyboard rises over it
-    // instead of the content being swapped while the header collapses.
-    body.push(section(&t!("mobile-browse-all"), palette));
-    body.push(browse(usize::MAX, width - 32.0, 2, 98.0, palette));
     ScrollArea::new("mobile-search-idle", Element::column(body).gap(16.0).padding(16.0)).render().flex(1.0)
 }
 
@@ -343,6 +342,8 @@ mod tests {
     fn recent_searches_are_aligned_suggestion_rows_that_can_be_forgotten_one_by_one() {
         let mut state = phone();
         state.collection.searches = vec!["Soda Stereo".into()];
+        // What was searched shows where a search starts: in the field.
+        state.mobile_ui.search_editing = true;
         let mut tree = UiTree::new(results(&state));
         let frame = tree.layout(Size::new(390.0, 700.0));
         let target = |id: &str| frame.regions.iter().find(|region| region.id == id && region.kind == HitKind::Button).unwrap().rect;
@@ -361,11 +362,11 @@ mod tests {
         tree.handle_event(UiEvent::PointerDown(point));
         assert!(tree.handle_event(UiEvent::PointerUp(point)).iter().any(|action|
             matches!(action, UiAction::Clicked { id } if id == "recent-search-remove:0")));
-        state.mobile_ui.search_editing = true;
-        let editing = UiTree::new(results(&state)).layout(Size::new(390.0, 700.0));
-        assert!(editing.regions.iter().any(|region| region.id == "browse:Rock argentino"),
-            "focusing the field does not swap the page under the rising keyboard");
-        assert!(!editing.commands.iter().any(|command| matches!(command, DrawCommand::Icon { icon: Icon::ArrowRight, .. })));
+        state.mobile_ui.search_editing = false;
+        let tab = UiTree::new(results(&state)).layout(Size::new(390.0, 700.0));
+        assert!(tab.regions.iter().any(|region| region.id == "browse:Rock argentino") && !tab.regions.iter().any(|region| region.id == "recent-search:0"),
+            "the tab is the genres to browse, apart from what was searched");
+        assert!(!tab.commands.iter().any(|command| matches!(command, DrawCommand::Icon { icon: Icon::ArrowRight, .. })));
     }
 
     #[test]

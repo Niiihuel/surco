@@ -193,3 +193,5 @@ mobile-eq-preamp = Preamp
 mobile-eq-reset = Reset
 mobile-eq-reset-detail = Bands and preamp to 0 dB
 mobile-eq-preamp-note = The preamp raises or lowers everything before the bands.
+mobile-search-start = Play what you love
+mobile-search-start-detail = Search for artists, songs or albums.
