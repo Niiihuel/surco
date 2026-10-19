@@ -221,8 +221,9 @@ pub struct Collection {
     pub kept: Vec<Entry>,
     pub recent: Vec<Entry>,
     /// Explicit searches and the results chosen from them, newest first. Typing alone is not
-    /// history.
-    #[serde(default)]
+    /// history. Kept under a key of their own: a build from before results were remembered
+    /// fails on them and would drop the whole collection, so it finds none.
+    #[serde(default, rename = "searched", alias = "searches")]
     pub searches: Vec<Searched>,
     #[serde(default)]
     pub playlists: Vec<Playlist>,
@@ -3457,8 +3458,11 @@ mod tests {
         let mut collection = old.clone();
         collection.searched(Searched::Entry(Entry::Artist(ArtistRef { id: "x".into(), name: "Soda".into(), subscribers: None, artwork_url: None })));
         collection.searched(Searched::Track { track: track("t") });
-        let again: Collection = serde_json::from_str(&serde_json::to_string(&collection).unwrap()).unwrap();
+        let text = serde_json::to_string(&collection).unwrap();
+        let again: Collection = serde_json::from_str(&text).unwrap();
         assert_eq!(again, collection);
+        // A build from before reads what it knows and does not lose the collection over them.
+        assert!(!text.contains("\"searches\""), "the old key is left to the old builds");
     }
 
     /// The covers among what was asked for.
