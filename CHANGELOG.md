@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.9.2
+
+### Fixed
+
+- On iOS, the import, new playlist and Listen on sheets open again.
+- On the desktop, the recent searches stay open under the search field instead of
+  flickering away when it is clicked.
+- The desktop's settings are drawn at the size of its other pages.
+- On iOS the player runs clear to the bottom, with no fade over its last card.
+- While the phone searches, rows the shape of its results pulse instead of "Buscando…".
+
 ## 0.9.1
 
 ### Fixed
