@@ -2601,9 +2601,11 @@ fn mix_page(state: &State, mix: &Mix, width: f32, palette: ComponentPalette) -> 
     page_scroll("mix", washed(state, &cover, Element::column(vec![header, play_buttons(state, None, palette), list]).gap(16.0).padding(12.0)))
 }
 
-/// What goes with a playlist, ten at a time under it as Spotify offers it: a row plays its
-/// song, its button adds it to the end of the list, and the one below trades the ten for
-/// others. Nothing until the catalog has answered.
+/// What goes with a playlist, ten at a time under it as Spotify offers it: its heading and
+/// what it goes by, then rows as the list's own, with the album and an outlined Añadir at
+/// the end; a row plays the ten from it, its button adds it to the end of the list, and the
+/// text button under them, at the end, trades the ten for the next. Nothing until the catalog
+/// has answered.
 fn suggested(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Option<Element> {
     let shown = state.suggestions();
     if shown.is_empty() {
@@ -2611,27 +2613,32 @@ fn suggested(state: &State, playlist: &Playlist, width: f32, palette: ComponentP
     }
     let detail = if playlist.tracks.is_empty() { t!("common-recommended-listening") } else { t!("common-recommended-detail") };
     let heading = Element::column(vec![
-        Text::new(t!("common-recommended"), palette).font_size(24.0).render(),
-        Text::new(detail, palette).muted().render(),
-    ]).gap(4.0);
+        Text::new(t!("common-recommended"), palette).font_size(24.0).render().font_family(FontFamily::SansBold),
+        Text::new(detail, palette).font_size(14.0).muted().render(),
+    ]).gap(5.0);
     if state.mobile {
         return Some(Element::column(vec![heading, mobile::suggested(state, &shown[..shown.len().min(SUGGESTED_SHOWN)], palette)]).gap(12.0));
     }
     let columns = vec![
         TableColumn::flexible("title", t!("common-title"), TITLE_MIN),
         TableColumn::fixed("album", t!("common-album"), state.album_width).hide_below(ALBUM_FROM),
-        TableColumn::fixed("add", "", 96.0).align_end(),
+        TableColumn::fixed("add", "", 112.0).align_end(),
     ];
+    // Spotify's small secondary button: a pill outlined in grey on nothing, 32 tall.
+    let outlined = ComponentPalette { surface: Color::TRANSPARENT, hover: Color::rgba(255, 255, 255, 14), selected: Color::rgba(255, 255, 255, 28), border: Color::rgb(124, 124, 124), ..palette };
     let rows = shown.iter().take(SUGGESTED_SHOWN).enumerate().map(|(index, track)| {
+        let row = format!("suggested:{index}");
         let copy = Element::column(vec![
             Text::new(&track.title, palette).font_size(TRACK_ROW.title_size).truncate().render(),
             Text::new(&track.artist, palette).font_size(TRACK_ROW.subtitle_size).muted().truncate().render(),
         ]).gap(TRACK_ROW.copy_gap).flex(1.0).centered_y();
         let add = format!("suggested-add:{index}");
-        let button = Button::new(&add, t!("common-recommended-add"), palette).variant(ButtonVariant::Secondary).size(ControlSize::Compact).round()
+        let button = Button::new(&add, t!("common-recommended-add"), outlined).variant(ButtonVariant::Outline)
+            .sizing(limn::ButtonSizing { height: 32.0, font_size: 14.0, horizontal_padding: 16.0, ..ControlSize::Regular.button_sizing() }).round()
             .tooltip(t!("common-recommended-add-title", title = track.title.as_str())).render();
-        TableRow::new(format!("suggested:{index}"), vec![
-            Element::row(vec![cover(state, &track.artwork_url, COVER, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0),
+        TableRow::new(&row, vec![
+            // Its cover plays it under the pointer and sounds while it plays, as the list's.
+            Element::row(vec![sleeve(state, &row, track, palette).centered_y(), copy]).gap(TRACK_ROW.gap).flex(1.0),
             Text::new(track.album.as_deref().unwrap_or_default(), palette).muted().truncate().render(),
             Element::row(vec![Element::spacer().flex(1.0), button.centered_y()]),
         ]).controls([add])
@@ -2639,11 +2646,14 @@ fn suggested(state: &State, playlist: &Playlist, width: f32, palette: ComponentP
     // No heads: the rows read as more of the list above them.
     let (_, rows) = Table::new("suggested", columns, table_width(width), palette)
         .rows(rows)
-        .radius(RadiusRole::Card)
+        .radius(RadiusRole::Control)
         .sizing(TableSizing { row_height: TRACK_TABLE_ROW, ..TableSizing::ROOMY })
         .into_parts();
-    let refresh = Button::new("suggested-refresh", t!("common-refresh"), palette).variant(ButtonVariant::Ghost).render();
-    Some(Element::column(vec![Element::spacer().size(None, Some(16.0)), heading, Element::column(rows), Element::row(vec![refresh])]).gap(12.0))
+    let rows = rows.into_iter().map(Element::hover_region).collect();
+    let refresh = Button::new("suggested-refresh", t!("common-recommended-refresh"), palette).variant(ButtonVariant::Ghost)
+        .ink(palette.muted).size(ControlSize::Regular).round().render();
+    // Thirty above it, as Spotify's, and twenty-four between its parts.
+    Some(Element::column(vec![Element::spacer().size(None, Some(14.0)), heading, Element::column(rows), Element::row(vec![Element::spacer().flex(1.0), refresh])]).gap(24.0))
 }
 
 /// A size on disk as people read it.

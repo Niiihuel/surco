@@ -50,6 +50,7 @@ common-recommended = Recommended
 common-recommended-detail = Based on what's in this playlist
 common-recommended-listening = Based on your listening
 common-recommended-add = Add
+common-recommended-refresh = Refresh
 common-recommended-add-title = Add { $title } to the playlist
 common-refresh = Refresh
 common-patches = Release notes

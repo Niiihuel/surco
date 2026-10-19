@@ -3236,11 +3236,12 @@ impl State {
     fn suggestion_action(&mut self, id: &str) -> Vec<Command> {
         let shown: Vec<Track> = self.suggestions().into_iter().take(SUGGESTED_SHOWN).cloned().collect();
         let picked = |prefix: &str| id.strip_prefix(prefix).and_then(|index| index.parse::<usize>().ok()).and_then(|index| shown.get(index));
-        if let Some(track) = picked("suggested:") {
-            if self.current().is_some_and(|current| current.id == track.id) {
+        // A row plays the ten shown from it, as Spotify's.
+        if let Some(index) = id.strip_prefix("suggested:").and_then(|index| index.parse::<usize>().ok()).filter(|index| *index < shown.len()) {
+            if self.current().is_some_and(|current| current.id == shown[index].id) {
                 return vec![Command::PlayPause];
             }
-            return vec![Command::PlayList { tracks: vec![track.clone()], index: 0 }];
+            return vec![Command::PlayList { tracks: shown, index }];
         }
         let Some(suggested) = self.suggested.as_mut() else { return Vec::new() };
         if let Some(track) = picked("suggested-add:") {
@@ -4313,7 +4314,8 @@ mod tests {
         let Some(Command::Suggest { seeds, known, .. }) = asked.into_iter().find(|command| matches!(command, Command::Suggest { .. })) else { panic!("few are left: more are asked for") };
         assert!(known.contains("s1") && known.contains("s24") && known.contains("s0"), "nothing offered is offered again");
         assert_ne!(seeds[0].id, "s0", "other songs of the list lead");
-        assert_eq!(click(&mut state, "suggested:0"), vec![Command::PlayList { tracks: vec![track("s11")], index: 0 }]);
+        let ten: Vec<Track> = (11..21).map(|index| track(&format!("s{index}"))).collect();
+        assert_eq!(click(&mut state, "suggested:1"), vec![Command::PlayList { tracks: ten, index: 1 }], "a row plays the ten shown from it");
 
         state.apply(Event::Suggested { playlist: 1, tracks: vec![track("s5"), track("n")] });
         assert_eq!(state.suggestions().last().unwrap().id, "n", "what was offered before is left out");
