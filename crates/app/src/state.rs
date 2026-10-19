@@ -803,6 +803,27 @@ fn cover_requests<'a>(asked: &mut HashSet<String>, urls: impl IntoIterator<Item 
     urls.filter(|url| asked.insert((*url).clone())).map(|url| Command::FetchArtwork(url.clone())).collect()
 }
 
+/// The action a control of limn's top bar or of the closed panel's strip stands for, under
+/// the id the rest of the app knows it by: `nav:search` is the search, `nav:home` home.
+fn desktop_alias(action: &UiAction) -> Option<UiAction> {
+    let alias = |id: &str| match id {
+        "nav:search" => Some("search"),
+        "nav:search:clear" => Some("search-clear"),
+        "nav:home" => Some("home"),
+        "nav:browse" => Some("browse"),
+        "panel-peek" => Some("toggle-panel-open"),
+        "library-rail:expand" => Some("toggle-library-open"),
+        "library-rail:create" => Some("playlist-new"),
+        _ => None,
+    };
+    match action {
+        UiAction::Clicked { id } => alias(id).map(|id| UiAction::Clicked { id: id.into() }),
+        UiAction::InputChanged { id, value } => alias(id).map(|id| UiAction::InputChanged { id: id.into(), value: value.clone() }),
+        UiAction::Submitted { id, value } => alias(id).map(|id| UiAction::Submitted { id: id.into(), value: value.clone() }),
+        _ => None,
+    }
+}
+
 /// How long the home's wash takes to change colour, and how strong it is at the top.
 const WASH_FADE: Duration = Duration::from_millis(1000);
 const WASH_ALPHA: u8 = 150;
@@ -1439,6 +1460,10 @@ impl State {
                 return commands;
             }
         }
+        // limn's top bar and the closed panel's strip name their controls after themselves;
+        // here they are the controls they stand for.
+        let renamed = desktop_alias(action);
+        let action = renamed.as_ref().unwrap_or(action);
         match action {
             UiAction::CopyRequested { text } => {
                 self.copy = Some(text.clone());
@@ -1512,15 +1537,27 @@ impl State {
             }
             UiAction::DragStarted { id, position } => {
                 self.column_drag = (id == "tracks:resize:album").then_some((position.x, self.album_width));
+                // A folded library is dragged out from its rail.
                 self.resizing = [Side::Left, Side::Right].into_iter().find(|side| side.handle() == id).map(|side| {
-                    (side, position.x, if side == Side::Left { self.left_width } else { self.right_width })
+                    let width = match side { Side::Left if !self.library_open => limn::SideRail::WIDTH, Side::Left => self.left_width, Side::Right => self.right_width };
+                    (side, position.x, width)
                 });
                 Vec::new()
             }
             UiAction::DragMoved { position, .. } => {
                 // The left panel grows as its handle goes right; the right one as its handle goes left.
                 match self.resizing {
-                    Some((Side::Left, from, width)) => self.left_width = Side::Left.width(width + position.x - from),
+                    Some((Side::Left, from, width)) => {
+                        // Dragged narrow enough, the library folds into its rail, and out of it, opens.
+                        let wanted = width + position.x - from;
+                        let open = wanted >= (limn::SideRail::WIDTH + Side::Left.limits().min) / 2.0;
+                        if open != self.library_open {
+                            self.open_side(Side::Left, open);
+                        }
+                        if open {
+                            self.left_width = Side::Left.width(wanted);
+                        }
+                    }
                     Some((Side::Right, from, width)) => self.right_width = Side::Right.width(width - (position.x - from)),
                     None => {}
                 }

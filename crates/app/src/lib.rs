@@ -525,7 +525,9 @@ impl eframe::App for Host {
         }
         // A newly appeared field enters focus_order during layout, before it can take the keyboard.
         if let Some(field) = self.state.focus.take() {
-            self.tree.focus(&field);
+            // On a desktop the search is the top bar's.
+            let field = if field == "search" && !self.state.mobile { search_field(&self.state) } else { field.as_str() };
+            self.tree.focus(field);
         }
         let input = if self.state.mobile { limn_egui::events_with_touch(&ctx, area.min, &input_frame) }
             else { limn_egui::events(&ctx, area.min) };
@@ -565,13 +567,13 @@ impl eframe::App for Host {
         }
         // The field keeps what was typed in it: what the app itself empties or writes there
         // has to be handed to it.
-        if self.tree.input_value("search").is_some_and(|shown| shown != self.state.query) {
-            self.tree.set_input_value("search", self.state.query.clone());
+        if self.tree.input_value(search_field(&self.state)).is_some_and(|shown| shown != self.state.query) {
+            self.tree.set_input_value(search_field(&self.state), self.state.query.clone());
             acted = true;
         }
         // The recent searches drop down from the field while it holds the keyboard, and stay
         // while one of them does: a press on a row takes the keyboard before its click lands.
-        let focused = !self.state.mobile && self.tree.focused_id().is_some_and(|id| id == "search" || id.starts_with("recent-search"));
+        let focused = !self.state.mobile && self.tree.focused_id().is_some_and(|id| id == search_field(&self.state) || id.starts_with("recent-search"));
         if focused != self.state.search_focused {
             self.state.search_focused = focused;
             acted = true;
@@ -699,6 +701,11 @@ impl eframe::App for Host {
             ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
     }
+}
+
+/// The id of the field the search is typed in: the phone's own, or the desktop top bar's.
+fn search_field(state: &state::State) -> &'static str {
+    if state.mobile { "search" } else { "nav:search" }
 }
 
 /// Whether anyone can see the window: always on a desktop, not on a phone in the background.

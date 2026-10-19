@@ -14,7 +14,7 @@ use limn::{
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, ScrollbarAppearance, SearchField, Select, SelectorSizing, Separator, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
-    TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec,
+    TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
 };
 
 use crate::backend::{Release, Target};
@@ -123,11 +123,9 @@ const CHOSEN: Color = Color::rgb(31, 31, 31);
 const PROMO: Color = Color::rgb(36, 36, 36);
 const GAP: f32 = 8.0;
 const PANEL_RADIUS: f32 = 8.0;
-pub(crate) const TOP_BAR_HEIGHT: f32 = 56.0;
-const SEARCH_MAX_WIDTH: f32 = 474.0;
-/// The room each end of the top bar keeps: three header buttons, for the bell, the
-/// settings and the way back to a panel that was shut.
-const TOP_BAR_END: f32 = 80.0;
+pub(crate) const TOP_BAR_HEIGHT: f32 = 64.0;
+/// The widest the top bar's search grows, and the recent searches under it with it.
+const SEARCH_MAX_WIDTH: f32 = 546.0;
 /// The round button's fill under the pointer and while held, and what it shows disabled.
 const ROUND_HOVER: Color = Color::rgb(224, 224, 224);
 const ROUND_HELD: Color = Color::rgb(204, 204, 204);
@@ -136,8 +134,11 @@ const ROUND_OFF_INK: Color = Color::rgb(117, 117, 117);
 const PLAYER_HEIGHT: f32 = 76.0;
 const VOLUME_WIDTH: f32 = 93.0;
 const VOLUME_WIDTH_NARROW: f32 = 64.0;
-/// The library folded to its icons, for a window too narrow to spare it a column.
-const RAIL_WIDTH: f32 = 64.0;
+/// The library folded to its pictures: when the user folds it, and for a window too narrow
+/// to spare it a column.
+const RAIL_WIDTH: f32 = SideRail::WIDTH;
+/// The strip a shut right panel leaves at the window's edge.
+const PEEK_WIDTH: f32 = 40.0;
 const RAIL_BELOW: f32 = 860.0;
 /// From this width the right panel has a column of its own; below it, the queue takes the
 /// content's place.
@@ -218,29 +219,37 @@ pub fn view(state: &State, window: Size) -> Element {
     // keeps the width it has at rest.
     let sliding = |content: Element, whole: f32, shown: f32| surface(Element::row(vec![content.size(Some(whole), None)])).size(Some(shown), None).clip_children();
     let now = std::time::Instant::now();
-    let left_slide = state.library_slide.value(now).clamp(0.0, 1.0);
+    // Folded, the library is a rail of pictures, as Spotify's: when the user folds it, and
+    // always in a window too narrow to spare it a column. Unfolding, it grows out of the rail.
+    let narrow = window.width < RAIL_BELOW;
+    let unfold = if narrow { 0.0 } else { state.library_slide.value(now).clamp(0.0, 1.0) };
     let right_slide = if window.width >= PANEL_FROM { state.panel_slide.value(now).clamp(0.0, 1.0) } else { 0.0 };
-    let rail = window.width < RAIL_BELOW;
+    // Shut, the right panel leaves a strip at the window's edge that peeks at what it holds.
+    let peek = window.width >= PANEL_FROM && right_slide == 0.0;
     // The side panels give way before the content does.
     let right_whole = state.right_width.min(window.width - 4.0 * GAP - RAIL_WIDTH - CONTENT_MIN_WIDTH);
     let right = right_whole * right_slide;
-    let left_whole = if rail { RAIL_WIDTH } else { state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH) };
-    let left = left_whole * left_slide;
-    let handle = |side: Side, slide: f32| {
-        // Only a panel at rest can be resized.
-        if slide < 1.0 || (side == Side::Left && rail) { gap() } else { ResizeHandle::vertical(side.handle(), palette).thickness(GAP).render() }
-    };
+    let left_whole = state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH);
+    let left = RAIL_WIDTH + (left_whole - RAIL_WIDTH) * unfold;
+    // Only a panel at rest can be resized; a folded library is dragged open from its edge.
+    let handle = |side: Side, rest: bool| if rest { ResizeHandle::vertical(side.handle(), palette).thickness(GAP).render() } else { gap() };
 
     let mut columns = vec![gap()];
-    let mut content = window.width - 2.0 * GAP;
-    if left_slide > 0.0 {
-        columns.extend([sliding(library(state, rail, left_whole, palette), left_whole, left), handle(Side::Left, left_slide)]);
-        content -= left + GAP;
+    let mut content = window.width - 2.0 * GAP - left - GAP;
+    let library = if unfold > 0.0 {
+        sliding(library(state, false, left_whole, palette), left_whole, left)
+    } else {
+        surface(library(state, true, RAIL_WIDTH, palette)).size(Some(RAIL_WIDTH), None).clip_children()
+    };
+    columns.extend([library, handle(Side::Left, !narrow && (unfold == 0.0 || unfold == 1.0))]);
+    if peek {
+        // The strip runs to the window's edge, in place of the gap there.
+        content -= PEEK_WIDTH;
     }
     if right_slide > 0.0 {
         content -= right + GAP;
         columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
-        columns.extend([handle(Side::Right, right_slide), sliding(panel(state, palette), right_whole, right)]);
+        columns.extend([handle(Side::Right, right_slide == 1.0), sliding(panel(state, palette), right_whole, right)]);
     } else if state.queue_open && window.width < PANEL_FROM {
         columns.push(surface(panel(state, palette)).flex(1.0));
     } else {
@@ -248,6 +257,14 @@ pub fn view(state: &State, window: Size) -> Element {
         columns.push(surface(pane(state, content, palette)).corner_mask(CANVAS).flex(1.0));
     }
     columns.push(gap());
+    if peek {
+        let strip = PeekPanel::new("panel-peek", panel(state, palette), palette)
+            .side(limn::Side::Right)
+            .width(PEEK_WIDTH)
+            .content_width(right_whole)
+            .accessibility_label(t!("desktop-show-now-playing"));
+        columns.push(strip.render());
+    }
     let window_tree = Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
@@ -890,30 +907,15 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
 /// The side of the chip on the bell's corner.
 const BELL_CHIP: f32 = 14.0;
 
-/// Across the top: the way back, home, and the search in the middle of the window. A side
-/// panel that is shut is opened from here, on its own side.
+/// Across the top, as Spotify's: the way back, a round home and the search in the middle of
+/// the window, and what is new and the settings at the end. limn's own bar.
 fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     // The window's own buttons keep the end the system puts them at.
     let (left, right) = state.caption;
-    let field = SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised()).width((width - 280.0 - 2.0 * left.max(right)).clamp(160.0, SEARCH_MAX_WIDTH)).render().radius(ControlSize::Spacious.height() / 2.0);
-    // What was typed is taken back from a cross at the field's end, filled as the field is so it covers a long text.
-    // An empty field keeps there the way to browse instead.
-    let end = if state.query.is_empty() {
-        IconButton::new("browse", Icon::Grid, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().active(state.page == Page::Browse).tooltip(t!("desktop-browse")).render()
-    } else {
-        IconButton::new("search-clear", Icon::Close, SCHEME.on_raised()).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round().tooltip(t!("common-clear")).render()
-    };
-    let search = Element::stack(vec![field, Element::row(vec![Element::spacer().flex(1.0), end.centered_y()]).padding(6.0)]);
-    let search = recent_searches(state, search, palette).centered_y();
-    let room = |width: f32| (width > 0.0).then(|| Element::spacer().size(Some(width), None));
     // A rule tells the window's buttons apart from the app's.
-    let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render().centered_y());
-    let mut leading: Vec<Element> = room(left).into_iter().chain(rule(left)).collect();
-    if !state.library_open {
-        leading.push(header_button("toggle-library-open", Icon::PanelLeftOpen, TooltipSpec::new(t!("desktop-show-library")).shortcut("Ctrl+B"), palette).render().centered_y());
-    }
-    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render().centered_y());
-    let mut trailing = vec![Element::spacer().flex(1.0)];
+    let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render());
+    let mut leading: Vec<Element> = rule(left).into_iter().collect();
+    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render());
     // The bell is full while it has something to say.
     let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
     let bell = header_button("news", bell, TooltipSpec::new(t!("desktop-news")), palette).active(state.page == Page::News).render();
@@ -926,28 +928,26 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
             Element::stack(vec![bell, Element::row(vec![Element::spacer().flex(1.0), chip])])
         }
     };
-    trailing.push(bell.centered_y());
-    trailing.push(header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(matches!(state.page, Page::Settings | Page::SettingsPart(_))).render().centered_y());
-    if !state.panel_open && width >= PANEL_FROM {
-        trailing.push(header_button("toggle-panel-open", Icon::PanelRightOpen, TooltipSpec::new(t!("desktop-show-now-playing")), palette).render().centered_y());
+    let settings = header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(matches!(state.page, Page::Settings | Page::SettingsPart(_))).render();
+    let trailing: Vec<Element> = vec![bell, settings].into_iter().chain(rule(right)).collect();
+    let bar = TopBar::new(TOP_BAR, &state.query, t!("common-search-placeholder"), palette)
+        .width(width)
+        .caption(left, right)
+        .home_active(state.at_home())
+        .browse_active(state.page == Page::Browse)
+        .home_label(t!("desktop-home"))
+        .browse_label(t!("desktop-browse"))
+        .leading(leading)
+        .trailing(trailing);
+    match recent_searches(state, palette) {
+        Some(panel) => bar.search_popover("recent-searches", panel),
+        None => bar,
     }
-    trailing.extend(rule(right).into_iter().chain(room(right)));
-    // Both ends take the same room, so the search stays in the middle of the window.
-    let end = |children: Vec<Element>| Element::row(children).gap(4.0).size(Some(TOP_BAR_END + left.max(right)), None);
-    Element::panel(
-        Element::row(vec![
-            end(leading),
-            Element::spacer().flex(1.0),
-            header_button("home", Icon::Home, TooltipSpec::new(t!("desktop-home")), palette).round().render().centered_y(),
-            search,
-            Element::spacer().flex(1.0),
-            end(trailing),
-        ])
-        .gap(GAP),
-    )
-    .padding(GAP)
-    .size(None, Some(TOP_BAR_HEIGHT))
+    .render()
 }
+
+/// The id of the window's top bar; its search reports as `nav:search`.
+pub(crate) const TOP_BAR: &str = "nav";
 
 /// A square of the library's size for something with no picture of its own.
 fn library_tile(icon: Icon, palette: ComponentPalette) -> Element {
@@ -1022,10 +1022,13 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let pinned = |key: &str| state.collection.pinned.iter().position(|pinned| pinned == key);
     entries.sort_by_key(|entry| pinned(&entry.key).unwrap_or(usize::MAX));
     if rail {
-        let pictures = entries.into_iter().map(|entry| Element::clickable(entry.id, entry.picture));
-        let shut = header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new(t!("desktop-hide-library")).shortcut("Ctrl+B"), palette);
-        let head = Element::row(vec![Element::spacer().flex(1.0), shut.render().centered_y(), Element::spacer().flex(1.0)]).size(Some(LIBRARY_TILE), Some(40.0));
-        return ScrollArea::new("library", Element::column(std::iter::once(head).chain(pictures).collect()).gap(8.0).padding(8.0)).render();
+        // limn's rail: each entry its picture, named to the right at once under the pointer.
+        let current = entries.iter().find(|entry| entry.here).map(|entry| entry.id.clone());
+        let items = entries.into_iter().map(|entry| SideRailItem::new(entry.id, entry.name).subtitle(entry.about).picture(entry.picture).round(entry.round)).collect();
+        let rail = SideRail::new("library-rail", items, palette).create(t!("common-create-playlist"));
+        // Folded by the user, it unfolds from its head; a window too narrow keeps it folded.
+        let rail = if state.library_open { rail } else { rail.expand(t!("desktop-show-library")) };
+        return match current { Some(id) => rail.current(id), None => rail }.render();
     }
     // A panel is shut from its own header.
     let mut header = vec![
@@ -1322,9 +1325,9 @@ const HOME_WASH: f32 = 320.0;
 /// What was searched lately, dropped down from the desktop's field while it holds the
 /// keyboard with nothing typed, as Spotify's: a row each to search again, its cross under the
 /// pointer, and a way to forget them all below. It goes when the keyboard leaves them.
-fn recent_searches(state: &State, field: Element, palette: ComponentPalette) -> Element {
+fn recent_searches(state: &State, palette: ComponentPalette) -> Option<Element> {
     if !state.recent_searches_shown() {
-        return field;
+        return None;
     }
     let raised = ComponentPalette { surface: SCHEME.raised, ..palette };
     let rows: Vec<Element> = state.collection.searches.iter().enumerate().map(|(index, query)| {
@@ -1344,8 +1347,8 @@ fn recent_searches(state: &State, field: Element, palette: ComponentPalette) -> 
         .padding(8.0).background(SCHEME.raised).radius(8.0)
         .shadow(Color::rgba(0, 0, 0, 77), limn::Point::new(0.0, 16.0), 24.0, 0.0)
         .size(Some(SEARCH_MAX_WIDTH.min(560.0)), None);
-    // Non-modal, so the field keeps the keyboard while it is open and typing goes on in it.
-    Element::popover(field, panel, "recent-searches", PopoverPlacement::BottomStart).popover_non_modal()
+    // The bar floats it non-modal, so the field keeps the keyboard and typing goes on in it.
+    Some(panel)
 }
 
 /// Where a search starts: every genre to browse; what was searched lately drops down from
@@ -1372,7 +1375,10 @@ fn washed(state: &State, artwork: &Option<String>, content: Element) -> Element 
 /// A page of the middle panel. Its bar floats over the page, as Spotify's does, so a
 /// page's wash runs under it to the panel's edge instead of stopping short of a rail.
 fn page_scroll(id: &str, content: Element) -> Element {
-    ScrollArea::new(id, content).appearance(ScrollbarAppearance::overlay()).render().flex(1.0)
+    // Its bar shows while the pointer is over the page or it moves, and fades after, as Spotify's.
+    ScrollArea::new(id, content).appearance(ScrollbarAppearance::overlay()).render()
+        .scrollbar_visibility(limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 300 })
+        .flex(1.0)
 }
 
 fn centered(element: Element) -> Element {
@@ -1398,11 +1404,15 @@ fn headed_shelf(state: &State, id: &str, eyebrow: Option<&str>, title: &str, til
         None => heading(title, palette),
     };
     let header = vec![pad(), heading.flex(1.0), pad()];
-    // Under the tiles, room for the strip's own bar: a tile lit under the pointer stops short of it.
-    let tiles = Element::column(vec![Element::row(tiles).gap(if state.mobile { TILE_GAP } else { 0.0 }), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
-    // Moved by dragging it, or sideways on a touchpad, as Threads' rows: its bar shows only
-    // while it moves.
-    let strip = Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted).scrollbar_visibility(mobile::SCROLL_INDICATOR);
+    let strip = if state.mobile {
+        // A phone's touch has its own pan; under the tiles, room for the strip's bar.
+        let tiles = Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]);
+        Element::horizontal_scroll_2d(id, tiles).drag_to_pan().foreground(palette.muted).scrollbar_visibility(mobile::SCROLL_INDICATOR)
+    } else {
+        // limn's carousel: dragged, or sideways on a touchpad, it glides on when let go, as
+        // Threads' rows; a tile dragged is not opened. The cards' padding is the space between.
+        Carousel::new(id, tiles, palette).gap(0.0).render()
+    };
     Element::column(vec![Element::row(header).gap(4.0), strip]).gap(8.0)
 }
 
@@ -3198,7 +3208,7 @@ mod tests {
     }
 
     #[test]
-    fn a_shut_panel_keeps_the_button_that_opens_it_inside_the_window() {
+    fn a_shut_panel_peeks_from_the_window_edge_and_opens_from_there() {
         let mut state = State::default();
         state.update(&limn::UiAction::Clicked { id: "toggle-panel".into() });
         for width in [1100.0, 1400.0, 2200.0] {
@@ -3206,9 +3216,12 @@ mod tests {
             let mut tree = UiTree::new(view(&state, size));
             let frame = tree.layout(size);
             let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap_or_else(|| panic!("no {id} at {width}"));
-            let (bell, settings, open) = (rect("news"), rect("settings"), rect("toggle-panel-open"));
-            assert!(bell.x + bell.width <= settings.x && settings.x + settings.width <= open.x && open.x + open.width <= width, "at {width}: {bell:?} {settings:?} {open:?}");
+            let (bell, settings, peek) = (rect("news"), rect("settings"), rect("panel-peek"));
+            assert!(bell.x + bell.width <= settings.x && settings.x + settings.width <= width, "at {width}: {bell:?} {settings:?}");
+            assert_eq!(peek.x + peek.width, width, "the strip runs to the window's edge at {width}");
         }
+        state.update(&limn::UiAction::Clicked { id: "panel-peek".into() });
+        assert!(state.panel_open, "the strip opens what it peeks at");
     }
 
     #[test]
@@ -3237,7 +3250,7 @@ mod tests {
         for state in [State::default(), searching, failed, empty] {
             for width in [720.0, 1180.0, 2200.0] {
                 let found = ids(&state, Size::new(width, 700.0));
-                assert!(found.iter().any(|id| id == "search"), "the search field is always there at {width}");
+                assert!(found.iter().any(|id| id == "nav:search"), "the search is always there at {width}");
                 assert!(found.iter().any(|id| id == "volume"));
                 assert!(found.iter().any(|id| id == "queue") && found.iter().any(|id| id == "equalizer"));
                 assert!(found.iter().any(|id| id == "downloads"), "the way to what is kept on disk");
@@ -3293,11 +3306,11 @@ mod tests {
         let size = Size::new(1180.0, 700.0);
         let has = |state: &State, id: &str| ids(state, size).iter().any(|found| found == id);
         let mut state = asked("Cerati");
-        assert!(has(&state, "search-clear") && !has(&state, "browse"), "a typed field ends in the cross that empties it");
+        assert!(has(&state, "nav:search:clear") && has(&state, "nav:browse"), "a typed field has the cross that empties it before the way to browse");
         state.search();
         assert_eq!(state.collection.searches, ["Cerati"], "a search made on the desktop is remembered");
         state.update(&limn::UiAction::Clicked { id: "home".into() });
-        assert!(has(&state, "browse"), "an empty field ends in the way to browse");
+        assert!(has(&state, "nav:browse") && !has(&state, "nav:search:clear"), "an empty field ends in the way to browse");
         state.update(&limn::UiAction::Clicked { id: "browse".into() });
         assert_eq!(state.page, Page::Browse);
         for id in ["browse:Rock argentino", "browse:Pop latino"] {
@@ -3315,11 +3328,11 @@ mod tests {
         // leave the keyboard in the field, frame after frame, with no flicker.
         state.search_focused = false;
         let mut tree = UiTree::new(view(&state, size));
-        let field = tree.layout(size).access.iter().find(|node| node.id == "search").unwrap().rect;
+        let field = tree.layout(size).access.iter().find(|node| node.id == "nav:search").unwrap().rect;
         let point = limn::Point::new(field.x + 40.0, field.y + field.height / 2.0);
         let frame = |state: &mut State, tree: &mut UiTree, event: Option<limn::UiEvent>| {
             for action in event.map(|event| tree.handle_event(event)).unwrap_or_default() { state.update(&action); }
-            state.search_focused = tree.focused_id().is_some_and(|id| id == "search" || id.starts_with("recent-search"));
+            state.search_focused = tree.focused_id().is_some_and(|id| id == "nav:search" || id.starts_with("recent-search"));
             if std::mem::take(&mut state.mobile_ui.blur) { tree.clear_focus(); }
             tree.set_root(view(state, size));
             tree.layout(size);
@@ -3327,7 +3340,7 @@ mod tests {
         frame(&mut state, &mut tree, Some(limn::UiEvent::PointerDown(point)));
         frame(&mut state, &mut tree, Some(limn::UiEvent::PointerUp(point)));
         frame(&mut state, &mut tree, None);
-        assert!(state.recent_searches_shown() && tree.focused_id() == Some("search"), "{:?}", tree.focused_id());
+        assert!(state.recent_searches_shown() && tree.focused_id() == Some("nav:search"), "{:?}", tree.focused_id());
         // A click away, on the page's heading, takes the keyboard and them with it.
         let heading = tree.layout(size).text_layouts().into_iter().find(|block| block.source == "Explorar todo").unwrap().runs[0].rect;
         let away = limn::Point::new(heading.x + 4.0, heading.y + heading.height / 2.0);
@@ -3349,14 +3362,14 @@ mod tests {
             tree.layout(size).regions.iter().find(|region| region.id == id).unwrap().rect
         };
         let mut state = State::default();
-        let (back, settings, search) = (at(&state, "back"), at(&state, "settings"), at(&state, "search"));
+        let (back, settings, search) = (at(&state, "back"), at(&state, "settings"), at(&state, "nav:search"));
         state.caption = (0.0, 138.0);
         assert!(at(&state, "settings").x + at(&state, "settings").width <= size.width - 138.0, "Windows' buttons keep the right end");
         assert_eq!(at(&state, "back"), back);
         state.caption = (72.0, 0.0);
         assert!(at(&state, "back").x >= 72.0, "macOS's lights keep the left end");
         assert_eq!(at(&state, "settings"), settings);
-        assert!((at(&state, "search").x - search.x).abs() < 0.5, "the search stays in the middle");
+        assert!((at(&state, "nav:search").x - search.x).abs() < 0.5, "the search stays in the middle");
     }
 
     #[test]
@@ -3388,7 +3401,7 @@ mod tests {
         assert!(has(&wide, "panel-artist") && has(&wide, "resize:left") && has(&wide, "resize:right"), "three panels and their handles");
         let narrow = at(&state, 700.0);
         assert!(!has(&narrow, "panel-artist") && !has(&narrow, "resize:left"), "one panel beside a rail when narrow");
-        assert!(has(&narrow, "downloads") && has(&narrow, "search"), "the rail and the search are still there");
+        assert!(has(&narrow, "downloads") && has(&narrow, "nav:search"), "the rail and the search are still there");
         state.update(&limn::UiAction::Clicked { id: "queue".into() });
         assert!(has(&at(&state, 1400.0), "upcoming:0") && has(&at(&state, 700.0), "upcoming:0"), "the queue shows at any width");
         assert!(!has(&at(&state, 1400.0), "queue-clear"), "nothing was queued by hand");
@@ -3506,19 +3519,22 @@ mod tests {
     }
 
     #[test]
-    fn each_panel_is_shut_from_its_own_header_and_opened_from_the_bar_above() {
+    fn each_panel_folds_from_its_own_header_and_opens_from_what_it_leaves() {
         let mut state = State::default();
         let at = |state: &State| ids(state, Size::new(1400.0, 700.0));
         let has = |found: &[String], id: &str| found.iter().any(|found| found == id);
         let open = at(&state);
         assert!(has(&open, "toggle-library") && has(&open, "toggle-panel"));
-        assert!(!has(&open, "toggle-library-open") && !has(&open, "toggle-panel-open"));
+        assert!(!has(&open, "library-rail:expand") && !has(&open, "panel-peek"));
         state.update(&limn::UiAction::Clicked { id: "toggle-library".into() });
         state.update(&limn::UiAction::Clicked { id: "toggle-panel".into() });
         let shut = at(&state);
-        assert!(has(&shut, "toggle-library-open") && has(&shut, "toggle-panel-open"), "the bar above opens them: {shut:?}");
-        assert!(!has(&shut, "downloads") && !has(&shut, "resize:left") && !has(&shut, "resize:right"), "nothing of a shut panel is left");
-        assert!(has(&shut, "search") && has(&shut, "home"), "the bars stay");
+        assert!(has(&shut, "library-rail:expand") && has(&shut, "panel-peek"), "the rail and the strip open them: {shut:?}");
+        assert!(has(&shut, "downloads") && has(&shut, "resize:left") && !has(&shut, "resize:right"), "the library folds to its pictures, still dragged open from its edge");
+        assert!(has(&shut, "nav:search") && has(&shut, "nav:home"), "the bars stay");
+        state.update(&limn::UiAction::Clicked { id: "library-rail:expand".into() });
+        state.update(&limn::UiAction::Clicked { id: "panel-peek".into() });
+        assert!(state.library_open && state.panel_open);
     }
 
     #[test]
