@@ -145,6 +145,7 @@ desktop-for-fans-of = Para fans de
 desktop-more-of = Más de
 desktop-news-from-followed = Novedades de tus artistas
 desktop-explore-genres = Explorá géneros
+desktop-forward = Adelante
 desktop-your-mixes = Tus mixes
 desktop-mix = Mix
 desktop-mix-of = Mix de { $artist }

@@ -161,6 +161,8 @@ const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
 const MENU_WIDTH: f32 = 272.0;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
+/// The dot under a control of the playback bar that is on.
+const ACTIVE_DOT: f32 = 4.0;
 /// The way to what plays, in the right panel: a square with a play in it.
 const NOW_PLAYING_VIEW: &str = include_str!("../assets/icons/square-play.svg");
 /// What the bar's start keeps beside the title and artist: the cover, the heart and the gaps.
@@ -920,7 +922,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     // A rule tells the window's buttons apart from the app's.
     let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render());
     let mut leading: Vec<Element> = rule(left).into_iter().collect();
-    leading.push(header_button("back", Icon::ArrowLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render());
+    // Back and forward as Spotify's: two chevrons, muted where they lead nowhere.
+    leading.push(header_button("back", Icon::ChevronLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render());
+    leading.push(header_button("forward", Icon::ChevronRight, TooltipSpec::new(t!("desktop-forward")), palette).enabled(state.can_go_forward()).render());
     // The bell is full while it has something to say.
     let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
     let bell = header_button("news", bell, TooltipSpec::new(t!("desktop-news")), palette).active(state.page == Page::News).render();
@@ -933,8 +937,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
             Element::stack(vec![bell, Element::row(vec![Element::spacer().flex(1.0), chip])])
         }
     };
-    let settings = header_button("settings", Icon::Settings, TooltipSpec::new(t!("common-settings")), palette).active(matches!(state.page, Page::Settings | Page::SettingsPart(_))).render();
-    let trailing: Vec<Element> = vec![bell, settings].into_iter().chain(rule(right)).collect();
+    let trailing: Vec<Element> = vec![bell, account(state, palette)].into_iter().chain(rule(right)).collect();
     let bar = TopBar::new(TOP_BAR, &state.query, t!("common-search-placeholder"), palette)
         .width(width)
         .caption(left, right)
@@ -950,6 +953,27 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     }
     .render()
 }
+
+/// The account's face at the end of the top bar, as Spotify's: its initial on its colour, and
+/// under it the menu of whose Surco this is and where to go from there.
+fn account(state: &State, palette: ComponentPalette) -> Element {
+    let colour = MIX_STRIPES[state.profile.shown().bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()];
+    let face = Element::panel(Element::text(state.profile.initial()).font_size(14.0).font_family(FontFamily::SansBold).foreground(palette.surface).centered())
+        .background(colour).radius(ACCOUNT_FACE / 2.0).size(Some(ACCOUNT_FACE), Some(ACCOUNT_FACE));
+    // A ring of the bar's own ground, as the face of Spotify's stands on a dark disc.
+    let face = Element::panel(face.centered()).background(CHOSEN).radius(ACCOUNT_RING / 2.0).size(Some(ACCOUNT_RING), Some(ACCOUNT_RING));
+    let anchor = Element::clickable("account", face).accessible(limn::Access::new(limn::Role::Button).name(state.profile.shown()));
+    let item = |id: &str, label: std::borrow::Cow<'static, str>| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label));
+    let entries = vec![
+        DropdownMenuEntry::Heading(state.profile.shown().to_owned().into()),
+        item("settings", t!("common-settings")),
+    ];
+    DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", SCHEME.menu()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
+}
+
+/// The side of the account's face, and of the dark disc it stands on.
+const ACCOUNT_FACE: f32 = 32.0;
+const ACCOUNT_RING: f32 = 48.0;
 
 /// The id of the window's top bar; its search reports as `nav:search`.
 pub(crate) const TOP_BAR: &str = "nav";
@@ -3116,8 +3140,14 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         time(state.player.duration),
     ])
     .gap(8.0);
+    // As Spotify's: muted at rest and lit under the pointer; one that is on is in full ink with
+    // a dot under it.
     let side = |id: &str, icon: Icon, hint: &str, active: bool| {
-        IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact).tooltip(hint).active(active).render().centered_y()
+        let button = IconButton::new(id, icon, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Compact).tooltip(hint)
+            .ink(if active { palette.text } else { palette.muted }).hover_ink(palette.text).render();
+        let dot = Element::spacer().size(Some(ACTIVE_DOT), Some(ACTIVE_DOT)).background(palette.text).radius(ACTIVE_DOT / 2.0);
+        let marked = if active { Element::stack(vec![button, Element::column(vec![Element::spacer().flex(1.0), dot.centered_x()])]) } else { button };
+        marked.centered_y()
     };
     let equalizer = Popover::new(
         side("equalizer", Icon::Sliders, &t!("common-equalizer"), state.equalizer_open),
@@ -3357,7 +3387,7 @@ mod tests {
             let mut tree = UiTree::new(view(&state, size));
             let frame = tree.layout(size);
             let rect = |id: &str| frame.regions.iter().find(|region| region.id == id).map(|region| region.rect).unwrap_or_else(|| panic!("no {id} at {width}"));
-            let (bell, settings, peek) = (rect("news"), rect("settings"), rect("panel-peek"));
+            let (bell, settings, peek) = (rect("news"), rect("account"), rect("panel-peek"));
             assert!(bell.x + bell.width <= settings.x && settings.x + settings.width <= width, "at {width}: {bell:?} {settings:?}");
             assert_eq!(peek.x + peek.width, width, "the strip runs to the window's edge at {width}");
         }
@@ -3503,13 +3533,13 @@ mod tests {
             tree.layout(size).regions.iter().find(|region| region.id == id).unwrap().rect
         };
         let mut state = State::default();
-        let (back, settings, search) = (at(&state, "back"), at(&state, "settings"), at(&state, "nav:search"));
+        let (back, settings, search) = (at(&state, "back"), at(&state, "account"), at(&state, "nav:search"));
         state.caption = (0.0, 138.0);
-        assert!(at(&state, "settings").x + at(&state, "settings").width <= size.width - 138.0, "Windows' buttons keep the right end");
+        assert!(at(&state, "account").x + at(&state, "account").width <= size.width - 138.0, "Windows' buttons keep the right end");
         assert_eq!(at(&state, "back"), back);
         state.caption = (72.0, 0.0);
         assert!(at(&state, "back").x >= 72.0, "macOS's lights keep the left end");
-        assert_eq!(at(&state, "settings"), settings);
+        assert_eq!(at(&state, "account"), settings);
         assert!((at(&state, "nav:search").x - search.x).abs() < 0.5, "the search stays in the middle");
     }
 
@@ -3576,7 +3606,10 @@ mod tests {
                 assert!(found.iter().any(|found| found == id), "{id} is there: {found:?}");
             }
         };
-        has(&state, &["playlist-new", "settings"]);
+        has(&state, &["playlist-new", "account"]);
+        state.update(&limn::UiAction::Clicked { id: "account".into() });
+        has(&state, &["settings"]);
+        state.update(&limn::UiAction::Clicked { id: "account".into() });
         let click = |state: &mut State, id: &str| drop(state.update(&limn::UiAction::Clicked { id: id.into() }));
 
         click(&mut state, "playlist-new");

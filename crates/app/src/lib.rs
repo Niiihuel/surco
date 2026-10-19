@@ -308,6 +308,7 @@ const LEFT_KEY: &str = "left-width";
 const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
 const OUTPUT_KEY: &str = "output";
+const PROFILE_KEY: &str = "profile";
 
 impl eframe::App for Host {
     #[cfg(target_os = "ios")]
@@ -330,6 +331,9 @@ impl eframe::App for Host {
         storage.set_string(RIGHT_KEY, self.state.right_width.to_string());
         storage.set_string(EQUALIZER_KEY, state::equalizer_text(self.state.equalizer));
         storage.set_string(OUTPUT_KEY, self.state.output.clone().unwrap_or_default());
+        if let Ok(profile) = serde_json::to_string(&self.state.profile) {
+            storage.set_string(PROFILE_KEY, profile);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
@@ -862,6 +866,7 @@ pub fn run() -> eframe::Result {
                 let equalizer = storage.get_string(EQUALIZER_KEY).and_then(|text| state::equalizer_from(&text));
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
                 state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
+                state.profile = storage.get_string(PROFILE_KEY).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
             }
             i18n::set(state.settings.language.unwrap_or_else(i18n::Language::system));
             #[cfg(target_os = "ios")]

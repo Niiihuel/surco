@@ -369,6 +369,26 @@ impl Default for Settings {
     }
 }
 
+/// Who uses this Surco: an account that lives on the device, named as its user likes.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Profile {
+    pub name: String,
+}
+
+impl Profile {
+    /// What the account is called: its name, or the app's while it has none.
+    pub fn shown(&self) -> &str {
+        let name = self.name.trim();
+        if name.is_empty() { "Surco" } else { name }
+    }
+
+    /// The letter its face shows.
+    pub fn initial(&self) -> String {
+        self.shown().chars().next().map(|first| first.to_uppercase().collect()).unwrap_or_default()
+    }
+}
+
 /// How far taking a later version in has got.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub enum Updating {
@@ -616,6 +636,8 @@ pub struct State {
     pub page: Page,
     /// The pages behind the current one, the search first.
     history: Vec<Page>,
+    /// The pages gone back from, the latest last: where forward leads, until a page is opened.
+    ahead: Vec<Page>,
     /// The player as the backend last described it.
     pub player: PlayerView,
     /// Where the seek thumb is while it is being dragged.
@@ -652,6 +674,9 @@ pub struct State {
     pub motion: bool,
     pub queue_open: bool,
     pub collection: Collection,
+    pub profile: Profile,
+    /// The account's menu, at the end of the top bar.
+    pub account_open: bool,
     pub filter: Filter,
     /// What the library's rows are searched for.
     pub library_search: String,
@@ -982,6 +1007,7 @@ impl Default for State {
             search_error: None,
             page: Page::Search,
             history: Vec::new(),
+            ahead: Vec::new(),
             player: PlayerView::default(),
             seek_preview: None,
             volume: 0.8,
@@ -1000,6 +1026,8 @@ impl Default for State {
             motion: false,
             queue_open: false,
             collection: Collection::default(),
+            profile: Profile::default(),
+            account_open: false,
             filter: Filter::All,
             library_search: String::new(),
             library_searching: false,
@@ -1131,11 +1159,16 @@ impl State {
         self.search_error = None;
         self.page = Page::Search;
         self.history.clear();
+        self.ahead.clear();
         vec![Command::Search(query)]
     }
 
     pub fn can_go_back(&self) -> bool {
         !self.history.is_empty()
+    }
+
+    pub fn can_go_forward(&self) -> bool {
+        !self.ahead.is_empty()
     }
 
     /// The page being shown as something the library can keep.
@@ -1283,6 +1316,7 @@ impl State {
         if !matches!(leaving, Page::Loading(_) | Page::Failed(..)) {
             self.history.push(leaving);
         }
+        self.ahead.clear();
     }
 
     fn open(&mut self, target: Target) -> Vec<Command> {
@@ -1490,6 +1524,10 @@ impl State {
             if let Some(commands) = self.mobile_action(action) {
                 return commands;
             }
+        }
+        // A choice in the account's menu closes it.
+        if let UiAction::Clicked { id } = action {
+            if id.starts_with("account-") || id == "settings" { self.account_open = false; }
         }
         // limn's top bar and the closed panel's strip name their controls after themselves;
         // here they are the controls they stand for.
@@ -1724,9 +1762,20 @@ impl State {
                 }
                 Vec::new()
             }
+            // As a browser's: back keeps the page left for forward, which a new page forgets.
             "back" => {
                 if let Some(page) = self.history.pop() {
-                    self.page = page;
+                    let left = std::mem::replace(&mut self.page, page);
+                    if !matches!(left, Page::Loading(_) | Page::Failed(..)) {
+                        self.ahead.push(left);
+                    }
+                }
+                Vec::new()
+            }
+            "forward" => {
+                if let Some(page) = self.ahead.pop() {
+                    let left = std::mem::replace(&mut self.page, page);
+                    self.history.push(left);
                 }
                 Vec::new()
             }
@@ -1897,6 +1946,7 @@ impl State {
                 self.mobile_search = false;
                 self.page = Page::Search;
                 self.history.clear();
+                self.ahead.clear();
                 self.query.clear();
                 self.submitted = None;
                 self.searching = false;
@@ -2006,6 +2056,15 @@ impl State {
             "now-share" => {
                 self.sharing = self.current().cloned();
                 self.copied = false;
+                Vec::new()
+            }
+            // The account's menu: whose Surco this is, and its ways out.
+            "account" => {
+                self.account_open = !self.account_open;
+                Vec::new()
+            }
+            "account-dismiss" => {
+                self.account_open = false;
                 Vec::new()
             }
             "now-playing-view" => {
@@ -3201,6 +3260,24 @@ mod tests {
         assert!(state.is_sliding(Instant::now()), "with motion it travels");
         state.restore_sides(false, true);
         assert!(!state.library_open && state.panel_open && !state.is_sliding(Instant::now()));
+    }
+
+    #[test]
+    fn back_keeps_the_page_left_for_forward_until_another_is_opened() {
+        let mut state = State::default();
+        state.page = Page::Liked;
+        click(&mut state, "downloads");
+        assert_eq!(state.page, Page::Downloads);
+        assert!(!state.can_go_forward());
+        click(&mut state, "back");
+        assert_eq!(state.page, Page::Liked);
+        assert!(state.can_go_forward());
+        click(&mut state, "forward");
+        assert_eq!(state.page, Page::Downloads);
+        assert!(state.can_go_back() && !state.can_go_forward());
+        click(&mut state, "back");
+        click(&mut state, "settings");
+        assert!(!state.can_go_forward(), "a page opened forgets where forward led");
     }
 
     #[test]
