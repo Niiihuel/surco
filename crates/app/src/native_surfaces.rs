@@ -436,22 +436,20 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         return Some((format!("missed:{id}"), sheet));
     }
     if let Some(link) = &state.importing {
-        let description = if state.import_unknown { t!("native-import-unknown") } else { "Spotify · Apple Music · YouTube Music".into() };
-        let mut sheet = shell(&t!("native-import-title"), &description, "import-cancel");
-        // Where it comes from, and the way to copy its link there.
+        // UIKit's sheet keeps its editor alone, where its own editing menu is reached; the way to
+        // copy a link, for the app the link pasted is of, is its description.
         let chosen = state.import_source;
-        let sources = state::ImportSource::ALL.map(|source| Action::new(format!("import-source:{}", source.slug()), source.name(), "music.note.list")).to_vec();
         let copy = match chosen {
             state::ImportSource::Spotify => t!("desktop-import-step-copy-spotify"),
             state::ImportSource::Apple => t!("desktop-import-step-copy-apple"),
             state::ImportSource::YouTube => t!("desktop-import-step-copy-youtube"),
         };
-        let steps = format!("1. {}\n2. {copy}\n3. {}", t!("desktop-import-step-open", app = chosen.name()), t!("desktop-import-step-paste"));
-        // The editor first, where UIKit's own editing menu is reached; the guide under it.
+        let description = if state.import_unknown { t!("native-import-unknown").into_owned() } else {
+            format!("1. {}\n2. {copy}\n3. {}", t!("desktop-import-step-open", app = chosen.name()), t!("desktop-import-step-paste"))
+        };
+        let mut sheet = shell(&t!("native-import-title"), &description, "import-cancel");
         sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
-            placeholder: t!("native-import-placeholder").into_owned(), keyboard: "url".into(), paste: true, paste_title: t!("native-paste").into_owned() },
-            Row::Segments { id: "import-source".into(), items: sources, selected: state::ImportSource::ALL.iter().position(|source| *source == chosen).unwrap_or(0) },
-            text(steps, true)];
+            placeholder: t!("native-import-placeholder").into_owned(), keyboard: "url".into(), paste: true, paste_title: t!("native-paste").into_owned() }];
         sheet.actions = vec![Action::new("import-cancel", t!("common-cancel"), "xmark"), Action::new("import-go", t!("common-import"), "square.and.arrow.down")];
         return Some(("import".into(), sheet));
     }
@@ -683,9 +681,8 @@ mod tests {
         state.importing = Some("https://example.com/ñ".into());
         let payload = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
         let json = serde_json::to_value(payload).unwrap();
-        assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 3, "the import form: its editor, the app it comes from, and how to copy its link there");
-        assert_eq!(json["sheet"]["rows"][0]["kind"], "field", "the editor first, where UIKit's editing menu is reached");
-        assert_eq!(json["sheet"]["rows"][1]["kind"], "segments");
+        assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
+        assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
         assert_eq!(json["sheet"]["rows"][0]["paste"], true);
         // UIKit keeps no words of its own: Rust sends each label it shows or speaks.
         assert_eq!(json["sheet"]["rows"][0]["paste_title"], "Pegar");
