@@ -231,6 +231,11 @@ const GENRES: [Genre; 35] = [
     (|| t!("mobile-genre-soundtracks"), "Bandas sonoras de películas", Color::rgb(39, 133, 106)),
 ];
 
+/// The genres by their names and what each searches for.
+pub(in crate::view) fn genres() -> impl Iterator<Item = (Cow<'static, str>, &'static str)> {
+    GENRES.iter().map(|(name, query, _)| (name(), *query))
+}
+
 /// Figma "Card Type - horizontal": a bold title over the genre's color, with an
 /// artwork-like tile tucked into the corner and cropped by the card. The first `count`
 /// genres, `columns` cards to a row of `width`, each `height` tall; the corner tile grows

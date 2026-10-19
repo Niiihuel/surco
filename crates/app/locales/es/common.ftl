@@ -86,3 +86,34 @@ common-settings-sound = Sonido
 common-settings-your-library = Tu biblioteca
 common-settings-bring = Traer música
 common-clear-recent-searches = Eliminar búsquedas recientes
+
+## First run
+common-onboarding-welcome = Te damos la bienvenida a Surco
+common-onboarding-welcome-detail = Tu música, en tu equipo. Sin servidores ni cuentas en la nube.
+common-onboarding-fresh = Empezar de cero
+common-onboarding-bring = Ya tengo Surco en otro dispositivo
+common-onboarding-name = ¿Cómo querés que te llamemos?
+common-onboarding-name-detail = Así aparece en tu perfil. Lo podés cambiar cuando quieras.
+common-onboarding-name-placeholder = Tu nombre
+common-onboarding-genres = ¿Qué te gusta escuchar?
+common-onboarding-genres-detail = Elegí los géneros que quieras. Nos ayudan a mostrarte artistas.
+common-onboarding-artists = Elegí 3 o más artistas que te gusten.
+common-onboarding-artists-detail = Con ellos armamos tu inicio. Al elegir uno aparecen otros parecidos.
+common-onboarding-search = Buscá artistas
+common-onboarding-left = { $count ->
+    [one] Te falta 1
+   *[other] Te faltan { $count }
+}
+common-onboarding-chosen = { $count ->
+    [one] Elegiste 1
+   *[other] Elegiste { $count }
+}
+common-onboarding-next = Siguiente
+common-onboarding-ready = Listo
+common-onboarding-skip = Omitir
+common-onboarding-done = ¡Todo listo, { $name }!
+common-onboarding-done-detail = Armamos tu inicio con lo que elegiste.
+common-onboarding-home = Ir al inicio
+common-onboarding-step = Ir al paso { $step }
+common-onboarding-taste = Volver a elegir artistas
+common-onboarding-taste-detail = Los géneros y artistas con los que se arma tu inicio.

@@ -2,6 +2,7 @@
 //! (`update`) or an answer from the backend (`apply`). Both return the commands to send.
 
 pub(crate) mod mobile;
+pub(crate) mod onboarding;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -327,6 +328,8 @@ pub struct Settings {
     pub translate_lyrics: bool,
     /// The offer to bring music in that greets a first start was answered.
     pub welcomed: bool,
+    /// Whether the first run's steps were gone through, or the account brought in.
+    pub onboarded: bool,
 }
 
 /// The order the library lists what is not pinned in.
@@ -412,7 +415,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false, onboarded: false }
     }
 }
 
@@ -779,6 +782,8 @@ pub struct State {
     pub title_reach: Option<(String, f32, Instant)>,
     /// The dialog that takes the account to another device, while it is open.
     pub handoff: Option<Handoff>,
+    /// The first run's steps, while they are open.
+    pub onboarding: Option<onboarding::Onboarding>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
     /// The window says so each frame.
     pub wide: bool,
@@ -1165,6 +1170,7 @@ impl Default for State {
             clip_ready: None,
             title_reach: None,
             handoff: None,
+            onboarding: None,
             wide: false,
             panel_more_open: false,
             profile_draft: None,
@@ -1817,6 +1823,15 @@ impl State {
                 }
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "onboarding-name" => {
+                if let Some(onboarding) = self.onboarding.as_mut() { onboarding.name = value.chars().take(PROFILE_NAME_MOST).collect(); }
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "onboarding-name" => self.click("onboarding-next"),
+            UiAction::InputChanged { id, value } if id == "onboarding-search" => {
+                self.onboarding_type(value, Instant::now());
+                Vec::new()
+            }
             UiAction::InputChanged { id, value } if id == "handoff-address" => {
                 if let Some(handoff) = self.handoff.as_mut() { handoff.address = value.clone(); }
                 Vec::new()
@@ -1932,6 +1947,9 @@ impl State {
     }
 
     fn click(&mut self, id: &str) -> Vec<Command> {
+        if let Some(commands) = self.onboarding_click(id) {
+            return commands;
+        }
         // A link in what a release says of itself: its address comes last in its id.
         if let Some(link) = id.strip_prefix(RELEASE_LINK) {
             self.open_url = link.splitn(3, ':').nth(2).filter(|address| address.starts_with("https://") || address.starts_with("http://")).map(str::to_owned);
@@ -2370,6 +2388,7 @@ impl State {
                 self.panel_more_open = false;
                 Vec::new()
             }
+            "onboarding-taste" => self.begin_onboarding(true),
             "account-handoff" => {
                 let handoff = Handoff::default();
                 let serve = Command::Serve(self.bundle(handoff.parts));
@@ -2421,7 +2440,12 @@ impl State {
             "handoff-take" => {
                 let Some(handoff) = self.handoff.take() else { return Vec::new() };
                 match handoff.fetched {
-                    Some(Ok(bundle)) => self.take_in(bundle, handoff.parts, handoff.replace),
+                    Some(Ok(bundle)) => {
+                        let commands = self.take_in(bundle, handoff.parts, handoff.replace);
+                        // An account brought in on the first run is the end of its steps.
+                        if self.onboarding.is_some() { self.end_first_run(); }
+                        commands
+                    }
                     _ => Vec::new(),
                 }
             }
@@ -2857,6 +2881,7 @@ impl State {
                 (self.mix, self.because) = (mix, because);
                 covers
             }
+            Event::ArtistsFound { key, artists } => self.onboarding_found(&key, artists),
             Event::Offered(offer) => {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving) { handoff.offer = Some(offer); }
                 Vec::new()

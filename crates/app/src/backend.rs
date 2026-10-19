@@ -82,6 +82,9 @@ pub enum Command {
     StopServing,
     /// Read an account served by another device, at this address.
     Fetch(String),
+    /// Look for artists for the first run's picker: what these searches find, a turn each.
+    /// `key` comes back with them.
+    FindArtists { key: String, queries: Vec<String> },
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
     PlayPause,
@@ -222,6 +225,8 @@ pub enum Event {
     Offered(Result<(Offer, RasterImage), String>),
     /// An account read from another device, its pictures kept with the covers already.
     Fetched(Result<Bundle, String>),
+    /// The artists found for the picker, under the key they were asked for with.
+    ArtistsFound { key: String, artists: Vec<ArtistRef> },
     SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
@@ -685,6 +690,25 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 (shared.reply)(Event::Offered(offered));
             });
         }
+        (Command::FindArtists { key, queries }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let found = join_all(queries.iter().map(|query| shared.youtube.search(query))).await;
+                // shortcut: the catalog lists its own mixes and playlists among artists; told
+                // apart by name until it says what each is.
+                let artist = |artist: &ArtistRef| { let name = artist.name.to_lowercase(); !name.ends_with(" mix") && !name.contains("playlist") };
+                let lists: Vec<Vec<ArtistRef>> = found.into_iter().map(|found| found.map(|found| found.artists.into_iter().filter(artist).collect()).unwrap_or_default()).collect();
+                // A turn each, so that no genre leads the picker.
+                let mut artists: Vec<ArtistRef> = Vec::new();
+                for rank in 0..lists.iter().map(Vec::len).max().unwrap_or(0) {
+                    for artist in lists.iter().filter_map(|list| list.get(rank)) {
+                        if artists.len() < PICKER_MOST && !artists.iter().any(|known| known.id == artist.id) { artists.push(artist.clone()); }
+                    }
+                }
+                (shared.reply)(Event::ArtistsFound { key, artists });
+            });
+        }
+        (Command::FindArtists { key, .. }, Err(_)) => reply(Event::ArtistsFound { key, artists: Vec::new() }),
         (Command::StopServing, Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move { shared.serving.lock().await.take(); });
@@ -1508,6 +1532,9 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
 }
 
 const COVERS_AT_ONCE: usize = 6;
+
+/// The most artists the first run's picker is offered at once.
+const PICKER_MOST: usize = 48;
 
 /// How long another device has to answer, and the most an account from it may weigh.
 const HANDOFF_WAIT: Duration = Duration::from_secs(15);

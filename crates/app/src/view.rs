@@ -2,6 +2,7 @@
 
 mod mobile;
 mod equalizer;
+mod onboarding;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
@@ -280,6 +281,10 @@ const PAGE_TITLE: f32 = 26.0;
 const HERO_TITLE: f32 = 48.0;
 
 pub fn view(state: &State, window: Size) -> Element {
+    // The first run's steps take the whole window; an account brought in comes over them.
+    if let Some(steps) = &state.onboarding {
+        return handoff_dialog(state, onboarding::view(state, steps, window), window.width);
+    }
     if state.mobile {
         return mobile::view(state, window);
     }
@@ -2805,6 +2810,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let bring = group(&t!("common-settings-bring"), vec![
         action("import-open", &t!("desktop-import-settings"), Some(&t!("desktop-import-settings-detail")), Some(chevron()), true, false),
         action("account-handoff", &t!("desktop-handoff"), Some(&t!("desktop-handoff-about")), Some(chevron()), true, false),
+        action("onboarding-taste", &t!("common-onboarding-taste"), Some(&t!("common-onboarding-taste-detail")), Some(chevron()), true, false),
     ], "");
 
     let about = group(&t!("desktop-about"), vec![

@@ -82,6 +82,8 @@ struct Host {
 #[derive(Default)]
 struct Script {
     mobile: bool,
+    /// Open the first run's steps whatever is kept, to see them.
+    onboarding: bool,
     search: Option<String>,
     play: Option<usize>,
     seek: Option<f64>,
@@ -371,8 +373,15 @@ impl eframe::App for Host {
             if self.state.output.is_some() {
                 self.send(vec![Command::Output(self.state.output.clone())]);
             }
-            // A first start offers to bring music in; a scripted run is about something else.
-            self.state.welcome = !self.state.settings.welcomed && self.script.actions.is_empty() && self.script.search.is_none();
+            // A first start goes through its steps, or offers to bring music in; a scripted run
+            // is about something else unless it asks for them.
+            let scripted = !self.script.actions.is_empty() || self.script.search.is_some();
+            self.state.welcome = !self.state.settings.welcomed && !scripted;
+            if self.script.onboarding || (self.state.first_run() && !scripted) {
+                self.state.welcome = false;
+                let commands = self.state.begin_onboarding(false);
+                self.send(commands);
+            }
             let covers = self.state.collection_covers();
             self.send(covers);
             let picks = self.state.ask_picks();
@@ -493,6 +502,11 @@ impl eframe::App for Host {
         self.run_script();
         let commands = self.state.search_tick(Instant::now());
         self.send(commands);
+        let commands = self.state.onboarding_tick(Instant::now());
+        self.send(commands);
+        if let Some(due) = self.state.onboarding_search_due() {
+            ctx.request_repaint_after(due.saturating_duration_since(Instant::now()));
+        }
         let commands = self.state.ask_suggested();
         self.send(commands);
         let commands = self.state.ask_translation();
@@ -822,16 +836,18 @@ pub fn run() -> eframe::Result {
         });
         match argument.as_str() {
             "--mobile" => script.mobile = true,
+            "--onboarding" => script.onboarding = true,
             "--search" => script.search = Some(value()),
             "--play" => script.play = value().parse().ok(),
             "--seek" => script.seek = value().parse().ok(),
-            "--click" | "--slide" => {
+            "--click" | "--slide" | "--type" => {
                 let value = value();
                 let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
                 let action = match what.split_once('=') {
                     Some((id, fraction)) if argument == "--slide" => {
                         UiAction::SliderChanged { id: id.to_owned(), fraction: fraction.parse().unwrap_or(0.0), committed: true }
                     }
+                    Some((id, text)) if argument == "--type" => UiAction::InputChanged { id: id.to_owned(), value: text.to_owned() },
                     _ => UiAction::Clicked { id: what.to_owned() },
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
