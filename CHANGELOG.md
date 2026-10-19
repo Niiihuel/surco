@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.10.2
+
+![The panel of what plays and its menu](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.2/docs/releases/0.10.2/panel-menu.jpg)
+
+### Changed
+
+- A song's name too long for the right panel slides along it, as Spotify's: it rests, goes
+  to its end, rests and comes back.
+- The right panel's menu carries the icons a song's menu has elsewhere, and the button
+  that shuts the panel an icon of Surco's own.
+
+### Fixed
+
+- A menu closes when the page is scrolled outside it.
+- The right panel's like, fullscreen, share, album and artist no longer shared their
+  names with the playback bar's own buttons.
+
 ## 0.10.1
 
 ![What plays, its video tall at the top of the right panel](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.1/docs/screenshots/playing.jpg)
