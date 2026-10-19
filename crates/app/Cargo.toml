@@ -47,6 +47,9 @@ sys-locale = "0.3"
 # over the zbus already in the tree.
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
 notify-rust = "4"
+# MIT. The system's own dialog for a picture of the user's: the desktop portal on Linux, over
+# the zbus already in the tree.
+rfd = "0.17.2"
 
 # MIT/Apache-2.0, already in the tree through winit and wgpu. Registers the app's
 # notifications under its own name, as Windows otherwise files them under PowerShell, and

@@ -209,11 +209,8 @@ pub(in crate::view) fn playlist(
     palette: ComponentPalette,
 ) -> Element {
     let side = cover_side(width);
-    let artwork = playlist
-        .tracks
-        .first()
-        .and_then(|track| track.artwork_url.clone());
-    let picture = if playlist.tracks.is_empty() {
+    let artwork = playlist.cover().cloned();
+    let picture = if artwork.is_none() {
         Element::panel(
             Element::icon(Icon::Playlist)
                 .large_icon(48.0)
@@ -384,6 +381,7 @@ mod tests {
                 id: 7,
                 name: "La playlist de nuestros viajes hasta el amanecer".into(),
                 collaborative: false,
+                picture: None,
                 tracks,
             },
         )

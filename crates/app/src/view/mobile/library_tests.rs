@@ -10,7 +10,7 @@ fn state() -> State {
     state.page = Page::Library;
     state.settings.import_dismissed = true;
     state.collection.kept.push(Entry::Artist(ArtistRef { id: "held".into(), name: "Un artista de nombre muy largo que debe entrar".into(), subscribers: None, artwork_url: None }));
-    state.collection.playlists.push(Playlist { id: 7, name: "Una playlist de nombre largo".into(), collaborative: false, tracks: Vec::new() });
+    state.collection.playlists.push(Playlist { id: 7, name: "Una playlist de nombre largo".into(), collaborative: false, picture: None, tracks: Vec::new() });
     state
 }
 

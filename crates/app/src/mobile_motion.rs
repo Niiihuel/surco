@@ -339,7 +339,7 @@ mod tests {
         let tracks: Vec<_> = (0..30).map(|index| Track {
             id: format!("song-{index}"), title: format!("Canción {index}"), ..state.current().unwrap().clone()
         }).collect();
-        state.collection.playlists.push(Playlist { id: 7, name: "Rutas de madrugada".into(), collaborative: false, tracks: tracks.clone() });
+        state.collection.playlists.push(Playlist { id: 7, name: "Rutas de madrugada".into(), collaborative: false, picture: None, tracks: tracks.clone() });
         vec![
             (Page::Playlist(7), "mobile-playlist", "Rutas de madrugada"),
             (Page::Album(Album { id: "album".into(), title: "Un álbum".into(), artist: "Artista".into(), artist_id: None,

@@ -29,3 +29,4 @@ backend-lyrics-unreachable = We couldn't reach the lyrics service. Check your co
 backend-lyrics-unavailable = The lyrics service isn't available (HTTP { $status }). Try again.
 backend-lyrics-unreadable = The lyrics service sent a response we couldn't read. Try again.
 backend-translation-unreadable = The translation could not be read.
+backend-pictures = Pictures

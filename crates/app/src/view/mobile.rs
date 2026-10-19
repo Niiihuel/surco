@@ -248,7 +248,7 @@ fn page_surface(state: &State) -> (Color, Color) {
         Page::Playing | Page::Lyrics => state.current().and_then(|track| track.artwork_url.as_deref()),
         Page::Album(album) => album.artwork_url.as_deref(),
         Page::Artist(artist) => artist.artwork_url.as_deref(),
-        Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.tracks.first()).and_then(|track| track.artwork_url.as_deref()),
+        Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.cover()).map(String::as_str),
         _ => None,
     };
     let Some(tint) = artwork.and_then(|url| state.tints.get(url)).copied() else { return (SCHEME.canvas, SCHEME.canvas); };
@@ -629,7 +629,7 @@ mod tests {
         for width in [320.0, 390.0, 430.0] {
             let size = Size::new(width, 600.0);
             let mut state = playing_state();
-            state.collection.playlists.push(Playlist { id: 7, name: "Mis viajes".into(), collaborative: false,
+            state.collection.playlists.push(Playlist { id: 7, name: "Mis viajes".into(), collaborative: false, picture: None,
                 tracks: (0..20).map(|index| Track { id: format!("song-{index}"), ..state.current().unwrap().clone() }).collect() });
             state.page = Page::Playlist(7);
             let mut tree = UiTree::new(super::view(&state, size));

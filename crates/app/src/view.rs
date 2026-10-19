@@ -197,6 +197,7 @@ mod glyph {
     pub const FULLSCREEN: &str = include_str!("../assets/icons/glyph/fullscreen.svg");
     pub const VIDEO: &str = include_str!("../assets/icons/glyph/video.svg");
     pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
+    pub const PENCIL: &str = include_str!("../assets/icons/glyph/pencil.svg");
     /// Liking, and liked: a circled plus, and the circle filled with the check cut out of it.
     pub const ADD: &str = include_str!("../assets/icons/glyph/add-circle.svg");
     pub const ADDED: &str = include_str!("../assets/icons/glyph/added-circle.svg");
@@ -429,9 +430,16 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
     let name = TextField::new("profile-name", draft, "Surco", palette).size(ControlSize::Regular).render();
     let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
     let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).render();
+    // As Spotify's profile details: the face beside the name, with the way to change it.
+    let mut choices = vec![Button::new("profile-picture", t!("desktop-choose-photo"), palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render()];
+    if state.profile.picture.is_some() {
+        choices.push(Button::new("profile-picture-remove", t!("desktop-remove-photo"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render());
+    }
+    let face = Element::column(vec![profile_face(state, DIALOG_FACE, palette).centered_x(), Element::column(choices).gap(4.0)]).gap(8.0);
+    let fields = Element::column(FormField::new(t!("desktop-profile-name"), name, palette).sizing(DIALOG_FIELD).rows()).gap(8.0).flex(1.0);
     Modal::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
-        .width(Modal::fit_width(width, 440.0).max(240.0))
-        .body(Element::column(FormField::new(t!("desktop-profile-name"), name, palette).sizing(DIALOG_FIELD).rows()).gap(8.0))
+        .width(Modal::fit_width(width, 480.0).max(240.0))
+        .body(Element::row(vec![face, fields]).gap(16.0))
         .footer(dialog_footer(cancel, save))
         .initial_focus("profile-name")
         .return_focus("profile-edit")
@@ -1034,11 +1042,33 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
 
 /// The account's initial on its colour, the same for a name wherever it shows.
 fn profile_face(state: &State, side: f32, palette: ComponentPalette) -> Element {
+    if let Some(image) = state.profile.picture.as_ref().and_then(|name| state.artwork.get(name)) {
+        return Element::raster_image(image.clone().cover()).radius(side / 2.0).size(Some(side), Some(side));
+    }
     Element::panel(Element::text(state.profile.initial()).font_size(side * 0.44).font_family(FontFamily::SansBold).foreground(palette.surface).centered())
         .background(profile_colour(state))
         .radius(side / 2.0)
         .size(Some(side), Some(side))
 }
+
+/// A picture that is the user's to choose, as Spotify's: under the pointer it darkens and
+/// offers a pencil and the words to choose another.
+fn choosable(id: &str, picture: Element, side: f32, round: bool, palette: ComponentPalette) -> Element {
+    let offer = Element::column(vec![
+        Element::icon(Icon::Custom(glyph::PENCIL)).large_icon(CHOOSE_GLYPH).foreground(palette.text).size(Some(CHOOSE_GLYPH), Some(CHOOSE_GLYPH)).centered_x(),
+        Text::new(t!("desktop-choose-photo"), palette).render().centered_x(),
+    ])
+    .gap(8.0)
+    .centered();
+    let radius = if round { side / 2.0 } else { limn::tokens().radius.control };
+    let veil = Element::panel(offer).background(COVER_SCRIM).radius(radius).size(Some(side), Some(side)).reveal_on_hover(format!("{id}:veil"));
+    Element::clickable(id.to_owned(), Element::stack(vec![picture, veil]))
+        .hover_region()
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-choose-photo")))
+}
+
+/// The pencil over a picture to choose.
+const CHOOSE_GLYPH: f32 = 48.0;
 
 fn profile_colour(state: &State) -> Color {
     MIX_STRIPES[state.profile.shown().bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()]
@@ -1063,7 +1093,8 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     .gap(10.0)
     .flex(1.0)
     .centered_y();
-    let header = Element::row(vec![profile_face(state, side, palette), about]).gap(24.0);
+    let face = if state.mobile { profile_face(state, side, palette) } else { choosable("profile-picture", profile_face(state, side, palette), side, true, palette) };
+    let header = Element::row(vec![face, about]).gap(24.0);
     let mut sections = vec![header];
     let artists: Vec<Element> = discover::top_artists(&collection.heard, crate::state::TOP_ARTISTS).iter().enumerate()
         .map(|(index, track)| tile(state, format!("top-artist:{index}"), &track.artist, Some(t!("common-artist").into_owned()), &track.artwork_url, true, palette))
@@ -1078,7 +1109,7 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
         sections.push(headed_shelf(state, "profile-tracks", None, Some(&t!("desktop-profile-only-you")), &t!("desktop-top-tracks"), tracks, palette));
     }
     let playlists: Vec<Element> = collection.playlists.iter().enumerate()
-        .map(|(index, playlist)| tile(state, format!("playlist:{index}"), &playlist.name, Some(songs(playlist.tracks.len())), &playlist.tracks.first().and_then(|track| track.artwork_url.clone()), false, palette))
+        .map(|(index, playlist)| tile(state, format!("playlist:{index}"), &playlist.name, Some(songs(playlist.tracks.len())), &playlist.cover().cloned(), false, palette))
         .collect();
     if !playlists.is_empty() {
         sections.push(shelf(state, "profile-playlists", &t!("desktop-your-playlists"), playlists, palette));
@@ -1087,6 +1118,8 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     page_scroll("profile", content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH))
 }
 
+/// The face in the dialog of the profile's details.
+const DIALOG_FACE: f32 = 120.0;
 /// The side of the profile's face, and the size of its name, as Spotify's.
 const PROFILE_FACE: f32 = 232.0;
 const PROFILE_NAME: f32 = 72.0;
@@ -1138,12 +1171,12 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             entries.push(LibraryEntry { id: "liked".into(), key: "liked".into(), picture: library_tile(Icon::HeartFill, palette), artwork: None, round: false, name: &liked, about: count, creator: "", here: state.page == Page::Liked });
         }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
-            let picture = match playlist.tracks.first() {
-                Some(track) => cover(state, &track.artwork_url, LIBRARY_TILE, palette),
+            let artwork = playlist.cover();
+            let picture = match artwork {
+                Some(url) => cover(state, &Some(url.clone()), LIBRARY_TILE, palette),
                 None => library_tile(Icon::Playlist, palette),
             };
             let about = format!("{} · {}", if playlist.collaborative { t!("desktop-collaborative-playlist") } else { t!("common-playlist") }, songs(playlist.tracks.len()));
-            let artwork = playlist.tracks.first().and_then(|track| track.artwork_url.as_ref());
             entries.push(LibraryEntry { id: format!("playlist:{index}"), key: format!("playlist:{}", playlist.id), picture, artwork, round: false, name: &playlist.name, about, creator: "", here: state.page == Page::Playlist(playlist.id) });
         }
     }
@@ -2205,7 +2238,7 @@ fn stuck_bar(state: &State, palette: ComponentPalette) -> Option<Element> {
         Page::Album(album) => (album.title.clone(), album.artwork_url.clone()),
         Page::Playlist(id) => {
             let playlist = state.collection.playlist(*id)?;
-            (playlist.name.clone(), playlist.tracks.first().and_then(|track| track.artwork_url.clone()))
+            (playlist.name.clone(), playlist.cover().cloned())
         }
         Page::Liked => (t!("common-liked-songs").into_owned(), None),
         Page::Downloads => (t!("common-downloads").into_owned(), None),
@@ -2286,18 +2319,23 @@ fn length(minutes: u64) -> String {
 fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Element {
     if state.mobile { return mobile::details::playlist(state, playlist, width, palette); }
     let length = length(playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000);
-    let picture = match playlist.tracks.first() {
-        Some(track) => cover(state, &track.artwork_url, ALBUM_COVER, palette),
+    let picture = match playlist.cover() {
+        Some(url) => cover(state, &Some(url.clone()), ALBUM_COVER, palette),
         None => Element::panel(Element::icon(Icon::Playlist).large_icon(48.0).foreground(palette.muted).centered())
             .background(CHOSEN)
             .radius(limn::tokens().radius.control)
             .size(Some(ALBUM_COVER), Some(ALBUM_COVER)),
     };
+    let picture = choosable("playlist-picture", picture, ALBUM_COVER, false, palette);
     // What else a list can do waits behind its dots, as Spotify's.
     let item = |id: &str, label: std::borrow::Cow<'static, str>, icon: Icon| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(icon));
     let copied = state.list_copied == Some(playlist.id);
     let exported = state.list_exported == Some(playlist.id);
-    let mut entries = Vec::new();
+    let mut entries = vec![item("playlist-picture", t!("desktop-choose-photo"), Icon::Custom(glyph::PENCIL))];
+    if playlist.picture.is_some() {
+        entries.push(item("playlist-picture-remove", t!("desktop-remove-photo"), Icon::Close));
+    }
+    entries.push(DropdownMenuEntry::Separator);
     if !playlist.tracks.is_empty() {
         entries.extend([
             item("playlist-share", if copied { t!("common-link-copied") } else { t!("desktop-share") }, Icon::Custom(include_str!("../assets/icons/share-2.svg"))),
@@ -2339,7 +2377,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     };
     let mut sections = vec![header, actions, list];
     sections.extend(suggested(state, playlist, width, palette));
-    let cover = playlist.tracks.first().and_then(|track| track.artwork_url.clone());
+    let cover = playlist.cover().cloned();
     page_scroll("playlist", washed(state, &cover, Element::column(sections).gap(16.0).padding(12.0)))
 }
 

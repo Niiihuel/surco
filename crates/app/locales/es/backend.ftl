@@ -29,3 +29,4 @@ backend-lyrics-unreachable = No pudimos conectar con el servicio de letras. Revi
 backend-lyrics-unavailable = El servicio de letras no está disponible (HTTP { $status }). Volvé a intentar.
 backend-lyrics-unreadable = El servicio de letras envió una respuesta que no pudimos leer. Volvé a intentar.
 backend-translation-unreadable = No se pudo leer la traducción.
+backend-pictures = Imágenes

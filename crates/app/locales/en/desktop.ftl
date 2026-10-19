@@ -329,3 +329,5 @@ desktop-profile-details = Profile details
 desktop-profile-details-detail = Your account's name. It stays on this computer.
 desktop-profile-name = Name
 desktop-profile-edit = Change the name
+desktop-choose-photo = Choose photo
+desktop-remove-photo = Remove photo

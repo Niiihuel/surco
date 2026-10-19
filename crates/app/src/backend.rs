@@ -61,11 +61,20 @@ pub enum Content {
 }
 
 /// What the window asks for.
+/// What a picture of the user's own is for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum PictureFor {
+    Playlist(u64),
+    Profile,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
     Search(String),
     Open(Target),
     FetchArtwork(String),
+    /// Ask the user for a picture of their own, from their files, for a list or the account.
+    PickPicture(PictureFor),
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
     PlayPause,
@@ -200,6 +209,8 @@ pub enum Picks {
 /// order: a result for a query or a page the user already left must be ignored.
 #[derive(Clone, Debug)]
 pub enum Event {
+    /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
+    Picture { of: PictureFor, name: String },
     SearchResults { query: String, found: Found },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
@@ -616,6 +627,20 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::Open(target), Err(message)) => reply(Event::Opened { target, result: Err(message.clone()) }),
+        (Command::PickPicture(of), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let Some(bytes) = pick_picture().await else { return };
+                // Decoding and writing hold the library: off the runtime's two workers.
+                let kept = tokio::task::block_in_place(|| {
+                    let jpeg = square_jpeg(&bytes)?;
+                    let name = format!("surco:picture:{:016x}", fastrand::u64(..));
+                    shared.library.lock().unwrap().keep_cover(&name, &jpeg).ok()?;
+                    Some(name)
+                });
+                if let Some(name) = kept { (shared.reply)(Event::Picture { of, name }); }
+            });
+        }
         (Command::FetchArtwork(url), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -631,7 +656,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         // than half the samples. The engine only fails this when its thread is gone, which the
         // next `Play` reports.
         (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
-        (Command::FetchArtwork(_) | Command::Volume(_), Err(_)) => {}
+        (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
@@ -1426,6 +1451,35 @@ async fn download(shared: Arc<Shared>, audio: Audio, buffer: MediaBuffer) {
 
 const COVERS_AT_ONCE: usize = 6;
 
+/// The side a picture of the user's own is kept at.
+const PICTURE_SIDE: u32 = 640;
+
+/// A picture from the user's files, through the system's own dialog. A phone has its own way.
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
+async fn pick_picture() -> Option<Vec<u8>> {
+    let file = rfd::AsyncFileDialog::new().add_filter(t!("backend-pictures"), &["jpg", "jpeg", "png", "webp"]).pick_file().await?;
+    Some(file.read().await)
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+async fn pick_picture() -> Option<Vec<u8>> {
+    None
+}
+
+/// The middle square of a picture, at most `PICTURE_SIDE` a side, as JPEG.
+fn square_jpeg(bytes: &[u8]) -> Option<Vec<u8>> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let edge = picture.width().min(picture.height());
+    let side = edge.min(PICTURE_SIDE);
+    let square = picture
+        .crop_imm((picture.width() - edge) / 2, (picture.height() - edge) / 2, edge, edge)
+        .resize_exact(side, side, image::imageops::FilterType::Triangle)
+        .to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 88).encode_image(&square).ok()?;
+    Some(jpeg)
+}
+
 /// A cover from the library when it is there, from the network otherwise, where the catalog's
 /// own size would show blurred.
 async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
@@ -1474,6 +1528,17 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 #[cfg(test)]
 mod tests {
     use super::tint_of;
+
+    #[test]
+    fn a_picture_chosen_is_kept_as_its_middle_square() {
+        let mut png = Vec::new();
+        image::RgbImage::from_fn(30, 20, |x, _| image::Rgb([if x < 5 { 255 } else { 0 }, 0, 0]))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let kept = image::load_from_memory(&super::square_jpeg(&png).unwrap()).unwrap();
+        assert_eq!((kept.width(), kept.height()), (20, 20), "no larger than it came");
+        assert!(kept.to_rgb8().get_pixel(0, 10)[0] < 64, "the red edge was cut away");
+        assert!(super::square_jpeg(b"not a picture").is_none());
+    }
 
     #[test]
     fn an_unavailable_audio_engine_answers_device_requests_with_an_error() {

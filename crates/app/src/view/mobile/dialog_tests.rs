@@ -120,7 +120,7 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
         target(&tree(&state, size).layout(size), id, size);
     }
     state.missed_open = false;
-    state.collection.playlists.push(Playlist { id: 1, name: "Una playlist de un nombre muy largo que no debe cubrir los botones al confirmar su eliminación".into(), collaborative: false, tracks: Vec::new() });
+    state.collection.playlists.push(Playlist { id: 1, name: "Una playlist de un nombre muy largo que no debe cubrir los botones al confirmar su eliminación".into(), collaborative: false, picture: None, tracks: Vec::new() });
     state.confirm = Some(Confirm::DeletePlaylist(1));
     let frame = tree(&state, size).layout(size);
     let dialog = frame.access.iter().find(|node| node.id == "confirm-cancel:dialog").unwrap();

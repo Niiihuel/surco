@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use limn::{RasterImage, ScalarSpring, ScalarTransition, SpringMotion, TableSort, UiAction};
 
-use crate::backend::{Command, Content, Event, Footage, Known, Patch, Picks, Release, Target, Taste};
+use crate::backend::{Command, Content, Event, Footage, Known, Patch, Picks, PictureFor, Release, Target, Taste};
 use crate::update::Note;
 use crate::clip::Showing;
 use crate::player::PlayerView;
@@ -234,7 +234,17 @@ pub struct Playlist {
     pub id: u64,
     pub name: String,
     pub collaborative: bool,
+    /// The picture chosen for it, kept with the covers on disk under this name.
+    #[serde(default)]
+    pub picture: Option<String>,
     pub tracks: Vec<Track>,
+}
+
+impl Playlist {
+    /// What shows for the list: the picture chosen for it, or its first song's cover.
+    pub fn cover(&self) -> Option<&String> {
+        self.picture.as_ref().or_else(|| self.tracks.first().and_then(|track| track.artwork_url.as_ref()))
+    }
 }
 
 /// A playlist being made in the dialog.
@@ -376,6 +386,8 @@ impl Default for Settings {
 #[serde(default)]
 pub struct Profile {
     pub name: String,
+    /// The picture chosen for its face, kept with the covers on disk under this name.
+    pub picture: Option<String>,
 }
 
 impl Profile {
@@ -474,6 +486,10 @@ impl Collection {
         self.playlists.iter().find(|playlist| playlist.id == id)
     }
 
+    fn playlist_mut(&mut self, id: u64) -> Option<&mut Playlist> {
+        self.playlists.iter_mut().find(|playlist| playlist.id == id)
+    }
+
     /// The name a playlist takes when it is given none.
     pub fn default_name(&self) -> String {
         t!("state-default-playlist-name", number = self.playlists.len() + 1).into_owned()
@@ -487,7 +503,7 @@ impl Collection {
             "" => self.default_name(),
             name => name.to_owned(),
         };
-        self.playlists.insert(0, Playlist { id, name, collaborative: draft.collaborative, tracks: draft.first.into_iter().collect() });
+        self.playlists.insert(0, Playlist { id, name, collaborative: draft.collaborative, picture: None, tracks: draft.first.into_iter().collect() });
         id
     }
 
@@ -1220,7 +1236,8 @@ impl State {
     /// The covers of everything the library and the home page show.
     pub fn collection_covers(&mut self) -> Vec<Command> {
         let collection = &self.collection;
-        cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork))
+        let pictures = collection.playlists.iter().map(|playlist| &playlist.picture).chain([&self.profile.picture]);
+        cover_requests(&mut self.covers, collection.kept.iter().chain(&collection.recent).map(Entry::artwork).chain(pictures))
     }
 
     /// Opens or closes a side panel, which slides to its place.
@@ -2116,6 +2133,23 @@ impl State {
                 if self.page != Page::Profile { self.go(Page::Profile); }
                 Vec::new()
             }
+            // A picture of its own for the list shown, or for the account, chosen from the
+            // computer's files.
+            "playlist-picture" => match self.page {
+                Page::Playlist(id) => vec![Command::PickPicture(PictureFor::Playlist(id))],
+                _ => Vec::new(),
+            },
+            "playlist-picture-remove" => {
+                if let Page::Playlist(id) = self.page {
+                    if let Some(playlist) = self.collection.playlist_mut(id) { playlist.picture = None; }
+                }
+                Vec::new()
+            }
+            "profile-picture" => vec![Command::PickPicture(PictureFor::Profile)],
+            "profile-picture-remove" => {
+                self.profile.picture = None;
+                Vec::new()
+            }
             "profile-edit" => {
                 self.profile_draft = Some(self.profile.name.clone());
                 Vec::new()
@@ -2518,6 +2552,13 @@ impl State {
                 let covers = cover_requests(&mut self.covers, covers_of(&mix).chain(seeds).chain(because.iter().flat_map(|(_, tracks)| covers_of(tracks))));
                 (self.mix, self.because) = (mix, because);
                 covers
+            }
+            Event::Picture { of, name } => {
+                match of {
+                    PictureFor::Playlist(id) => if let Some(playlist) = self.collection.playlist_mut(id) { playlist.picture = Some(name.clone()) },
+                    PictureFor::Profile => self.profile.picture = Some(name.clone()),
+                }
+                cover_requests(&mut self.covers, [&Some(name)])
             }
             Event::ArtworkMissing(url) => {
                 self.missing_covers.insert(url);
@@ -3331,6 +3372,23 @@ mod tests {
     }
 
     #[test]
+    fn a_picture_chosen_is_the_lists_cover_and_the_accounts_face_until_taken_off() {
+        let mut state = State::default();
+        state.collection.playlists.push(Playlist { id: 3, name: "L".into(), collaborative: false, picture: None, tracks: vec![track("a")] });
+        state.page = Page::Playlist(3);
+        assert_eq!(click(&mut state, "playlist-picture"), vec![Command::PickPicture(PictureFor::Playlist(3))]);
+        let asked = state.apply(Event::Picture { of: PictureFor::Playlist(3), name: "surco:picture:1".into() });
+        assert_eq!(asked, vec![Command::FetchArtwork("surco:picture:1".into())], "it is fetched as a cover");
+        assert_eq!(state.collection.playlist(3).and_then(Playlist::cover).map(String::as_str), Some("surco:picture:1"));
+        click(&mut state, "playlist-picture-remove");
+        assert_eq!(state.collection.playlist(3).and_then(Playlist::cover), track("a").artwork_url.as_ref(), "back to its first song's");
+        state.apply(Event::Picture { of: PictureFor::Profile, name: "surco:picture:2".into() });
+        assert_eq!(state.profile.picture.as_deref(), Some("surco:picture:2"));
+        click(&mut state, "profile-picture-remove");
+        assert!(state.profile.picture.is_none());
+    }
+
+    #[test]
     fn the_profile_opens_from_the_account_and_its_name_is_saved_trimmed() {
         let mut state = State::default();
         click(&mut state, "account-profile");
@@ -3797,7 +3855,7 @@ mod tests {
 
     #[test]
     fn a_playlist_travels_in_its_link_and_arrives_as_a_copy() {
-        let list = Playlist { id: 7, name: "Para el viaje & más".into(), collaborative: false, tracks: vec![track("DdI598gKkKw"), track("abc_-1")] };
+        let list = Playlist { id: 7, name: "Para el viaje & más".into(), collaborative: false, picture: None, tracks: vec![track("DdI598gKkKw"), track("abc_-1")] };
         let link = list_link(&list);
         assert_eq!(link, "surco://lista/DdI598gKkKw,abc_-1?nombre=Para%20el%20viaje%20%26%20m%C3%A1s");
         assert_eq!(shared_list(&format!("  {link} ")), Some(("Para el viaje & más".into(), vec!["DdI598gKkKw".into(), "abc_-1".into()])));
@@ -3866,7 +3924,7 @@ mod tests {
     #[test]
     fn a_playlist_is_offered_ten_songs_at_a_time_to_add_or_trade_for_others() {
         let mut state = State::default();
-        state.collection.playlists.push(Playlist { id: 1, name: "Lista".into(), collaborative: false, tracks: vec![track("a"), track("b")] });
+        state.collection.playlists.push(Playlist { id: 1, name: "Lista".into(), collaborative: false, picture: None, tracks: vec![track("a"), track("b")] });
         assert!(state.ask_suggested().is_empty(), "only on the playlist's page");
         state.page = Page::Playlist(1);
         let Some(Command::Suggest { playlist, seeds, known }) = state.ask_suggested().pop() else { panic!("they are asked for") };

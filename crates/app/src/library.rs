@@ -66,6 +66,13 @@ impl Library {
         fs::read(self.dir.join(file_name(url))).ok()
     }
 
+    /// Keeps a picture with the covers, where `cover` finds it by `name`.
+    // shortcut: a picture replaced stays on disk; sweep the ones nothing names if they pile up.
+    pub fn keep_cover(&mut self, name: &str, bytes: &[u8]) -> io::Result<()> {
+        fs::create_dir_all(&self.dir)?;
+        write(&self.dir.join(file_name(name)), bytes)
+    }
+
     pub fn add(&mut self, track: Track, mime: String, loudness_db: Option<f64>, audio: &[u8], cover: Option<&[u8]>) -> io::Result<()> {
         fs::create_dir_all(&self.dir)?;
         write(&self.dir.join(file_name(&track.id)), audio)?;

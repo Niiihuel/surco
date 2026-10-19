@@ -611,8 +611,8 @@ mod tests {
     #[test]
     fn playlist_menu_opens_the_captured_id_after_library_reordering() {
         let mut state = phone();
-        state.collection.playlists = vec![state::Playlist { id: 7, name: "First".into(), collaborative: false, tracks: Vec::new() },
-            state::Playlist { id: 9, name: "Second".into(), collaborative: false, tracks: Vec::new() }];
+        state.collection.playlists = vec![state::Playlist { id: 7, name: "First".into(), collaborative: false, picture: None, tracks: Vec::new() },
+            state::Playlist { id: 9, name: "Second".into(), collaborative: false, picture: None, tracks: Vec::new() }];
         let frame = UiTree::new(ContextMenu::new("playlist-context", Element::button("playlist:0", "First"), Vec::new(), limn::ComponentPalette::neutral_dark())
             .open_action("entry-more:playlist:0").render()).layout(Size::new(240.0, 160.0));
         let mut controller = Controller::default();
