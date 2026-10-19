@@ -1,5 +1,60 @@
 # Changelog
 
+## 0.10.0
+
+![Home](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/home.jpg)
+
+### Added
+
+- Home is far fuller, and grows the more you listen: mixes made from the artists you play
+  most, a card for the time of day, what you play again and again, picks inspired by what
+  you heard lately, shelves for fans of an artist, more of another, news from the artists
+  you follow, genres to explore and your own albums and artists.
+- A local profile, from the account's menu: its face and name, which you can change, a
+  picture of your own, your most played artists and songs, and your playlists.
+
+![Profile](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/profile.jpg)
+
+- Move to another device: your profile, playlists, likes, library, settings, equalizer
+  and, if you want, what you played, to your phone or another computer on the same
+  network. A phone's camera reads the code; another computer types the address.
+
+![Move to another device](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/handoff.jpg)
+
+- A playlist or your profile can have a picture of your own, chosen from your files.
+- Search shows results as you type: the top result beside its songs, then artists and
+  albums. What you open from it is remembered with its picture.
+- A playlist's recommendations are drawn as Spotify's, and play the ten shown from the one
+  you pick.
+
+![Search](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/search.jpg)
+
+### Changed
+
+- The desktop is laid out as Spotify's: the top bar with home, search and browse, a
+  library that folds into a rail of covers, and a right panel that, shut, leaves a strip
+  that peeks at what plays and pushes the page aside under the pointer.
+- The right panel is Spotify's Now Playing view: the song's video stands tall at its top
+  and keeps playing behind the shut panel's strip, followed by its lyrics, the artist and
+  what comes next.
+- Surco draws its own icons, in the manner of Spotify's: thin strokes, filled only when
+  something is on. A song is liked with a circled plus that fills with a check.
+- Menus, tooltips and dialogs share one look, without outlines; menus scroll with the
+  pages' bar, and a song's lists to add it to open beside its menu.
+- A page's actions are larger, and a playlist's share, export and delete wait behind its
+  dots. Shelves move by dragging or with the touchpad, and fade at their edge.
+- Settings take the whole page, and the playback bar keeps Spotify's order.
+
+![Settings](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/settings.jpg)
+
+![A playlist and its menu](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/playlist.jpg)
+
+### Fixed
+
+- Sound follows the system's output on Windows, macOS and Linux when headphones or
+  speakers come and go.
+- Opening an older Surco after this one keeps your playlists and likes.
+
 ## 0.9.2
 
 ### Fixed
