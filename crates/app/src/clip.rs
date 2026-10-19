@@ -46,6 +46,9 @@ struct Shared {
     fit: Mutex<Fit>,
     clock: Mutex<Clock>,
     stopped: AtomicBool,
+    /// The least time between two frames shown, and when the last one was: a picture barely
+    /// seen needs few of them.
+    pace: Mutex<(Duration, Option<Instant>)>,
 }
 
 impl Shared {
@@ -65,6 +68,11 @@ impl Shared {
     }
 
     fn show(&self, frame: &Frame, repaint: &impl Fn()) {
+        {
+            let mut pace = self.pace.lock().unwrap();
+            if pace.1.is_some_and(|last| last.elapsed() < pace.0) { return; }
+            pace.1 = Some(Instant::now());
+        }
         let fit = *self.fit.lock().unwrap();
         let laid = match fit {
             Fit::Cover { width, height } => covered(frame, width, height),
@@ -96,6 +104,7 @@ impl Screen {
             fit: Mutex::new(fit),
             clock: Mutex::new(Clock { position: 0.0, at: Instant::now(), playing: false }),
             stopped: AtomicBool::new(false),
+            pace: Mutex::new((Duration::ZERO, None)),
         });
         let theirs = shared.clone();
         // A machine that cannot spare a thread goes on showing the cover.
@@ -117,10 +126,11 @@ impl Screen {
         self.shared.backdrop.lock().unwrap().take()
     }
 
-    /// Follows the music: where the song is and whether it plays, and the place the
-    /// picture has, which may change size.
-    pub fn follow(&self, playing: bool, position: f64, fit: Fit) {
+    /// Follows the music: where the song is and whether it plays, the place the picture
+    /// has, which may change size, and the least time between two of its frames.
+    pub fn follow(&self, playing: bool, position: f64, fit: Fit, pace: Duration) {
         *self.shared.fit.lock().unwrap() = fit;
+        self.shared.pace.lock().unwrap().0 = pace;
         let mut clock = self.shared.clock.lock().unwrap();
         // The same word again is no news: the clock goes on counting from when it came.
         if clock.position != position || clock.playing != playing {

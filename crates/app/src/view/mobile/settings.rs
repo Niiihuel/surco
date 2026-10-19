@@ -67,7 +67,8 @@ pub(in crate::view) fn value(text: &str) -> Element {
 }
 
 pub(in crate::view) fn chevron() -> Element {
-    Element::icon(Icon::ChevronRight).foreground(SCHEME.muted)
+    let glyph = if DENSE_PAGE.get() { Icon::Custom(crate::view::glyph::CHEVRON_RIGHT) } else { Icon::ChevronRight };
+    Element::icon(glyph).foreground(SCHEME.muted)
 }
 
 pub(in crate::view) fn switch(title: &str, detail: Option<&str>, id: &str, on: bool) -> Element {
@@ -143,6 +144,19 @@ fn part_about(part: SettingsPart) -> std::borrow::Cow<'static, str> {
 }
 
 fn part_glyph(part: SettingsPart) -> Icon {
+    // A desktop draws Surco's own glyphs; a phone keeps the platform's.
+    if DENSE_PAGE.get() {
+        use crate::view::glyph;
+        return Icon::Custom(match part {
+            SettingsPart::Playback => glyph::VOLUME_HIGH,
+            SettingsPart::Audio => glyph::EQUALIZER,
+            SettingsPart::Devices => glyph::DEVICE,
+            SettingsPart::Display => glyph::DISPLAY,
+            SettingsPart::Library => glyph::LIBRARY,
+            SettingsPart::About => glyph::INFO,
+            SettingsPart::Storage => glyph::DOWNLOAD,
+        });
+    }
     match part {
         SettingsPart::Playback => Icon::Volume,
         SettingsPart::Audio => Icon::ChartBar,

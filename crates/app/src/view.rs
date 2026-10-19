@@ -150,7 +150,7 @@ const PEEK_WIDTH: f32 = 40.0;
 const RAIL_BELOW: f32 = 860.0;
 /// From this width the right panel has a column of its own; below it, the queue takes the
 /// content's place.
-const PANEL_FROM: f32 = 1024.0;
+pub(crate) const PANEL_FROM: f32 = 1024.0;
 /// What the middle panel keeps however wide the user drags the other two.
 const CONTENT_MIN_WIDTH: f32 = 360.0;
 /// The popover: ten band columns of 34 inside its padding.
@@ -168,7 +168,9 @@ const NUMBER_WIDTH: f32 = 24.0;
 const DURATION_WIDTH: f32 = 56.0;
 /// The column of a row's like, as wide as its button.
 const LIKE_WIDTH: f32 = 32.0;
-const MENU_WIDTH: f32 = 272.0;
+const MENU_WIDTH: f32 = 320.0;
+/// The most rows a menu shows before it scrolls.
+const MENU_ROWS: usize = 12;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
 /// The dot under a control of the playback bar that is on.
 const ACTIVE_DOT: f32 = 4.0;
@@ -198,6 +200,15 @@ mod glyph {
     pub const VIDEO: &str = include_str!("../assets/icons/glyph/video.svg");
     pub const PICTURE: &str = include_str!("../assets/icons/glyph/picture.svg");
     pub const PENCIL: &str = include_str!("../assets/icons/glyph/pencil.svg");
+    pub const PLUS: &str = include_str!("../assets/icons/glyph/plus.svg");
+    pub const CHEVRON_RIGHT: &str = include_str!("../assets/icons/glyph/chevron-right.svg");
+    pub const CHEVRON_LEFT: &str = include_str!("../assets/icons/glyph/chevron-left.svg");
+    pub const BELL: &str = include_str!("../assets/icons/glyph/bell.svg");
+    pub const BELL_FILL: &str = include_str!("../assets/icons/glyph/bell-fill.svg");
+    pub const LIBRARY: &str = include_str!("../assets/icons/glyph/library.svg");
+    pub const DISPLAY: &str = include_str!("../assets/icons/glyph/display.svg");
+    pub const INFO: &str = include_str!("../assets/icons/glyph/info.svg");
+    pub const DOWNLOAD: &str = include_str!("../assets/icons/glyph/download.svg");
     /// Liking, and liked: a circled plus, and the circle filled with the check cut out of it.
     pub const ADD: &str = include_str!("../assets/icons/glyph/add-circle.svg");
     pub const ADDED: &str = include_str!("../assets/icons/glyph/added-circle.svg");
@@ -1010,10 +1021,10 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let rule = |width: f32| (width > 0.0).then(|| Separator::vertical(palette).length(20.0).margin(2.0).render());
     let mut leading: Vec<Element> = rule(left).into_iter().collect();
     // Back and forward as Spotify's: two chevrons, muted where they lead nowhere.
-    leading.push(header_button("back", Icon::ChevronLeft, TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render());
-    leading.push(header_button("forward", Icon::ChevronRight, TooltipSpec::new(t!("desktop-forward")), palette).enabled(state.can_go_forward()).render());
+    leading.push(header_button("back", Icon::Custom(glyph::CHEVRON_LEFT), TooltipSpec::new(t!("common-back")), palette).enabled(state.can_go_back()).render());
+    leading.push(header_button("forward", Icon::Custom(glyph::CHEVRON_RIGHT), TooltipSpec::new(t!("desktop-forward")), palette).enabled(state.can_go_forward()).render());
     // The bell is full while it has something to say.
-    let bell = if state.has_news() { Icon::BellFill } else { Icon::Bell };
+    let bell = Icon::Custom(if state.has_news() { glyph::BELL_FILL } else { glyph::BELL });
     let bell = header_button("news", bell, TooltipSpec::new(t!("desktop-news")), palette).active(state.page == Page::News).render();
     // How many things it has to say, on its corner.
     let bell = match state.news_count() {
@@ -1994,23 +2005,36 @@ fn sleeve(state: &State, row: &str, track: &Track, palette: ComponentPalette) ->
 fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) -> (Element, Vec<ContextMenuEntry>) {
     let open = state.menu.as_deref() == Some(row);
     let actions = track_actions(state, row, track);
-    let entries = actions.iter().map(|action| match action {
-        Some(action) => {
-            let item = DropdownMenuItem::new(&action.id, action.label.clone()).icon(action.icon);
-            DropdownMenuEntry::Item(match &action.detail {
-                Some(detail) => item.description(detail),
-                None => item,
-            })
+    // As Spotify's: every action in rows of its own, the lists to add to in a menu beside it.
+    let adds = |action: &Action| action.id.starts_with("do:add-");
+    let mut lists = Vec::new();
+    for action in actions.iter().flatten().filter(|action| adds(action)) {
+        if action.id.starts_with("do:add-new:") {
+            lists.extend([DropdownMenuEntry::Item(DropdownMenuItem::new(&action.id, t!("desktop-new-playlist")).icon(Icon::Custom(glyph::PLUS))), DropdownMenuEntry::Separator]);
+        } else {
+            lists.push(DropdownMenuEntry::Item(DropdownMenuItem::new(&action.id, action.detail.clone().unwrap_or_default())));
         }
-        None => DropdownMenuEntry::Separator,
-    });
+    }
+    let mut entries = Vec::new();
+    for action in &actions {
+        match action {
+            Some(action) if action.id.starts_with("do:add-new:") => entries.push(DropdownMenuEntry::Item(
+                DropdownMenuItem::new(format!("add-to:{row}"), t!("desktop-add-to-playlist")).icon(Icon::Custom(glyph::PLUS)).submenu(std::mem::take(&mut lists)),
+            )),
+            Some(action) if adds(action) => {}
+            Some(action) => entries.push(DropdownMenuEntry::Item(DropdownMenuItem::new(&action.id, action.label.clone()).icon(action.icon))),
+            None => entries.push(DropdownMenuEntry::Separator),
+        }
+    }
     let dots = IconButton::new(format!("more:{row}"), Icon::More, palette).round()
         .variant(ButtonVariant::Ghost)
         .size(ControlSize::Compact)
         .tooltip(t!("common-options"))
         .active(open)
         .render();
-    let menu = DropdownMenu::new(dots, entries.collect(), open, "menu-close", menu_palette())
+    let menu = DropdownMenu::new(dots, entries, open, "menu-close", menu_palette())
+        .sizing(menu_sizing(state))
+        .max_visible_items(MENU_ROWS)
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::BottomEnd)
         .render();
@@ -2468,9 +2492,6 @@ fn megabytes(bytes: u64) -> String {
     if megabytes >= 1024.0 { format!("{:.1} GB", megabytes / 1024.0) } else { format!("{megabytes:.0} MB") }
 }
 
-/// The widest the settings' column grows on a desktop.
-const SETTINGS_WIDTH: f32 = 760.0;
-
 /// What the user can set, in the phone's cards: on a desktop a column of reading width with
 /// its own rows (the output device, the side panels), each control beside its name while
 /// there is room and under it when not.
@@ -2480,7 +2501,8 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     if state.mobile { return mobile::settings::page(state, width); }
     // The desktop's rows and words are the size of its other pages', not the phone's.
     let _dense = mobile::settings::Dense::on();
-    let across = width.min(SETTINGS_WIDTH);
+    // The whole of the pane, as its other pages.
+    let across = width;
     let inner = (across - GUTTER * 4.0).max(0.0);
     let wide = inner >= 560.0;
     let span = if wide { inner.min(288.0) } else { inner };
@@ -2514,9 +2536,11 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     };
     let output = Select::new("setting:output", playing_through, devices.collect(), state.output_open, "setting:output-dismiss", SCHEME.on_raised())
         .menu_palette(menu_palette())
+        .sizing(menu_sizing(state))
         .accessibility_label(t!("desktop-output-device"))
         .size(ControlSize::Spacious)
-        .width(span)
+        .width(if wide { inner.min(MENU_WIDTH + 40.0) } else { inner })
+        .menu_width(if wide { inner.min(MENU_WIDTH + 40.0) } else { inner })
         .render();
     let output_status = if state.outputs_loading {
         t!("desktop-outputs-searching")
@@ -2593,7 +2617,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
         (Display, display), (Display, language), (Library, library), (Library, bring), (About, about), (Storage, erase)];
     let column = Element::column(arrange(state, sections, true, palette)).gap(28.0).padding(GUTTER).size(Some(across), None);
-    page_scroll("settings", Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]))
+    page_scroll("settings", column)
 }
 
 fn results(state: &State, palette: ComponentPalette) -> Element {

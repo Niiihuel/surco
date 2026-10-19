@@ -296,6 +296,8 @@ const SETTLED_FRAME: Duration = Duration::from_millis(if cfg!(target_os = "ios")
 const SETTLED_FRAME_BESIDE_VIDEO: Duration = Duration::from_millis(100);
 /// What drifts by itself, slowly, needs few frames: fifteen a second.
 const AMBIENT_FRAME: Duration = Duration::from_millis(66);
+/// The least time between two frames of the video seen through the shut panel's strip.
+const PEEK_PACE: Duration = Duration::from_millis(125);
 
 /// Its own id, and with it its own settings folder.
 const APP_ID: &str = "surco";
@@ -435,6 +437,7 @@ impl eframe::App for Host {
             mobile_content_insets(area, safe_content, keyboard_inset)
         } else { Default::default() };
         let window = Size::new(area.width(), area.height());
+        self.state.wide = window.width >= view::PANEL_FROM;
 
         // Ctrl+B folds the library, as it folds a sidebar anywhere.
         if ctx.input(|input| input.modifiers.command && input.key_pressed(egui::Key::B)) {
@@ -505,7 +508,9 @@ impl eframe::App for Host {
                     self.clip = Some(clip::Screen::start(name, footage.clone(), showing, fit, move || wake.request_repaint_after(backend::SOON)));
                 }
                 if let Some(screen) = &self.clip {
-                    screen.follow(self.state.player.playing, self.state.player.position, fit);
+                    // Behind the shut panel's strip a few frames a second will do.
+                    let pace = if self.state.peeks() && !self.state.cinema { PEEK_PACE } else { Duration::ZERO };
+                    screen.follow(self.state.player.playing, self.state.player.position, fit, pace);
                     if let Some(frame) = screen.take() {
                         limn_egui::present_surface(&ctx, view::CLIP_SURFACE, frame);
                     }

@@ -701,6 +701,9 @@ pub struct State {
     pub account_open: bool,
     /// Whether the menu behind a page's dots is open.
     pub page_more_open: bool,
+    /// Whether the window has room for the right panel, open or as the strip it leaves shut.
+    /// The window says so each frame.
+    pub wide: bool,
     /// Whether the menu behind the dots of the panel of what plays is open.
     pub panel_more_open: bool,
     /// The account's name while it is being changed.
@@ -1057,6 +1060,7 @@ impl Default for State {
             profile: Profile::default(),
             account_open: false,
             page_more_open: false,
+            wide: false,
             panel_more_open: false,
             profile_draft: None,
             filter: Filter::All,
@@ -2756,9 +2760,15 @@ impl State {
         self.swapped.as_ref().or(self.player.current.as_ref())
     }
 
+    /// Whether the right panel is shut to the strip that peeks at what plays, as Spotify's,
+    /// where its video goes on showing.
+    pub fn peeks(&self) -> bool {
+        !self.mobile && self.wide && !self.panel_open
+    }
+
     /// Whether what plays is somewhere its video is seen, and the user wants videos.
     fn wants_footage(&self) -> bool {
-        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing())
+        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing() || self.peeks())
     }
 
     /// A song's footage is looked for once, while it would be seen and the user wants it.
@@ -3369,6 +3379,16 @@ mod tests {
         assert!(state.is_sliding(Instant::now()), "with motion it travels");
         state.restore_sides(false, true);
         assert!(!state.library_open && state.panel_open && !state.is_sliding(Instant::now()));
+    }
+
+    #[test]
+    fn the_shut_panels_strip_keeps_the_video_where_the_window_has_room_for_it() {
+        let mut state = State { panel_open: false, ..State::default() };
+        assert!(!state.peeks() && !state.wants_footage(), "a narrow window has no strip");
+        state.wide = true;
+        assert!(state.peeks() && state.wants_footage());
+        state.settings.clips = false;
+        assert!(!state.wants_footage(), "nor when videos are off");
     }
 
     #[test]

@@ -331,3 +331,4 @@ desktop-profile-name = Nombre
 desktop-profile-edit = Cambiar el nombre
 desktop-choose-photo = Elegir foto
 desktop-remove-photo = Quitar foto
+desktop-add-to-playlist = Agregar a una playlist
