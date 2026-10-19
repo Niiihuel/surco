@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.10.1
+
+### Changed
+
+- A song among the recent searches plays or pauses from its cover, shows its wave while it
+  sounds, and has its options behind its dots. Clearing the recent searches is a word in
+  the middle.
+
+### Fixed
+
+- A song's video fades in over its cover instead of replacing it at once.
+- The right panel keeps its corners round over the song's video.
+- The cross inside a page's search no longer draws a disc over the field.
+
 ## 0.10.0
 
 ![Home](https://raw.githubusercontent.com/Niiihuel/surco/v0.10.0/docs/releases/0.10.0/home.jpg)
