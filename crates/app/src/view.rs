@@ -1696,6 +1696,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     page_scroll("home", if wash.a == 0 || state.mobile { content } else { content.top_background_fade(wash, HOME_WASH) })
 }
 
+/// How wide a shelf's edge fades where tiles go on past it.
+const SHELF_FADE: f32 = 72.0;
 /// How far down the home its wash reaches.
 const HOME_WASH: f32 = 320.0;
 /// The face beside the heading of a shelf for an artist's fans, as Spotify's.
@@ -1847,7 +1849,8 @@ fn headed_shelf(state: &State, id: &str, leading: Option<Element>, eyebrow: Opti
     } else {
         // limn's carousel: dragged, or sideways on a touchpad, it glides on when let go, as
         // Threads' rows; a tile dragged is not opened. The cards' padding is the space between.
-        Carousel::new(id, tiles, palette).gap(0.0).render()
+        // Its cut edge fades into the page where there is more to see, as Spotify's shelves.
+        Carousel::new(id, tiles, palette).gap(0.0).render().horizontal_edge_fade(palette.surface, SHELF_FADE)
     };
     Element::column(vec![Element::row(header).gap(12.0), strip]).gap(8.0)
 }
