@@ -204,6 +204,11 @@ mod glyph {
     pub const CHEVRON_RIGHT: &str = include_str!("../assets/icons/glyph/chevron-right.svg");
     pub const CHEVRON_LEFT: &str = include_str!("../assets/icons/glyph/chevron-left.svg");
     pub const BELL: &str = include_str!("../assets/icons/glyph/bell.svg");
+    pub const HOME: &str = include_str!("../assets/icons/glyph/home.svg");
+    pub const HOME_FILL: &str = include_str!("../assets/icons/glyph/home-fill.svg");
+    pub const BROWSE: &str = include_str!("../assets/icons/glyph/browse.svg");
+    pub const BROWSE_FILL: &str = include_str!("../assets/icons/glyph/browse-fill.svg");
+    pub const SEARCH: &str = include_str!("../assets/icons/glyph/search.svg");
     pub const BELL_FILL: &str = include_str!("../assets/icons/glyph/bell-fill.svg");
     pub const LIBRARY: &str = include_str!("../assets/icons/glyph/library.svg");
     pub const DISPLAY: &str = include_str!("../assets/icons/glyph/display.svg");
@@ -335,7 +340,7 @@ pub fn view(state: &State, window: Size) -> Element {
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
     let shared = share_dialog(state, window_tree, window.width, palette);
-    let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width, palette), window.width, palette);
+    let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     let whole = update_dialog(state, confirm_dialog(state, welcome_dialog(state, imported, window.width), palette), palette);
     Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
@@ -353,6 +358,12 @@ fn update_toast(state: &State, palette: ComponentPalette) -> Vec<Element> {
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
 const DIALOG_FIELD: FormFieldSizing = FormFieldSizing { label_role: TextRole::Label, hint_role: TextRole::Caption, gap: 8.0, ..FormFieldSizing::DEFAULT };
+
+/// A dialog as Spotify's: its menus' grey with no rule round it, and fields a step lighter
+/// with none either.
+fn dialog_palette() -> ComponentPalette {
+    ComponentPalette { surface: Color::rgb(40, 40, 40), raised: Color::rgb(62, 62, 62), border: Color::rgba(0, 0, 0, 0), ..SCHEME.palette() }
+}
 
 /// A dialog's footer: the way out first, what goes ahead last, at the end.
 fn dialog_footer(cancel: Element, confirm: Element) -> Element {
@@ -404,6 +415,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .return_focus("playlist-new")
         .render();
     }
+    let palette = dialog_palette();
     let dialog = Modal::fit_width(width, 440.0).max(240.0);
     // This dialog is short enough never to scroll: its form reaches both paddings.
     let form = Modal::fitted_body_width(dialog);
@@ -424,8 +436,8 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
     if let Some(track) = &draft.first {
         fields.push(Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette).role(TextRole::Caption).muted().truncate().render());
     }
-    let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
-    let create = Button::new("playlist-create", t!("desktop-create"), palette).size(ControlSize::Regular).render();
+    let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
+    let create = Button::new("playlist-create", t!("desktop-create"), palette).size(ControlSize::Regular).round().render();
     Modal::new(window_tree, true, t!("desktop-new-playlist"), t!("desktop-new-playlist-detail"), "playlist-cancel", palette)
         .width(dialog)
         .body(Element::column(fields).gap(8.0))
@@ -439,9 +451,10 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
 /// reads: sending it, with its code for a phone's camera, the address for another computer and
 /// the parts that go; or receiving one from the address another device shows, and choosing
 /// what of it comes and whether it joins what is here or takes its place.
-fn handoff_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     use mobile::settings::switch;
     let Some(handoff) = &state.handoff else { return window_tree };
+    let palette = dialog_palette();
     let _dense = mobile::settings::Dense::on();
     let dialog = Modal::fit_width(width, 560.0).max(280.0);
     let form = Modal::fitted_body_width(dialog);
@@ -449,7 +462,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     let mut body = vec![tabs];
     let collection = &state.collection;
-    let mut cancel = Button::new("handoff-close", t!("common-close"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
+    let mut cancel = Button::new("handoff-close", t!("common-close"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
     let mut confirm = None;
     if !handoff.receiving {
         match &handoff.offer {
@@ -508,14 +521,14 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
                 rows.push(segments("handoff-mode", form, vec![mode("handoff-mode:add", &t!("desktop-handoff-add"), !handoff.replace), mode("handoff-mode:replace", &t!("desktop-handoff-replace"), handoff.replace)]));
                 rows.push(Text::new(if handoff.replace { t!("desktop-handoff-replace-detail") } else { t!("desktop-handoff-add-detail") }, palette).role(TextRole::Caption).muted().render());
                 body.extend(rows);
-                confirm = Some(Button::new("handoff-take", t!("desktop-handoff-take"), palette).size(ControlSize::Regular).render());
+                confirm = Some(Button::new("handoff-take", t!("desktop-handoff-take"), palette).size(ControlSize::Regular).round().render());
             }
             None => {}
         }
     }
     if confirm.is_none() {
         // Sending, the dialog only closes: the other device does the rest.
-        cancel = Button::new("handoff-close", t!("common-close"), palette).size(ControlSize::Regular).render();
+        cancel = Button::new("handoff-close", t!("common-close"), palette).size(ControlSize::Regular).round().render();
     }
     let footer = match confirm {
         Some(confirm) => dialog_footer(cancel, confirm),
@@ -533,11 +546,12 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
 const HANDOFF_CODE: f32 = 168.0;
 
 /// Changing the account's name.
-fn profile_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(draft) = &state.profile_draft else { return window_tree };
+    let palette = dialog_palette();
     let name = TextField::new("profile-name", draft, "Surco", palette).size(ControlSize::Regular).render();
-    let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
-    let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).render();
+    let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
+    let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).round().render();
     // As Spotify's profile details: the face beside the name, with the way to change it.
     let mut choices = vec![Button::new("profile-picture", t!("desktop-choose-photo"), palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render()];
     if state.profile.picture.is_some() {
@@ -595,14 +609,15 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .initial_focus("import-link")
         .render();
     }
+    let palette = dialog_palette();
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
     let about = if state.import_unknown {
         t!("desktop-import-unknown-detail")
     } else {
         t!("desktop-import-hint")
     };
-    let cancel = Button::new("import-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).render();
-    let go = Button::new("import-go", t!("common-import"), palette).size(ControlSize::Regular).render();
+    let cancel = Button::new("import-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
+    let go = Button::new("import-go", t!("common-import"), palette).size(ControlSize::Regular).round().render();
     let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
     let mut fields: Vec<Element> = FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows();
     fields.push(out);
@@ -643,9 +658,10 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .footer(dialog_footer(copy, close))
         .render();
     }
+    let palette = dialog_palette();
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
-    let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Regular).render();
-    let close = Button::new("import-missed-close", t!("common-close"), palette).size(ControlSize::Regular).render();
+    let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette).variant(ButtonVariant::Ghost).icon(Icon::Copy).size(ControlSize::Regular).round().render();
+    let close = Button::new("import-missed-close", t!("common-close"), palette).size(ControlSize::Regular).round().render();
     Modal::new(window_tree, true, t!("desktop-missed-title"), t!("desktop-missed-detail"), "import-missed-close", palette)
         .width(Modal::fit_width(width, 460.0).max(240.0))
         .body(Element::column(rows).gap(6.0))
@@ -832,7 +848,7 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         .backdrop_dismiss(false)
         .render();
     }
-    AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", palette)
+    AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", dialog_palette())
         .confirm_label(yes)
         .cancel_label(t!("common-cancel"))
         .render()
@@ -956,7 +972,7 @@ fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette)
         body.push(ScrollArea::new("update-notes", Element::column(notes).gap(12.0)).render().size(None, Some(UPDATE_NOTES_ROOM)));
     }
     // No way around it: the other button leads to the release's own page.
-    let dialog = AlertDialog::new(window_tree, true, t!("desktop-update-mandatory"), about, action.0, "update-page", palette).confirm_label(action.1).cancel_label(t!("desktop-see-release")).width(UPDATE_DIALOG);
+    let dialog = AlertDialog::new(window_tree, true, t!("desktop-update-mandatory"), about, action.0, "update-page", dialog_palette()).confirm_label(action.1).cancel_label(t!("desktop-see-release")).width(UPDATE_DIALOG);
     if body.is_empty() { dialog } else { dialog.body(Element::column(body).gap(12.0)) }.render()
 }
 
@@ -1099,7 +1115,7 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         None => (Element::spacer(), String::new()),
     };
     let copy = if state.copied { Button::new("share-copy", t!("common-link-copied"), palette).icon(Icon::Check) } else { Button::new("share-copy", t!("desktop-copy-link"), palette).icon(Icon::Copy) };
-    Modal::new(window_tree, state.sharing.is_some(), t!("common-share-song"), t!("desktop-share-detail"), "share-close", palette)
+    Modal::new(window_tree, state.sharing.is_some(), t!("common-share-song"), t!("desktop-share-detail"), "share-close", dialog_palette())
         .width(Modal::fit_width(width, 420.0))
         .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
         .footer(ButtonGroup::new(vec![copy.size(ControlSize::Regular).render()]).align_end().render())
@@ -1134,6 +1150,9 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
     };
     let trailing: Vec<Element> = vec![bell, account(state, palette)].into_iter().chain(rule(right)).collect();
     let bar = TopBar::new(TOP_BAR, &state.query, t!("common-search-placeholder"), palette)
+        .home_icons(Icon::Custom(glyph::HOME), Icon::Custom(glyph::HOME_FILL))
+        .browse_icons(Icon::Custom(glyph::BROWSE), Icon::Custom(glyph::BROWSE_FILL))
+        .search_icon(Icon::Custom(glyph::SEARCH))
         .width(width)
         .caption(left, right)
         .home_active(state.at_home())
@@ -1333,20 +1352,22 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         // limn's rail: each entry its picture, named to the right at once under the pointer.
         let current = entries.iter().find(|entry| entry.here).map(|entry| entry.id.clone());
         let items = entries.into_iter().map(|entry| SideRailItem::new(entry.id, entry.name).subtitle(entry.about).picture(entry.picture).round(entry.round)).collect();
-        let rail = SideRail::new("library-rail", items, palette).create(t!("common-create-playlist"));
+        let rail = SideRail::new("library-rail", items, palette).create(t!("common-create-playlist"))
+            .library_icon(Icon::Custom(glyph::LIBRARY))
+            .create_icon(Icon::Custom(glyph::PLUS));
         // Folded by the user, it unfolds from its head; a window too narrow keeps it folded.
         let rail = if state.library_open { rail } else { rail.expand(t!("desktop-show-library")) };
         return match current { Some(id) => rail.current(id), None => rail }.render();
     }
     // A panel is shut from its own header.
-    let mut header = vec![
-        Text::new(if state.mobile { t!("desktop-saved-for-you") } else { t!("common-library") }, palette).font_size(15.0).muted().render().centered_y(),
-        Element::spacer().flex(1.0),
-    ];
+    let title = Text::new(if state.mobile { t!("desktop-saved-for-you") } else { t!("common-library") }, palette).font_size(15.0);
+    // As Spotify's on a desktop: the name in bold, beside the glyph that folds the panel.
+    let title = if state.mobile { title.muted().render() } else { title.font_size(16.0).render().font_family(FontFamily::SansBold) };
+    let mut header = vec![title.centered_y(), Element::spacer().flex(1.0)];
     // A phone makes playlists from the page's own bar.
     if !state.mobile {
-        header.push(IconButton::new("playlist-new", Icon::Add, palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(t!("common-create-playlist")).accessibility_label(t!("common-create-playlist")).render().centered_y());
-        header.insert(0, header_button("toggle-library", Icon::PanelLeftClose, TooltipSpec::new(t!("desktop-hide-library")).shortcut("Ctrl+B"), palette).render().centered_y());
+        header.push(IconButton::new("playlist-new", Icon::Custom(glyph::PLUS), palette).round().variant(ButtonVariant::Ghost).size(ControlSize::Dense).tooltip(t!("common-create-playlist")).accessibility_label(t!("common-create-playlist")).render().centered_y());
+        header.insert(0, header_button("toggle-library", Icon::Custom(glyph::LIBRARY), TooltipSpec::new(t!("desktop-hide-library")).shortcut("Ctrl+B"), palette).render().centered_y());
     }
     let header = Element::row(header)
     .gap(8.0)
@@ -1388,7 +1409,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
             vec![field.centered_y().flex(grown), Element::spacer().flex(1.0 - grown)]
         }
     } else {
-        vec![search_button(Icon::Search, &looking), Element::spacer().flex(1.0)]
+        vec![search_button(if state.mobile { Icon::Search } else { Icon::Custom(glyph::SEARCH) }, &looking), Element::spacer().flex(1.0)]
     };
     let (sort, view) = (state.settings.library_sort, state.settings.library_view);
     let choice = |id: &str, label: &str, chosen: bool| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).selected(chosen));
@@ -1731,7 +1752,26 @@ fn page_scroll(id: &str, content: Element) -> Element {
 /// over the content, white at 30%, 50% under the pointer and 70% held, at least 30 long, with
 /// no track. It shows while the pointer is over the panel or it moves, and fades in 0.2 s.
 fn panel_scroll(id: &str, content: Element) -> ScrollArea {
-    let bar = ScrollbarAppearance {
+    ScrollArea::new(id, content).appearance(spotify_bar()).visibility(SPOTIFY_BAR_SHOWS)
+}
+
+/// Every tooltip as Spotify's: its menus' grey, no outline, white words.
+pub(crate) const TOOLTIP: limn::TooltipStyle = limn::TooltipStyle {
+    background: Color::rgb(40, 40, 40),
+    border: Color::rgba(0, 0, 0, 0),
+    keycap: Color::rgb(62, 62, 62),
+    text: Color::WHITE,
+    muted: Color::rgb(179, 179, 179),
+    shadow: Color::rgba(0, 0, 0, 140),
+};
+
+/// When Spotify's bar shows: under the pointer or while it moves, and a moment after.
+const SPOTIFY_BAR_SHOWS: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 200 };
+
+/// Spotify's scrollbar, wherever something scrolls on a desktop: its pages, its panels, its
+/// menus.
+fn spotify_bar() -> ScrollbarAppearance {
+    ScrollbarAppearance {
         rail_width: 14.0,
         thumb_width: 12.0,
         min_thumb_length: 30.0,
@@ -1744,8 +1784,7 @@ fn panel_scroll(id: &str, content: Element) -> ScrollArea {
         // Square, as it is on Windows and Linux.
         thumb_radius: Some(0.0),
         ..ScrollbarAppearance::overlay()
-    };
-    ScrollArea::new(id, content).appearance(bar).visibility(limn::ScrollbarVisibility::AutoHideUnlessHovered { hold_ms: 600, fade_ms: 200 })
+    }
 }
 
 fn centered(element: Element) -> Element {
@@ -2133,6 +2172,8 @@ fn row_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette) 
     let menu = DropdownMenu::new(dots, entries, open, "menu-close", menu_palette())
         .sizing(menu_sizing(state))
         .max_visible_items(MENU_ROWS)
+        .scrollbar(spotify_bar())
+        .scrollbar_visibility(SPOTIFY_BAR_SHOWS)
         .width(MENU_WIDTH)
         .placement(PopoverPlacement::BottomEnd)
         .render();
@@ -2856,7 +2897,7 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
             .shrink_to_fit();
         parts.push(field);
     } else {
-        parts.push(toggle(Icon::Search, &t!("desktop-search-page")));
+        parts.push(toggle(if state.mobile { Icon::Search } else { Icon::Custom(glyph::SEARCH) }, &t!("desktop-search-page")));
     }
     // Beside it, the order the page's tracks are listed in.
     let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());

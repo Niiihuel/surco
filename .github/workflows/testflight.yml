@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  LIMN_REF: 150193aabe04f82283a218d198e820b52b4c7e03 # top bar, carousel, rail and peek
+  LIMN_REF: 6f6ca3f945da29587dfe3939918dcc66770c5878 # host glyphs, tooltip look and menu scrollbar
   # App Store Connect requires SDK 26+. SDK 27 also requires a UIScene migration.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'

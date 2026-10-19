@@ -849,7 +849,7 @@ pub fn run() -> eframe::Result {
             // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4.
             if !mobile {
                 let tokens = limn::tokens();
-                limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, ..tokens });
+                limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, tooltip: Some(view::TOOLTIP), ..tokens });
             }
             // Beside the settings; without a place of its own the library lasts the session.
             let data = data.join("offline");
