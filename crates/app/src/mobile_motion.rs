@@ -108,12 +108,12 @@ impl Motion {
             if let Some((drawn, at)) = self.search_drawn {
                 if now.saturating_duration_since(at) > STALL && self.search.is_active(at) { self.search.snap_to(drawn, now); }
             }
-            self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { HEADER }, now, RETURN, reduced);
+            self.search.retarget_with_motion(if state.mobile_search_compact() { 0.0 } else { crate::view::mobile_search_header(state) }, now, RETURN, reduced);
             let height = self.search.value(now);
             self.search_drawn = Some((height, now));
             state.mobile_ui.search_header = Some(height);
         } else {
-            self.search.snap_to(HEADER, now);
+            self.search.snap_to(crate::view::mobile_search_header(state), now);
             self.search_drawn = None;
             state.mobile_ui.search_header = None;
         }
@@ -260,8 +260,14 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         Page::Album(_) | Page::Artist(_) | Page::Playlist(_) => Some("mobile-detail-title"),
         _ => None,
     };
-    let compact = state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER);
-    let scrolled = state.mobile && tree.anchor_offset(crate::view::PAGE_TOP).is_some_and(|top| top < -0.5);
+    let scroll = if state.mobile { tree.anchor_offset(crate::view::PAGE_TOP).map_or(0.0, |top| (-top).max(0.0)) } else { 0.0 };
+    let searching = state.page == Page::Search && state.mobile_search;
+    // A large title gives the bar its name once it has scrolled up under it, as UIKit's does.
+    let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
+        else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
+    let scrolled = scroll > 0.5;
+    // Followed every frame by the native title, without laying the page out again.
+    state.mobile_ui.page_scroll = if searching { 0.0 } else { scroll };
     let moved = std::mem::replace(&mut state.mobile_ui.scrolled, scrolled) != scrolled;
     std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved
 }
@@ -355,6 +361,27 @@ mod tests {
     fn paint_header(motion: &mut Motion, state: &mut State, tree: &mut UiTree, size: Size, now: Instant) -> Frame {
         motion.advance(state, size, now);
         crate::layout_view(state, tree, size)
+    }
+
+    #[test]
+    fn a_large_title_names_the_bar_once_it_has_scrolled_under_it() {
+        let now = Instant::now();
+        let size = Size::new(402.0, 420.0);
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.page = Page::Settings;
+        let mut motion = Motion::new(now);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.set_reduced_motion(true);
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(!state.mobile_ui.compact_header && state.mobile_ui.page_scroll == 0.0, "at rest the title is large");
+
+        tree.scroll_to_end("settings");
+        tree.layout(size);
+        paint_header(&mut motion, &mut state, &mut tree, size, now);
+        assert!(state.mobile_ui.page_scroll > crate::view::MOBILE_LARGE_TITLE, "the title follows the page up");
+        assert!(state.mobile_ui.compact_header && state.mobile_ui.scrolled, "and the bar takes its name");
     }
 
     #[test]

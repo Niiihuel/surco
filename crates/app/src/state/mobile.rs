@@ -73,6 +73,8 @@ pub(crate) struct MobileUi {
     pub compact_header: bool,
     /// Whether the page has scrolled under the header.
     pub scrolled: bool,
+    /// How far the page has scrolled, which carries the native large title up with it.
+    pub page_scroll: f32,
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,

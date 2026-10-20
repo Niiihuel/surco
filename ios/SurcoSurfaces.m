@@ -11,8 +11,8 @@ static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSD
 static const CGFloat SurcoEdgeFade = 16;
 // view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
 static const CGFloat SurcoHeaderHeight = 56;
-// mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
-static const NSTimeInterval SurcoSearchMotion = 0.22;
+// view.rs MOBILE_LARGE_TITLE: the large title's row beneath the bar.
+static const CGFloat SurcoLargeTitleHeight = 52;
 static BOOL SurcoDeliverPaste(NSString *text, void (^receive)(NSString *)) {
     if (!text.length || text.length > 65536) return NO;
     dispatch_async(dispatch_get_main_queue(), ^{ if (receive) receive(text); });
@@ -161,7 +161,9 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     NSArray<SurcoGradientView *> *_backdropMasks;
     SurcoGradientView *_shade;
     SurcoChromeView *_header;
-    UIStackView *_headerRow;
+    UINavigationBar *_bar;
+    UINavigationItem *_barItem;
+    UIView *_largeClip;
     UILabel *_title;
     NSArray *_headerButtons;
     SurcoChromeView *_tabs;
@@ -214,7 +216,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
     _sheet = nil;
-    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _tabs ?: NSNull.null]) {
+    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _largeClip ?: NSNull.null, _tabs ?: NSNull.null]) {
         if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
     }
     _view = nil;
@@ -277,7 +279,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 // Chrome fades instead of popping while the canvas slides the player over it.
 - (void)setChrome:(UIView *)view shown:(BOOL)shown {
-    BOOL interactive = shown && view != _backdrop && view != _shade;
+    BOOL interactive = shown && view != _backdrop && view != _shade && view != _largeClip;
     if (!view || (view.alpha == (shown ? 1 : 0) && view.userInteractionEnabled == interactive)) return;
     view.userInteractionEnabled = interactive;
     if (shown) view.hidden = NO;
@@ -372,34 +374,20 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     [self setChrome:_backdrop shown:YES];
     [self setChrome:_shade shown:YES];
 }
-- (UIButton *)chromeButton:(id)value {
+- (UIBarButtonItem *)chromeItem:(id)value {
     NSDictionary *item = SurcoDictionary(value);
     NSString *identifier = SurcoString(item[@"id"]);
-    UIButtonConfiguration *configuration = nil;
-    // Liquid Glass circles on iOS 26, a quiet translucent circle before it.
-    if (@available(iOS 26.0, *)) configuration = [UIButtonConfiguration glassButtonConfiguration];
-    if (!configuration) {
-        configuration = [UIButtonConfiguration plainButtonConfiguration];
-        configuration.background.backgroundColor = [UIColor colorWithWhite:1 alpha:0.1];
-    }
-    configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
-    configuration.baseForegroundColor = UIColor.whiteColor;
-    configuration.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
-    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:17 weight:UIImageSymbolWeightSemibold];
     __weak SurcoSurfaces *weakSelf = self;
-    UIButton *button = [UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
-        [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}];
-    }]];
+    // The bar's own item: UIKit draws it, on iOS 26 in Liquid Glass shared with its neighbours.
+    UIAction *action = [UIAction actionWithTitle:SurcoString(item[@"title"]) image:[UIImage systemImageNamed:SurcoString(item[@"symbol"])]
+        identifier:nil handler:^(__kindof UIAction *action) { [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}]; }];
+    UIBarButtonItem *button = [[UIBarButtonItem alloc] initWithPrimaryAction:action];
     button.accessibilityIdentifier = identifier;
     button.accessibilityLabel = SurcoString(item[@"title"]);
-    [NSLayoutConstraint activateConstraints:@[
-        [button.widthAnchor constraintEqualToConstant:44],
-        [button.heightAnchor constraintEqualToConstant:44],
-    ]];
     return button;
 }
 - (void)updateHeader:(NSDictionary *)model rect:(CGRect)rect {
-    if (CGRectIsNull(rect) || CGRectIsEmpty(rect)) { [self setChrome:_header shown:NO]; return; }
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect)) { [self setChrome:_header shown:NO]; [self setChrome:_largeClip shown:NO]; return; }
     if (!_header) {
         _header = [SurcoChromeView new];
         _header.alpha = 0;
@@ -409,60 +397,90 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
             edge.edge = UIRectEdgeTop;
             [_header addInteraction:edge];
         }
+        // A navigation bar of the system's own, as SwiftUI's NavigationStack shows: clear, since
+        // the scroll edge beneath it is the background, with its buttons and its inline title.
+        // https://developer.apple.com/documentation/uikit/uinavigationbar
+        _bar = [UINavigationBar new];
+        _bar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _bar.tintColor = UIColor.whiteColor;
+        UINavigationBarAppearance *appearance = [UINavigationBarAppearance new];
+        [appearance configureWithTransparentBackground];
+        appearance.titleTextAttributes = @{NSForegroundColorAttributeName: UIColor.whiteColor};
+        _bar.standardAppearance = appearance;
+        _bar.compactAppearance = appearance;
+        _bar.scrollEdgeAppearance = appearance;
+        _barItem = [UINavigationItem new];
+        _bar.items = @[_barItem];
+        [_header addSubview:_bar];
+        // The large title, a navigation stack root's: cropped where it passes under the bar.
+        _largeClip = [UIView new];
+        _largeClip.clipsToBounds = YES;
+        _largeClip.userInteractionEnabled = NO;
+        _largeClip.alpha = 0;
         _title = [UILabel new];
         _title.textColor = UIColor.whiteColor;
         _title.adjustsFontForContentSizeCategory = YES;
+        _title.adjustsFontSizeToFitWidth = YES;
+        _title.minimumScaleFactor = 0.6;
         _title.accessibilityTraits = UIAccessibilityTraitHeader;
         _title.accessibilityIdentifier = @"surco.native.title";
-        [_title setContentHuggingPriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-        [_title setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
-        _headerRow = [[UIStackView alloc] initWithArrangedSubviews:@[_title]];
-        _headerRow.axis = UILayoutConstraintAxisHorizontal;
-        _headerRow.alignment = UIStackViewAlignmentCenter;
-        _headerRow.spacing = 8;
-        _headerRow.translatesAutoresizingMaskIntoConstraints = NO;
-        [_header addSubview:_headerRow];
-        [NSLayoutConstraint activateConstraints:@[
-            [_headerRow.leadingAnchor constraintEqualToAnchor:_header.leadingAnchor constant:16],
-            [_headerRow.trailingAnchor constraintEqualToAnchor:_header.trailingAnchor constant:-12],
-            // Pinned to the bottom at full height: as Search collapses the slot the
-            // title slides up with the field and is cropped, never squeezed or
-            // left behind the rising field.
-            [_headerRow.heightAnchor constraintEqualToConstant:SurcoHeaderHeight],
-            [_headerRow.bottomAnchor constraintEqualToAnchor:_header.bottomAnchor],
-        ]];
+        _title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleLargeTitle]
+            scaledFontForFont:[UIFont systemFontOfSize:34 weight:UIFontWeightBold] maximumPointSize:40];
+        [_largeClip addSubview:_title];
     }
     if (_header.superview != _view) [_view addSubview:_header];
+    if (_largeClip.superview != _view) [_view addSubview:_largeClip];
+    BOOL large = [model[@"large"] isKindOfClass:NSNumber.class] && [model[@"large"] boolValue];
+    BOOL compact = [model[@"compact"] boolValue];
+    double scroll = [model[@"scroll"] isKindOfClass:NSNumber.class] ? [model[@"scroll"] doubleValue] : 0;
+    scroll = isfinite(scroll) ? MAX(0, scroll) * _scale : 0;
+    CGFloat largeHeight = SurcoLargeTitleHeight * _scale;
+    // Over Search the large title is the header's, above the field; elsewhere it is the
+    // page's first row, beneath the header.
+    BOOL search = large && [model[@"search"] boolValue];
+    CGFloat full = SurcoHeaderHeight * _scale + (search ? largeHeight : 0);
     _header.frame = rect;
     // Only a collapsing header crops; at rest the glass buttons keep their glow.
-    _header.clipsToBounds = CGRectGetHeight(rect) < SurcoHeaderHeight;
-    BOOL compact = [model[@"compact"] boolValue];
-    UIFont *font = [UIFont systemFontOfSize:compact ? 17 : 24 weight:compact ? UIFontWeightSemibold : UIFontWeightBold];
-    _title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2] scaledFontForFont:font maximumPointSize:compact ? 22 : 30];
-    // A navigation bar's inline title sits centred; the large one leads.
-    _title.textAlignment = compact ? NSTextAlignmentCenter : NSTextAlignmentNatural;
+    _header.clipsToBounds = CGRectGetHeight(rect) < full - 0.5;
+    // The bar's row stays at its full height at the bottom (above Search's title): as Search
+    // collapses the slot it slides up with the field and is cropped, never squeezed.
+    CGFloat row = CGRectGetHeight(rect) - (search ? largeHeight : 0) - SurcoHeaderHeight * _scale;
+    CGFloat barHeight = [_bar sizeThatFits:CGSizeMake(CGRectGetWidth(rect), CGFLOAT_MAX)].height;
+    _bar.frame = CGRectMake(0, row + (SurcoHeaderHeight * _scale - barHeight) / 2, CGRectGetWidth(rect), barHeight);
     NSString *title = SurcoString(model[@"title"]);
-    if (![_title.text isEqualToString:title]) {
-        if (_title.text.length && [self chromeAnimates]) {
+    // A large title names the bar only once it has scrolled up under it, as UIKit's does.
+    NSString *named = large && !compact ? @"" : title;
+    if (![_barItem.title ?: @"" isEqualToString:named]) {
+        if ([self chromeAnimates] && _header.window) {
             CATransition *fade = [CATransition animation];
             fade.type = kCATransitionFade;
             fade.duration = 0.18;
-            [_title.layer addAnimation:fade forKey:@"title"];
+            [_bar.layer addAnimation:fade forKey:@"title"];
         }
-        _title.text = title;
+        _barItem.title = named;
     }
     NSArray *buttons = @[SurcoArray(model[@"leading"]), SurcoArray(model[@"trailing"])];
     if (![_headerButtons isEqual:buttons]) {
         _headerButtons = buttons;
-        for (UIView *view in [_headerRow.arrangedSubviews copy]) {
-            if (view == _title) continue;
-            [_headerRow removeArrangedSubview:view];
-            [view removeFromSuperview];
-        }
-        NSUInteger index = 0;
-        for (id item in buttons[0]) [_headerRow insertArrangedSubview:[self chromeButton:item] atIndex:index++];
-        for (id item in buttons[1]) [_headerRow addArrangedSubview:[self chromeButton:item]];
+        NSMutableArray *leading = [NSMutableArray array];
+        NSMutableArray *trailing = [NSMutableArray array];
+        for (id item in buttons[0]) [leading addObject:[self chromeItem:item]];
+        // The bar lays its right items out from the edge inwards.
+        for (id item in [buttons[1] reverseObjectEnumerator]) [trailing addObject:[self chromeItem:item]];
+        _barItem.hidesBackButton = YES;
+        [_barItem setLeftBarButtonItems:leading animated:NO];
+        [_barItem setRightBarButtonItems:trailing animated:NO];
     }
+    if (![_title.text isEqualToString:title]) _title.text = title;
+    if (large) {
+        CGFloat top = search ? CGRectGetMaxY(rect) - largeHeight : CGRectGetMaxY(rect) - scroll;
+        CGFloat clip = search ? CGRectGetMinY(rect) : CGRectGetMaxY(rect);
+        CGRect bounds = _view.bounds;
+        CGFloat inset = _view.safeAreaInsets.left + 16;
+        _largeClip.frame = CGRectMake(bounds.origin.x, clip, bounds.size.width, MAX(0, top + largeHeight - clip));
+        _title.frame = CGRectMake(inset, top - clip, bounds.size.width - inset - _view.safeAreaInsets.right - 16, largeHeight);
+    }
+    [self setChrome:_largeClip shown:large];
     [self setChrome:_header shown:YES];
 }
 - (UIButtonConfiguration *)tabConfiguration:(NSDictionary *)item {
@@ -650,23 +668,15 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 // The Figma kit's white idle field becomes the dark editing field. The colors
 // cross-fade over the header's collapse instead of flipping in one frame.
 - (void)styleSearch:(BOOL)compact {
-    UISearchTextField *field = _searchBar.searchTextField;
-    BOOL animated = _searchStyled && [self searchAnimates];
+    // The system's own field, as a navigation bar's search shows it: its fill, ink and
+    // placeholder, the same at rest and while editing.
     _searchStyled = YES;
     _searchCompact = compact;
-    UIColor *ink = compact ? UIColor.whiteColor : UIColor.blackColor;
-    NSString *placeholder = _searchBar.placeholder ?: @"";
-    void (^change)(void) = ^{
-        field.backgroundColor = compact ? [UIColor colorWithWhite:49.0 / 255.0 alpha:1] : UIColor.whiteColor;
-        field.textColor = ink;
-        field.tintColor = ink;
-        field.leftView.tintColor = ink;
-        field.attributedPlaceholder = [[NSAttributedString alloc] initWithString:placeholder
-            attributes:@{NSForegroundColorAttributeName: compact ? [UIColor colorWithWhite:0.70 alpha:1] : UIColor.darkGrayColor}];
-    };
-    if (!animated) { change(); return; }
-    [UIView transitionWithView:field duration:SurcoSearchMotion options:UIViewAnimationOptionTransitionCrossDissolve |
-        UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:change completion:nil];
+    UISearchTextField *field = _searchBar.searchTextField;
+    field.backgroundColor = nil;
+    field.textColor = UIColor.labelColor;
+    field.tintColor = UIColor.whiteColor;
+    field.leftView.tintColor = UIColor.secondaryLabelColor;
 }
 - (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
     if (![self searchIsLive]) return;

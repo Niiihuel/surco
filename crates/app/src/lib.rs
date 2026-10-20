@@ -363,7 +363,7 @@ impl eframe::App for Host {
         }
     }
 
-    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, ui: &mut egui::Ui, host: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         if !self.started {
             self.started = true;
@@ -413,7 +413,7 @@ impl eframe::App for Host {
             self.state.mobile_ui.native_routes = false;
             self.state.mobile_ui.native_surfaces = false;
             if let Some(native) = &mut self.native_ui {
-                if let Ok(handle) = _frame.window_handle() {
+                if let Ok(handle) = host.window_handle() {
                     if let RawWindowHandle::UiKit(handle) = handle.as_raw() {
                         // eframe supplies the live main-thread UIView for this window.
                         unsafe { native.update_view(handle.ui_view); }
@@ -442,7 +442,7 @@ impl eframe::App for Host {
         // Full screen, AppKit shows the lights in a bar of its own that slides down.
         #[cfg(target_os = "macos")]
         if self.chrome == window::Chrome::Overlaid && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
-            window::center_lights(_frame, view::TOP_BAR_HEIGHT);
+            window::center_lights(host, view::TOP_BAR_HEIGHT);
         }
         let area = if self.state.mobile {
             mobile_canvas(ui, self.script.mobile)
@@ -672,8 +672,13 @@ impl eframe::App for Host {
         if let Some(url) = self.state.open_url.take() {
             ctx.open_url(egui::OpenUrl::new_tab(url));
         }
-        // The later version is in place: it starts, and this one leaves.
+        // The later version is in place: it starts, and this one leaves. What this one has is
+        // written first: the later one reads it as it starts, before this one has closed.
         if std::mem::take(&mut self.state.restart) {
+            if let Some(storage) = host.storage_mut() {
+                self.save(storage);
+                storage.flush();
+            }
             if let Some(program) = update::running() {
                 let _ = std::process::Command::new(program).spawn();
             }

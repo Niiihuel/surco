@@ -103,7 +103,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { HEADER_HEIGHT }) } else { HEADER_HEIGHT };
+    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
     // UIKit draws the header and tabs over these slots outside the song pages.
     let native_chrome = state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
@@ -171,7 +171,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // player has no bar below, only the home indicator's room: it runs clear to the bottom.
     let player = state.page == Page::Playing;
     let (header_edge, footer_edge) = if native_chrome { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
-    let content = chrome::under_bars(content, top_height, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge });
+    // The large title is the page's first row, scrolling up under the bar; over Search it
+    // stays in the header, above the field.
+    let scroll_top = top_height + if large_title(state) && !searching { MOBILE_LARGE_TITLE } else { 0.0 };
+    let content = chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge });
     let top = Element::column(top);
     let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
     let footer = Element::column(bottom);
@@ -197,6 +200,17 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = super::profile_dialog(state, super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width), window.width);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
     confirm_dialog(state, tree, palette)
+}
+
+/// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.
+pub(crate) fn large_title(state: &State) -> bool {
+    state.mobile_ui.native_surfaces
+        && matches!(state.page, Page::Search | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
+}
+
+/// Search's whole header: its bar and, natively, the large title over the field.
+pub(crate) fn search_header_height(state: &State) -> f32 {
+    HEADER_HEIGHT + if state.mobile_ui.native_surfaces { MOBILE_LARGE_TITLE } else { 0.0 }
 }
 
 /// The page title, shared by the limn header and the native iOS header.

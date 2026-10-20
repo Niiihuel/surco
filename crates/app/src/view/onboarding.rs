@@ -99,6 +99,14 @@ fn heading(title: &str, detail: Option<&str>, palette: ComponentPalette) -> Elem
     Element::column(copy).gap(8.0)
 }
 
+/// The first step's and the last's heading, in the middle as the rest of them is.
+fn centered_heading(title: &str, detail: Option<&str>, palette: ComponentPalette) -> Element {
+    let size = if PHONE.get() { 26.0 } else { 32.0 };
+    let mut copy = vec![Text::new(title, palette).font_size(size).render().font_family(FontFamily::SansBold).center_content()];
+    copy.extend(detail.map(|detail| Text::new(detail, palette).font_size(16.0).muted().render().center_content()));
+    Element::column(copy).gap(8.0)
+}
+
 /// The white pill that goes on, as Spotify's; muted until there is something to go on with.
 fn go_on(id: &str, label: &str, enabled: bool, width: f32, palette: ComponentPalette) -> Element {
     let white = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
@@ -115,10 +123,10 @@ fn welcome(palette: ComponentPalette) -> Element {
         .sizing(limn::ButtonSizing { height: PILL, font_size: 16.0, ..ControlSize::Spacious.button_sizing() }).round().width(WELCOME_PILL).render().center_content();
     Element::column(vec![
         Element::spacer().flex(1.0),
-        heading(&t!("common-onboarding-welcome"), Some(&t!("common-onboarding-welcome-detail")), palette),
+        centered_heading(&t!("common-onboarding-welcome"), Some(&t!("common-onboarding-welcome-detail")), palette),
         Element::spacer().size(None, Some(24.0)),
-        go_on("onboarding-fresh", &t!("common-onboarding-fresh"), true, WELCOME_PILL, palette),
-        bring,
+        go_on("onboarding-fresh", &t!("common-onboarding-fresh"), true, WELCOME_PILL, palette).centered_x(),
+        bring.centered_x(),
         Element::spacer().flex(2.0),
     ]).gap(12.0)
 }
@@ -263,11 +271,11 @@ fn done(state: &State, onboarding: &Onboarding, palette: ComponentPalette) -> El
     let faces: Vec<Element> = onboarding.picked.iter().take(7).map(|artist| cover(state, &artist.artwork_url, 64.0, palette).radius(32.0)).collect();
     Element::column(vec![
         Element::spacer().flex(1.0),
-        heading(&t!("common-onboarding-done", name = onboarding.name.trim()), Some(&t!("common-onboarding-done-detail")), palette),
+        centered_heading(&t!("common-onboarding-done", name = onboarding.name.trim()), Some(&t!("common-onboarding-done-detail")), palette),
         Element::spacer().size(None, Some(16.0)),
-        Element::row(faces).gap(8.0),
+        Element::row(faces).gap(8.0).centered_x(),
         Element::spacer().size(None, Some(16.0)),
-        go_on("onboarding-done", &t!("common-onboarding-home"), true, GO_ON, palette),
+        go_on("onboarding-done", &t!("common-onboarding-home"), true, GO_ON, palette).centered_x(),
         Element::spacer().flex(2.0),
     ]).gap(8.0)
 }

@@ -6,6 +6,7 @@ mod onboarding;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
+pub(crate) use mobile::{large_title as mobile_large_title, search_header_height as mobile_search_header};
 
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
@@ -102,6 +103,8 @@ const LYRIC_WASH: f32 = 520.0;
 /// How far down a page the colour of its cover reaches, from behind its header.
 const HEADER_WASH: f32 = 360.0;
 pub(crate) const MOBILE_HEADER_HEIGHT: f32 = 56.0;
+/// A navigation bar's large title beneath it, as UIKit's at the root of a stack.
+pub(crate) const MOBILE_LARGE_TITLE: f32 = 52.0;
 
 fn segments(group: &str, width: f32, tabs: Vec<Tab>) -> Element {
     Tabs::new(tabs, segmented_palette()).id(group).size(ControlSize::Compact).radius(pill(ControlSize::Compact)).fill_width(width).render()

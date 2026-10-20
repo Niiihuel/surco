@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use eframe::egui::Pos2;
 use limn::{Frame, Point, UiAction};
 use serde::{Deserialize, Serialize};
-use crate::{backend::Command, i18n::t, state::{self, mobile::{CardContext, LibraryContext}, Confirm, State}};
+use crate::{backend::Command, i18n::t, state::{self, mobile::{CardContext, LibraryContext}, Confirm, Page, State}};
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub(crate) struct Payload {
@@ -31,6 +31,11 @@ pub(crate) struct Chrome {
     pub header: Option<[f32; 4]>,
     pub title: String,
     pub compact: bool,
+    /// The title drawn large beneath the bar, `scroll` points up from its resting place; over
+    /// Search it is the header's own, above the field.
+    pub large: bool,
+    pub scroll: f32,
+    pub search: bool,
     pub leading: Vec<Action>,
     pub trailing: Vec<Action>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -228,8 +233,12 @@ impl Controller {
         } else { Vec::new() };
         self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
         let tint = crate::view::surface_tint(state);
+        // A detail page's bar is nameless until its own title has scrolled under it.
+        let hero = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
+        let title = if hero && !state.mobile_ui.compact_header { String::new() } else { crate::view::mobile_title(state).into() };
         Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, scrolled: state.mobile_ui.scrolled, tint: [tint.r, tint.g, tint.b], header,
-            title: crate::view::mobile_title(state).into(), compact: state.mobile_ui.compact_header, leading, trailing, tabs, items })
+            title, compact: state.mobile_ui.compact_header, large: crate::view::mobile_large_title(state), scroll: state.mobile_ui.page_scroll,
+            search: state.page == Page::Search && state.mobile_search, leading, trailing, tabs, items })
     }
 
     pub fn apply(&mut self, state: &mut State, event: Event) -> Vec<Command> {
