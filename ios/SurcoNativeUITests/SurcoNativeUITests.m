@@ -450,6 +450,14 @@
 
 - (void)testSettingsRowsBlurBeneathTheHeaderAsTheyScroll {
     [self launch];
+    // Home is long enough to pass under the header; its edge is the one the eye judges.
+    [[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.75)] pressForDuration:0.05
+        thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.45)]];
+    [NSThread sleepForTimeInterval:1.0];
+    [self attachScreenshot:@"home-scrolled-header-edge"];
+    [[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.3)] pressForDuration:0.05
+        thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.9)]];
+    [NSThread sleepForTimeInterval:1.0];
     [self canvasTap:@"settings" page:@"home"];
     [[self entryCoordinate:@"settings-part:devices" page:@"settings"] pressForDuration:0.05
         thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.12)]];
