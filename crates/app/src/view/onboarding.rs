@@ -47,7 +47,17 @@ pub(super) fn view(state: &State, onboarding: &Onboarding, window: Size) -> Elem
         Element::spacer().size(None, Some(insets.top + margin)),
         Element::row(vec![Element::spacer().flex(1.0), column, Element::spacer().flex(1.0)]),
     ]);
+    // Each step under a colour of its own that gives way to black, as a page under its cover's.
+    let hue = match onboarding.step {
+        Step::Welcome => 3,
+        Step::Bring => 2,
+        Step::Name => 5,
+        Step::Genres => 0,
+        Step::Artists => 4,
+        Step::Done => 2,
+    };
     Element::panel(middle).background(SCHEME.canvas).size(Some(window.width), Some(window.height))
+        .top_background_fade(Color { a: 150, ..MIX_STRIPES[hue] }, window.height * 0.5)
 }
 
 /// The way back, where the steps are, and the way past one that can be left out.

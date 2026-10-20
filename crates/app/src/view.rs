@@ -3543,11 +3543,12 @@ fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPal
     // The menu open keeps them in view.
     let tools = Element::row(vec![footage, more, large]).gap(8.0);
     let tools = if state.panel_more_open { tools } else { tools.reveal_on_hover("panel-tools") };
-    let header = Element::row(vec![
-        shut.centered_y(),
-        Element::clickable("panel-context", Text::new(context, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold)).dispatch_as("now-album").flex(1.0).centered_y(),
-        tools.centered_y(),
-    ]).gap(12.0).padding(PANEL_PAD).size(None, Some(PANEL_HEADER));
+    // Over the video the header names nothing: the name is at its foot already.
+    let context = if video && !state.panel_scrolled { Element::spacer() } else {
+        Element::clickable("panel-context", Text::new(context, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold)).dispatch_as("now-album")
+    };
+    let header = Element::row(vec![shut.centered_y(), context.flex(1.0).centered_y(), tools.centered_y()])
+        .gap(12.0).padding(PANEL_PAD).size(None, Some(PANEL_HEADER));
     let header = if state.panel_scrolled || !video {
         header.background(PANEL_FLOOR).shadow(if state.panel_scrolled { Color::rgba(0, 0, 0, 153) } else { Color::rgba(0, 0, 0, 0) }, limn::Point::new(0.0, 6.0), 10.0, 0.0)
     } else { header };

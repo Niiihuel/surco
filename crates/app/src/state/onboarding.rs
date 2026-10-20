@@ -56,11 +56,10 @@ impl Onboarding {
 }
 
 impl State {
-    /// A first run: no name, nothing of the user's, and the steps never gone through.
+    /// A first run: no name and the steps never gone through. What was heard or liked in a
+    /// version from before the steps does not skip them.
     pub fn first_run(&self) -> bool {
-        let collection = &self.collection;
-        !self.settings.onboarded && self.profile.name.trim().is_empty() && collection.kept.is_empty() && collection.playlists.is_empty()
-            && collection.liked.is_empty() && collection.heard.is_empty()
+        !self.settings.onboarded && self.profile.name.trim().is_empty()
     }
 
     /// Opens the steps: all of them, or only the genres and the artists.
@@ -80,10 +79,13 @@ impl State {
                 Vec::new()
             }
             // The account comes from the other device, as the dialog that moves it reads it,
-            // here a step of its own; nothing is here for it to join.
+            // here a step of its own; it takes the place of what is here only when nothing is,
+            // since an older version's music may be.
             "onboarding-bring" => {
                 onboarding.step = Step::Bring;
-                self.handoff = Some(Handoff { receiving: true, replace: true, ..Handoff::default() });
+                let collection = &self.collection;
+                let empty = collection.kept.is_empty() && collection.playlists.is_empty() && collection.liked.is_empty() && collection.heard.is_empty();
+                self.handoff = Some(Handoff { receiving: true, replace: empty, ..Handoff::default() });
                 self.focus = Some("handoff-address".to_owned());
                 Vec::new()
             }
@@ -284,6 +286,18 @@ mod tests {
         assert_eq!(state.import_source, ImportSource::YouTube);
         state.update(&UiAction::InputChanged { id: "import-link".into(), value: "https://music.apple.com/ar/playlist/viaje/pl.u-abc".into() });
         assert_eq!(state.import_source, ImportSource::Apple, "a link pasted says which app it is of");
+    }
+
+    #[test]
+    fn music_from_a_version_before_the_steps_does_not_skip_them_nor_is_replaced() {
+        let mut state = State::default();
+        state.collection.heard = vec![Track { id: "a".into(), title: "A".into(), artist: "Ana".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 }];
+        assert!(state.first_run(), "heard before, but never named nor through the steps");
+        state.begin_onboarding(false);
+        click(&mut state, "onboarding-bring");
+        assert!(!state.handoff.as_ref().unwrap().replace, "what is here is joined, not lost");
+        state.profile.name = "Nihuel".into();
+        assert!(!state.first_run());
     }
 
     #[test]
