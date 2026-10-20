@@ -304,11 +304,39 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
 }
 - (void)updateBackdrop:(CGFloat)edge {
+    if (@available(iOS 26.0, *)) {
+        // The system's own soft scroll edge, as SwiftUI's NavigationStack draws under its bar: a
+        // still, empty scroll view over the canvas whose top edge effect the header claims as its
+        // container, so UIKit shapes the blur and scrim around the title and buttons.
+        // https://developer.apple.com/documentation/uikit/uiscrolledgeelementcontainerinteraction
+        if (!_backdrop) {
+            UIScrollView *scroll = [UIScrollView new];
+            scroll.userInteractionEnabled = NO;
+            scroll.accessibilityElementsHidden = YES;
+            scroll.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+            scroll.showsVerticalScrollIndicator = NO;
+            scroll.showsHorizontalScrollIndicator = NO;
+            scroll.topEdgeEffect.style = UIScrollEdgeEffectStyle.softStyle;
+            scroll.bottomEdgeEffect.hidden = YES;
+            scroll.leftEdgeEffect.hidden = YES;
+            scroll.rightEdgeEffect.hidden = YES;
+            scroll.alpha = 0;
+            _backdrop = scroll;
+        }
+        if (_backdrop.superview != _view) [_view addSubview:_backdrop];
+        UIScrollView *scroll = (UIScrollView *)_backdrop;
+        CGRect bounds = _view.bounds;
+        scroll.frame = bounds;
+        scroll.contentSize = CGSizeMake(bounds.size.width, bounds.size.height * 3);
+        // Content always under the edge; the canvas below it is what the effect blurs.
+        scroll.contentOffset = CGPointMake(0, bounds.size.height);
+        [self setChrome:_backdrop shown:edge > 0];
+        return;
+    }
     if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
     if (!_backdrop) {
-        // iOS 26's soft scroll edge effect, as SwiftUI draws under a navigation bar: no bar
-        // material, the page itself blurring more and darkening toward the status bar. (The
-        // system's UIScrollEdgeEffect only reaches a UIScrollView's content, never this canvas.)
+        // Before iOS 26: a soft edge of our own, the page blurring more and darkening toward the
+        // status bar.
         _backdrop = [UIView new];
         NSMutableArray *masks = [NSMutableArray array];
         // Two passes of a thin blur: the second over the top half only, so the blur deepens upward.
@@ -375,6 +403,12 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     if (!_header) {
         _header = [SurcoChromeView new];
         _header.alpha = 0;
+        if (@available(iOS 26.0, *)) {
+            UIScrollEdgeElementContainerInteraction *edge = [UIScrollEdgeElementContainerInteraction new];
+            edge.scrollView = [_backdrop isKindOfClass:UIScrollView.class] ? (UIScrollView *)_backdrop : nil;
+            edge.edge = UIRectEdgeTop;
+            [_header addInteraction:edge];
+        }
         _title = [UILabel new];
         _title.textColor = UIColor.whiteColor;
         _title.adjustsFontForContentSizeCategory = YES;
