@@ -7,9 +7,8 @@ static UIColor *SurcoSurfaceColor(void) { return [UIColor colorWithWhite:28.0 / 
 static NSString *SurcoString(id value) { return [value isKindOfClass:NSString.class] ? value : @""; }
 static NSArray *SurcoArray(id value) { return [value isKindOfClass:NSArray.class] ? value : @[]; }
 static NSDictionary *SurcoDictionary(id value) { return [value isKindOfClass:NSDictionary.class] ? value : @{}; }
-// The edge below the header where its material gives way to the page, as short as a system
-// navigation bar's.
-static const CGFloat SurcoEdgeFade = 12;
+// How far below the header the soft scroll edge reaches before the page is sharp again.
+static const CGFloat SurcoEdgeFade = 16;
 // view.rs MOBILE_HEADER_HEIGHT: the header's row keeps it while Search collapses the slot.
 static const CGFloat SurcoHeaderHeight = 56;
 // mobile_motion.rs RETURN: the header collapse the search field restyles in step with.
@@ -300,25 +299,24 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     edge = isfinite(edge) && edge > 0 ? edge * _scale : 0;
     // As UINavigationBar's scroll edge appearance: clear while the page is at its top.
     BOOL scrolled = [model[@"scrolled"] isKindOfClass:NSNumber.class] && [model[@"scrolled"] boolValue];
-    [self updateBackdrop:(scrolled ? edge : 0) tint:SurcoArray(model[@"tint"])];
+    [self updateBackdrop:(scrolled ? edge : 0)];
     [self updateHeader:model rect:header];
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
 }
-- (void)updateBackdrop:(CGFloat)edge tint:(NSArray *)tint {
+- (void)updateBackdrop:(CGFloat)edge {
     if (edge <= 0) { [self setChrome:_backdrop shown:NO]; [self setChrome:_shade shown:NO]; return; }
     if (!_backdrop) {
-        // A system bar's background over the canvas: the bar material, ending in a short edge.
-        // (The system's own UIScrollEdgeEffect only blurs a UIScrollView's content, never this
-        // canvas.) https://developer.apple.com/documentation/uikit/uiblureffect/style
+        // iOS 26's soft scroll edge effect, as SwiftUI draws under a navigation bar: no bar
+        // material, the page itself blurring more and darkening toward the status bar. (The
+        // system's UIScrollEdgeEffect only reaches a UIScrollView's content, never this canvas.)
         _backdrop = [UIView new];
         NSMutableArray *masks = [NSMutableArray array];
-        // One material, the system's own for a bar, as UINavigationBar and SwiftUI's toolbar draw.
-        for (NSUInteger index = 0; index < 1; index++) {
-            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemChromeMaterialDark]];
+        // Two passes of a thin blur: the second over the top half only, so the blur deepens upward.
+        for (NSUInteger index = 0; index < 2; index++) {
+            UIVisualEffectView *blur = [[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterialDark]];
             SurcoGradientView *mask = [SurcoGradientView new];
             mask.gradient.colors = @[(id)UIColor.blackColor.CGColor, (id)UIColor.blackColor.CGColor, (id)UIColor.clearColor.CGColor];
             blur.maskView = mask;
-            blur.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
             [_backdrop addSubview:blur];
             [masks addObject:mask];
         }
@@ -330,31 +328,21 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     CGRect bounds = _view.bounds;
     CGRect frame = CGRectMake(bounds.origin.x, bounds.origin.y, bounds.size.width, edge + SurcoEdgeFade);
     _backdrop.frame = frame;
-    // Each blur is whole down to the header's edge and fades over the band below it, the
-    // first through all of it and the others sooner, so the page is clear just under it.
-    CGFloat height = MAX(1, frame.size.height);
     for (NSUInteger index = 0; index < _backdropMasks.count; index++) {
         SurcoGradientView *mask = _backdropMasks[index];
         UIView *blur = _backdrop.subviews[index];
-        blur.frame = _backdrop.bounds;
+        blur.frame = CGRectMake(0, 0, frame.size.width, frame.size.height * (index ? 0.55 : 1));
         mask.frame = blur.bounds;
-        double end = 1;
-        double start = MAX(0, edge / height);
-        mask.gradient.locations = @[@0, @(start), @(end)];
+        mask.gradient.locations = @[@0, @(index ? 0.3 : 0.2), @1];
     }
-    CGFloat channel[3] = {18, 18, 18};
-    for (NSUInteger index = 0; index < 3 && index < tint.count; index++) {
-        if ([tint[index] isKindOfClass:NSNumber.class]) channel[index] = MAX(0, MIN(255, [tint[index] doubleValue]));
-    }
-    UIColor *color = [UIColor colorWithRed:channel[0] / 255 green:channel[1] / 255 blue:channel[2] / 255 alpha:1];
+    // The page's own dark, never its tint: a shade over the status bar, gone by the title.
+    UIColor *color = [UIColor colorWithWhite:18.0 / 255.0 alpha:1];
     _shade.frame = frame;
-    // Darkest over the status bar, still holding the header, gone just below it.
-    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.86].CGColor, (id)[color colorWithAlphaComponent:0.62].CGColor,
+    _shade.gradient.colors = @[(id)[color colorWithAlphaComponent:0.55].CGColor, (id)[color colorWithAlphaComponent:0.2].CGColor,
                                (id)[color colorWithAlphaComponent:0].CGColor];
-    _shade.gradient.locations = @[@0, @(MAX(0, MIN(1, edge / frame.size.height))), @1];
+    _shade.gradient.locations = @[@0, @0.45, @0.8];
     [self setChrome:_backdrop shown:YES];
-    // The bar is the material alone, without a wash of the page's colour over it.
-    [self setChrome:_shade shown:NO];
+    [self setChrome:_shade shown:YES];
 }
 - (UIButton *)chromeButton:(id)value {
     NSDictionary *item = SurcoDictionary(value);
@@ -417,6 +405,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     BOOL compact = [model[@"compact"] boolValue];
     UIFont *font = [UIFont systemFontOfSize:compact ? 17 : 24 weight:compact ? UIFontWeightSemibold : UIFontWeightBold];
     _title.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleTitle2] scaledFontForFont:font maximumPointSize:compact ? 22 : 30];
+    // A navigation bar's inline title sits centred; the large one leads.
+    _title.textAlignment = compact ? NSTextAlignmentCenter : NSTextAlignmentNatural;
     NSString *title = SurcoString(model[@"title"]);
     if (![_title.text isEqualToString:title]) {
         if (_title.text.length && [self chromeAnimates]) {
