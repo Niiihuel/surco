@@ -185,13 +185,13 @@ fn genres(onboarding: &Onboarding, palette: ComponentPalette) -> Element {
     }).collect();
     let chips = ScrollArea::new("onboarding-genres", Element::row(chips).gap(8.0).line_gap(8.0).wrap()).appearance(spotify_bar()).visibility(SPOTIFY_BAR_SHOWS).render().flex(1.0);
     let label = if onboarding.genres.is_empty() { t!("common-onboarding-skip") } else { t!("common-onboarding-next") };
-    let id = if onboarding.genres.is_empty() { "onboarding-skip" } else { "onboarding-next" };
     Element::column(vec![
         Element::spacer().size(None, Some(24.0)),
         heading(&t!("common-onboarding-genres"), Some(&t!("common-onboarding-genres-detail")), palette),
         Element::spacer().size(None, Some(16.0)),
         chips,
-        Element::row(vec![Element::spacer().flex(1.0), go_on(id, &label, true, GO_ON, palette)]).padding(16.0),
+        // Not the header's "onboarding-skip": a control's fill follows its id, so the two would share the pill's white.
+        Element::row(vec![Element::spacer().flex(1.0), go_on("onboarding-next", &label, true, GO_ON, palette)]).padding(16.0),
     ]).gap(8.0)
 }
 

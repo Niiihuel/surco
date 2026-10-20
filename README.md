@@ -92,7 +92,9 @@ later.
 `crates/audio` is adapted from [noFAYZ/zuno](https://github.com/noFAYZ/zuno)
 (Apache-2.0, see `LICENSES/Apache-2.0.txt`); each adapted file names its origin and what
 changed. The icons under `crates/app/assets/icons` are from Lucide (ISC, see
-`LICENSES/ISC-lucide.txt`).
+`LICENSES/ISC-lucide.txt`). The interface is set in
+[Figtree](https://github.com/erikdkennedy/figtree) (SIL Open Font License 1.1, see
+`LICENSES/OFL-1.1-figtree.txt`), the fonts under `crates/app/assets/fonts`.
 
 The import illustration uses service icons from [Simple Icons](https://simpleicons.org)
 ([CC0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md)). The

@@ -890,6 +890,12 @@ pub fn run() -> eframe::Result {
         APP_ID,
         options,
         Box::new(move |creation| {
+            // Figtree in limn's Ubuntu's place: round and geometric, as Spotify's own face is.
+            let figtree = |bytes: &'static [u8]| limn::Font::from_static(bytes).expect("Figtree is a font");
+            limn::set_fonts(limn::Fonts::bundled()
+                .face(limn::FontFamily::Sans, figtree(include_bytes!("../assets/fonts/Figtree-Regular.ttf")))
+                .face(limn::FontFamily::SansMedium, figtree(include_bytes!("../assets/fonts/Figtree-Medium.ttf")))
+                .face(limn::FontFamily::SansBold, figtree(include_bytes!("../assets/fonts/Figtree-Bold.ttf"))));
             limn_egui::install_fonts(&creation.egui_ctx);
             #[cfg(target_os = "ios")]
             ios_symbols::install();
