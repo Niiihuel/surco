@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.11.1
+
+![The first run, in Figtree](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.1/docs/releases/0.11.1/welcome.jpg)
+
+### Changed
+
+- The interface is set in Figtree, round and geometric as Spotify's own face, in place of
+  Ubuntu.
+
+![Figtree across the library, the page and the panel](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.1/docs/releases/0.11.1/figtree.jpg)
+
+- Each of the first run's steps sits under a colour of its own that gives way to black, and
+  the welcome and the last step stand in the middle of the window.
+- The button that shuts the right panel has a glyph of Surco's own, and over the song's
+  video the panel's header no longer names the album.
+- A playlist, an album, a mix or the liked songs are downloaded whole from their page, with
+  Spotify's arrow in a circle.
+- On an iPhone: Apple's own headers, a system navigation bar with a large title that
+  scrolls under it and Search's own field; a playlist's share, export, picture and delete
+  wait behind its dots, as on the desktop.
+
+![Choosing genres](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.1/docs/releases/0.11.1/genres.jpg)
+
+### Fixed
+
+- Updating from a version before 0.11 goes through the first run's steps once: they were
+  skipped for anyone who had played a song. Bringing an account in then joins the music
+  already there instead of replacing it.
+- Once the steps are gone through they never come back: what the app has is saved before
+  an update starts the new version.
+- The genres step's "Skip" no longer shows a white box.
+
 ## 0.11.0
 
 ![The first run](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.0/docs/releases/0.11.0/welcome.jpg)
