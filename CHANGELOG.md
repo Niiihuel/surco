@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.14.0
+
+![Replay told as a story](https://raw.githubusercontent.com/Niiihuel/surco/v0.14.0/docs/releases/0.14.0/story.jpg)
+
+### Added
+
+- Replay as Wrapped: cards in coal, cream, lavender and yellow, the minutes huge, the songs
+  and artists ranked large with framed covers, the artist heard most under stacked rings,
+  a card that keeps the tops, and the highlights each a moment of its own, for the month,
+  the year or all time.
+- Watch your Replay: told as a story, a step at a time, each with a bar that fills while it
+  is on screen and goes on by itself; the minutes count up and the rankings arrive one by
+  one. A wide screen of its own on a desktop, the whole screen on a phone; a tap, the
+  arrows or the keyboard go on and back, Escape leaves.
+- When in the day is a stacked area with a gradient: the artists heard most each a band of
+  their colour, everyone else on top.
+
+![A field whose name rises onto its outline](https://raw.githubusercontent.com/Niiihuel/surco/v0.14.0/docs/releases/0.14.0/fields.jpg)
+
+### Changed
+
+- Every text field is a pill named by a label that rests inside it and rises onto its
+  outline once it is used.
+- Accepting, cancelling and the rest are the cards' own buttons: a white pill for what goes
+  ahead, a clear one that turns white under the pointer for the rest.
+
+### Fixed
+
+- Replay's periods change without the page flickering, and its covers are fetched when it
+  opens.
+- Replay and the codes to move an account or join a room are set in the interface's own
+  faces rather than a monospaced one.
+
 ## 0.13.0
 
 ![Replay: what you listened to, summed up](https://raw.githubusercontent.com/Niiihuel/surco/v0.13.0/docs/releases/0.13.0/replay.jpg)
