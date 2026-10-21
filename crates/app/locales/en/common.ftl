@@ -168,6 +168,17 @@ common-replay-plays-of = { $count ->
    *[other] { $count } plays
 }
 common-replay-song-heard = { $plays } × · { $minutes } min
+common-replay-minutes-title = Your minutes listened
+common-replay-minutes-days = { $count ->
+    [one] That's { $count } day.
+   *[other] That's { $count } days.
+}
+common-replay-minutes-hours = { $count ->
+    [one] That's an hour.
+   *[other] That's { $count } hours.
+}
+common-replay-top-artist = Your top artist
+common-replay-streak-title = Days in a row
 common-replay-top-songs = What you played most
 common-replay-top-artists = Your artists
 common-replay-when = When you listen

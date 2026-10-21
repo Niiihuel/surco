@@ -94,7 +94,10 @@ later.
 changed. The icons under `crates/app/assets/icons` are from Lucide (ISC, see
 `LICENSES/ISC-lucide.txt`). The interface is set in
 [Figtree](https://github.com/erikdkennedy/figtree) (SIL Open Font License 1.1, see
-`LICENSES/OFL-1.1-figtree.txt`), the fonts under `crates/app/assets/fonts`.
+`LICENSES/OFL-1.1-figtree.txt`), and Replay's headlines in
+[Dela Gothic One](https://github.com/syakuzen/DelaGothic) (SIL Open Font License 1.1, its Latin
+letters only, see `LICENSES/OFL-1.1-dela-gothic-one.txt`), the fonts under
+`crates/app/assets/fonts`.
 
 The import illustration uses service icons from [Simple Icons](https://simpleicons.org)
 ([CC0](https://github.com/simple-icons/simple-icons/blob/develop/LICENSE.md)). The

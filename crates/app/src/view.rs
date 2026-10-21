@@ -3,6 +3,7 @@
 mod mobile;
 mod equalizer;
 mod onboarding;
+mod wrapped;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
@@ -1410,135 +1411,6 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
     DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
 }
 
-/// What was listened to, summed up as Replay, over the stretch chosen: how long and how much,
-/// the songs and artists heard most, when in the day, and the run of days and the song played
-/// again and again. Everything from the plays this device kept.
-fn replay_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    use crate::replay::Period;
-    let summary = state.replay();
-    let inner = (width - 24.0).max(240.0);
-    let wide = !state.mobile && inner >= REPLAY_WIDE;
-    // The stretch chosen as Spotify's filters: pills, the one chosen filled light.
-    let chips = Period::ALL.into_iter().map(|period| {
-        let label = match period { Period::Month => t!("common-replay-month"), Period::Year => t!("common-replay-year"), Period::All => t!("common-replay-all") };
-        let (id, chosen) = (format!("replay-period:{}", period.slug()), period == state.replay_period);
-        if state.mobile { return mobile::chip(id, &label, chosen, limn::Role::Button, palette); }
-        Button::new(id, label, palette).variant(if chosen { ButtonVariant::Default } else { ButtonVariant::Secondary })
-            .sizing(ControlSize::Regular.button_sizing()).round().render()
-    }).collect();
-    let mut sections = Vec::new();
-    // As Spotify's profile: the name large and bold, and under it who sees it. A phone's header already names it.
-    if !state.mobile {
-        sections.push(Element::column(vec![
-            Text::new(t!("common-replay"), palette).font_size(HERO_TITLE).render().font_family(FontFamily::SansBold),
-            Text::new(t!("desktop-profile-only-you"), palette).muted().render(),
-        ]).gap(6.0));
-    }
-    sections.push(Element::row(chips).gap(8.0).wrap().line_gap(8.0));
-    if summary.plays == 0 {
-        sections.push(centered(Empty::new(t!("common-replay-empty"), t!("common-replay-empty-detail"), palette).icon(Icon::Custom(glyph::REPLAY)).render()));
-        return page_scroll("replay", Element::column(sections).gap(16.0).padding(12.0));
-    }
-    let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    // A section's name as Spotify's: bold, a step under the page's.
-    let title = |words: std::borrow::Cow<'static, str>| Text::new(words, palette).font_size(if state.mobile { 20.0 } else { 24.0 }).render().font_family(FontFamily::SansBold);
-    let number = |value: String, size: f32| Element::text(value).font_family(FontFamily::SansBold).font_size(size).foreground(palette.text);
-    let card = |parts: Vec<Element>| Element::panel(Element::column(parts).gap(4.0)).padding(20.0).background(CHOSEN).radius(8.0);
-    // The minutes lead, larger, over the colour of the song heard most; the other three beside
-    // them, or under them where the room is short. Their numbers stand on a line at the foot.
-    let top = summary.top_songs.first().and_then(|song| song.track.artwork_url.as_deref());
-    let tint = top.and_then(|url| state.tints.get(url)).copied().unwrap_or(CHOSEN);
-    let mut lead = vec![Element::spacer().flex(1.0), number(summary.minutes.to_string(), if wide { 72.0 } else { 56.0 }),
-        Text::new(t!("common-replay-minutes", count = summary.minutes), raised).font_size(16.0).render().font_family(FontFamily::SansBold)];
-    if summary.minutes >= 60 { lead.push(Text::new(t!("common-replay-hours", count = summary.minutes / 60), raised).render()); }
-    let lead = Element::panel(Element::column(lead).gap(4.0)).padding(24.0).radius(8.0)
-        .vertical_gradient(vec![shade(tint, 0.15), shade(tint, 0.55)]);
-    let stat = |value: usize, label: std::borrow::Cow<'static, str>| card(vec![
-        Element::spacer().flex(1.0), number(value.to_string(), if wide { 44.0 } else { 32.0 }), Text::new(label, raised).muted().render(),
-    ]);
-    let stats = [
-        stat(summary.plays, t!("common-replay-plays", count = summary.plays)),
-        stat(summary.songs, t!("common-replay-songs", count = summary.songs)),
-        stat(summary.artists, t!("common-replay-artists", count = summary.artists)),
-    ];
-    if wide {
-        let mut row = vec![lead.flex(2.0)];
-        row.extend(stats.map(|stat| stat.flex(1.0)));
-        sections.push(Element::row(row).gap(8.0).size(None, Some(REPLAY_KPI)));
-    } else {
-        sections.push(lead.size(None, Some(REPLAY_KPI * 0.75)));
-        sections.push(Element::row(stats.map(|stat| stat.flex(1.0)).into()).gap(8.0).size(None, Some(REPLAY_KPI * 0.6)));
-    }
-    // The artists heard most, as many round as the row holds, as Spotify's profile shows them.
-    let artists: Vec<Element> = summary.top_artists.iter().enumerate()
-        .map(|(index, artist)| tile(state, format!("replay-artist:{index}"), &artist.track.artist, Some(t!("common-replay-plays-of", count = artist.plays).into_owned()), &artist.track.artwork_url, true, palette))
-        .collect();
-    let side = if state.mobile { TILE_WIDTH } else { CARD_WIDTH };
-    let fit = (((inner + TILE_GAP) / (side + TILE_GAP)) as usize).max(1);
-    sections.extend([title(t!("common-replay-top-artists")), Element::row(artists.into_iter().take(fit).collect()).gap(TILE_GAP)]);
-    // The songs heard most, a row each, numbered; they play as a list. Two columns where there is room.
-    let mut rows: Vec<Element> = summary.top_songs.iter().enumerate().map(|(index, song)| {
-        let rank = Element::text((index + 1).to_string()).font_family(FontFamily::SansBold).font_size(16.0).foreground(palette.muted).center_content().size(Some(24.0), None);
-        let leading = Element::row(vec![rank.centered_y(), cover(state, &song.track.artwork_url, 48.0, palette).radius(4.0)]).gap(12.0);
-        ListRow::new(format!("replay-song:{index}"), &song.track.title, palette)
-            .sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), leading_width: 84.0, ..TRACK_ROW })
-            .leading(leading)
-            .subtitle(song.track.artist.clone())
-            .meta(t!("common-replay-song-heard", plays = song.plays, minutes = song.minutes).into_owned())
-            .title_fade(true)
-            .radius(RadiusRole::Card)
-            .render()
-    }).collect();
-    let songs = if wide && rows.len() >= 6 {
-        let right = rows.split_off(rows.len().div_ceil(2));
-        Element::row(vec![Element::column(rows).gap(2.0).flex(1.0), Element::column(right).gap(2.0).flex(1.0)]).gap(16.0)
-    } else {
-        Element::column(rows).gap(2.0)
-    };
-    sections.extend([title(t!("common-replay-top-songs")), songs]);
-    // When in the day: a bar an hour, as tall as the minutes heard in it.
-    let most = summary.hours.iter().copied().max().unwrap_or(0).max(1);
-    let bars = summary.hours.iter().map(|minutes| {
-        let tall = (REPLAY_BARS * *minutes as f32 / most as f32).max(3.0);
-        let bar = Element::spacer().size(None, Some(tall)).background(if *minutes == most { palette.text } else { palette.muted }).radius(3.0);
-        Element::column(vec![Element::spacer().flex(1.0), bar]).size(None, Some(REPLAY_BARS)).flex(1.0)
-    }).collect();
-    let marks = Element::row([0, 6, 12, 18].into_iter().map(|hour| Text::new(format!("{hour}:00"), raised).role(TextRole::Caption).muted().render().flex(1.0)).collect());
-    let mut when = vec![Text::new(t!("common-replay-when"), raised).font_size(16.0).render().font_family(FontFamily::SansBold)];
-    if let Some(part) = crate::replay::part_of_day(&summary.hours) {
-        when.push(Text::new(crate::i18n::text(crate::i18n::current(), part, None), raised).muted().render());
-    }
-    when.extend([Element::spacer().size(None, Some(12.0)), Element::row(bars).gap(4.0), marks]);
-    let when = card(when);
-    // A few things worth knowing, a card each: what it came to, large, and what it is.
-    let fact = |leading: Option<Element>, value: String, label: String| {
-        let words = Element::column(vec![
-            Text::new(value, raised).font_size(22.0).truncate().render().font_family(FontFamily::SansBold),
-            Text::new(label, raised).muted().render(),
-        ]).gap(2.0).flex(1.0).centered_y();
-        let mut row = Vec::from_iter(leading.map(|leading| leading.centered_y()));
-        row.push(words);
-        Element::panel(Element::row(row).gap(14.0)).padding(20.0).background(CHOSEN).radius(8.0)
-    };
-    let mut facts = Vec::new();
-    if summary.streak > 1 {
-        facts.push(fact(None, t!("common-replay-days", count = summary.streak).into_owned(), t!("common-replay-streak").into_owned()));
-    }
-    if let Some((day, minutes)) = summary.busiest_day {
-        facts.push(fact(None, day.format("%d/%m/%Y").to_string(), t!("common-replay-busiest", minutes = minutes).into_owned()));
-    }
-    if let Some((track, times)) = &summary.on_repeat {
-        facts.push(fact(Some(cover(state, &track.artwork_url, 56.0, palette).radius(4.0)), track.title.clone(), t!("common-replay-on-repeat", times = *times).into_owned()));
-    }
-    if wide && !facts.is_empty() {
-        sections.push(Element::row(vec![when.flex(3.0), Element::column(facts).gap(8.0).flex(2.0)]).gap(8.0));
-    } else {
-        sections.push(when);
-        sections.extend(facts);
-    }
-    page_scroll("replay", washed(state, &top.map(str::to_owned), Element::column(sections).gap(16.0).padding(12.0)))
-}
-
 /// Naming the song that plays nearby, as Shazam's page does: a disc that swells with what the
 /// microphone hears while it listens, then what was named and the way to it in the catalog,
 /// and the songs named lately.
@@ -1692,12 +1564,6 @@ fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 /// The side of the recognising disc at rest.
 const RECOGNIZE_DISC: f32 = 168.0;
 
-/// How tall the hours of Replay stand at their most.
-const REPLAY_BARS: f32 = 140.0;
-/// How tall Replay's numbers stand.
-const REPLAY_KPI: f32 = 196.0;
-/// The width from which Replay's numbers share a row and its songs two columns.
-const REPLAY_WIDE: f32 = 760.0;
 
 /// The account's initial on its colour, the same for a name wherever it shows.
 fn profile_face(state: &State, side: f32, palette: ComponentPalette) -> Element {
@@ -3109,7 +2975,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Browse => browse_page(width, palette),
         Page::Mix(mix) => mix_page(state, mix, width, palette),
         Page::Profile => profile_page(state, palette),
-        Page::Replay => replay_page(state, width, palette),
+        Page::Replay => wrapped::page(state, width, palette),
         Page::Recognize => recognize_page(state, width, palette),
         Page::Together => together_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
@@ -4845,9 +4711,12 @@ mod tests {
         state.collection.plays = (0..3).map(|index| crate::replay::Play { track: track(&format!("t{index}")), at: now - 100 * index, seconds: 180 }).collect();
         let found = ids(&state, size);
         for id in ["replay-song:0", "replay-song:2", "replay-period:month"] { assert!(found.iter().any(|found| found == id), "{id} in {found:?}"); }
-        let frame = UiTree::new(view(&state, size)).layout(size);
+        // Tall enough that the hours, at the foot, are laid out too.
+        let tall = Size::new(1400.0, 4000.0);
+        let frame = UiTree::new(view(&state, tall)).layout(tall);
         let texts: Vec<String> = frame.text_layouts().iter().map(|block| block.source.clone()).collect();
-        for text in ["Tu Replay", "Lo que más escuchaste", "Cuándo escuchás", "18:00"] { assert!(texts.iter().any(|found| found == text), "{text} in {texts:?}"); }
+        // The headlines on blocks end where the room does, so they are not laid out as wrapped text.
+        for text in ["Tu Replay", "Tus minutos escuchados", "18:00"] { assert!(texts.iter().any(|found| found == text), "{text} in {texts:?}"); }
     }
 
     #[test]

@@ -931,7 +931,9 @@ pub fn run() -> eframe::Result {
             limn::set_fonts(limn::Fonts::bundled()
                 .face(limn::FontFamily::Sans, figtree(include_bytes!("../assets/fonts/Figtree-Regular.ttf")))
                 .face(limn::FontFamily::SansMedium, figtree(include_bytes!("../assets/fonts/Figtree-Medium.ttf")))
-                .face(limn::FontFamily::SansBold, figtree(include_bytes!("../assets/fonts/Figtree-Bold.ttf"))));
+                .face(limn::FontFamily::SansBold, figtree(include_bytes!("../assets/fonts/Figtree-Bold.ttf")))
+                // Replay's headlines and figures, as Wrapped's: Dela Gothic One, its Latin letters only.
+                .face(limn::FontFamily::Display, limn::Font::from_static(include_bytes!("../assets/fonts/DelaGothicOne-Regular.ttf")).expect("Dela Gothic One is a font")));
             limn_egui::install_fonts(&creation.egui_ctx);
             #[cfg(target_os = "ios")]
             ios_symbols::install();
