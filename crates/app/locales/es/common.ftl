@@ -258,6 +258,22 @@ common-together-hosting = Sos el anfitrión · { $relays } relays
 common-together-live = Escuchando con el anfitrión · { $relays } relays
 common-together-lost = No sabemos nada del anfitrión hace un rato…
 common-together-ended = La sala terminó.
+common-together-room-of = Sala de { $name }
+common-together-listening = { $count ->
+    [one] { $count } escuchando
+   *[other] { $count } escuchando
+}
+common-together-invite = Invitar
+common-together-invite-title = Invitá a escuchar con vos
+common-together-invite-detail = Pasales este código: lo escriben en Escuchar juntos y entran a la sala, cada uno desde su dispositivo.
+common-together-activity = Actividad
+common-together-queue = Lo que viene
+common-together-queue-empty = Nada en la cola todavía. Lo que se agregue aparece acá.
+common-together-added-by = Lo agregó { $name }
+common-together-react = Reaccionar a lo que suena
+common-together-you = Vos
+common-together-open-room = Abrir la sala
+common-together-in-room = En la sala · { $count }
 common-together-copy = Copiar código
 common-together-open = Los invitados también controlan
 common-together-open-detail = Pueden poner, pausar, adelantar y saltar canciones, no solo sugerirlas.

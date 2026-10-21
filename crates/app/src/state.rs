@@ -1040,6 +1040,8 @@ pub struct State {
     pub room_error: Option<String>,
     /// Whether a room was asked for and not left: what a room says after it is left is not news.
     room_wanted: bool,
+    /// The card that shows the room's code to invite others with is open.
+    pub room_invite: bool,
 }
 
 /// How many songs named by the microphone are remembered.
@@ -1414,6 +1416,7 @@ impl Default for State {
             room_chat: String::new(),
             room_error: None,
             room_wanted: false,
+            room_invite: false,
         }
     }
 }
@@ -2765,6 +2768,7 @@ impl State {
             }
             "room-leave" => {
                 self.room = None;
+                self.room_invite = false;
                 self.room_wanted = false;
                 vec![Command::RoomOrder(crate::room::Order::Leave)]
             }
@@ -2780,6 +2784,20 @@ impl State {
             "room-copy" => {
                 self.copy = self.room.as_ref().map(|room| room.code.clone());
                 Vec::new()
+            }
+            "room-invite" => {
+                self.room_invite = self.room.is_some();
+                Vec::new()
+            }
+            "room-invite-close" => {
+                self.room_invite = false;
+                Vec::new()
+            }
+            // A reaction to what plays, for everyone in the room.
+            _ if id.starts_with("room-react:") => {
+                let emoji = &id["room-react:".len()..];
+                if self.room.is_none() || !crate::together::REACTIONS.contains(&emoji) { return Vec::new(); }
+                vec![Command::RoomOrder(crate::room::Order::React(emoji.to_owned()))]
             }
             // Opened, it listens at once, as Shazam's does; again, it starts over.
             "recognize" | "recognize-again" => {
@@ -3275,6 +3293,7 @@ impl State {
                     if view.is_none() && self.room.is_none() { self.room_error = Some(t!("common-together-failed").into_owned()); }
                     self.room_wanted = view.is_some();
                     self.room = view;
+                    if self.room.is_none() { self.room_invite = false; }
                 }
                 Vec::new()
             }
@@ -3719,7 +3738,7 @@ impl State {
     /// Whether a dialog of the app's own stands over the window, the first run's included:
     /// what offers itself over the window waits for it to close.
     pub fn dialog_open(&self) -> bool {
-        self.replay_story.is_some() || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
+        self.replay_story.is_some() || self.room_invite || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
             || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
     }
 
@@ -4104,7 +4123,13 @@ mod tests {
         state.room.as_mut().unwrap().open = true;
         assert_eq!(state.update(&UiAction::Clicked { id: "page-track:0".into() }), vec![ask("play", Some(track("a")))], "or played, where the host lets it");
         assert_eq!(state.update(&UiAction::Clicked { id: "next".into() }), vec![ask("next", None)]);
+        // A reaction from the row goes to the room; what is not one of them goes nowhere.
+        assert_eq!(click(&mut state, "room-react:🔥"), vec![Command::RoomOrder(Order::React("🔥".into()))]);
+        assert!(click(&mut state, "room-react:spam").is_empty());
+        click(&mut state, "room-invite");
+        assert!(state.room_invite && state.dialog_open(), "the invitation stands as a dialog does");
         assert_eq!(click(&mut state, "room-leave"), vec![Command::RoomOrder(Order::Leave)]);
+        assert!(!state.room_invite, "leaving shuts the invitation");
         assert!(state.room.is_none());
         state.apply(Event::Room(Some(RoomView { phase: Phase::Live, ..RoomView::default() })));
         assert!(state.room.is_none(), "left, a late word does not bring it back");

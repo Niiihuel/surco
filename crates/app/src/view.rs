@@ -4,6 +4,7 @@ mod mobile;
 mod equalizer;
 mod onboarding;
 mod wrapped;
+mod jam;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
@@ -421,7 +422,7 @@ fn window_view(state: &State, window: Size) -> Element {
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
-    let whole = wrapped::story(state, whole, window);
+    let whole = wrapped::story(state, jam::invite(state, whole, window.width), window);
     Toast::layer(whole, skip_notice(state, palette), PLAYER_HEIGHT + 12.0)
 }
 
@@ -1475,93 +1476,6 @@ fn recognize_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
     page_scroll("recognize", Element::column(sections).gap(16.0).padding(12.0))
 }
 
-/// Listening together: a room to host, or to join by its code; in one, its code to share, who
-/// is in it, what it says, and the way out.
-fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    use crate::room::{Phase, Said};
-    let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let card = |parts: Vec<Element>| Element::panel(Element::column(parts).gap(10.0)).padding(16.0).background(CHOSEN).radius(8.0);
-    let bold = |text: std::borrow::Cow<'static, str>| Text::new(text, raised).font_size(16.0).render().font_family(FontFamily::SansBold);
-    let inner = (width - 24.0 - 32.0).min(520.0);
-    let mut sections = Vec::new();
-    if !state.mobile {
-        sections.push(Element::column(vec![
-            Text::new(t!("common-together"), palette).font_size(PAGE_TITLE).render(),
-            Text::new(t!("common-together-detail"), palette).muted().render(),
-        ]).gap(4.0));
-    }
-    let Some(room) = &state.room else {
-        sections.push(card(vec![
-            bold(t!("common-together-host")),
-            Text::new(t!("common-together-host-detail"), raised).muted().render(),
-            Element::row(vec![card_button("room-host", t!("common-together-host-go"), true).icon(Icon::Custom(glyph::TOGETHER)).render()]),
-        ]));
-        let mut join = vec![
-            bold(t!("common-together-join")),
-            Text::new(t!("common-together-join-detail"), raised).muted().render(),
-            Element::row(vec![
-                TextField::new("room-code", &state.room_code, "XXXX-XXXX-XXXX", raised).label(t!("common-code")).width(inner.min(260.0)).render(),
-                card_button("room-join", t!("common-together-join-go"), false).enabled(!state.room_code.trim().is_empty()).render().centered_y(),
-            ]).gap(8.0),
-        ];
-        if let Some(why) = &state.room_error {
-            join.push(Alert::new(t!("common-together-join"), why, palette).id("room-error").compact(true).render());
-        }
-        sections.push(card(join));
-        return page_scroll("together", Element::column(sections).gap(16.0).padding(12.0));
-    };
-    let phase = match room.phase {
-        Phase::Connecting => t!("common-together-connecting"),
-        Phase::Waiting => t!("common-together-waiting"),
-        Phase::Live if room.hosting => t!("common-together-hosting", relays = room.relays),
-        Phase::Live => t!("common-together-live", relays = room.relays),
-        Phase::LostHost => t!("common-together-lost"),
-        Phase::Ended => t!("common-together-ended"),
-    };
-    // The code, large, to be read out or copied.
-    let code = Element::text(&room.code).font_family(FontFamily::SansBold).font_size(32.0).foreground(palette.text);
-    let copy = card_button("room-copy", t!("common-together-copy"), false).icon(Icon::Copy).sizing(CARD_BUTTON_SMALL).render();
-    let mut head = vec![Text::new(phase, raised).muted().render(), Element::row(vec![code.centered_y(), copy.centered_y()]).gap(16.0).wrap().line_gap(8.0)];
-    if room.hosting {
-        head.push(mobile::settings::switch(&t!("common-together-open"), Some(&t!("common-together-open-detail")), "room-open", room.open));
-    }
-    let leave = card_button("room-leave", if room.hosting { t!("common-together-close") } else { t!("common-together-leave") }, false).sizing(CARD_BUTTON_SMALL).render();
-    head.push(Element::row(vec![leave]));
-    sections.push(card(head));
-    // Who is in it.
-    let members = room.members.iter().map(|member| {
-        let host = if member.host { format!(" · {}", t!("common-together-host-tag")) } else { String::new() };
-        Text::new(format!("{}{host}", member.name), raised).render()
-    }).collect::<Vec<_>>();
-    if !members.is_empty() {
-        let mut parts = vec![bold(t!("common-together-members"))];
-        parts.extend(members);
-        sections.push(card(parts));
-    }
-    // What is said in it, the latest last, and what to say.
-    let lines = room.chat.iter().rev().take(40).rev().map(|line| {
-        let said = match line.said {
-            Said::Chat => format!("{}: {}", line.name, line.text),
-            Said::Joined => t!("common-together-joined", name = line.name.as_str()).into_owned(),
-            Said::Suggested => t!("common-together-suggested", name = line.name.as_str(), title = line.text.as_str()).into_owned(),
-        };
-        let text = Text::new(said, raised);
-        if line.said == Said::Chat { text.render() } else { text.muted().render() }
-    }).collect::<Vec<_>>();
-    let mut chat = vec![bold(t!("common-together-chat"))];
-    if lines.is_empty() { chat.push(Text::new(t!("common-together-chat-empty"), raised).muted().render()); }
-    chat.extend(lines);
-    chat.push(Element::row(vec![
-        TextField::new("room-chat", &state.room_chat, "", raised).label(t!("common-together-chat-placeholder")).render().flex(1.0),
-        card_button("room-send", t!("common-together-send"), true).enabled(!state.room_chat.trim().is_empty()).render().centered_y(),
-    ]).gap(8.0));
-    if !room.hosting {
-        chat.insert(1, Text::new(if room.open { t!("common-together-guest-open") } else { t!("common-together-guest-suggest") }, raised).role(TextRole::Caption).muted().render());
-    }
-    sections.push(card(chat));
-    page_scroll("together", Element::column(sections).gap(16.0).padding(12.0))
-}
-
 /// The side of the recognising disc at rest.
 const RECOGNIZE_DISC: f32 = 168.0;
 
@@ -1597,7 +1511,12 @@ fn choosable(id: &str, picture: Element, side: f32, round: bool, palette: Compon
 const CHOOSE_GLYPH: f32 = 48.0;
 
 fn profile_colour(state: &State) -> Color {
-    MIX_STRIPES[state.profile.shown().bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()]
+    name_colour(state.profile.shown())
+}
+
+/// The colour a name is drawn on, the same wherever it shows.
+fn name_colour(name: &str) -> Color {
+    MIX_STRIPES[name.bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(byte as usize)) % MIX_STRIPES.len()]
 }
 
 /// The local account's page, as Spotify's profile: its face and name over its colour, what it
@@ -2978,7 +2897,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Profile => profile_page(state, palette),
         Page::Replay => wrapped::page(state, width, palette),
         Page::Recognize => recognize_page(state, width, palette),
-        Page::Together => together_page(state, width, palette),
+        Page::Together => jam::page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
@@ -3872,6 +3791,8 @@ fn now_playing(state: &State, track: &Track, window: Size, palette: ComponentPal
         Element::column(vec![Element::spacer().size(None, Some(PANEL_HEADER)), inset(picture), inset(title)]).gap(16.0)
     };
     let mut parts = vec![media];
+    // In a room, the room first: who is in it and what they say.
+    parts.extend(jam::room_panel(state, side, palette).map(inset));
     parts.extend(lyrics_preview(state, side, palette).map(inset));
     parts.extend(about_artist(state, side, palette).map(inset));
     parts.extend(next_up(state, side, palette).map(inset));
@@ -4269,6 +4190,8 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if width >= PANEL_FROM {
         controls.push(sleep);
     }
+    // In a room, the room, where it can always be seen and reached.
+    controls.extend(jam::bar_pill(state, palette));
     controls.extend([
         devices,
         equalizer,

@@ -171,6 +171,9 @@ pub enum Msg {
         /// Guests may play, pause, seek and skip, not only suggest.
         #[serde(default)]
         open: bool,
+        /// Who added which of the songs to come: a track's ID and a member's name.
+        #[serde(default)]
+        added: Vec<(String, String)>,
     },
     /// The host closed the room.
     End,
@@ -187,7 +190,12 @@ pub enum Msg {
         track: Option<Track>,
     },
     Chat { text: String },
+    /// A reaction to what plays, an emoji.
+    React { emoji: String },
 }
+
+/// The reactions a room offers to what plays, as a row of quick ones.
+pub const REACTIONS: [&str; 5] = ["🔥", "❤️", "😂", "😮", "👏"];
 
 /// Where a guest should be in the song now, given the host's last state and how far the host's
 /// clock is ahead of this one's, in milliseconds.

@@ -16,6 +16,8 @@ use crate::together::{clock_offset, target_position, Member, Msg, Relays, Room};
 #[derive(Clone, Debug, PartialEq)]
 pub enum Order {
     Chat(String),
+    /// A reaction to what plays.
+    React(String),
     /// A guest's: add, play, pause, resume, seek, next or previous.
     Ask { action: String, pos: u64, track: Option<Track> },
     /// The host's: whether guests may play, pause, seek and skip.
@@ -43,6 +45,8 @@ pub enum Said {
     Joined,
     /// A guest suggested a song; its text is the song's title.
     Suggested,
+    /// Someone reacted to what plays; its text is the emoji.
+    Reacted,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -63,10 +67,15 @@ pub struct RoomView {
     pub members: Vec<Member>,
     pub chat: Vec<Line>,
     pub open: bool,
+    /// What the host has to come, as a guest hears it; the host's own is its queue.
+    pub next: Vec<Track>,
+    /// Who added which of the songs to come: a track's ID and a member's name.
+    pub added: Vec<(String, String)>,
 }
 
-/// How many lines of chat are kept.
+/// How many lines of chat are kept, and how many songs' adders.
 const CHAT_KEPT: usize = 100;
+const ADDED_KEPT: usize = 50;
 /// How often the host says where it is with nothing changing, and a guest that it is there.
 const STATE_EVERY: Duration = Duration::from_secs(4);
 const HERE_EVERY: Duration = Duration::from_secs(15);
@@ -126,6 +135,10 @@ pub async fn run(room: Room, hosting: bool, name: String, mut orders: mpsc::Unbo
                     relays.say(&Msg::Chat { text: text.clone() });
                     line(&mut view, name.clone(), text, true, Said::Chat);
                 }
+                Some(Order::React(emoji)) => {
+                    relays.say(&Msg::React { emoji: emoji.clone() });
+                    line(&mut view, name.clone(), emoji, true, Said::Reacted);
+                }
                 Some(Order::Ask { action, pos, track }) => relays.say(&Msg::Ask { action, pos, track }),
                 Some(Order::Open(open)) if hosting => { view.open = open; say_state = true; }
                 Some(Order::Open(_)) => {}
@@ -154,7 +167,11 @@ pub async fn run(room: Room, hosting: bool, name: String, mut orders: mpsc::Unbo
                     match (action.as_str(), track) {
                         ("add", Some(track)) => {
                             let who = name_of(&view, &from);
-                            line(&mut view, who, track.title.clone(), false, Said::Suggested);
+                            line(&mut view, who.clone(), track.title.clone(), false, Said::Suggested);
+                            view.added.retain(|(id, _)| *id != track.id);
+                            view.added.push((track.id.clone(), who));
+                            if view.added.len() > ADDED_KEPT { view.added.remove(0); }
+                            say_state = true;
                             command(Command::Enqueue(track));
                         }
                         ("play", Some(track)) if view.open => command(Command::PlayList { tracks: vec![track], index: 0 }),
@@ -170,11 +187,18 @@ pub async fn run(room: Room, hosting: bool, name: String, mut orders: mpsc::Unbo
                     let who = name_of(&view, &from);
                     line(&mut view, who, text, false, Said::Chat);
                 }
-                Msg::State { track, playing: on, pos, at, members, open, .. } if !hosting && host.as_ref().is_none_or(|host| *host == from) => {
+                // One emoji at most, so a reaction stays one.
+                Msg::React { emoji } if emoji.chars().count() <= 4 => {
+                    let who = name_of(&view, &from);
+                    line(&mut view, who, emoji, false, Said::Reacted);
+                }
+                Msg::State { track, playing: on, pos, at, members, open, next, added, .. } if !hosting && host.as_ref().is_none_or(|host| *host == from) => {
                     host = Some(from);
                     view.phase = Phase::Live;
                     view.members = members;
                     view.open = open;
+                    view.next = next;
+                    view.added = added;
                     state = Some((track, on, pos, at, Instant::now()));
                 }
                 Msg::Pong { c, h, to } if !hosting && to == me => offset = clock_offset(c, h, now_ms()),
@@ -223,9 +247,12 @@ pub async fn run(room: Room, hosting: bool, name: String, mut orders: mpsc::Unbo
             said_state = Instant::now();
             seq += 1;
             let now = playing.borrow().clone();
+            view.next = now.upcoming.iter().take(10).cloned().collect();
+            // Only what is still to come keeps who added it.
+            view.added.retain(|(id, _)| now.upcoming.iter().any(|track| track.id == *id));
             relays.say(&Msg::State {
                 seq, track: now.current.clone(), playing: now.playing, pos: (now.position * 1000.0) as u64, at: now_ms(),
-                next: now.upcoming.iter().take(10).cloned().collect(), members: view.members.clone(), open: view.open,
+                next: view.next.clone(), members: view.members.clone(), open: view.open, added: view.added.clone(),
             });
         }
         // A guest follows: the host's song, its playing or not when that changes, and where it is.

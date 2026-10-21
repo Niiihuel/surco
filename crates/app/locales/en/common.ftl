@@ -257,6 +257,22 @@ common-together-hosting = You are the host · { $relays } relays
 common-together-live = Listening with the host · { $relays } relays
 common-together-lost = The host has not been heard from for a while…
 common-together-ended = The room ended.
+common-together-room-of = { $name }'s room
+common-together-listening = { $count ->
+    [one] { $count } listening
+   *[other] { $count } listening
+}
+common-together-invite = Invite
+common-together-invite-title = Invite others to listen with you
+common-together-invite-detail = Give them this code: they type it in Listen together and join the room, each on their own device.
+common-together-activity = Activity
+common-together-queue = Up next
+common-together-queue-empty = Nothing queued yet. What is added shows here.
+common-together-added-by = Added by { $name }
+common-together-react = React to what plays
+common-together-you = You
+common-together-open-room = Open the room
+common-together-in-room = In the room · { $count }
 common-together-copy = Copy code
 common-together-open = Guests control it too
 common-together-open-detail = They can play, pause, seek and skip, not only suggest songs.
