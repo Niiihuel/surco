@@ -143,9 +143,9 @@ impl Controller {
             route_label: t!("native-audio-output").into_owned(), ..Payload::default() };
         self.menus.clear();
         self.paste = None;
-        // The greeting stands over everything, the header and the tab bar too, with no
-        // native surface beside it.
-        if !state.mobile || state.welcome { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
+        // The greeting, moving an account and the profile are limn's: they stand over
+        // everything, the header and the tab bar too, with no native surface beside them.
+        if !state.mobile || state.welcome || state.handoff.is_some() || state.profile_draft.is_some() { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
         payload.chrome = self.chrome(state, frame, origin);
         if let Some((key, mut sheet)) = sheet_spec(state) {
             self.search = None;
@@ -728,6 +728,24 @@ mod tests {
         state.settings.reduce_motion = false;
         state.motion = false;
         assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], true);
+    }
+
+    #[test]
+    fn moving_an_account_and_the_profile_stand_over_the_native_bars() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        let size = Size::new(390.0, 844.0);
+        let mut controller = Controller::default();
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        assert!(controller.payload(&state, &frame, Pos2::ZERO).chrome.is_some(), "the bars, at rest");
+        for open in ["account-handoff", "profile-edit"] {
+            let mut state = phone();
+            state.mobile_ui.native_surfaces = true;
+            state.update(&limn::UiAction::Clicked { id: open.into() });
+            let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+            let payload = controller.payload(&state, &frame, Pos2::ZERO);
+            assert!(payload.chrome.is_none() && payload.sheet.is_none(), "{open}: nothing of UIKit's over it");
+        }
     }
 
     #[test]

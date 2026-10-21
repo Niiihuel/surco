@@ -190,16 +190,22 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
-    // UIKit owns these surfaces when its bridge is ready. Keep the limn
-    // implementation available on other platforms or if the bridge is unavailable.
-    // The greeting is limn's on every platform: no UIKit surface draws it.
-    let tree = welcome_dialog(state, tree, window.width);
-    if cfg!(target_os = "ios") && state.mobile_ui.native_surfaces { return tree; }
+    dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces)
+}
+
+/// The phone's dialogs over `tree`. UIKit owns its sheets when its bridge is ready, `uikit`;
+/// the limn ones stay for other platforms or if the bridge is unavailable. The greeting,
+/// the profile and moving an account are limn's on every platform: no UIKit surface draws
+/// them, and left behind the bridge they would open to nothing.
+fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, uikit: bool) -> Element {
+    let tree = welcome_dialog(state, tree, width);
+    let tree = super::profile_dialog(state, super::handoff_dialog(state, tree, width), width);
+    if uikit { return tree; }
     let tree = sheets::render(state, tree, palette);
-    let tree = share_dialog(state, tree, window.width, palette);
-    let tree = super::profile_dialog(state, super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width), window.width);
-    let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
-    confirm_dialog(state, tree, window.width, palette)
+    let tree = share_dialog(state, tree, width, palette);
+    let tree = playlist_dialog(state, tree, width, palette);
+    let tree = missed_dialog(state, import_dialog(state, tree, width, palette), width, palette);
+    confirm_dialog(state, tree, width, palette)
 }
 
 /// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.
@@ -524,6 +530,23 @@ mod tests {
                 assert!(rect.x >= 0.0 && rect.x + rect.width <= width && rect.y + rect.height <= size.height - NAV_HEIGHT - MINI_HEIGHT);
             }
         }
+    }
+
+    #[test]
+    fn behind_uikit_moving_an_account_and_the_profile_still_open() {
+        let size = Size::new(390.0, 844.0);
+        let mut state = playing_state();
+        let ids = |state: &State| {
+            let tree = dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size.width, SCHEME.palette(), true);
+            UiTree::new(tree).layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
+        };
+        state.update(&UiAction::Clicked { id: "account-handoff".into() });
+        let offer = crate::handoff::Offer { code: "0000-0000-0001".into(), link: "surco://receive?from=x".into() };
+        state.handoff.as_mut().unwrap().offer = Some(Ok((offer, None)));
+        assert!(ids(&state).iter().any(|id| id == "handoff-copy"), "its code, over what UIKit draws");
+        state.handoff = None;
+        state.update(&UiAction::Clicked { id: "profile-edit".into() });
+        assert!(ids(&state).iter().any(|id| id == "profile-name"), "the profile's name");
     }
 
     #[test]
