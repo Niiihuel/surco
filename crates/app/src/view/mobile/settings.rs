@@ -83,6 +83,47 @@ pub(in crate::view) fn sponsorblock(state: &State) -> Vec<Element> {
     rows
 }
 
+/// Last.fm and ListenBrainz: who is signed in, and what waits to be sent; or the fields to sign
+/// in with, the password never kept.
+pub(in crate::view) fn scrobbling(state: &State, width: f32) -> Element {
+    use crate::scrobble::Service;
+    let palette = SCHEME.on_raised();
+    let form = &state.scrobble_form;
+    let white = Color::WHITE;
+    let field = |id: &str, value: &str, placeholder: std::borrow::Cow<'static, str>, hidden: bool|
+        TextField::new(id, value, placeholder, palette).password(hidden).size(ControlSize::Regular).render().size(Some(width), None);
+    let connect = |id: &str, busy: bool, ready: bool| Button::new(id, if busy { t!("common-scrobble-connecting") } else { t!("common-scrobble-connect") }, palette)
+        .size(ControlSize::Compact).round().enabled(ready && form.busy.is_none()).render();
+    let signed = |id: &str, name: &str, user: &str, waiting: usize| {
+        let detail = if waiting > 0 { t!("common-scrobble-signed-waiting", user = user, count = waiting) } else { t!("common-scrobble-signed", user = user) };
+        action(id, name, Some(&detail), Some(value(&t!("common-scrobble-sign-out"))), true, true)
+    };
+    let mut rows = vec![match &state.scrobbling.listenbrainz {
+        Some(account) => signed("scrobble:listenbrainz-out", "ListenBrainz", &account.user, account.waiting.len()),
+        None => stacked(line("ListenBrainz", Some(&t!("common-scrobble-listenbrainz-detail")), None, white), Element::column(vec![
+            field("scrobble-token", &form.token, t!("common-scrobble-token"), true),
+            Element::row(vec![connect("scrobble:listenbrainz", form.busy == Some(Service::ListenBrainz), !form.token.trim().is_empty())]),
+        ]).gap(8.0)),
+    }];
+    rows.push(match &state.scrobbling.lastfm {
+        Some(account) => signed("scrobble:lastfm-out", "Last.fm", &account.user, account.waiting.len()),
+        None => {
+            let ready = [&form.key, &form.secret, &form.user, &form.password].iter().all(|field| !field.trim().is_empty());
+            stacked(line("Last.fm", Some(&t!("common-scrobble-lastfm-detail")), None, white), Element::column(vec![
+                field("scrobble-key", &form.key, t!("common-scrobble-key"), false),
+                field("scrobble-secret", &form.secret, t!("common-scrobble-secret"), true),
+                field("scrobble-user", &form.user, t!("common-scrobble-user"), false),
+                field("scrobble-password", &form.password, t!("common-scrobble-password"), true),
+                Element::row(vec![connect("scrobble:lastfm", form.busy == Some(Service::LastFm), ready)]),
+            ]).gap(8.0))
+        }
+    });
+    if let Some(why) = &form.error {
+        rows.push(Alert::new(t!("common-scrobble-failed"), why, SCHEME.palette()).id("scrobble-error").compact(true).render());
+    }
+    group(&t!("common-scrobble"), rows, &t!("common-scrobble-footer"))
+}
+
 pub(in crate::view) fn switch(title: &str, detail: Option<&str>, id: &str, on: bool) -> Element {
     // Monochrome: a white track with a dark thumb when on, a white thumb on gray when off.
     let track = ComponentPalette { surface: if on { SCHEME.canvas } else { Color::WHITE }, selected: SCHEME.control.border, ..SCHEME.on_raised() };
@@ -287,7 +328,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
 
     use SettingsPart::*;
     let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
-        (Display, display), (Display, language), (Library, library), (Library, bring), (About, about), (Storage, erase)];
+        (Display, display), (Display, language), (Library, library), (Library, bring), (Library, scrobbling(state, inner)), (About, about), (Storage, erase)];
     ScrollArea::new("settings", Element::column(arrange(state, sections, false, SCHEME.palette())).gap(24.0).padding(GUTTER)).render().flex(1.0)
 }
 
@@ -393,7 +434,7 @@ mod tests {
         assert_eq!(parts.last(), Some(&"settings-part:storage"), "erasing is the last part");
         assert!(ROWS.iter().all(|id| !frames[0].access.iter().any(|node| node.id == *id)), "the list holds the parts, not their settings");
         let groups = frames[1..].iter().flat_map(|frame| frame.access.iter().filter(|node| node.id.starts_with("settings-group:"))).count();
-        assert_eq!(groups, 11);
+        assert_eq!(groups, 12);
         // No hue but the destructive red, and no cards: the rows are on the page.
         for frame in &frames {
             for command in &frame.commands {

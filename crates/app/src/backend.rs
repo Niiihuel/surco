@@ -109,6 +109,12 @@ pub enum Command {
     MoveQueue(usize, usize),
     /// Pass by the silence a song opens and closes with.
     SkipSilence(bool),
+    /// Sign in to Last.fm or ListenBrainz.
+    ScrobbleSignIn(crate::scrobble::SignIn),
+    /// Say on the listener's profiles what is playing.
+    NowPlaying { accounts: crate::scrobble::Accounts, listen: crate::scrobble::Listen },
+    /// Send what waits for each service signed in to.
+    Scrobble(crate::scrobble::Accounts),
     /// Which SponsorBlock categories are jumped over, a bit each; none, nothing is asked.
     SponsorBlock(u8),
     /// Stop the music after so long, or with the song that plays, or not.
@@ -232,6 +238,10 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// Signed in to a service, or why not.
+    SignedIn(Result<crate::scrobble::Account, String>),
+    /// The first of what waited for a service went.
+    Scrobbled { service: crate::scrobble::Service, sent: usize },
     /// Where the account is served, and the code a phone reads that from.
     /// What is served, with its QR code when one could be made: the code to type is enough.
     Offered(Result<(Offer, Option<RasterImage>), String>),
@@ -790,6 +800,28 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
         (Command::SkipSilence(on), _) => surco_audio::silence::set_skip_silence(on),
+        (Command::ScrobbleSignIn(sign_in), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let account = crate::scrobble::sign_in(&shared.youtube, sign_in).await;
+                (shared.reply)(Event::SignedIn(account));
+            });
+        }
+        (Command::NowPlaying { accounts, listen }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move { crate::scrobble::playing_now(&shared.youtube, &accounts, &listen).await });
+        }
+        (Command::Scrobble(accounts), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                for service in [crate::scrobble::Service::ListenBrainz, crate::scrobble::Service::LastFm] {
+                    let sent = crate::scrobble::send(&shared.youtube, &accounts, service).await;
+                    if sent > 0 { (shared.reply)(Event::Scrobbled { service, sent }); }
+                }
+            });
+        }
+        (Command::ScrobbleSignIn(_), Err(message)) => reply(Event::SignedIn(Err(message.clone()))),
+        (Command::NowPlaying { .. } | Command::Scrobble(_), Err(_)) => {}
         (Command::SponsorBlock(mask), Ok(shared)) => {
             shared.sponsor.store(mask, Ordering::SeqCst);
             shared.segments.lock().unwrap().clear();

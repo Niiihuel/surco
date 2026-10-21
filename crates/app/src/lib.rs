@@ -27,6 +27,7 @@ mod ios_symbols;
 mod paths;
 mod player;
 mod replay;
+mod scrobble;
 mod sponsorblock;
 mod state;
 mod update;
@@ -341,6 +342,7 @@ const EQUALIZER_KEY: &str = "equalizer";
 const OUTPUT_KEY: &str = "output";
 const PROFILE_KEY: &str = "profile";
 const SESSION_KEY: &str = "session";
+const SCROBBLING_KEY: &str = "scrobbling";
 
 impl eframe::App for Host {
     #[cfg(target_os = "ios")]
@@ -369,6 +371,9 @@ impl eframe::App for Host {
         // Nothing playing leaves nothing to go on with.
         let session = self.state.session().and_then(|session| serde_json::to_string(&session).ok());
         storage.set_string(SESSION_KEY, session.unwrap_or_default());
+        if let Ok(scrobbling) = serde_json::to_string(&self.state.scrobbling) {
+            storage.set_string(SCROBBLING_KEY, scrobbling);
+        }
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, host: &mut eframe::Frame) {
@@ -380,6 +385,10 @@ impl eframe::App for Host {
             self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay), Command::Crossfade(f64::from(self.state.settings.crossfade)), Command::Quality(self.state.settings.quality.bps()), Command::Mono(self.state.settings.mono), Command::Normalize(self.state.settings.normalize), Command::SponsorBlock(self.state.settings.sponsorblock), Command::SkipSilence(self.state.settings.skip_silence)]);
             if self.state.output.is_some() {
                 self.send(vec![Command::Output(self.state.output.clone())]);
+            }
+            // What could not be sent the last time goes now.
+            if self.state.scrobbling.any() {
+                self.send(vec![Command::Scrobble(self.state.scrobbling.clone())]);
             }
             if let Some(state::Session { tracks, position }) = self.session.take() {
                 self.send(vec![Command::Session { tracks, position }]);
@@ -947,6 +956,7 @@ pub fn run() -> eframe::Result {
                 state.equalizer = equalizer.unwrap_or(state.equalizer);
                 state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
                 state.profile = storage.get_string(PROFILE_KEY).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
+                state.scrobbling = storage.get_string(SCROBBLING_KEY).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
             }
             let session = creation.storage.and_then(|storage| storage.get_string(SESSION_KEY)).and_then(|text| serde_json::from_str(&text).ok());
             i18n::set(state.settings.language.unwrap_or_else(i18n::Language::system));

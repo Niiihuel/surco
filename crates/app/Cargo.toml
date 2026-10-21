@@ -27,6 +27,9 @@ tokio = { version = "1", features = ["rt-multi-thread", "sync", "macros", "time"
 sha2 = "0.10"
 # Already in the tree: the code Spotify's web player proves itself with, for a long playlist.
 sha1 = "0.10"
+# MIT/Apache-2.0, RustCrypto's as sha1 and sha2 are, over the same digest: Last.fm signs every
+# write with the MD5 of its parameters.
+md-5 = "0.10"
 # The index of what is kept for offline listening.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

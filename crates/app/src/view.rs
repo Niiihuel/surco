@@ -3173,7 +3173,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
 
     use SettingsPart::*;
     let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
-        (Display, display), (Display, language), (Library, library), (Library, bring), (About, about), (Storage, erase)];
+        (Display, display), (Display, language), (Library, library), (Library, bring), (Library, mobile::settings::scrobbling(state, inner.min(420.0))), (About, about), (Storage, erase)];
     let column = Element::column(arrange(state, sections, true, palette)).gap(28.0).padding(GUTTER).size(Some(across), None);
     page_scroll("settings", column)
 }

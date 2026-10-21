@@ -73,7 +73,7 @@ common-settings-devices-about = Audio output • Bluetooth
 common-settings-display = Display and language
 common-settings-display-about = Motion • Videos • Language
 common-settings-library = Library
-common-settings-library-about = Order • View • Import music
+common-settings-library-about = Order • View • Import music • Scrobbling
 common-settings-about = About Surco
 common-settings-about-about = Version { $version } • Release notes
 common-settings-storage = Storage and privacy
@@ -177,3 +177,23 @@ common-replay-evening = Evenings are when you press play.
 common-replay-streak = { $days } days in a row with music.
 common-replay-busiest = Your busiest day: { $day }, { $minutes } min.
 common-replay-on-repeat = On repeat: “{ $title }”, { $times } times in one day.
+
+## Scrobbling
+common-scrobble = Scrobbling
+common-scrobble-footer = What you listen to goes to your account once you heard half the song or four minutes. Keys stay on this device only and do not travel when you move your account.
+common-scrobble-listenbrainz-detail = Paste your token from listenbrainz.org/settings.
+common-scrobble-lastfm-detail = With your own API key from last.fm/api. The password is used once and not kept.
+common-scrobble-token = User token
+common-scrobble-key = API key
+common-scrobble-secret = Shared secret
+common-scrobble-user = Username
+common-scrobble-password = Password
+common-scrobble-connect = Connect
+common-scrobble-connecting = Connecting…
+common-scrobble-sign-out = Sign out
+common-scrobble-signed = Signed in as { $user }
+common-scrobble-signed-waiting = Signed in as { $user } · { $count ->
+    [one] 1 listen to send
+   *[other] { $count } listens to send
+}
+common-scrobble-failed = Could not connect

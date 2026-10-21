@@ -1007,6 +1007,23 @@ pub struct State {
     listening: Option<Listening>,
     /// The stretch Replay looks over.
     pub replay_period: crate::replay::Period,
+    /// The Last.fm and ListenBrainz accounts signed in to, kept apart from the collection
+    /// that travels to another device: they are credentials.
+    pub scrobbling: crate::scrobble::Accounts,
+    pub scrobble_form: ScrobbleForm,
+}
+
+/// What is being typed to sign in to a service, and how it went.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ScrobbleForm {
+    pub token: String,
+    pub key: String,
+    pub secret: String,
+    pub user: String,
+    pub password: String,
+    /// Which service is being signed in to.
+    pub busy: Option<crate::scrobble::Service>,
+    pub error: Option<String>,
 }
 
 /// A song as it is listened to, until another takes its place.
@@ -1017,6 +1034,8 @@ struct Listening {
     at: i64,
     /// Seconds it really played, paused time left out.
     heard: f64,
+    /// Whether it went to Last.fm and ListenBrainz.
+    sent: bool,
     /// Since when it has been playing, while it is.
     since: Option<Instant>,
     /// Whether it already counts as played, as the last of the plays.
@@ -1353,6 +1372,8 @@ impl Default for State {
             skip_notice: None,
             listening: None,
             replay_period: crate::replay::Period::default(),
+            scrobbling: crate::scrobble::Accounts::default(),
+            scrobble_form: ScrobbleForm::default(),
         }
     }
 }
@@ -1943,6 +1964,19 @@ impl State {
             UiAction::Submitted { id, .. } if id == "onboarding-name" => self.click("onboarding-next"),
             UiAction::InputChanged { id, value } if id == "onboarding-search" => {
                 self.onboarding_type(value, Instant::now());
+                Vec::new()
+            }
+            UiAction::InputChanged { id, value } if id.starts_with("scrobble-") => {
+                let form = &mut self.scrobble_form;
+                let field = match id.as_str() {
+                    "scrobble-token" => &mut form.token,
+                    "scrobble-key" => &mut form.key,
+                    "scrobble-secret" => &mut form.secret,
+                    "scrobble-user" => &mut form.user,
+                    "scrobble-password" => &mut form.password,
+                    _ => return Vec::new(),
+                };
+                *field = value.clone();
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "handoff-address" => {
@@ -2635,6 +2669,30 @@ impl State {
                 }
                 Vec::new()
             }
+            "scrobble:listenbrainz" => {
+                use crate::scrobble::{Service, SignIn};
+                let form = &mut self.scrobble_form;
+                if form.token.trim().is_empty() || form.busy.is_some() { return Vec::new(); }
+                form.busy = Some(Service::ListenBrainz);
+                form.error = None;
+                vec![Command::ScrobbleSignIn(SignIn::ListenBrainz { token: form.token.clone() })]
+            }
+            "scrobble:lastfm" => {
+                use crate::scrobble::{Service, SignIn};
+                let form = &mut self.scrobble_form;
+                if [&form.key, &form.secret, &form.user, &form.password].iter().any(|field| field.trim().is_empty()) || form.busy.is_some() { return Vec::new(); }
+                form.busy = Some(Service::LastFm);
+                form.error = None;
+                vec![Command::ScrobbleSignIn(SignIn::LastFm { key: form.key.clone(), secret: form.secret.clone(), user: form.user.clone(), password: form.password.clone() })]
+            }
+            "scrobble:listenbrainz-out" => {
+                self.scrobbling.listenbrainz = None;
+                Vec::new()
+            }
+            "scrobble:lastfm-out" => {
+                self.scrobbling.lastfm = None;
+                Vec::new()
+            }
             "replay" => {
                 if self.page != Page::Replay { self.go(Page::Replay); }
                 Vec::new()
@@ -3058,6 +3116,30 @@ impl State {
                 covers
             }
             Event::ArtistsFound { key, artists } => self.onboarding_found(&key, artists),
+            Event::SignedIn(account) => {
+                self.scrobble_form.busy = None;
+                match account {
+                    Ok(crate::scrobble::Account::ListenBrainz(account)) => {
+                        self.scrobbling.listenbrainz = Some(account);
+                        self.scrobble_form.token.clear();
+                        self.scrobble_form.error = None;
+                    }
+                    Ok(crate::scrobble::Account::LastFm(account)) => {
+                        self.scrobbling.lastfm = Some(account);
+                        // The password is not kept, typed or otherwise.
+                        self.scrobble_form = ScrobbleForm::default();
+                    }
+                    Err(why) => {
+                        self.scrobble_form.password.clear();
+                        self.scrobble_form.error = Some(why);
+                    }
+                }
+                Vec::new()
+            }
+            Event::Scrobbled { service, sent } => {
+                self.scrobbling.sent(service, sent);
+                Vec::new()
+            }
             Event::Offered(offer) => {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving) { handoff.offer = Some(offer); }
                 Vec::new()
@@ -3222,7 +3304,7 @@ impl State {
         // The song's own video in its place is that song still.
         let song = self.swapped.clone().or_else(|| self.player.current.clone());
         let (playing, position, duration) = (self.player.playing, self.player.position, self.player.duration);
-        self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp());
+        let scrobbles = self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp());
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         // And the panel of what plays shows what comes next.
@@ -3232,13 +3314,15 @@ impl State {
         commands.extend(self.ask_lyrics());
         commands.extend(self.ask_clip());
         commands.extend(self.ask_about());
+        commands.extend(scrobbles);
         commands
     }
 
     /// Follows what plays as it is listened to: past `replay::counts_after` it counts as played,
     /// and from there each second heard is added to its play. Paused time is not; the same
     /// song played again from its beginning is another play.
-    fn listen(&mut self, song: Option<Track>, playing: bool, position: f64, duration: f64, now: Instant, unix: i64) {
+    /// It is also said to Last.fm and ListenBrainz: as it starts, and once heard as Last.fm asks.
+    fn listen(&mut self, song: Option<Track>, playing: bool, position: f64, duration: f64, now: Instant, unix: i64) -> Vec<Command> {
         let again = |listening: &Listening| position < 3.0 && listening.position > position + 10.0;
         let same = |listening: &Listening| song.as_ref().is_some_and(|song| song.id == listening.track.id) && !again(listening);
         match self.listening.as_mut().filter(|listening| same(listening)) {
@@ -3248,11 +3332,22 @@ impl State {
                 listening.position = position;
             }
             None => {
-                self.listening = song.map(|track| Listening { track, at: unix, heard: 0.0, since: playing.then_some(now), counted: false, position });
-                return;
+                self.listening = song.map(|track| Listening { track, at: unix, heard: 0.0, sent: false, since: playing.then_some(now), counted: false, position });
+                let starting = self.listening.as_ref().filter(|_| playing && self.scrobbling.any());
+                return starting.map(|listening| Command::NowPlaying {
+                    accounts: self.scrobbling.clone(), listen: crate::scrobble::Listen::of(&listening.track, listening.at),
+                }).into_iter().collect();
             }
         }
-        let Some(listening) = self.listening.as_mut() else { return };
+        let Some(listening) = self.listening.as_mut() else { return Vec::new() };
+        let mut commands = Vec::new();
+        if !listening.sent && crate::scrobble::sends(listening.heard, duration) {
+            listening.sent = true;
+            if self.scrobbling.any() {
+                self.scrobbling.keep(&crate::scrobble::Listen::of(&listening.track, listening.at));
+                commands.push(Command::Scrobble(self.scrobbling.clone()));
+            }
+        }
         let plays = &mut self.collection.plays;
         if listening.counted {
             if let Some(play) = plays.last_mut().filter(|play| play.at == listening.at && play.track.id == listening.track.id) {
@@ -3263,6 +3358,7 @@ impl State {
             plays.push(crate::replay::Play { track: listening.track.clone(), at: listening.at, seconds: listening.heard as u32 });
             if plays.len() > PLAYS_KEPT { plays.drain(..plays.len() - PLAYS_KEPT); }
         }
+        commands
     }
 
     /// Asks what the artists followed have out and whether the app has a later version:
@@ -3762,6 +3858,34 @@ mod tests {
         state.listen(Some(track("c")), true, 0.0, 200.0, secs(255), 1_305);
         state.listen(Some(track("c")), true, 31.0, 200.0, secs(286), 1_305);
         assert_eq!(state.collection.plays.iter().map(|play| play.track.id.as_str()).collect::<Vec<_>>(), ["a", "a", "c"]);
+    }
+
+    #[test]
+    fn signing_in_to_scrobble_keeps_no_password_and_a_listen_goes_once_heard_enough() {
+        use crate::scrobble::{Account, LastFm, Service, SignIn};
+        let mut state = State::default();
+        assert!(click(&mut state, "scrobble:lastfm").is_empty(), "nothing typed, nothing asked");
+        for (id, value) in [("scrobble-key", "k"), ("scrobble-secret", "s"), ("scrobble-user", "ana"), ("scrobble-password", "hunter2")] {
+            state.update(&UiAction::InputChanged { id: id.into(), value: value.into() });
+        }
+        assert_eq!(click(&mut state, "scrobble:lastfm"), vec![Command::ScrobbleSignIn(SignIn::LastFm { key: "k".into(), secret: "s".into(), user: "ana".into(), password: "hunter2".into() })]);
+        assert!(click(&mut state, "scrobble:lastfm").is_empty(), "once at a time");
+        state.apply(Event::SignedIn(Err("Invalid password".into())));
+        assert!(state.scrobble_form.password.is_empty() && state.scrobble_form.error.is_some(), "a refused password is not kept either");
+        state.apply(Event::SignedIn(Ok(Account::LastFm(LastFm { user: "ana".into(), key: "k".into(), secret: "s".into(), session: "sk".into(), waiting: Vec::new() }))));
+        assert_eq!(state.scrobble_form, ScrobbleForm::default());
+        // Playing, it is said; past half of it, it is sent, once.
+        let start = Instant::now();
+        let at = |seconds: u64| start + Duration::from_secs(seconds);
+        assert!(matches!(state.listen(Some(track("a")), true, 0.0, 200.0, at(0), 1_000).as_slice(), [Command::NowPlaying { .. }]));
+        assert!(state.listen(Some(track("a")), true, 90.0, 200.0, at(90), 1_000).is_empty());
+        let sent = state.listen(Some(track("a")), true, 100.0, 200.0, at(100), 1_000);
+        assert!(matches!(sent.as_slice(), [Command::Scrobble(accounts)] if accounts.lastfm.as_ref().unwrap().waiting.len() == 1));
+        assert!(state.listen(Some(track("a")), true, 150.0, 200.0, at(150), 1_000).is_empty());
+        state.apply(Event::Scrobbled { service: Service::LastFm, sent: 1 });
+        assert!(state.scrobbling.lastfm.as_ref().unwrap().waiting.is_empty());
+        click(&mut state, "scrobble:lastfm-out");
+        assert!(state.scrobbling.lastfm.is_none());
     }
 
     #[test]

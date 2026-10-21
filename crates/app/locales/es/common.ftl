@@ -74,7 +74,7 @@ common-settings-devices-about = Salida de audio • Bluetooth
 common-settings-display = Pantalla e idioma
 common-settings-display-about = Movimiento • Videos • Idioma
 common-settings-library = Biblioteca
-common-settings-library-about = Orden • Vista • Importar música
+common-settings-library-about = Orden • Vista • Importar música • Scrobbling
 common-settings-about = Acerca de Surco
 common-settings-about-about = Versión { $version } • Notas de versión
 common-settings-storage = Almacenamiento y privacidad
@@ -178,3 +178,23 @@ common-replay-evening = Las tardes son tu momento de darle play.
 common-replay-streak = { $days } días seguidos escuchando música.
 common-replay-busiest = Tu día con más música: { $day }, { $minutes } min.
 common-replay-on-repeat = En repetición: «{ $title }», { $times } veces en un mismo día.
+
+## Scrobbling
+common-scrobble = Scrobbling
+common-scrobble-footer = Lo que escuchás se envía a tu cuenta cuando escuchaste la mitad de la canción o cuatro minutos. Las claves quedan solo en este dispositivo y no viajan al pasar tu cuenta.
+common-scrobble-listenbrainz-detail = Pegá tu token de listenbrainz.org/settings.
+common-scrobble-lastfm-detail = Con tu propia clave de API de last.fm/api. La contraseña se usa una vez y no se guarda.
+common-scrobble-token = Token de usuario
+common-scrobble-key = Clave de API
+common-scrobble-secret = Secreto compartido
+common-scrobble-user = Usuario
+common-scrobble-password = Contraseña
+common-scrobble-connect = Conectar
+common-scrobble-connecting = Conectando…
+common-scrobble-sign-out = Desconectar
+common-scrobble-signed = Conectado como { $user }
+common-scrobble-signed-waiting = Conectado como { $user } · { $count ->
+    [one] 1 escucha por enviar
+   *[other] { $count } escuchas por enviar
+}
+common-scrobble-failed = No se pudo conectar
