@@ -177,6 +177,32 @@ const MENU_WIDTH: f32 = 320.0;
 /// The most rows a menu shows before it scrolls.
 const MENU_ROWS: usize = 12;
 const DOWNLOAD: &str = include_str!("../assets/icons/download.svg");
+/// What the sleep timer offers: so many minutes, the end of the song, and putting it away
+/// when one is set.
+pub(crate) fn sleep_choices(state: &State) -> Vec<DropdownMenuEntry> {
+    use crate::player::Sleep;
+    let mut entries = vec![DropdownMenuEntry::Heading(t!("desktop-sleep").into())];
+    entries.extend(crate::state::SLEEP_MINUTES.iter().map(|minutes| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("sleep:{minutes}"), t!("desktop-sleep-minutes", minutes = minutes)))));
+    entries.push(DropdownMenuEntry::Item(DropdownMenuItem::new("sleep:end", t!("desktop-sleep-end")).selected(state.player.sleep == Some(Sleep::EndOfSong))));
+    if state.player.sleep.is_some() {
+        entries.extend([DropdownMenuEntry::Separator, DropdownMenuEntry::Item(DropdownMenuItem::new("sleep:off", t!("desktop-sleep-off")))]);
+    }
+    entries
+}
+
+/// What the sleep timer's button says: what it is for, or how long is left of it.
+pub(crate) fn sleep_hint(state: &State) -> String {
+    use crate::player::Sleep;
+    match state.player.sleep {
+        Some(Sleep::At { ends, .. }) => {
+            let left = ends.saturating_duration_since(std::time::Instant::now()).as_secs();
+            t!("desktop-sleep-left", minutes = left.div_ceil(60).max(1)).into_owned()
+        }
+        Some(Sleep::EndOfSong) => t!("desktop-sleep-at-end").into_owned(),
+        None => t!("desktop-sleep").into_owned(),
+    }
+}
+
 /// The dot under a control of the playback bar that is on.
 const ACTIVE_DOT: f32 = 4.0;
 /// What the bar's start keeps beside the title and artist: the cover, the heart and the gaps.
@@ -197,6 +223,7 @@ mod glyph {
     pub const LYRICS: &str = include_str!("../assets/icons/glyph/microphone.svg");
     pub const QUEUE: &str = include_str!("../assets/icons/glyph/queue.svg");
     pub const DEVICE: &str = include_str!("../assets/icons/glyph/connect-device.svg");
+    pub const SLEEP: &str = include_str!("../assets/icons/glyph/moon.svg");
     pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
     pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
     pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
@@ -4009,12 +4036,27 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
         .placement(PopoverPlacement::TopEnd)
         .render()
         .centered_y();
+    let choices = sleep_choices(state);
+    let rows = choices.len();
+    let sleep = DropdownMenu::new(side("sleep", Icon::Custom(glyph::SLEEP), &sleep_hint(state), state.sleep_open || state.player.sleep.is_some()), choices, state.sleep_open, "sleep-dismiss", menu_palette())
+        .sizing(menu_sizing(state))
+        .max_visible_items(rows)
+        .width(MENU_WIDTH)
+        .placement(PopoverPlacement::TopEnd)
+        .render()
+        .centered_y();
     if width >= PANEL_FROM {
         controls.push(side("now-playing-view", Icon::Custom(glyph::NOW_PLAYING_VIEW), &t!("desktop-now-playing-view"), showing));
     }
     controls.extend([
         side("lyrics", Icon::Custom(glyph::LYRICS), &t!("desktop-lyrics"), state.lyrics_open()),
         side("queue", Icon::Custom(glyph::QUEUE), &t!("desktop-queue"), state.queue_open),
+    ]);
+    // Where the bar has room for it: narrower, the volume would leave the window.
+    if width >= PANEL_FROM {
+        controls.push(sleep);
+    }
+    controls.extend([
         devices,
         equalizer,
         IconButton::new("mute", volume_glyph(state.volume), palette).round()
@@ -4444,6 +4486,25 @@ mod tests {
             let twice: Vec<&String> = found.iter().filter(|id| !seen.insert(*id)).collect();
             assert!(twice.is_empty(), "at {width}, more than one control answers to {twice:?}");
         }
+    }
+
+    #[test]
+    fn the_sleep_timer_is_chosen_from_the_bar_and_says_how_long_is_left() {
+        use crate::player::{Sleep, SleepAfter};
+        let size = Size::new(1400.0, 900.0);
+        let mut state = State::default();
+        assert!(ids(&state, size).iter().any(|id| id == "sleep"));
+        state.update(&limn::UiAction::Clicked { id: "sleep".into() });
+        let found = ids(&state, size);
+        for id in ["sleep:15", "sleep:90", "sleep:end"] { assert!(found.iter().any(|found| found == id), "{id} in {found:?}"); }
+        assert!(!found.iter().any(|id| id == "sleep:off"), "nothing to turn off yet");
+        assert_eq!(state.update(&limn::UiAction::Clicked { id: "sleep:30".into() }), vec![crate::backend::Command::Sleep(Some(SleepAfter::Minutes(30)))]);
+        assert!(!state.sleep_open, "chosen, the menu shuts");
+        state.player.sleep = Some(Sleep::At { ends: std::time::Instant::now() + std::time::Duration::from_secs(29 * 60 + 10), fade: std::time::Duration::from_secs(180) });
+        assert_eq!(sleep_hint(&state), "Se detiene en 30 min");
+        state.update(&limn::UiAction::Clicked { id: "sleep".into() });
+        assert!(ids(&state, size).iter().any(|id| id == "sleep:off"), "{:?}", ids(&state, size).iter().filter(|id| id.starts_with("sleep")).collect::<Vec<_>>());
+        assert_eq!(state.update(&limn::UiAction::Clicked { id: "sleep:off".into() }), vec![crate::backend::Command::Sleep(None)]);
     }
 
     #[test]

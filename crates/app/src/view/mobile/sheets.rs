@@ -28,7 +28,21 @@ pub(super) fn render(state: &State, base: Element, palette: ComponentPalette) ->
     });
     let base = BottomSheet::new(base, context.is_some(), t!("common-song-options"), "", "mobile-context-close", SCHEME.menu())
         .max_height(680.0).body(body).render();
-    connections(state, library_sheet(state, base, palette), palette)
+    sleep_sheet(state, connections(state, library_sheet(state, base, palette), palette), palette)
+}
+
+/// The sleep timer's choices, as the desktop's menu has them.
+fn sleep_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
+    if !state.sleep_open { return base; }
+    let rows = crate::view::sleep_choices(state).into_iter().filter_map(|entry| match entry {
+        DropdownMenuEntry::Item(item) => {
+            let row = ListRow::new(item.action_id.clone(), item.label.clone(), palette).sizing(ListRowSizing { height: Some(52.0), title_size: 15.0, ..TRACK_ROW });
+            Some(if item.selected { row.trailing_icon(Icon::Check) } else { row }.render())
+        }
+        _ => None,
+    }).collect();
+    BottomSheet::new(base, true, t!("desktop-sleep"), crate::view::sleep_hint(state), "sleep-dismiss", SCHEME.menu())
+        .max_height(560.0).body(Element::column(rows).gap(4.0)).return_focus("sleep").render()
 }
 
 fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {

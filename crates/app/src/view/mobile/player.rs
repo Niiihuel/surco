@@ -21,7 +21,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     if let Some(error) = &state.player.error {
         controls.push(Alert::new(t!("mobile-play-failed"), error, palette).id("mobile-player-error").render());
     }
-    controls.extend([timeline(state, palette), transport(state, palette), tools(palette)]);
+    controls.extend([timeline(state, palette), transport(state, palette), tools(state, palette)]);
     let main = Element::column(vec![
         sole_cover(state, &largest(state, track), side, palette).radius(8.0).centered_x()
             .animate_enter(format!("mobile-player-cover:{}", track.id)),
@@ -68,11 +68,12 @@ fn transport(state: &State, palette: ComponentPalette) -> Element {
     ])
 }
 
-fn tools(palette: ComponentPalette) -> Element {
+fn tools(state: &State, palette: ComponentPalette) -> Element {
     Element::row(vec![
         icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette),
         Element::spacer().flex(1.0),
         icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), &t!("common-share-song"), palette),
+        icon("sleep", Icon::Custom(crate::view::glyph::SLEEP), &crate::view::sleep_hint(state), palette),
         icon("queue", Icon::Playlist, &t!("mobile-show-queue"), palette),
         icon("more:current", Icon::More, &t!("common-song-options"), palette),
     ]).gap(8.0)

@@ -107,6 +107,8 @@ pub enum Command {
     ClearQueue,
     /// Move the n-th of the upcoming tracks to where the m-th is.
     MoveQueue(usize, usize),
+    /// Stop the music after so long, or with the song that plays, or not.
+    Sleep(Option<crate::player::SleepAfter>),
     /// Play the same in both speakers.
     Mono(bool),
     /// Turn the tracks louder than the reference down to it.
@@ -325,6 +327,8 @@ struct Shared {
     handovers: AtomicU64,
     /// The most bits per second a stream is fetched at.
     quality: AtomicU64,
+    /// The user's volume, and what the sleep timer leaves of it, as the engine is given their product.
+    volume: Mutex<(f32, f32)>,
     downloads: Mutex<Downloads>,
     /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
     decks: tokio::sync::Mutex<()>,
@@ -626,6 +630,7 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         library: Mutex::new(Library::open(library)),
         saving: Mutex::default(),
         covers: tokio::sync::Semaphore::new(COVERS_AT_ONCE),
+        volume: Mutex::new((1.0, 1.0)),
         serving: tokio::sync::Mutex::new(None),
         #[cfg(target_os = "ios")]
         cached_loads: Mutex::default(),
@@ -761,7 +766,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         // The slider is evenly spaced to the ear, not to the amplitude: half way is far quieter
         // than half the samples. The engine only fails this when its thread is gone, which the
         // next `Play` reports.
-        (Command::Volume(volume), Ok(shared)) => drop(shared.audio.set_volume(volume.powf(2.5), false)),
+        (Command::Volume(volume), Ok(shared)) => {
+            let dim = { let mut held = shared.volume.lock().unwrap(); held.0 = volume; held.1 };
+            drop(shared.audio.set_volume(volume.powf(2.5) * dim, false));
+        }
         (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
@@ -997,6 +1005,10 @@ fn run(shared: &Arc<Shared>, effect: Effect) {
         Effect::Pause => drop(shared.audio.pause()),
         Effect::Resume => drop(shared.audio.play()),
         Effect::Seek(seconds) => drop(shared.audio.seek(seconds)),
+        Effect::Dim(dim) => {
+            let volume = { let mut held = shared.volume.lock().unwrap(); held.1 = dim; held.0 };
+            drop(shared.audio.set_volume(volume.powf(2.5) * dim, false));
+        }
     }
 }
 

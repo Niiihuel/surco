@@ -158,6 +158,9 @@ pub struct Session {
     pub position: f64,
 }
 
+/// The minutes the sleep timer offers, as Opentune's and the phones' own clocks do.
+pub const SLEEP_MINUTES: [u32; 5] = [15, 30, 45, 60, 90];
+
 /// The most of what was still to play a session keeps.
 const SESSION_KEPT: usize = 500;
 
@@ -987,6 +990,8 @@ pub struct State {
     pub output_open: bool,
     /// The playback bar's menu of where it sounds.
     pub device_open: bool,
+    /// The sleep timer's menu.
+    pub sleep_open: bool,
 }
 
 /// How many covers a session holds, a few tens of megabytes of them.
@@ -1311,6 +1316,7 @@ impl Default for State {
             output: None,
             output_open: false,
             device_open: false,
+            sleep_open: false,
         }
     }
 }
@@ -2429,6 +2435,24 @@ impl State {
             "device-dismiss" => {
                 self.device_open = false;
                 Vec::new()
+            }
+            "sleep" => {
+                self.sleep_open = !self.sleep_open;
+                Vec::new()
+            }
+            "sleep-dismiss" => {
+                self.sleep_open = false;
+                Vec::new()
+            }
+            _ if id.starts_with("sleep:") => {
+                use crate::player::SleepAfter;
+                self.sleep_open = false;
+                let after = match &id["sleep:".len()..] {
+                    "end" => Some(SleepAfter::EndOfSong),
+                    "off" => None,
+                    minutes => match minutes.parse() { Ok(minutes) => Some(SleepAfter::Minutes(minutes)), Err(_) => return Vec::new() },
+                };
+                vec![Command::Sleep(after)]
             }
             // What plays, in the right panel: shown if it was not, or the panel shut.
             // What plays, handed around from its own panel.

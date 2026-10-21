@@ -340,6 +340,7 @@ pub(crate) fn has_sheet(state: &State) -> bool {
     state.confirm.is_some() || (state.missed_open && state.imported.is_some())
         || state.importing.is_some() || state.creating.is_some() || state.sharing.is_some()
         || state.mobile_ui.connections || state.mobile_ui.library.is_some() || state.mobile_ui.context.is_some()
+        || state.sleep_open
 }
 
 fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect, in_header: bool) -> Option<limn::Rect> {
@@ -478,6 +479,17 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         let mut sheet = shell(&track.title, &track.artist, "share-close");
         sheet.share = Some(Share { url: state::share_link(track), artwork: track.artwork_url.clone() });
         return Some((format!("share:{}", track.id), sheet));
+    }
+    if state.sleep_open {
+        let mut sheet = shell(&t!("desktop-sleep"), &crate::view::sleep_hint(state), "sleep-dismiss");
+        sheet.rows = crate::view::sleep_choices(state).into_iter().filter_map(|entry| match entry {
+            limn::DropdownMenuEntry::Item(item) => {
+                let symbol = match item.action_id.as_str() { "sleep:end" => "music.note", "sleep:off" => "xmark.circle", _ => "moon.zzz" };
+                Some(Row::Action(Action { selected: item.selected, destructive: item.action_id == "sleep:off", ..Action::new(item.action_id.clone(), item.label.clone(), symbol) }))
+            }
+            _ => None,
+        }).collect();
+        return Some(("sleep".into(), sheet));
     }
     if state.mobile_ui.connections {
         let mut sheet = shell(&t!("native-listen-on"), "", "mobile-connections-close");
@@ -728,6 +740,18 @@ mod tests {
         state.settings.reduce_motion = false;
         state.motion = false;
         assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], true);
+    }
+
+    #[test]
+    fn the_sleep_timer_is_a_sheet_of_its_choices() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.update(&limn::UiAction::Clicked { id: "sleep".into() });
+        assert!(has_sheet(&state));
+        let (key, sheet) = sheet_spec(&state).unwrap();
+        assert_eq!((key.as_str(), sheet.dismiss.as_str()), ("sleep", "sleep-dismiss"));
+        let ids: Vec<&str> = sheet.rows.iter().filter_map(|row| match row { Row::Action(action) => Some(action.id.as_str()), _ => None }).collect();
+        assert_eq!(ids, ["sleep:15", "sleep:30", "sleep:45", "sleep:60", "sleep:90", "sleep:end"]);
     }
 
     #[test]

@@ -1,12 +1,53 @@
 //! The player: the queue and what the engine is doing with it. It runs on the backend's
 //! thread, so the music moves on while the window is hidden and nothing repaints.
 
+use std::time::{Duration, Instant};
+
 use surco_core::{Queue, Repeat, Track};
 
 use crate::backend::Command;
 
 /// How long before a track ends the next one is fetched onto the standby deck.
 const PRELOAD_AHEAD: f64 = 20.0;
+
+/// When the music stops by itself, as asked from the sleep timer.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Sleep {
+    /// At this moment, the volume easing away over so long before it.
+    At { ends: Instant, fade: Duration },
+    /// As the song that plays ends, its last seconds fading.
+    EndOfSong,
+}
+
+/// What the sleep timer is asked for.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SleepAfter {
+    Minutes(u32),
+    EndOfSong,
+}
+
+/// How long a song's end fades when the music stops with it.
+const END_FADE: f64 = 15.0;
+
+impl Sleep {
+    /// From now, as asked. A timer winds down over three minutes, or a third of a short one.
+    fn from(after: SleepAfter, now: Instant) -> Self {
+        match after {
+            SleepAfter::Minutes(minutes) => {
+                let total = Duration::from_secs(u64::from(minutes) * 60);
+                Sleep::At { ends: now + total, fade: (total / 3).clamp(Duration::from_secs(5), Duration::from_secs(180)) }
+            }
+            SleepAfter::EndOfSong => Sleep::EndOfSong,
+        }
+    }
+}
+
+/// The volume at `fraction` of a wind-down: barely lower at first, half at the middle, gone
+/// at its end.
+fn wind_down(fraction: f64) -> f32 {
+    let along = (fraction.clamp(0.0, 1.0) * std::f64::consts::FRAC_PI_2).cos();
+    (along * along) as f32
+}
 
 /// What the window shows of the player.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -27,6 +68,7 @@ pub struct PlayerView {
     pub picks: Vec<String>,
     pub repeat: Repeat,
     pub error: Option<String>,
+    pub sleep: Option<Sleep>,
 }
 
 /// What the backend does for the player.
@@ -48,6 +90,8 @@ pub enum Effect {
     Pause,
     Resume,
     Seek(f64),
+    /// The volume, times this: 1 is the user's own, lower while the sleep timer winds down.
+    Dim(f32),
 }
 
 pub struct Player {
@@ -72,6 +116,9 @@ pub struct Player {
     rng: fastrand::Rng,
     /// Where a session brought back from the last time goes on from, once it is played.
     resume_at: Option<f64>,
+    sleep: Option<Sleep>,
+    /// Whether the volume was turned down for the sleep timer, to be given back.
+    dimmed: bool,
 }
 
 impl Default for Player {
@@ -90,6 +137,8 @@ impl Default for Player {
             crossfade: 0.0,
             rng: fastrand::Rng::default(),
             resume_at: None,
+            sleep: None,
+            dimmed: false,
         }
     }
 }
@@ -108,6 +157,7 @@ impl Player {
             picks: self.queue.guests().iter().map(|track| track.id.clone()).collect(),
             repeat: self.queue.repeat,
             error: self.error.clone(),
+            sleep: self.sleep,
         }
     }
 
@@ -198,7 +248,15 @@ impl Player {
             Command::PlayPause if !self.loaded => self.start(self.queue.current().cloned()),
             Command::PlayPause => {
                 self.playing = !self.playing;
+                // A timer that ran out while paused is done with.
+                if self.playing && matches!(self.sleep, Some(Sleep::At { ends, .. }) if ends <= Instant::now()) {
+                    self.sleep = None;
+                }
                 vec![if self.playing { Effect::Resume } else { Effect::Pause }]
+            }
+            Command::Sleep(after) => {
+                self.sleep = after.map(|after| Sleep::from(after, Instant::now()));
+                self.undim()
             }
             // With nothing playing there is no "after": the track simply starts.
             Command::PlayNext(track) | Command::Enqueue(track) if self.queue.current().is_none() => {
@@ -309,7 +367,23 @@ impl Player {
                 if let Some(duration) = duration_sec.filter(|duration| *duration > 0.0) {
                     self.duration = duration;
                 }
-                self.fade().unwrap_or_else(|| self.preload())
+                match self.sleep {
+                    Some(sleep) => self.wind(sleep, Instant::now()),
+                    None => self.fade().unwrap_or_else(|| self.preload()),
+                }
+            }
+            // The song the music was to stop with: the next waits, paused, for play.
+            Event::Ended { track_id } if self.is_current(&track_id) && self.sleep == Some(Sleep::EndOfSong) => {
+                self.loaded = false;
+                self.playing = false;
+                self.sleep = None;
+                if let Some(next) = self.queue.advance().cloned() {
+                    self.position = 0.0;
+                    self.duration = next.duration_ms as f64 / 1000.0;
+                } else {
+                    self.position = self.duration;
+                }
+                self.undim()
             }
             Event::Ended { track_id } if self.is_current(&track_id) => {
                 self.loaded = false;
@@ -330,6 +404,38 @@ impl Player {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// The sleep timer at `now`, on each tick of what plays: the volume eases away before its
+    /// end, and at its end the music pauses. A timer that stops with the song lets nothing
+    /// come in under it.
+    fn wind(&mut self, sleep: Sleep, now: Instant) -> Vec<Effect> {
+        let fraction = match sleep {
+            Sleep::At { ends, fade } => {
+                if ends <= now {
+                    self.playing = false;
+                    self.sleep = None;
+                    let mut effects = vec![Effect::Pause];
+                    effects.extend(self.undim());
+                    return effects;
+                }
+                let left = ends - now;
+                if left >= fade { return self.fade().unwrap_or_else(|| self.preload()) }
+                1.0 - left.as_secs_f64() / fade.as_secs_f64()
+            }
+            Sleep::EndOfSong => {
+                let left = self.duration - self.position;
+                if self.duration <= 0.0 || left >= END_FADE { return Vec::new() }
+                1.0 - left / END_FADE
+            }
+        };
+        self.dimmed = true;
+        vec![Effect::Dim(wind_down(fraction))]
+    }
+
+    /// The user's own volume back, if the sleep timer had turned it down.
+    fn undim(&mut self) -> Vec<Effect> {
+        std::mem::take(&mut self.dimmed).then_some(Effect::Dim(1.0)).into_iter().collect()
     }
 
     /// With a crossfade set, the next track comes in under the last seconds of this one.
@@ -410,6 +516,38 @@ mod tests {
         let view = player.view();
         assert!(!view.playing && view.position == view.duration, "the queue ended on its last track");
         assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("c"))), "play starts it again");
+    }
+
+    #[test]
+    fn the_sleep_timer_winds_the_volume_down_and_pauses_at_its_end() {
+        let mut player = playing(&["a", "b"], 0);
+        player.command(Command::Sleep(Some(SleepAfter::Minutes(30))));
+        let Some(Sleep::At { ends, fade }) = player.view().sleep else { panic!("a timer") };
+        assert_eq!(fade, Duration::from_secs(180), "three minutes, for a long timer");
+        assert!(!player.wind(Sleep::At { ends, fade }, ends - Duration::from_secs(600)).iter().any(|effect| matches!(effect, Effect::Dim(_))), "untouched before its last minutes");
+        let half = player.wind(Sleep::At { ends, fade }, ends - Duration::from_secs(90));
+        assert!(matches!(half.as_slice(), [Effect::Dim(dim)] if (dim - 0.5).abs() < 0.01), "half way down at the middle: {half:?}");
+        assert_eq!(player.wind(Sleep::At { ends, fade }, ends), vec![Effect::Pause, Effect::Dim(1.0)], "paused, and the volume given back");
+        assert!(!player.view().playing && player.view().sleep.is_none());
+        // A short timer winds down over a third of itself; put away, the volume comes back.
+        let mut player = playing(&["a"], 0);
+        player.command(Command::Sleep(Some(SleepAfter::Minutes(6))));
+        let Some(Sleep::At { ends, fade }) = player.view().sleep else { panic!("a timer") };
+        assert_eq!(fade, Duration::from_secs(120));
+        player.wind(Sleep::At { ends, fade }, ends - Duration::from_secs(10));
+        assert_eq!(player.command(Command::Sleep(None)), vec![Effect::Dim(1.0)]);
+    }
+
+    #[test]
+    fn stopping_with_the_song_fades_its_end_and_leaves_the_next_waiting() {
+        let mut player = playing(&["a", "b"], 0);
+        player.command(Command::Sleep(Some(SleepAfter::EndOfSong)));
+        assert!(player.engine(at("a", 100.0)).is_empty(), "nothing preloaded or faded in under it");
+        assert!(matches!(player.engine(at("a", 192.5)).as_slice(), [Effect::Dim(dim)] if (dim - 0.5).abs() < 0.01));
+        assert_eq!(player.engine(ended("a")), vec![Effect::Dim(1.0)], "it stops there, its volume back");
+        let view = player.view();
+        assert!(!view.playing && view.sleep.is_none() && view.current == Some(track("b")) && view.position == 0.0);
+        assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("b"))), "play goes on with the next");
     }
 
     #[test]
