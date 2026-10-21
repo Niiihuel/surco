@@ -16,7 +16,7 @@ use limn::{
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, ScrollbarAppearance, SearchField, Select, SelectorSizing, Separator, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
-    TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
+    TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
 };
 
 use crate::backend::{Release, Target};
@@ -399,7 +399,18 @@ pub fn view(state: &State, window: Size) -> Element {
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
-    confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette)
+    let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
+    Toast::layer(whole, skip_notice(state, palette), PLAYER_HEIGHT + 12.0)
+}
+
+/// How long what SponsorBlock had skipped is said.
+const SKIP_NOTICE: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// The SponsorBlock segment just jumped over, said over the window's corner for a moment.
+fn skip_notice(state: &State, palette: ComponentPalette) -> Vec<Element> {
+    let Some((category, at)) = state.skip_notice.as_ref().filter(|(_, at)| at.elapsed() < SKIP_NOTICE) else { return Vec::new() };
+    let what = crate::i18n::text(crate::i18n::current(), crate::sponsorblock::key_of(category), None);
+    vec![Toast::new(t!("common-sponsorblock-skipped", what = what.as_ref()), palette).render().animate_presence(format!("skip-notice:{at:?}"))]
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -2968,9 +2979,9 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     let crossfade = if wide { cell(line(&crossfade, mixes, Some(Element::row(vec![value(&fade).centered_y(), slider.centered_y()]).gap(12.0)), white)) }
         else { stacked(line(&crossfade, mixes, Some(value(&fade)), white), slider) };
     let transitions = group(&t!("common-settings-transitions"), vec![crossfade], "");
-    let controls = group(&t!("common-settings-controls"), vec![
-        switch(&t!("desktop-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay),
-    ], "");
+    let mut controls = vec![switch(&t!("desktop-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay)];
+    controls.extend(mobile::settings::sponsorblock(state));
+    let controls = group(&t!("common-settings-controls"), controls, &t!("common-sponsorblock-footer"));
 
     let device = |id: &str, name: &str| DropdownOption::new(format!("setting:output:{id}"), name).selected(state.output.as_deref().unwrap_or_default() == id);
     let system_output = state.outputs.iter().find(|output| output.is_default)

@@ -26,6 +26,7 @@ mod ios_ui;
 mod ios_symbols;
 mod paths;
 mod player;
+mod sponsorblock;
 mod state;
 mod update;
 mod view;
@@ -375,7 +376,7 @@ impl eframe::App for Host {
             self.started = true;
             limn_egui::attach_fonts(&mut self.tree, &ctx);
             // The engine starts at full volume and flat; the window owns both settings.
-            self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay), Command::Crossfade(f64::from(self.state.settings.crossfade)), Command::Quality(self.state.settings.quality.bps()), Command::Mono(self.state.settings.mono), Command::Normalize(self.state.settings.normalize)]);
+            self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay), Command::Crossfade(f64::from(self.state.settings.crossfade)), Command::Quality(self.state.settings.quality.bps()), Command::Mono(self.state.settings.mono), Command::Normalize(self.state.settings.normalize), Command::SponsorBlock(self.state.settings.sponsorblock)]);
             if self.state.output.is_some() {
                 self.send(vec![Command::Output(self.state.output.clone())]);
             }

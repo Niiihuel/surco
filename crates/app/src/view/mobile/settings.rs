@@ -71,6 +71,18 @@ pub(in crate::view) fn chevron() -> Element {
     Element::icon(glyph).foreground(SCHEME.muted)
 }
 
+/// Jumping over what is not music in a video, as SponsorBlock's users marked it: a switch for
+/// it, and one a category while it is on.
+pub(in crate::view) fn sponsorblock(state: &State) -> Vec<Element> {
+    let mask = state.settings.sponsorblock;
+    let mut rows = vec![switch(&t!("common-sponsorblock-title"), Some(&t!("common-sponsorblock-detail")), "setting:sponsorblock", mask != 0)];
+    if mask != 0 {
+        rows.extend(crate::sponsorblock::CATEGORIES.iter().enumerate().map(|(bit, (name, key))|
+            switch(&crate::i18n::text(crate::i18n::current(), key, None), None, &format!("setting:sponsorblock:{name}"), mask & (1 << bit) != 0)));
+    }
+    rows
+}
+
 pub(in crate::view) fn switch(title: &str, detail: Option<&str>, id: &str, on: bool) -> Element {
     // Monochrome: a white track with a dark thumb when on, a white thumb on gray when off.
     let track = ComponentPalette { surface: if on { SCHEME.canvas } else { Color::WHITE }, selected: SCHEME.control.border, ..SCHEME.on_raised() };
@@ -203,9 +215,9 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
         Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(inner).render(),
     );
     let transitions = group(&t!("common-settings-transitions"), vec![crossfade], "");
-    let controls = group(&t!("common-settings-controls"), vec![
-        switch(&t!("mobile-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay),
-    ], "");
+    let mut controls = vec![switch(&t!("mobile-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay)];
+    controls.extend(sponsorblock(state));
+    let controls = group(&t!("common-settings-controls"), controls, &t!("common-sponsorblock-footer"));
 
     let mut connections = group(&t!("mobile-connections"), vec![
         action("setting:connections", &t!("mobile-listen-elsewhere"), None, Some(chevron()), true, false),

@@ -5,6 +5,8 @@ use std::time::{Duration, Instant};
 
 use surco_core::{Queue, Repeat, Track};
 
+use crate::sponsorblock::Segment;
+
 use crate::backend::Command;
 
 /// How long before a track ends the next one is fetched onto the standby deck.
@@ -69,6 +71,8 @@ pub struct PlayerView {
     pub repeat: Repeat,
     pub error: Option<String>,
     pub sleep: Option<Sleep>,
+    /// How many SponsorBlock segments were jumped over, and the category of the last.
+    pub skipped: Option<(u32, String)>,
 }
 
 /// What the backend does for the player.
@@ -119,6 +123,12 @@ pub struct Player {
     sleep: Option<Sleep>,
     /// Whether the volume was turned down for the sleep timer, to be given back.
     dimmed: bool,
+    /// The SponsorBlock segments of what plays, by its id, and the ones already jumped over:
+    /// moved back into one, it plays, as that was asked for.
+    segments: Option<(String, Vec<Segment>)>,
+    jumped: Vec<String>,
+    /// How many segments were jumped over, and the category of the last.
+    skipped: Option<(u32, String)>,
 }
 
 impl Default for Player {
@@ -139,6 +149,9 @@ impl Default for Player {
             resume_at: None,
             sleep: None,
             dimmed: false,
+            segments: None,
+            jumped: Vec::new(),
+            skipped: None,
         }
     }
 }
@@ -158,6 +171,7 @@ impl Player {
             repeat: self.queue.repeat,
             error: self.error.clone(),
             sleep: self.sleep,
+            skipped: self.skipped.clone(),
         }
     }
 
@@ -189,6 +203,34 @@ impl Player {
         self.preloading = None;
         let current = self.queue.current().filter(|_| self.loaded);
         current.map(|track| Effect::Restore(track.clone(), self.position, self.playing)).into_iter().collect()
+    }
+
+    /// SponsorBlock's answer for `track_id`, kept while it plays.
+    pub fn segments(&mut self, track_id: &str, segments: Vec<Segment>) {
+        if self.is_current(track_id) && self.segments.as_ref().is_none_or(|(held, _)| held != track_id) {
+            self.segments = Some((track_id.to_owned(), segments));
+            self.jumped.clear();
+        }
+    }
+
+    /// Over the segment the music has just entered, once: to its end, or to the next track
+    /// when it runs to the end of this one.
+    fn jump(&mut self) -> Option<Vec<Effect>> {
+        let (id, segments) = self.segments.as_ref()?;
+        if !self.is_current(id) { return None; }
+        let (position, duration) = (self.position, self.duration);
+        let segment = segments.iter().find(|segment| !self.jumped.contains(&segment.uuid)
+            && position >= segment.start && position < segment.end - 0.5 && segment.fits(duration))?.clone();
+        self.jumped.push(segment.uuid);
+        let count = self.skipped.as_ref().map_or(0, |(count, _)| *count) + 1;
+        self.skipped = Some((count, segment.category));
+        if duration > 0.0 && segment.end >= duration - 1.0 {
+            if self.queue.peek_next().is_some() { return Some(self.skip(1)); }
+            self.position = duration;
+            return Some(vec![Effect::Seek(duration)]);
+        }
+        self.position = segment.end;
+        Some(vec![Effect::Seek(segment.end)])
     }
 
     /// The catalog's answer to `Effect::Radio`. One that arrives after the user moved on to
@@ -367,6 +409,7 @@ impl Player {
                 if let Some(duration) = duration_sec.filter(|duration| *duration > 0.0) {
                     self.duration = duration;
                 }
+                if let Some(effects) = self.jump() { return effects; }
                 match self.sleep {
                     Some(sleep) => self.wind(sleep, Instant::now()),
                     None => self.fade().unwrap_or_else(|| self.preload()),
@@ -516,6 +559,29 @@ mod tests {
         let view = player.view();
         assert!(!view.playing && view.position == view.duration, "the queue ended on its last track");
         assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("c"))), "play starts it again");
+    }
+
+    fn segment(uuid: &str, start: f64, end: f64) -> Segment {
+        Segment { start, end, category: "music_offtopic".into(), uuid: uuid.into(), video_duration: 200.0 }
+    }
+
+    #[test]
+    fn sponsorblock_segments_are_jumped_over_once_and_one_at_the_end_leads_on() {
+        let mut player = playing(&["a", "b"], 0);
+        player.segments("a", vec![segment("intro", 0.0, 12.0), segment("talk", 90.0, 100.0), segment("outro", 185.0, 200.0)]);
+        assert_eq!(player.engine(at("a", 0.3)), vec![Effect::Seek(12.0)], "the intro, as it starts");
+        assert_eq!(player.view().skipped, Some((1, "music_offtopic".into())));
+        assert!(player.engine(at("a", 50.0)).is_empty());
+        assert_eq!(player.engine(at("a", 91.0)), vec![Effect::Seek(100.0)]);
+        // Moved back into it, it plays: that was asked for.
+        assert!(player.engine(at("a", 92.0)).is_empty());
+        assert_eq!(player.engine(at("a", 185.2)).first(), Some(&Effect::Play(track("b"))), "running to the end, it goes on with the next");
+        // Another track's segments, or another cut's, are not taken.
+        let mut player = playing(&["a"], 0);
+        player.segments("z", vec![segment("x", 0.0, 50.0)]);
+        assert!(player.engine(at("a", 1.0)).is_empty());
+        player.segments("a", vec![Segment { video_duration: 260.0, ..segment("x", 0.0, 50.0) }]);
+        assert!(player.engine(at("a", 1.0)).is_empty(), "marked on a longer cut of the video");
     }
 
     #[test]

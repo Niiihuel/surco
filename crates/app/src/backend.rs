@@ -1,7 +1,7 @@
 //! The contract between the window and everything that takes time: the catalog, the network,
 //! the player and the audio engine live on the other side of these two channels.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
@@ -107,6 +107,8 @@ pub enum Command {
     ClearQueue,
     /// Move the n-th of the upcoming tracks to where the m-th is.
     MoveQueue(usize, usize),
+    /// Which SponsorBlock categories are jumped over, a bit each; none, nothing is asked.
+    SponsorBlock(u8),
     /// Stop the music after so long, or with the song that plays, or not.
     Sleep(Option<crate::player::SleepAfter>),
     /// Play the same in both speakers.
@@ -292,6 +294,8 @@ enum Input {
     Engine(surco_audio::Event),
     Media(MediaEvent),
     Radio { seed: String, tracks: Vec<Track> },
+    /// The SponsorBlock segments of a video, to be jumped over while it plays.
+    Segments { track_id: String, segments: Vec<crate::sponsorblock::Segment> },
 }
 
 /// A track on its way into a deck.
@@ -329,6 +333,9 @@ struct Shared {
     quality: AtomicU64,
     /// The user's volume, and what the sleep timer leaves of it, as the engine is given their product.
     volume: Mutex<(f32, f32)>,
+    /// The SponsorBlock categories skipped, and the segments of the videos asked for lately.
+    sponsor: std::sync::atomic::AtomicU8,
+    segments: Mutex<HashMap<String, Vec<crate::sponsorblock::Segment>>>,
     downloads: Mutex<Downloads>,
     /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
     decks: tokio::sync::Mutex<()>,
@@ -574,6 +581,10 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                                 player.radio(&seed, tracks);
                                 Vec::new()
                             }
+                            Input::Segments { track_id, segments } => {
+                                player.segments(&track_id, segments);
+                                Vec::new()
+                            }
                         },
                     };
                     for effect in effects {
@@ -631,6 +642,8 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         saving: Mutex::default(),
         covers: tokio::sync::Semaphore::new(COVERS_AT_ONCE),
         volume: Mutex::new((1.0, 1.0)),
+        sponsor: std::sync::atomic::AtomicU8::new(crate::sponsorblock::DEFAULT),
+        segments: Mutex::new(HashMap::new()),
         serving: tokio::sync::Mutex::new(None),
         #[cfg(target_os = "ios")]
         cached_loads: Mutex::default(),
@@ -774,6 +787,11 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
+        (Command::SponsorBlock(mask), Ok(shared)) => {
+            shared.sponsor.store(mask, Ordering::SeqCst);
+            shared.segments.lock().unwrap().clear();
+        }
+        (Command::SponsorBlock(_), Err(_)) => {}
         (Command::Quality(bps), Ok(shared)) => shared.quality.store(bps, Ordering::SeqCst),
         (Command::Quality(_), Err(_)) => {}
         (Command::Output(id), Ok(shared)) => {
@@ -979,7 +997,35 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
     content.map_err(|error| error.to_string())
 }
 
+/// The most videos whose segments are held.
+const SEGMENTS_KEPT: usize = 200;
+
+/// Asks SponsorBlock what of `track` to jump over, and hands it to the player. A video asked
+/// for before is not asked again; one that could not be asked is, next time.
+fn look_for_segments(shared: &Arc<Shared>, track: &Track) {
+    let mask = shared.sponsor.load(Ordering::SeqCst);
+    if mask == 0 { return; }
+    let id = track.id.clone();
+    if let Some(segments) = shared.segments.lock().unwrap().get(&id).cloned() {
+        let _ = shared.inputs.send(Input::Segments { track_id: id, segments });
+        return;
+    }
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        let Ok(segments) = crate::sponsorblock::segments(&shared.youtube, &id, mask).await else { return };
+        {
+            let mut held = shared.segments.lock().unwrap();
+            if held.len() >= SEGMENTS_KEPT { held.clear(); }
+            held.insert(id.clone(), segments.clone());
+        }
+        if !segments.is_empty() { let _ = shared.inputs.send(Input::Segments { track_id: id, segments }); }
+    });
+}
+
 fn run(shared: &Arc<Shared>, effect: Effect) {
+    if let Effect::Play(track) | Effect::Fade(track, _) | Effect::Restore(track, ..) | Effect::Handover(track, _) = &effect {
+        look_for_segments(shared, track);
+    }
     match effect {
         Effect::Play(track) => begin(shared, track, Duration::ZERO, None),
         Effect::Fade(track, seconds) => begin(shared, track, Duration::from_secs_f64(seconds), None),

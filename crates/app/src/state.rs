@@ -344,6 +344,8 @@ pub struct Settings {
     pub welcomed: bool,
     /// Whether the first run's steps were gone through, or the account brought in.
     pub onboarded: bool,
+    /// The SponsorBlock categories jumped over in a video, a bit each; none, it is off.
+    pub sponsorblock: u8,
 }
 
 /// The order the library lists what is not pinned in.
@@ -429,7 +431,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false, onboarded: false }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false, onboarded: false, sponsorblock: crate::sponsorblock::DEFAULT }
     }
 }
 
@@ -992,6 +994,8 @@ pub struct State {
     pub device_open: bool,
     /// The sleep timer's menu.
     pub sleep_open: bool,
+    /// The category of the SponsorBlock segment last jumped over, and when.
+    pub skip_notice: Option<(String, Instant)>,
 }
 
 /// How many covers a session holds, a few tens of megabytes of them.
@@ -1317,6 +1321,7 @@ impl Default for State {
             output_open: false,
             device_open: false,
             sleep_open: false,
+            skip_notice: None,
         }
     }
 }
@@ -1488,7 +1493,7 @@ impl State {
         if let Some(settings) = bundle.settings.filter(|_| parts.settings) {
             self.settings = settings;
             if let Some(language) = settings.language { crate::i18n::set(language); }
-            commands.extend([Command::Autoplay(settings.autoplay), Command::Crossfade(f64::from(settings.crossfade)), Command::Quality(settings.quality.bps()), Command::Mono(settings.mono), Command::Normalize(settings.normalize)]);
+            commands.extend([Command::Autoplay(settings.autoplay), Command::Crossfade(f64::from(settings.crossfade)), Command::Quality(settings.quality.bps()), Command::Mono(settings.mono), Command::Normalize(settings.normalize), Command::SponsorBlock(settings.sponsorblock)]);
         }
         if let Some(equalizer) = bundle.equalizer.as_deref().filter(|_| parts.equalizer).and_then(equalizer_from) {
             self.equalizer = equalizer;
@@ -2632,6 +2637,17 @@ impl State {
                 self.settings.normalize = !self.settings.normalize;
                 vec![Command::Normalize(self.settings.normalize)]
             }
+            // On, it skips what most listeners want skipped; off, nothing is asked.
+            "setting:sponsorblock" => {
+                self.settings.sponsorblock = if self.settings.sponsorblock == 0 { crate::sponsorblock::DEFAULT } else { 0 };
+                vec![Command::SponsorBlock(self.settings.sponsorblock)]
+            }
+            _ if id.starts_with("setting:sponsorblock:") => {
+                let name = &id["setting:sponsorblock:".len()..];
+                let Some(bit) = crate::sponsorblock::CATEGORIES.iter().position(|(category, _)| *category == name) else { return Vec::new() };
+                self.settings.sponsorblock ^= 1 << bit;
+                vec![Command::SponsorBlock(self.settings.sponsorblock)]
+            }
             "setting:motion" => {
                 self.settings.reduce_motion = !self.settings.reduce_motion;
                 Vec::new()
@@ -3125,6 +3141,11 @@ impl State {
 
     /// Takes the player as the backend now describes it.
     pub fn show(&mut self, player: PlayerView) -> Vec<Command> {
+        // A SponsorBlock segment just jumped over is said, for a moment.
+        let jumped = |view: &PlayerView| view.skipped.as_ref().map_or(0, |(count, _)| *count);
+        if jumped(&player) > jumped(&self.player) {
+            self.skip_notice = player.skipped.as_ref().map(|(_, category)| (category.clone(), Instant::now()));
+        }
         let before = self.player.current.as_ref().map(|track| track.id.as_str());
         let now = player.current.as_ref().map(|track| track.id.as_str());
         if before != now {
@@ -4216,6 +4237,9 @@ mod tests {
         click(&mut state, "settings");
         assert_eq!(state.page, Page::Settings);
         assert_eq!(click(&mut state, "setting:autoplay"), vec![Command::Autoplay(false)]);
+        assert_eq!(click(&mut state, "setting:sponsorblock:intro"), vec![Command::SponsorBlock(crate::sponsorblock::DEFAULT | 0b1_0000)], "a category added");
+        assert_eq!(click(&mut state, "setting:sponsorblock"), vec![Command::SponsorBlock(0)], "off: nothing is asked");
+        assert_eq!(click(&mut state, "setting:sponsorblock"), vec![Command::SponsorBlock(crate::sponsorblock::DEFAULT)], "on again, as most want it");
         click(&mut state, "setting:motion");
         assert!(!state.settings.autoplay && state.settings.reduce_motion);
         let half = UiAction::SliderChanged { id: "setting:crossfade".into(), fraction: 0.5, committed: true };

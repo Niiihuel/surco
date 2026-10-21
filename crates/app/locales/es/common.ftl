@@ -121,3 +121,18 @@ common-scan-code = Escanear código
 common-onboarding-bring-title = Traé tu cuenta
 common-onboarding-bring-detail = En el otro dispositivo, abrí Configuración › Pasar a otro dispositivo › Enviar.
 common-onboarding-bring-type = O escribí la dirección que muestra:
+
+## SponsorBlock
+common-sponsorblock-title = Saltar lo que no es música
+common-sponsorblock-detail = En los videos, las partes que la gente marcó en SponsorBlock.
+common-sponsorblock-footer = Los segmentos vienen de sponsor.ajay.app (CC BY-NC-SA 4.0). Solo se envía un pedazo del hash del video, no cuál suena.
+common-sponsorblock-music-offtopic = Partes que no son música
+common-sponsorblock-sponsor = Patrocinios
+common-sponsorblock-selfpromo = Autopromoción
+common-sponsorblock-interaction = Pedidos de like y suscripción
+common-sponsorblock-intro = Intros
+common-sponsorblock-outro = Cierres y créditos
+common-sponsorblock-preview = Adelantos y resúmenes
+common-sponsorblock-filler = Relleno y chistes
+common-sponsorblock-segment = Una parte
+common-sponsorblock-skipped = Se saltó: { $what }
