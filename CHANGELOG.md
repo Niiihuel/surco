@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.14.2
+
+### Changed
+
+- Replay's rankings play from their covers, as every list's rows do: under the pointer a
+  cover shows play or pause, and the song that plays wears its own sound there.
+- Text fields can be seen before they are used: a faint outline at rest, brighter under the
+  pointer, whole while typing in them.
+
 ## 0.14.1
 
 ![Replay's story, its songs to play](https://raw.githubusercontent.com/Niiihuel/surco/v0.14.1/docs/releases/0.14.1/story-songs.jpg)

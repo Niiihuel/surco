@@ -25,7 +25,7 @@ env:
   # The commit of limn the app is built against: limn moves on its own, and a build of
   # the app must not change under it. This commit adds the hover cards and seek bar to the
   # reviewed mobile primitives.
-  LIMN_REF: 8446d9f41e0f8b705619a87f2317c4fe8b44008d
+  LIMN_REF: 70fb59ee6cbd3e4b6618dcc0ae6b0396576cd12e
 
 jobs:
   build:
