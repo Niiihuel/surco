@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.13.0
+
+![Replay: what you listened to, summed up](https://raw.githubusercontent.com/Niiihuel/surco/v0.13.0/docs/releases/0.13.0/replay.jpg)
+
+### Added
+
+- The app opens where it was closed: the song paused at its second and the queue after it,
+  nothing fetched until it is played.
+- A sleep timer, from the bar's moon on a desktop and the player on a phone: 15 to 90
+  minutes or the end of the song, the volume easing away before it stops.
+- SponsorBlock skips what is not music in a video (talk, intros, sponsors, like
+  reminders), each category a switch in Settings; only four characters of the video's hash
+  are sent.
+- Skip silence, in Settings › Audio quality: the silence a song opens and closes with is
+  passed by, lyrics and video keeping the song's own time.
+- Replay, from the account's menu and the profile: minutes, plays, the songs and artists
+  heard most, when in the day, the longest run of days and the song on repeat, for the
+  month, the year or all time. A song counts after 30 seconds really heard.
+- Scrobbling to Last.fm and ListenBrainz, in Settings › Library. The Last.fm password is
+  used once and not kept; what could not be sent waits for the next time.
+
+![Listen together](https://raw.githubusercontent.com/Niiihuel/surco/v0.13.0/docs/releases/0.13.0/together.jpg)
+
+- Listen together: a room by its code, over public Nostr relays, sealed with a key that
+  comes from the code. Guests hear what the host plays, in step, each on their own device;
+  they suggest songs, or play and skip for everyone when the host lets them; and a chat.
+
+![What's this song?](https://raw.githubusercontent.com/Niiihuel/surco/v0.13.0/docs/releases/0.13.0/recognize.jpg)
+
+- What's this song?, from the search's start on a desktop: the microphone hears the song
+  that plays nearby and Shazam names it from a fingerprint of the sound, never the
+  recording. Not yet on an iPhone.
+
+### Changed
+
+- The code to move an account is shown in capitals and fours as it is typed, and what is
+  brought takes the place of what is here in each part chosen, with a screen while it comes.
+  A phone's sheet to bring data is taller and roomier.
+- A card's picture stands in its grey, and its way out turns into a white pill under the
+  pointer.
+- What's new and the release notes fill the panel, what a release says in its middle.
+- The lyrics page scrolls with the panels' bar, and the account's menu has its glyphs.
+
 ## 0.12.2
 
 ### Fixed

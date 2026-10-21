@@ -5090,7 +5090,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surco"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -5134,7 +5134,7 @@ dependencies = [
 
 [[package]]
 name = "surco-audio"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "opus",
  "rodio",
@@ -5144,7 +5144,7 @@ dependencies = [
 
 [[package]]
 name = "surco-core"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "fastrand 2.5.0",
  "serde",
@@ -5152,7 +5152,7 @@ dependencies = [
 
 [[package]]
 name = "surco-video"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "openh264",
  "surco-youtube",
@@ -5161,7 +5161,7 @@ dependencies = [
 
 [[package]]
 name = "surco-youtube"
-version = "0.12.2"
+version = "0.13.0"
 dependencies = [
  "futures-util",
  "reqwest",
