@@ -234,8 +234,9 @@ fn song_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPale
             display_cut(&song.track.title, (side * 0.22).max(14.0), CREAM),
             plain(&song.track.artist, (side * 0.16).max(12.0), CREAM).font_family(FontFamily::SansMedium),
         ]).gap(2.0).flex(1.0).centered_y();
-        let (id, words) = playable(state, at, "song", index, &song.track, words, CREAM);
-        entering(ranked(state, id, index, &song.track.title, framed(state, &song.track.artwork_url, side, CREAM, false, palette), words, side, CREAM), at, format!("story:song:{index}"))
+        let id = row_id(at, "song", index);
+        let picture = sleeve(state, &id, &song.track, side, CREAM, palette);
+        entering(ranked(state, id, index, &song.track.title, picture, words, side, CREAM), at, format!("story:song:{index}"))
     }).collect()
 }
 
@@ -253,18 +254,32 @@ fn artist_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPa
     summary.top_artists.iter().take(5).enumerate().map(|(index, artist)| {
         if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
         let name = Element::row(vec![block(&artist.track.artist, (side * 0.24).max(14.0), CREAM, COAL)]).flex(1.0).centered_y();
-        let (id, name) = playable(state, at, "artist", index, &artist.track, name, COAL);
-        entering(ranked(state, id, index, &artist.track.artist, framed(state, &artist.track.artwork_url, side, COAL, false, palette), name, side, COAL), at, format!("story:artist:{index}"))
+        let id = row_id(at, "artist", index);
+        let picture = sleeve(state, &id, &artist.track, side, COAL, palette);
+        entering(ranked(state, id, index, &artist.track.artist, picture, name, side, COAL), at, format!("story:artist:{index}"))
     }).collect()
 }
 
-/// A ranking's row on the page plays the list from it; in a story, `at` its time in, it plays
-/// a moment of its song, or holds it, and says which with a glyph at its end.
-fn playable(state: &State, at: Option<f32>, list: &str, index: usize, track: &Track, words: Element, ink: Color) -> (String, Element) {
-    if at.is_none() { return (format!("replay-{list}:{index}"), words); }
-    let sounding = state.player.playing && state.current().is_some_and(|current| current.id == track.id);
-    let glyph = Element::icon(if sounding { Icon::PauseFill } else { Icon::PlayFill }).foreground(ink).centered_y();
-    (format!("story-{list}:{index}"), Element::row(vec![words, glyph]).gap(10.0).flex(1.0))
+/// A ranking's row: on the page it plays the list from it; in a story, `at` its time in, a
+/// moment of its song, or holds it.
+fn row_id(at: Option<f32>, list: &str, index: usize) -> String {
+    if at.is_some() { format!("story-{list}:{index}") } else { format!("replay-{list}:{index}") }
+}
+
+/// A ranking's picture framed, as every row's cover is: what plays wears its own sound, and
+/// under the pointer each says what a click does, playing or pausing.
+fn sleeve(state: &State, row: &str, track: &Track, side: f32, frame: Color, palette: ComponentPalette) -> Element {
+    let current = state.current().is_some_and(|current| current.id == track.id);
+    let inside = side - 2.0 * (side * 0.02).clamp(2.0, 4.0);
+    let over = |content: Element| Element::panel(content.centered()).background(COVER_SCRIM).size(Some(inside), Some(inside)).centered();
+    let does = Element::icon(if current && state.player.playing { Icon::PauseFill } else { Icon::PlayFill })
+        .large_icon((side * 0.3).clamp(16.0, 40.0)).foreground(palette.text);
+    let mut layers = vec![framed(state, &track.artwork_url, side, frame, false, palette)];
+    if current {
+        layers.push(over(wave(state, format!("wave:{row}"), palette)).conceal_on_hover(format!("sounding:{row}")));
+    }
+    layers.push(over(does).reveal_on_hover(format!("does:{row}")));
+    Element::stack(layers).size(Some(side), Some(side))
 }
 
 /// A row of a ranking: its place large, the picture, what it is; it plays when chosen.
@@ -272,7 +287,7 @@ fn playable(state: &State, at: Option<f32>, list: &str, index: usize, track: &Tr
 fn ranked(state: &State, id: String, index: usize, name: &str, picture: Element, words: Element, side: f32, ink: Color) -> Element {
     let place = display((index + 1).to_string(), (side * 0.36).max(18.0), ink).center_content().size(Some(side * 0.45), None).centered_y();
     let row = Element::row(vec![place, picture, words]).gap(if state.mobile { 12.0 } else { 16.0 });
-    Element::clickable(id, row).accessible(limn::Access::new(limn::Role::Button).name(name.to_owned()))
+    Element::clickable(id, row).hover_region().accessible(limn::Access::new(limn::Role::Button).name(name.to_owned()))
 }
 
 /// "My Top Artist": the face round under rings stacked like records, the name in a frame,
