@@ -89,6 +89,9 @@ pub enum Command {
     FindArtists { key: String, queries: Vec<String> },
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
+    /// What played when the app was last closed: the list from its current track on, held
+    /// paused so many seconds in until it is played. Nothing is fetched before then.
+    Session { tracks: Vec<Track>, position: f64 },
     PlayPause,
     Next,
     /// Play the n-th of the upcoming tracks, skipping the ones before it.

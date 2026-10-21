@@ -66,6 +66,8 @@ struct Host {
     script: Script,
     /// The song the panel of what plays was last scrolled for.
     panel_song: Option<String>,
+    /// What played when the app was last closed, handed to the player as it starts.
+    session: Option<state::Session>,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
     /// The notice already revealed; ordinary repaints preserve manual scrolling.
@@ -336,6 +338,7 @@ const RIGHT_KEY: &str = "right-width";
 const EQUALIZER_KEY: &str = "equalizer";
 const OUTPUT_KEY: &str = "output";
 const PROFILE_KEY: &str = "profile";
+const SESSION_KEY: &str = "session";
 
 impl eframe::App for Host {
     #[cfg(target_os = "ios")]
@@ -361,6 +364,9 @@ impl eframe::App for Host {
         if let Ok(profile) = serde_json::to_string(&self.state.profile) {
             storage.set_string(PROFILE_KEY, profile);
         }
+        // Nothing playing leaves nothing to go on with.
+        let session = self.state.session().and_then(|session| serde_json::to_string(&session).ok());
+        storage.set_string(SESSION_KEY, session.unwrap_or_default());
     }
 
     fn ui(&mut self, ui: &mut egui::Ui, host: &mut eframe::Frame) {
@@ -372,6 +378,9 @@ impl eframe::App for Host {
             self.send(vec![Command::Volume(self.state.volume), Command::Equalizer(self.state.equalizer), Command::Autoplay(self.state.settings.autoplay), Command::Crossfade(f64::from(self.state.settings.crossfade)), Command::Quality(self.state.settings.quality.bps()), Command::Mono(self.state.settings.mono), Command::Normalize(self.state.settings.normalize)]);
             if self.state.output.is_some() {
                 self.send(vec![Command::Output(self.state.output.clone())]);
+            }
+            if let Some(state::Session { tracks, position }) = self.session.take() {
+                self.send(vec![Command::Session { tracks, position }]);
             }
             // A first start goes through its steps, or offers to bring music in; a scripted run
             // is about something else unless it asks for them.
@@ -937,6 +946,7 @@ pub fn run() -> eframe::Result {
                 state.output = storage.get_string(OUTPUT_KEY).filter(|device| !device.is_empty());
                 state.profile = storage.get_string(PROFILE_KEY).and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
             }
+            let session = creation.storage.and_then(|storage| storage.get_string(SESSION_KEY)).and_then(|text| serde_json::from_str(&text).ok());
             i18n::set(state.settings.language.unwrap_or_else(i18n::Language::system));
             #[cfg(target_os = "ios")]
             let native_ui = match ios_ui::NativeUi::new(&creation.egui_ctx) {
@@ -969,6 +979,7 @@ pub fn run() -> eframe::Result {
                 #[cfg(target_os = "ios")]
                 keyboard_inset: limn::ScalarTransition::new(0.0, Instant::now()),
                 panel_song: None,
+                session,
             }))
         }),
     )

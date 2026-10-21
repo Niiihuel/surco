@@ -70,6 +70,8 @@ pub struct Player {
     /// Seconds a track that plays to its end shares with the next. 0 hands over in one step.
     crossfade: f64,
     rng: fastrand::Rng,
+    /// Where a session brought back from the last time goes on from, once it is played.
+    resume_at: Option<f64>,
 }
 
 impl Default for Player {
@@ -87,6 +89,7 @@ impl Default for Player {
             smart: false,
             crossfade: 0.0,
             rng: fastrand::Rng::default(),
+            resume_at: None,
         }
     }
 }
@@ -114,6 +117,7 @@ impl Player {
 
     fn begin(&mut self, track: Option<Track>, fade: f64) -> Vec<Effect> {
         let Some(track) = track else { return Vec::new() };
+        self.resume_at = None;
         self.playing = true;
         self.loaded = true;
         self.position = 0.0;
@@ -170,6 +174,26 @@ impl Player {
                 self.queue.start(tracks, index, &mut self.rng);
                 self.start(self.queue.current().cloned())
             }
+            // Held where the last time left it, there is nothing in the engine yet. As the
+            // engine reloads a track it lost, it goes in where it was, and sounds.
+            Command::Session { tracks, position } if self.queue.current().is_none() && !tracks.is_empty() => {
+                self.queue.start(tracks, 0, &mut self.rng);
+                let duration = self.queue.current().map_or(0.0, |track| track.duration_ms as f64 / 1000.0);
+                self.duration = duration;
+                // A track heard to its end starts again.
+                self.position = if position >= duration - 2.0 { 0.0 } else { position.max(0.0) };
+                self.resume_at = Some(self.position);
+                Vec::new()
+            }
+            Command::PlayPause if !self.loaded && self.resume_at.is_some() => {
+                let at = self.resume_at.unwrap_or(0.0);
+                let mut effects = self.start(self.queue.current().cloned());
+                if let Some(Effect::Play(track)) = effects.first().cloned() {
+                    self.position = at;
+                    effects[0] = Effect::Restore(track, at, true);
+                }
+                effects
+            }
             // After the queue ended or the track failed there is nothing to resume.
             Command::PlayPause if !self.loaded => self.start(self.queue.current().cloned()),
             Command::PlayPause => {
@@ -215,6 +239,12 @@ impl Player {
             Command::Previous => {
                 let previous = self.queue.previous().cloned();
                 self.start(previous)
+            }
+            // Not yet played, a session goes on from wherever it is moved to.
+            Command::Seek(seconds) if !self.loaded && self.resume_at.is_some() => {
+                self.position = seconds.clamp(0.0, self.duration);
+                self.resume_at = Some(self.position);
+                Vec::new()
             }
             Command::Seek(seconds) if self.loaded => {
                 self.position = seconds;
@@ -380,6 +410,28 @@ mod tests {
         let view = player.view();
         assert!(!view.playing && view.position == view.duration, "the queue ended on its last track");
         assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("c"))), "play starts it again");
+    }
+
+    #[test]
+    fn a_session_from_the_last_time_waits_paused_and_goes_on_from_where_it_was() {
+        let mut player = Player::default();
+        let session = Command::Session { tracks: vec![track("a"), track("b")], position: 73.0 };
+        assert!(player.command(session).is_empty(), "nothing is fetched before it is played");
+        let view = player.view();
+        assert_eq!((view.current, view.upcoming, view.position, view.playing), (Some(track("a")), vec![track("b")], 73.0, false));
+        // Moved before it plays, it goes on from there.
+        assert!(player.command(Command::Seek(80.0)).is_empty());
+        assert_eq!(player.command(Command::PlayPause), vec![Effect::Restore(track("a"), 80.0, true)]);
+        assert!(player.view().playing && player.view().position == 80.0);
+        // Only once: a second session does not replace what is in the queue now.
+        assert!(player.command(Command::Session { tracks: vec![track("z")], position: 1.0 }).is_empty());
+        assert_eq!(player.view().current, Some(track("a")));
+        // Something else chosen meanwhile starts from its beginning.
+        let mut player = Player::default();
+        player.command(Command::Session { tracks: vec![track("a")], position: 50.0 });
+        assert_eq!(player.command(Command::PlayList { tracks: vec![track("c")], index: 0 }).first(), Some(&Effect::Play(track("c"))));
+        player.engine(ended("c"));
+        assert_eq!(player.command(Command::PlayPause).first(), Some(&Effect::Play(track("c"))), "the session's place is forgotten");
     }
 
     #[test]

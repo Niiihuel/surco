@@ -150,6 +150,17 @@ impl SettingsPart {
     }
 }
 
+/// What played when the app was last closed, to go on from the next time: the list from its
+/// current track on, and how far into that track it was.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Session {
+    pub tracks: Vec<Track>,
+    pub position: f64,
+}
+
+/// The most of what was still to play a session keeps.
+const SESSION_KEPT: usize = 500;
+
 /// An album or an artist the library or the home page can lead to.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Entry {
@@ -3300,6 +3311,13 @@ impl State {
     pub fn dialog_open(&self) -> bool {
         self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
             || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
+    }
+
+    /// What plays and what follows it, to be gone on with the next time the app opens.
+    pub fn session(&self) -> Option<Session> {
+        let current = self.player.current.clone()?;
+        let tracks = std::iter::once(current).chain(self.player.upcoming.iter().take(SESSION_KEPT).cloned()).collect();
+        Some(Session { tracks, position: self.player.position })
     }
 
     /// Whether the recent searches drop down from the desktop's search field.
