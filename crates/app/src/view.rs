@@ -224,6 +224,9 @@ mod glyph {
     pub const QUEUE: &str = include_str!("../assets/icons/glyph/queue.svg");
     pub const DEVICE: &str = include_str!("../assets/icons/glyph/connect-device.svg");
     pub const SLEEP: &str = include_str!("../assets/icons/glyph/moon.svg");
+    pub const PROFILE: &str = include_str!("../assets/icons/glyph/profile.svg");
+    pub const HANDOFF: &str = include_str!("../assets/icons/glyph/handoff.svg");
+    pub const SETTINGS: &str = include_str!("../assets/icons/glyph/settings.svg");
     pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
     pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
     pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
@@ -1379,12 +1382,12 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
     // A ring of the bar's own ground, as the face of Spotify's stands on a dark disc.
     let face = Element::panel(face.centered()).background(CHOSEN).radius(ACCOUNT_RING / 2.0).size(Some(ACCOUNT_RING), Some(ACCOUNT_RING));
     let anchor = Element::clickable("account", face).accessible(limn::Access::new(limn::Role::Button).name(state.profile.shown()));
-    let item = |id: &str, label: std::borrow::Cow<'static, str>| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label));
+    let item = |id: &str, label: std::borrow::Cow<'static, str>, glyph: &'static str| DropdownMenuEntry::Item(DropdownMenuItem::new(id, label).icon(Icon::Custom(glyph)));
     let entries = vec![
         DropdownMenuEntry::Heading(state.profile.shown().to_owned()),
-        item("account-profile", t!("desktop-profile")),
-        item("account-handoff", t!("desktop-handoff")),
-        item("settings", t!("common-settings")),
+        item("account-profile", t!("desktop-profile"), glyph::PROFILE),
+        item("account-handoff", t!("desktop-handoff"), glyph::HANDOFF),
+        item("settings", t!("common-settings"), glyph::SETTINGS),
     ];
     DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
 }
@@ -3758,7 +3761,8 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
                         None => said,
                     }
                 })).collect();
-            let list = ScrollArea::new("lyrics-list", Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD)).render().flex(1.0);
+            let words = Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD);
+            let list = if state.mobile { ScrollArea::new("lyrics-list", words) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
             return with_translate(state, list, palette);
         }
         Some((_, Lyrics::Lines(_))) => state.lines(),
@@ -3806,7 +3810,9 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     }
     // The list glides to each new line rather than stepping to it.
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
-    let list = ScrollArea::new("lyrics-list", Element::column(rows).gap(gap).padding(margin)).motion(glide).render().flex(1.0);
+    // A desktop's has the panels' bar, under the pointer; a phone's, its own indicator.
+    let rows = Element::column(rows).gap(gap).padding(margin);
+    let list = if state.mobile { ScrollArea::new("lyrics-list", rows) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
     let page = with_translate(state, list, palette);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
         Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
