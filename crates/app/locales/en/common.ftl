@@ -137,3 +137,43 @@ common-sponsorblock-segment = A section
 common-sponsorblock-skipped = Skipped: { $what }
 common-skip-silence = Skip silence
 common-skip-silence-detail = Passes by the silence each song opens and closes with.
+
+## Replay
+common-replay = Your Replay
+common-replay-see = See your Replay
+common-replay-month = This month
+common-replay-year = This year
+common-replay-all = All time
+common-replay-empty = Nothing to tell yet
+common-replay-empty-detail = Listen for a while: a song counts after 30 seconds.
+common-replay-minutes = { $count ->
+    [one] minute listened
+   *[other] minutes listened
+}
+common-replay-plays = { $count ->
+    [one] play
+   *[other] plays
+}
+common-replay-songs = { $count ->
+    [one] song
+   *[other] songs
+}
+common-replay-artists = { $count ->
+    [one] artist
+   *[other] artists
+}
+common-replay-plays-of = { $count ->
+    [one] 1 play
+   *[other] { $count } plays
+}
+common-replay-song-heard = { $plays } × · { $minutes } min
+common-replay-top-songs = What you played most
+common-replay-top-artists = Your artists
+common-replay-when = When you listen
+common-replay-night = Night owl: your music comes alive after dark.
+common-replay-morning = Early bird: you start the day with a soundtrack.
+common-replay-day = Your music keeps you company all day.
+common-replay-evening = Evenings are when you press play.
+common-replay-streak = { $days } days in a row with music.
+common-replay-busiest = Your busiest day: { $day }, { $minutes } min.
+common-replay-on-repeat = On repeat: “{ $title }”, { $times } times in one day.

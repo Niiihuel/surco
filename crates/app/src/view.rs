@@ -227,6 +227,7 @@ mod glyph {
     pub const PROFILE: &str = include_str!("../assets/icons/glyph/profile.svg");
     pub const HANDOFF: &str = include_str!("../assets/icons/glyph/handoff.svg");
     pub const SETTINGS: &str = include_str!("../assets/icons/glyph/settings.svg");
+    pub const REPLAY: &str = include_str!("../assets/icons/glyph/replay.svg");
     pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
     pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
     pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
@@ -1386,11 +1387,97 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
     let entries = vec![
         DropdownMenuEntry::Heading(state.profile.shown().to_owned()),
         item("account-profile", t!("desktop-profile"), glyph::PROFILE),
+        item("replay", t!("common-replay"), glyph::REPLAY),
         item("account-handoff", t!("desktop-handoff"), glyph::HANDOFF),
         item("settings", t!("common-settings"), glyph::SETTINGS),
     ];
     DropdownMenu::new(anchor, entries, state.account_open, "account-dismiss", menu_palette()).sizing(menu_sizing(state)).width(MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y()
 }
+
+/// What was listened to, summed up as Replay, over the stretch chosen: how long and how much,
+/// the songs and artists heard most, when in the day, and the run of days and the song played
+/// again and again. Everything from the plays this device kept.
+fn replay_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    use crate::replay::Period;
+    let summary = state.replay();
+    let wide = (width - 24.0).max(240.0);
+    let periods = Period::ALL.into_iter().map(|period| {
+        let label = match period { Period::Month => t!("common-replay-month"), Period::Year => t!("common-replay-year"), Period::All => t!("common-replay-all") };
+        Tab::new(format!("replay-period:{}", period.slug()), label, 0.0).active(period == state.replay_period)
+    }).collect();
+    // A phone's header already names it.
+    let mut sections = Vec::new();
+    if !state.mobile {
+        sections.push(Element::column(vec![
+            Text::eyebrow(t!("desktop-profile-only-you"), palette).render(),
+            Text::new(t!("common-replay"), palette).font_size(PAGE_TITLE).render(),
+        ]).gap(4.0));
+    }
+    sections.push(segments("replay-period", wide.min(420.0), periods));
+    if summary.plays == 0 {
+        sections.push(centered(Empty::new(t!("common-replay-empty"), t!("common-replay-empty-detail"), palette).icon(Icon::Custom(glyph::REPLAY)).render()));
+        return page_scroll("replay", Element::column(sections).gap(16.0).padding(12.0));
+    }
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    // The four numbers, a tile each.
+    let stat = |value: String, label: std::borrow::Cow<'static, str>| Element::panel(Element::column(vec![
+        Element::text(value).font_family(FontFamily::SansBold).font_size(30.0).foreground(palette.text),
+        Text::new(label, raised).muted().render(),
+    ]).gap(2.0)).padding(16.0).background(CHOSEN).radius(8.0).flex(1.0);
+    sections.push(Element::row(vec![
+        stat(summary.minutes.to_string(), t!("common-replay-minutes", count = summary.minutes)),
+        stat(summary.plays.to_string(), t!("common-replay-plays", count = summary.plays)),
+        stat(summary.songs.to_string(), t!("common-replay-songs", count = summary.songs)),
+        stat(summary.artists.to_string(), t!("common-replay-artists", count = summary.artists)),
+    ]).gap(8.0).wrap().line_gap(8.0));
+    // The songs heard most, a row each, numbered; they play as a list.
+    let rows = summary.top_songs.iter().enumerate().map(|(index, song)| {
+        let rank = Element::text((index + 1).to_string()).font_family(FontFamily::SansBold).font_size(16.0).foreground(palette.muted).center_content().size(Some(24.0), None);
+        let leading = Element::row(vec![rank.centered_y(), cover(state, &song.track.artwork_url, 48.0, palette).radius(4.0)]).gap(12.0);
+        ListRow::new(format!("replay-song:{index}"), &song.track.title, palette)
+            .sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), leading_width: 84.0, ..TRACK_ROW })
+            .leading(leading)
+            .subtitle(song.track.artist.clone())
+            .meta(t!("common-replay-song-heard", plays = song.plays, minutes = song.minutes).into_owned())
+            .title_fade(true)
+            .radius(RadiusRole::Card)
+            .render()
+    }).collect();
+    sections.extend([heading(&t!("common-replay-top-songs"), palette), Element::column(rows).gap(2.0)]);
+    let artists: Vec<Element> = summary.top_artists.iter().enumerate()
+        .map(|(index, artist)| tile(state, format!("replay-artist:{index}"), &artist.track.artist, Some(t!("common-replay-plays-of", count = artist.plays).into_owned()), &artist.track.artwork_url, true, palette))
+        .collect();
+    sections.push(headed_shelf(state, "replay-artists", None, None, &t!("common-replay-top-artists"), artists, palette));
+    // When in the day: a bar an hour, as tall as the minutes heard in it.
+    let most = summary.hours.iter().copied().max().unwrap_or(0).max(1);
+    let bars = summary.hours.iter().map(|minutes| {
+        let tall = (REPLAY_BARS * *minutes as f32 / most as f32).max(2.0);
+        let bar = Element::spacer().size(None, Some(tall)).background(if *minutes == most { palette.text } else { palette.muted }).radius(2.0);
+        Element::column(vec![Element::spacer().flex(1.0), bar]).size(None, Some(REPLAY_BARS)).flex(1.0)
+    }).collect();
+    let marks = Element::row([0, 6, 12, 18].into_iter().map(|hour| Text::new(format!("{hour}:00"), palette).role(TextRole::Caption).muted().render().flex(1.0)).collect());
+    let mut when = vec![Element::row(bars).gap(3.0), marks];
+    if let Some(part) = crate::replay::part_of_day(&summary.hours) {
+        when.insert(0, Text::new(crate::i18n::text(crate::i18n::current(), part, None), palette).muted().render());
+    }
+    sections.extend([heading(&t!("common-replay-when"), palette), Element::panel(Element::column(when).gap(8.0)).padding(16.0).background(CHOSEN).radius(8.0)]);
+    // A few things worth knowing, each on a line.
+    let mut facts = Vec::new();
+    if summary.streak > 1 { facts.push(t!("common-replay-streak", days = summary.streak).into_owned()); }
+    if let Some((day, minutes)) = summary.busiest_day {
+        facts.push(t!("common-replay-busiest", day = day.format("%d/%m/%Y").to_string(), minutes = minutes).into_owned());
+    }
+    if let Some((track, times)) = &summary.on_repeat {
+        facts.push(t!("common-replay-on-repeat", title = track.title.as_str(), times = *times).into_owned());
+    }
+    if !facts.is_empty() {
+        sections.push(Element::panel(Element::column(facts.into_iter().map(|fact| Text::new(fact, raised).render()).collect()).gap(8.0)).padding(16.0).background(CHOSEN).radius(8.0));
+    }
+    page_scroll("replay", Element::column(sections).gap(16.0).padding(12.0))
+}
+
+/// How tall the hours of Replay stand at their most.
+const REPLAY_BARS: f32 = 96.0;
 
 /// The account's initial on its colour, the same for a name wherever it shows.
 fn profile_face(state: &State, side: f32, palette: ComponentPalette) -> Element {
@@ -1456,7 +1543,9 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     // A phone has no account menu: what it offers is here.
     if state.mobile {
         let action = |id: &str, label: std::borrow::Cow<'static, str>| Button::new(id, label, palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render();
-        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff"))]).gap(8.0).wrap().line_gap(8.0));
+        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see"))]).gap(8.0).wrap().line_gap(8.0));
+    } else {
+        sections.push(Element::row(vec![Button::new("profile-replay", t!("common-replay-see"), palette).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render()]));
     }
     let artists: Vec<Element> = discover::top_artists(&collection.heard, crate::state::TOP_ARTISTS).iter().enumerate()
         .map(|(index, track)| tile(state, format!("top-artist:{index}"), &track.artist, Some(t!("common-artist").into_owned()), &track.artwork_url, true, palette))
@@ -2695,6 +2784,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Browse => "page:browse".to_owned(),
         Page::Mix(mix) => format!("page:mix:{}", mix.key()),
         Page::Profile => "page:profile".to_owned(),
+        Page::Replay => format!("page:replay:{}", state.replay_period.slug()),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     let page = page(state, width, palette).animate_enter(entering);
@@ -2784,6 +2874,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Browse => browse_page(width, palette),
         Page::Mix(mix) => mix_page(state, mix, width, palette),
         Page::Profile => profile_page(state, palette),
+        Page::Replay => replay_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
@@ -4504,6 +4595,22 @@ mod tests {
             let twice: Vec<&String> = found.iter().filter(|id| !seen.insert(*id)).collect();
             assert!(twice.is_empty(), "at {width}, more than one control answers to {twice:?}");
         }
+    }
+
+    #[test]
+    fn replay_shows_its_numbers_songs_artists_and_hours_or_says_it_has_none() {
+        let size = Size::new(1400.0, 1400.0);
+        let mut state = State::default();
+        state.page = Page::Replay;
+        let found = ids(&state, size);
+        assert!(found.iter().any(|id| id == "replay-period:year") && !found.iter().any(|id| id.starts_with("replay-song:")), "nothing yet: {found:?}");
+        let now = chrono::Utc::now().timestamp();
+        state.collection.plays = (0..3).map(|index| crate::replay::Play { track: track(&format!("t{index}")), at: now - 100 * index, seconds: 180 }).collect();
+        let found = ids(&state, size);
+        for id in ["replay-song:0", "replay-song:2", "replay-period:month"] { assert!(found.iter().any(|found| found == id), "{id} in {found:?}"); }
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        let texts: Vec<String> = frame.text_layouts().iter().map(|block| block.source.clone()).collect();
+        for text in ["Tu Replay", "Lo que más escuchaste", "Cuándo escuchás", "18:00"] { assert!(texts.iter().any(|found| found == text), "{text} in {texts:?}"); }
     }
 
     #[test]

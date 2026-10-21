@@ -138,3 +138,43 @@ common-sponsorblock-segment = Una parte
 common-sponsorblock-skipped = Se saltó: { $what }
 common-skip-silence = Saltar silencios
 common-skip-silence-detail = Pasa de largo el silencio con que empieza y termina cada canción.
+
+## Replay
+common-replay = Tu Replay
+common-replay-see = Ver tu Replay
+common-replay-month = Este mes
+common-replay-year = Este año
+common-replay-all = Desde siempre
+common-replay-empty = Todavía no hay nada para contar
+common-replay-empty-detail = Escuchá un rato: una canción cuenta a los 30 segundos.
+common-replay-minutes = { $count ->
+    [one] minuto escuchado
+   *[other] minutos escuchados
+}
+common-replay-plays = { $count ->
+    [one] reproducción
+   *[other] reproducciones
+}
+common-replay-songs = { $count ->
+    [one] canción
+   *[other] canciones
+}
+common-replay-artists = { $count ->
+    [one] artista
+   *[other] artistas
+}
+common-replay-plays-of = { $count ->
+    [one] 1 reproducción
+   *[other] { $count } reproducciones
+}
+common-replay-song-heard = { $plays } × · { $minutes } min
+common-replay-top-songs = Lo que más escuchaste
+common-replay-top-artists = Tus artistas
+common-replay-when = Cuándo escuchás
+common-replay-night = Sos de la noche: tu música se enciende cuando oscurece.
+common-replay-morning = Sos de la mañana: arrancás el día con música.
+common-replay-day = Te acompaña todo el día.
+common-replay-evening = Las tardes son tu momento de darle play.
+common-replay-streak = { $days } días seguidos escuchando música.
+common-replay-busiest = Tu día con más música: { $day }, { $minutes } min.
+common-replay-on-repeat = En repetición: «{ $title }», { $times } veces en un mismo día.

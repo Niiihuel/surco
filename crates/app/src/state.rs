@@ -66,6 +66,8 @@ pub enum Page {
     Mix(Mix),
     /// The local account: who uses this Surco, and what they play most.
     Profile,
+    /// What was listened to, summed up: how long, who and what most, and when.
+    Replay,
 }
 
 /// A list the home makes out of what the user plays, opened and played as a playlist is.
@@ -245,6 +247,9 @@ pub struct Collection {
     /// The tracks last played, newest first.
     #[serde(default)]
     pub heard: Vec<Track>,
+    /// Every song listened to long enough to count, the oldest first: what Replay sums up.
+    #[serde(default)]
+    pub plays: Vec<crate::replay::Play>,
     /// The tracks marked as liked, the last one first.
     #[serde(default)]
     pub liked: Vec<Track>,
@@ -998,7 +1003,29 @@ pub struct State {
     pub sleep_open: bool,
     /// The category of the SponsorBlock segment last jumped over, and when.
     pub skip_notice: Option<(String, Instant)>,
+    /// The song being listened to, and how long it really has been.
+    listening: Option<Listening>,
+    /// The stretch Replay looks over.
+    pub replay_period: crate::replay::Period,
 }
+
+/// A song as it is listened to, until another takes its place.
+#[derive(Clone, Debug)]
+struct Listening {
+    track: Track,
+    /// When it started, in seconds since 1970.
+    at: i64,
+    /// Seconds it really played, paused time left out.
+    heard: f64,
+    /// Since when it has been playing, while it is.
+    since: Option<Instant>,
+    /// Whether it already counts as played, as the last of the plays.
+    counted: bool,
+    position: f64,
+}
+
+/// The most plays kept: years of listening, at a few hundred kilobytes.
+const PLAYS_KEPT: usize = 5_000;
 
 /// How many covers a session holds, a few tens of megabytes of them.
 const ARTWORK_KEPT: usize = 400;
@@ -1324,6 +1351,8 @@ impl Default for State {
             device_open: false,
             sleep_open: false,
             skip_notice: None,
+            listening: None,
+            replay_period: crate::replay::Period::default(),
         }
     }
 }
@@ -1529,6 +1558,12 @@ impl State {
     }
 
     /// What the user plays most: what was played again, the most played first.
+    /// What was listened to over Replay's stretch, seen from now, in the local time.
+    pub fn replay(&self) -> crate::replay::Summary {
+        let now = chrono::Local::now().fixed_offset();
+        crate::replay::summarize(&self.collection.plays, self.replay_period, now)
+    }
+
     pub fn top_tracks(&self) -> Vec<Track> {
         discover::on_repeat(&self.collection.heard, TOP_TRACKS)
     }
@@ -1671,6 +1706,7 @@ impl State {
             ("more-album", Some(index), _) => self.more_of.as_ref().and_then(|(_, albums)| albums.get(index)).map(album),
             ("more-artist", None, _) => self.more_of.as_ref().map(|(artist, _)| Target::Artist(artist.id.clone())),
             ("top-artist", Some(index), _) => discover::top_artists(&self.collection.heard, TOP_ARTISTS).get(index).map(artist_of),
+            ("replay-artist", Some(index), _) => self.replay().top_artists.get(index).map(|artist| artist_of(&artist.track)),
             (fans, index, _) if fans.starts_with("fans-") => {
                 // fans-2-album:4 is the fifth album for the fans of the third artist; fans-2 is that artist.
                 let (shelf, part) = fans["fans-".len()..].split_once('-').unwrap_or((&fans["fans-".len()..], ""));
@@ -2599,6 +2635,20 @@ impl State {
                 }
                 Vec::new()
             }
+            "replay" => {
+                if self.page != Page::Replay { self.go(Page::Replay); }
+                Vec::new()
+            }
+            _ if id.starts_with("replay-period:") => {
+                if let Some(period) = crate::replay::Period::from_slug(&id["replay-period:".len()..]) { self.replay_period = period; }
+                Vec::new()
+            }
+            // The songs heard most play as a list, from the one chosen.
+            _ if id.starts_with("replay-song:") => {
+                let tracks: Vec<Track> = self.replay().top_songs.into_iter().map(|song| song.track).collect();
+                let index = id["replay-song:".len()..].parse::<usize>().ok().filter(|index| *index < tracks.len());
+                index.map(|index| Command::PlayList { tracks, index }).into_iter().collect()
+            }
             _ if id.starts_with("top-track:") => {
                 let tracks = self.top_tracks();
                 let index = id["top-track:".len()..].parse::<usize>().ok().filter(|index| *index < tracks.len());
@@ -3169,6 +3219,10 @@ impl State {
             self.collection.heard(track);
         }
         self.player = player;
+        // The song's own video in its place is that song still.
+        let song = self.swapped.clone().or_else(|| self.player.current.clone());
+        let (playing, position, duration) = (self.player.playing, self.player.position, self.player.duration);
+        self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp());
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         // And the panel of what plays shows what comes next.
@@ -3179,6 +3233,36 @@ impl State {
         commands.extend(self.ask_clip());
         commands.extend(self.ask_about());
         commands
+    }
+
+    /// Follows what plays as it is listened to: past `replay::counts_after` it counts as played,
+    /// and from there each second heard is added to its play. Paused time is not; the same
+    /// song played again from its beginning is another play.
+    fn listen(&mut self, song: Option<Track>, playing: bool, position: f64, duration: f64, now: Instant, unix: i64) {
+        let again = |listening: &Listening| position < 3.0 && listening.position > position + 10.0;
+        let same = |listening: &Listening| song.as_ref().is_some_and(|song| song.id == listening.track.id) && !again(listening);
+        match self.listening.as_mut().filter(|listening| same(listening)) {
+            Some(listening) => {
+                if let Some(since) = listening.since { listening.heard += now.saturating_duration_since(since).as_secs_f64(); }
+                listening.since = playing.then_some(now);
+                listening.position = position;
+            }
+            None => {
+                self.listening = song.map(|track| Listening { track, at: unix, heard: 0.0, since: playing.then_some(now), counted: false, position });
+                return;
+            }
+        }
+        let Some(listening) = self.listening.as_mut() else { return };
+        let plays = &mut self.collection.plays;
+        if listening.counted {
+            if let Some(play) = plays.last_mut().filter(|play| play.at == listening.at && play.track.id == listening.track.id) {
+                play.seconds = listening.heard as u32;
+            }
+        } else if listening.heard >= crate::replay::counts_after(duration) {
+            listening.counted = true;
+            plays.push(crate::replay::Play { track: listening.track.clone(), at: listening.at, seconds: listening.heard as u32 });
+            if plays.len() > PLAYS_KEPT { plays.drain(..plays.len() - PLAYS_KEPT); }
+        }
     }
 
     /// Asks what the artists followed have out and whether the app has a later version:
@@ -3650,6 +3734,51 @@ mod tests {
             albums: vec![release("lp")],
             singles: vec![release("single")],
         }
+    }
+
+    #[test]
+    fn a_song_counts_as_played_after_thirty_seconds_heard_and_its_minutes_follow() {
+        let mut state = State::default();
+        let start = Instant::now();
+        let secs = |seconds: u64| start + Duration::from_secs(seconds);
+        let song = Some(track("a"));
+        state.listen(song.clone(), true, 0.0, 200.0, secs(0), 1_000);
+        state.listen(song.clone(), true, 20.0, 200.0, secs(20), 1_000);
+        assert!(state.collection.plays.is_empty(), "twenty seconds are not a play");
+        // Paused a minute: that minute is not heard.
+        state.listen(song.clone(), false, 20.0, 200.0, secs(20), 1_000);
+        state.listen(song.clone(), true, 20.0, 200.0, secs(80), 1_000);
+        state.listen(song.clone(), true, 35.0, 200.0, secs(95), 1_000);
+        assert_eq!(state.collection.plays.len(), 1);
+        assert_eq!((state.collection.plays[0].at, state.collection.plays[0].seconds), (1_000, 35));
+        state.listen(song.clone(), true, 155.0, 200.0, secs(215), 1_000);
+        assert_eq!(state.collection.plays[0].seconds, 155, "its seconds follow it");
+        // Played again from its beginning, it is another play.
+        state.listen(song.clone(), true, 1.0, 200.0, secs(216), 1_200);
+        state.listen(song.clone(), true, 31.0, 200.0, secs(246), 1_200);
+        assert_eq!(state.collection.plays.len(), 2);
+        // Another song starts its own; one skipped early is no play.
+        state.listen(Some(track("b")), true, 0.0, 200.0, secs(250), 1_300);
+        state.listen(Some(track("c")), true, 0.0, 200.0, secs(255), 1_305);
+        state.listen(Some(track("c")), true, 31.0, 200.0, secs(286), 1_305);
+        assert_eq!(state.collection.plays.iter().map(|play| play.track.id.as_str()).collect::<Vec<_>>(), ["a", "a", "c"]);
+    }
+
+    #[test]
+    fn replay_opens_on_its_stretch_and_plays_what_was_heard_most() {
+        let mut state = State::default();
+        let now = chrono::Utc::now().timestamp();
+        state.collection.plays = vec![
+            crate::replay::Play { track: track("a"), at: now - 60, seconds: 200 },
+            crate::replay::Play { track: track("b"), at: now - 30, seconds: 100 },
+            crate::replay::Play { track: track("a"), at: now - 10, seconds: 200 },
+        ];
+        click(&mut state, "replay");
+        assert_eq!(state.page, Page::Replay);
+        assert_eq!(state.replay().top_songs[0].track.id, "a");
+        assert_eq!(click(&mut state, "replay-song:0"), vec![Command::PlayList { tracks: vec![track("a"), track("b")], index: 0 }]);
+        click(&mut state, "replay-period:all");
+        assert_eq!(state.replay_period, crate::replay::Period::All);
     }
 
     fn click(state: &mut State, id: &str) -> Vec<Command> {
