@@ -81,3 +81,8 @@ raw-window-handle = "0.6.2"
 # eframe's iOS event loop logs startup errors before exiting instead of returning them.
 log = "0.4"
 raw-window-handle = "0.6.2"
+
+# Only for the examples that check what the app does against the real services: decoding a
+# song's own audio, as the engine already does through it.
+[dev-dependencies]
+rodio = { version = "0.23.0", default-features = false, features = ["symphonia-all"] }

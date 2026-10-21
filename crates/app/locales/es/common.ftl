@@ -198,3 +198,17 @@ common-scrobble-signed-waiting = Conectado como { $user } · { $count ->
    *[other] { $count } escuchas por enviar
 }
 common-scrobble-failed = No se pudo conectar
+
+## Recognize
+common-recognize-title = ¿Qué canción es esta?
+common-recognize-offer = Escucha lo que suena cerca y te dice qué es.
+common-recognize-detail = Escucha por el micrófono y le pregunta a Shazam. Solo se envía una huella del sonido, nunca la grabación.
+common-recognize-start = Escuchar
+common-recognize-stop = Dejar de escuchar
+common-recognize-idle = Tocá para escuchar
+common-recognize-listening = Escuchando… { $seconds } s
+common-recognize-found = ¡La encontramos!
+common-recognize-unknown = No la reconocimos. Probá más cerca de la música.
+common-recognize-failed = No se pudo escuchar
+common-recognize-search = Buscar en Surco
+common-recognize-lately = Encontradas hace poco

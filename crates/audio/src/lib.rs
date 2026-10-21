@@ -68,6 +68,7 @@
 mod audio;
 pub mod equalizer;
 mod media_buffer;
+pub mod microphone;
 pub mod meter;
 mod opus_source;
 pub mod silence;

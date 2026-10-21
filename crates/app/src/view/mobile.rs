@@ -236,6 +236,7 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Patches => t!("common-patches"),
         Page::Profile => t!("desktop-profile"),
         Page::Replay => t!("common-replay"),
+        Page::Recognize => t!("common-recognize-title"),
         Page::Album(album) if state.mobile_ui.compact_header => Cow::Borrowed(&album.title),
         Page::Artist(artist) if state.mobile_ui.compact_header => Cow::Borrowed(&artist.name),
         Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),

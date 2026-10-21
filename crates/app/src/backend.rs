@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Receiver};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use base64::Engine as _;
 use surco_audio::equalizer::{self, EqualizerValues};
@@ -109,6 +109,9 @@ pub enum Command {
     MoveQueue(usize, usize),
     /// Pass by the silence a song opens and closes with.
     SkipSilence(bool),
+    /// Listen through the microphone for the song that plays nearby, until it is named.
+    Recognize,
+    StopRecognizing,
     /// Sign in to Last.fm or ListenBrainz.
     ScrobbleSignIn(crate::scrobble::SignIn),
     /// Say on the listener's profiles what is playing.
@@ -238,6 +241,10 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// How loud what the microphone hears is, 0 to 1, and for how long it has listened.
+    Hearing { level: f32, seconds: f32 },
+    /// The song heard, none when Shazam did not know it, or why it could not be asked.
+    Recognized(Result<Option<crate::recognize::Recognized>, String>),
     /// Signed in to a service, or why not.
     SignedIn(Result<crate::scrobble::Account, String>),
     /// The first of what waited for a service went.
@@ -347,6 +354,10 @@ struct Shared {
     volume: Mutex<(f32, f32)>,
     /// The SponsorBlock categories skipped, and the segments of the videos asked for lately.
     sponsor: std::sync::atomic::AtomicU8,
+    /// The microphone while it listens for a song, and which listening it is: an older one's
+    /// answer is not said.
+    microphone: Mutex<Option<surco_audio::microphone::Microphone>>,
+    listening: AtomicU64,
     segments: Mutex<HashMap<String, Vec<crate::sponsorblock::Segment>>>,
     downloads: Mutex<Downloads>,
     /// Held while a task changes what the active deck holds, so the newest `Play` has the last word.
@@ -655,6 +666,8 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         covers: tokio::sync::Semaphore::new(COVERS_AT_ONCE),
         volume: Mutex::new((1.0, 1.0)),
         sponsor: std::sync::atomic::AtomicU8::new(crate::sponsorblock::DEFAULT),
+        microphone: Mutex::new(None),
+        listening: AtomicU64::new(0),
         segments: Mutex::new(HashMap::new()),
         serving: tokio::sync::Mutex::new(None),
         #[cfg(target_os = "ios")]
@@ -800,6 +813,13 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
         (Command::SkipSilence(on), _) => surco_audio::silence::set_skip_silence(on),
+        (Command::Recognize, Ok(shared)) => recognize(shared),
+        (Command::StopRecognizing, Ok(shared)) => {
+            shared.listening.fetch_add(1, Ordering::SeqCst);
+            shared.microphone.lock().unwrap().take();
+        }
+        (Command::Recognize, Err(message)) => reply(Event::Recognized(Err(message.clone()))),
+        (Command::StopRecognizing, Err(_)) => {}
         (Command::ScrobbleSignIn(sign_in), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -1030,6 +1050,53 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
         }
     };
     content.map_err(|error| error.to_string())
+}
+
+/// Listens for the song that plays nearby: the fingerprint grows as the sound comes in, and
+/// Shazam is asked about it as it does, until it names the song or the last time is asked.
+fn recognize(shared: &Arc<Shared>) {
+    use crate::recognize::{lookup, Signature, ASK_AT};
+    let this = shared.listening.fetch_add(1, Ordering::SeqCst) + 1;
+    let (heard, mut sound) = tokio::sync::mpsc::unbounded_channel::<Vec<i16>>();
+    // An iPhone's audio session plays and does not record; and it asks before the microphone.
+    let microphone = if cfg!(target_os = "ios") { Err(t!("backend-recognize-unsupported").into_owned()) }
+        else { surco_audio::microphone::listen(move |pcm| { let _ = heard.send(pcm.to_vec()); }) };
+    let microphone = match microphone {
+        Ok(microphone) => microphone,
+        Err(why) => return (shared.reply)(Event::Recognized(Err(why))),
+    };
+    *shared.microphone.lock().unwrap() = Some(microphone);
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        let current = || shared.listening.load(Ordering::SeqCst) == this;
+        let (mut signature, mut asked, mut said) = (Signature::default(), 0, Instant::now());
+        while let Some(pcm) = sound.recv().await {
+            if !current() { return; }
+            signature.add(&pcm);
+            let seconds = signature.duration_ms() as f32 / 1000.0;
+            if said.elapsed() >= Duration::from_millis(80) {
+                said = Instant::now();
+                let loud = (pcm.iter().map(|sample| f64::from(*sample).powi(2)).sum::<f64>() / pcm.len().max(1) as f64).sqrt();
+                (shared.reply)(Event::Hearing { level: (loud / 6_000.0).min(1.0) as f32, seconds });
+            }
+            if asked < ASK_AT.len() && f64::from(seconds) >= ASK_AT[asked] {
+                asked += 1;
+                // Named, it is over; not, the last time asked says how it went.
+                match lookup(&shared.youtube, &signature.encode(), signature.duration_ms(), chrono::Utc::now().timestamp()).await {
+                    Ok(Some(found)) => {
+                        if current() { (shared.reply)(Event::Recognized(Ok(Some(found)))); }
+                        break;
+                    }
+                    answer if asked == ASK_AT.len() => {
+                        if current() { (shared.reply)(Event::Recognized(answer)); }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if current() { shared.microphone.lock().unwrap().take(); }
+    });
 }
 
 /// The most videos whose segments are held.

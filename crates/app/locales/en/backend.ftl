@@ -36,4 +36,5 @@ backend-handoff-newer = That account comes from a newer Surco. Update this one t
 backend-handoff-unreachable = The other device could not be reached. Check that both are on the same network and that the dialog is still open there.
 backend-handoff-code = Code to hand the account over
 backend-handoff-no-port = There is no free port to move the account on. Close other Surco windows and try again.
+backend-recognize-unsupported = Naming songs is not on the iPhone yet.
 backend-handoff-stopped = Too many wrong codes were tried on the network, so sharing stopped. Switch an option or close and reopen for a new code.

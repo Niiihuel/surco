@@ -4922,6 +4922,7 @@ dependencies = [
  "qrcode",
  "raw-window-handle",
  "rfd",
+ "rodio",
  "serde",
  "serde_json",
  "sha1 0.10.7",

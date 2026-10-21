@@ -68,6 +68,8 @@ pub enum Page {
     Profile,
     /// What was listened to, summed up: how long, who and what most, and when.
     Replay,
+    /// Naming the song that plays nearby, from what the microphone hears.
+    Recognize,
 }
 
 /// A list the home makes out of what the user plays, opened and played as a playlist is.
@@ -253,6 +255,9 @@ pub struct Collection {
     /// The tracks marked as liked, the last one first.
     #[serde(default)]
     pub liked: Vec<Track>,
+    /// The songs named from what the microphone heard, the latest first.
+    #[serde(default)]
+    pub recognized: Vec<crate::recognize::Recognized>,
     /// What the artists followed have released since they were followed, the latest
     /// found first, each with whether it is still to be looked at.
     #[serde(default)]
@@ -1011,7 +1016,14 @@ pub struct State {
     /// that travels to another device: they are credentials.
     pub scrobbling: crate::scrobble::Accounts,
     pub scrobble_form: ScrobbleForm,
+    /// How loud what the microphone hears is, and for how long it has, while it listens.
+    pub hearing: Option<(f32, f32)>,
+    /// The song last named, none when it was not known, or why it could not be asked.
+    pub recognized: Option<Result<Option<crate::recognize::Recognized>, String>>,
 }
+
+/// How many songs named by the microphone are remembered.
+const RECOGNIZED_KEPT: usize = 30;
 
 /// What is being typed to sign in to a service, and how it went.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -1374,6 +1386,8 @@ impl Default for State {
             replay_period: crate::replay::Period::default(),
             scrobbling: crate::scrobble::Accounts::default(),
             scrobble_form: ScrobbleForm::default(),
+            hearing: None,
+            recognized: None,
         }
     }
 }
@@ -1918,6 +1932,16 @@ impl State {
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
+        let mut commands = self.handle(action);
+        // The microphone listens only while its page is open.
+        if self.hearing.is_some() && self.page != Page::Recognize {
+            self.hearing = None;
+            commands.push(Command::StopRecognizing);
+        }
+        commands
+    }
+
+    fn handle(&mut self, action: &UiAction) -> Vec<Command> {
         if self.mobile {
             if let Some(commands) = self.mobile_action(action) {
                 return commands;
@@ -2669,6 +2693,29 @@ impl State {
                 }
                 Vec::new()
             }
+            // Opened, it listens at once, as Shazam's does; again, it starts over.
+            "recognize" | "recognize-again" => {
+                if self.page != Page::Recognize { self.go(Page::Recognize); }
+                if self.hearing.is_some() { return Vec::new(); }
+                self.hearing = Some((0.0, 0.0));
+                self.recognized = None;
+                vec![Command::Recognize]
+            }
+            "recognize-stop" => {
+                self.hearing = None;
+                vec![Command::StopRecognizing]
+            }
+            // What was named, looked for in the catalog.
+            "recognized-search" => {
+                let Some(Ok(Some(found))) = &self.recognized else { return Vec::new() };
+                self.query = format!("{} {}", found.title, found.artist);
+                self.search()
+            }
+            _ if id.starts_with("recognized:") => {
+                let Some(found) = id["recognized:".len()..].parse::<usize>().ok().and_then(|index| self.collection.recognized.get(index)) else { return Vec::new() };
+                self.query = format!("{} {}", found.title, found.artist);
+                self.search()
+            }
             "scrobble:listenbrainz" => {
                 use crate::scrobble::{Service, SignIn};
                 let form = &mut self.scrobble_form;
@@ -3116,6 +3163,23 @@ impl State {
                 covers
             }
             Event::ArtistsFound { key, artists } => self.onboarding_found(&key, artists),
+            Event::Hearing { level, seconds } => {
+                if self.hearing.is_some() { self.hearing = Some((level, seconds)); }
+                Vec::new()
+            }
+            Event::Recognized(found) => {
+                if self.hearing.take().is_none() { return Vec::new(); }
+                let mut commands = Vec::new();
+                if let Ok(Some(song)) = &found {
+                    let list = &mut self.collection.recognized;
+                    list.retain(|held| !(held.title == song.title && held.artist == song.artist));
+                    list.insert(0, song.clone());
+                    list.truncate(RECOGNIZED_KEPT);
+                    commands = cover_requests(&mut self.covers, [&song.cover]);
+                }
+                self.recognized = Some(found);
+                commands
+            }
             Event::SignedIn(account) => {
                 self.scrobble_form.busy = None;
                 match account {
@@ -3886,6 +3950,27 @@ mod tests {
         assert!(state.scrobbling.lastfm.as_ref().unwrap().waiting.is_empty());
         click(&mut state, "scrobble:lastfm-out");
         assert!(state.scrobbling.lastfm.is_none());
+    }
+
+    #[test]
+    fn the_microphone_listens_while_its_page_is_open_and_what_it_names_is_remembered() {
+        use crate::recognize::Recognized;
+        let mut state = State::default();
+        assert_eq!(click(&mut state, "recognize"), vec![Command::Recognize]);
+        assert!(state.page == Page::Recognize && state.hearing.is_some());
+        assert!(click(&mut state, "recognize").is_empty(), "already listening");
+        state.apply(Event::Hearing { level: 0.4, seconds: 3.0 });
+        assert_eq!(state.hearing, Some((0.4, 3.0)));
+        let song = Recognized { title: "Persiana americana".into(), artist: "Soda Stereo".into(), album: None, cover: None, at: 1 };
+        state.apply(Event::Recognized(Ok(Some(song.clone()))));
+        assert!(state.hearing.is_none() && state.collection.recognized == [song.clone()]);
+        assert!(matches!(click(&mut state, "recognized-search").as_slice(), [Command::Search(query)] if query == "Persiana americana Soda Stereo"));
+        // Listening again and leaving, the microphone is let go; a late answer is not taken.
+        click(&mut state, "recognize");
+        click(&mut state, "recognize-again");
+        assert_eq!(click(&mut state, "home"), vec![Command::StopRecognizing]);
+        state.apply(Event::Recognized(Ok(Some(Recognized { title: "Late".into(), ..song.clone() }))));
+        assert_eq!(state.collection.recognized.len(), 1);
     }
 
     #[test]

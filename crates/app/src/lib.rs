@@ -26,6 +26,7 @@ mod ios_ui;
 mod ios_symbols;
 mod paths;
 mod player;
+mod recognize;
 mod replay;
 mod scrobble;
 mod sponsorblock;

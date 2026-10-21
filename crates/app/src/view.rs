@@ -228,6 +228,7 @@ mod glyph {
     pub const HANDOFF: &str = include_str!("../assets/icons/glyph/handoff.svg");
     pub const SETTINGS: &str = include_str!("../assets/icons/glyph/settings.svg");
     pub const REPLAY: &str = include_str!("../assets/icons/glyph/replay.svg");
+    pub const LISTEN: &str = include_str!("../assets/icons/glyph/listen.svg");
     pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
     pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
     pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
@@ -1476,6 +1477,72 @@ fn replay_page(state: &State, width: f32, palette: ComponentPalette) -> Element 
     page_scroll("replay", Element::column(sections).gap(16.0).padding(12.0))
 }
 
+/// Naming the song that plays nearby, as Shazam's page does: a disc that swells with what the
+/// microphone hears while it listens, then what was named and the way to it in the catalog,
+/// and the songs named lately.
+fn recognize_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let mut sections = Vec::new();
+    if !state.mobile {
+        sections.push(Element::column(vec![
+            Text::new(t!("common-recognize-title"), palette).font_size(PAGE_TITLE).render(),
+            Text::new(t!("common-recognize-detail"), palette).muted().render(),
+        ]).gap(4.0));
+    }
+    let (level, seconds) = state.hearing.unwrap_or_default();
+    let listening = state.hearing.is_some();
+    // The disc, as loud as what is heard; pressed, it stops listening, or starts again.
+    let side = RECOGNIZE_DISC + if listening { level * 36.0 } else { 0.0 };
+    let disc = Element::panel(Element::icon(Icon::Custom(glyph::LISTEN)).large_icon(56.0).foreground(SCHEME.canvas).centered())
+        .background(palette.text).radius(side / 2.0).size(Some(side), Some(side));
+    let ring = Element::panel(disc.centered()).background(Color { a: if listening { 40 } else { 0 }, ..palette.text })
+        .radius((RECOGNIZE_DISC + 48.0) / 2.0).size(Some(RECOGNIZE_DISC + 48.0), Some(RECOGNIZE_DISC + 48.0));
+    let label = if listening { t!("common-recognize-stop") } else { t!("common-recognize-start") };
+    let pressed = Element::clickable(if listening { "recognize-stop" } else { "recognize-again" }, ring)
+        .accessible(limn::Access::new(limn::Role::Button).name(label));
+    let status = match (&state.hearing, &state.recognized) {
+        (Some(_), _) => t!("common-recognize-listening", seconds = format!("{seconds:.0}")),
+        (None, Some(Ok(None))) => t!("common-recognize-unknown"),
+        (None, Some(Err(_))) => t!("common-recognize-failed"),
+        (None, Some(Ok(Some(_)))) => t!("common-recognize-found"),
+        (None, None) => t!("common-recognize-idle"),
+    };
+    let mut center = vec![pressed.centered_x(), Text::new(status, palette).font_size(16.0).render().center_content()];
+    if let Some(Err(why)) = &state.recognized {
+        center.push(Text::new(why, palette).muted().render().center_content());
+    }
+    if let Some(Ok(Some(found))) = &state.recognized {
+        let about = [Some(found.artist.as_str()), found.album.as_deref()].into_iter().flatten().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ");
+        let card = Element::row(vec![
+            cover(state, &found.cover, 96.0, palette).radius(6.0),
+            Element::column(vec![
+                Text::new(&found.title, raised).font_size(22.0).render().font_family(FontFamily::SansBold),
+                Text::new(about, raised).muted().render(),
+                Element::row(vec![Button::new("recognized-search", t!("common-recognize-search"), raised).icon(Icon::Custom(glyph::SEARCH)).size(ControlSize::Compact).round().render()]),
+            ]).gap(6.0).flex(1.0).centered_y(),
+        ]).gap(16.0);
+        center.push(Element::panel(card).padding(16.0).background(CHOSEN).radius(8.0).size(Some((width - 24.0).min(560.0)), None).centered_x());
+    }
+    sections.push(Element::column(center).gap(16.0).padding(16.0));
+    // What was named lately, each looked for in the catalog when chosen.
+    if !state.collection.recognized.is_empty() {
+        let rows = state.collection.recognized.iter().enumerate().map(|(index, found)| {
+            ListRow::new(format!("recognized:{index}"), &found.title, palette)
+                .sizing(TRACK_ROW)
+                .leading(middle(cover(state, &found.cover, 40.0, palette).radius(4.0)))
+                .subtitle(found.artist.clone())
+                .title_fade(true)
+                .radius(RadiusRole::Card)
+                .render()
+        }).collect();
+        sections.extend([heading(&t!("common-recognize-lately"), palette), Element::column(rows).gap(2.0)]);
+    }
+    page_scroll("recognize", Element::column(sections).gap(16.0).padding(12.0))
+}
+
+/// The side of the recognising disc at rest.
+const RECOGNIZE_DISC: f32 = 168.0;
+
 /// How tall the hours of Replay stand at their most.
 const REPLAY_BARS: f32 = 96.0;
 
@@ -2116,8 +2183,22 @@ pub(crate) fn remembered(searched: &Searched) -> (&str, String, Option<&Option<S
 /// Where a search starts: every genre to browse; what was searched lately drops down from
 /// the field instead.
 fn browse_page(width: f32, palette: ComponentPalette) -> Element {
-    // As Spotify's: the recent searches drop down from the field, and the page is the genres.
-    let mut sections = vec![Text::new(t!("desktop-browse-all"), palette).font_size(24.0).render().font_family(FontFamily::SansBold)];
+    // As Spotify's: the recent searches drop down from the field, and the page is the genres;
+    // over them, the way to name the song that plays nearby.
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let listen = Element::row(vec![
+        Element::icon(Icon::Custom(glyph::LISTEN)).large_icon(28.0).foreground(palette.text).centered_y(),
+        Element::column(vec![
+            Text::new(t!("common-recognize-title"), raised).font_size(16.0).render().font_family(FontFamily::SansBold),
+            Text::new(t!("common-recognize-offer"), raised).muted().render(),
+        ]).gap(2.0).flex(1.0).centered_y(),
+        Button::new("browse-recognize", t!("common-recognize-start"), raised).dispatch_as("recognize").size(ControlSize::Compact).round().render().centered_y(),
+    ]).gap(14.0);
+    let mut sections = vec![];
+    if !cfg!(target_os = "ios") {
+        sections.push(Element::panel(listen).padding(16.0).background(CHOSEN).radius(8.0));
+    }
+    sections.push(Text::new(t!("desktop-browse-all"), palette).font_size(24.0).render().font_family(FontFamily::SansBold));
     let width = width - 24.0;
     let columns = ((width / 200.0) as usize).clamp(2, 5);
     let side = (width - 12.0 * (columns - 1) as f32) / columns as f32;
@@ -2785,6 +2866,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Mix(mix) => format!("page:mix:{}", mix.key()),
         Page::Profile => "page:profile".to_owned(),
         Page::Replay => format!("page:replay:{}", state.replay_period.slug()),
+        Page::Recognize => "page:recognize".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     let page = page(state, width, palette).animate_enter(entering);
@@ -2875,6 +2957,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Mix(mix) => mix_page(state, mix, width, palette),
         Page::Profile => profile_page(state, palette),
         Page::Replay => replay_page(state, width, palette),
+        Page::Recognize => recognize_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),

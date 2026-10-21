@@ -197,3 +197,17 @@ common-scrobble-signed-waiting = Signed in as { $user } · { $count ->
    *[other] { $count } listens to send
 }
 common-scrobble-failed = Could not connect
+
+## Recognize
+common-recognize-title = What's this song?
+common-recognize-offer = Listens to what plays nearby and tells you what it is.
+common-recognize-detail = Listens through the microphone and asks Shazam. Only a fingerprint of the sound is sent, never the recording.
+common-recognize-start = Listen
+common-recognize-stop = Stop listening
+common-recognize-idle = Tap to listen
+common-recognize-listening = Listening… { $seconds } s
+common-recognize-found = Found it!
+common-recognize-unknown = We couldn't tell. Try closer to the music.
+common-recognize-failed = Couldn't listen
+common-recognize-search = Find in Surco
+common-recognize-lately = Found lately
