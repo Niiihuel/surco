@@ -228,13 +228,18 @@ impl Relays {
         let me = hex(&key.verifying_key().to_bytes());
         let since = chrono::Utc::now().timestamp() - 5;
         let request = json!(["REQ", "room", {"kinds": [KIND], "#t": [room.tag], "since": since}]).to_string();
+        // The relays' certificates are checked by the system, as the catalog's are.
+        let tls = {
+            use rustls_platform_verifier::ConfigVerifierExt as _;
+            rustls::ClientConfig::with_platform_verifier().ok().map(|config| tokio_tungstenite::Connector::Rustls(Arc::new(config)))
+        };
         let tasks = RELAYS.iter().map(|url| {
-            let (url, request, frames, connected, seen, heard, room, me) = (url.to_string(), request.clone(), frames.subscribe(), connected.clone(), seen.clone(), heard.clone(), room.clone(), me.clone());
+            let (url, request, frames, connected, seen, heard, room, me, tls) = (url.to_string(), request.clone(), frames.subscribe(), connected.clone(), seen.clone(), heard.clone(), room.clone(), me.clone(), tls.clone());
             tokio::spawn(async move {
                 let mut frames = frames;
                 let mut pause = Duration::from_secs(2);
                 loop {
-                    if let Ok((mut socket, _)) = tokio_tungstenite::connect_async(&url).await {
+                    if let Ok((mut socket, _)) = tokio_tungstenite::connect_async_tls_with_config(&url, None, false, tls.clone()).await {
                         pause = Duration::from_secs(2);
                         if socket.send(request.clone().into()).await.is_ok() {
                             connected.fetch_add(1, Ordering::SeqCst);
