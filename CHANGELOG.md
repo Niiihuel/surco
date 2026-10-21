@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.14.1
+
+![Replay's story, its songs to play](https://raw.githubusercontent.com/Niiihuel/surco/v0.14.1/docs/releases/0.14.1/story-songs.jpg)
+
+### Added
+
+- Replay's story plays each song's chorus, as Wrapped does: where the line sung most is
+  first sung, found from its synced lyrics. In its lists each song plays, or pauses, from
+  its row.
+- The story goes on by itself or waits: pause it from beside its close, or with Space.
+  When it ends, what you were listening to comes back where it was.
+
+### Changed
+
+- Listen together is where the music is: at the top of the queue, beside the devices on
+  a desktop and in a phone's sheet of them, with the room's faces once you are in one.
+- Last.fm and ListenBrainz have a part of their own in Settings, Connected apps, rather
+  than sitting under Library.
+
 ## 0.14.0
 
 ![Replay told as a story](https://raw.githubusercontent.com/Niiihuel/surco/v0.14.0/docs/releases/0.14.0/story.jpg)
