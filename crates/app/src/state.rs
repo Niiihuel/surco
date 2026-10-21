@@ -426,7 +426,7 @@ pub struct Handoff {
     pub receiving: bool,
     pub parts: Parts,
     /// The address another device reads it from, and the code of it, or why there is none.
-    pub offer: Option<Result<(Offer, limn::RasterImage), String>>,
+    pub offer: Option<Result<(Offer, Option<limn::RasterImage>), String>>,
     pub address: String,
     pub fetching: bool,
     /// What came from the other device, or why nothing did.
@@ -880,6 +880,8 @@ pub struct State {
     artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
     pub tints: HashMap<String, limn::Color>,
+    /// Each picture's width and height in pixels, by its address, while it is held.
+    pub picture_sizes: HashMap<String, (u32, u32)>,
     /// The track whose share card is open, and whether its link was just copied.
     pub sharing: Option<Track>,
     pub copied: bool,
@@ -1240,6 +1242,7 @@ impl Default for State {
             page_stuck: false,
             artwork_order: VecDeque::new(),
             tints: HashMap::new(),
+            picture_sizes: HashMap::new(),
             sharing: None,
             copied: false,
             list_copied: None,
@@ -3070,9 +3073,12 @@ impl State {
                 self.save_error = Some(format!("{title}: {message}"));
                 Vec::new()
             }
-            Event::Artwork { url, image, tint } => {
+            Event::Artwork { url, image, tint, size } => {
                 if let Some([red, green, blue]) = tint {
                     self.tints.insert(url.clone(), limn::Color::rgb(red, green, blue));
+                }
+                if let Some(size) = size.filter(|(wide, high)| *wide > 0 && *high > 0) {
+                    self.picture_sizes.insert(url.clone(), size);
                 }
                 if self.artwork.insert(url.clone(), image).is_none() { self.artwork_order.push_back(url); }
                 self.forget_old_covers();
@@ -3289,6 +3295,13 @@ impl State {
         self.covers.contains(url) && !self.artwork.contains_key(url) && !self.missing_covers.contains(url)
     }
 
+    /// Whether a dialog of the app's own stands over the window, the first run's included:
+    /// what offers itself over the window waits for it to close.
+    pub fn dialog_open(&self) -> bool {
+        self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
+            || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
+    }
+
     /// Whether the recent searches drop down from the desktop's search field.
     pub fn recent_searches_shown(&self) -> bool {
         !self.mobile && self.search_focused && self.query.is_empty() && !self.collection.searches.is_empty()
@@ -3426,6 +3439,7 @@ impl State {
                 continue;
             }
             self.artwork.remove(&url);
+            self.picture_sizes.remove(&url);
             self.covers.remove(&url);
         }
     }
@@ -4804,7 +4818,7 @@ mod tests {
         for index in 0..ARTWORK_KEPT + 2 {
             state.covers.insert(cover(index));
             let image = RasterImage::new(format!("{index:064x}"), limn::RasterImageFormat::Png, 1, "AA==".into(), "Portada").unwrap();
-            state.apply(Event::Artwork { url: cover(index), image, tint: None });
+            state.apply(Event::Artwork { url: cover(index), image, tint: None, size: None });
         }
         assert_eq!(state.artwork.len(), ARTWORK_KEPT);
         assert!(state.artwork.contains_key(&cover(0)), "the cover of what plays stays");

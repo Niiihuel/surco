@@ -474,8 +474,8 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
             Some(Ok((offer, qr))) => {
-                let qr = Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
-                    .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0);
+                let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
+                    .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0));
                 let copy = Button::new("handoff-copy", t!("desktop-handoff-copy"), palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Compact).round().render();
                 // The code as it is typed: large, its characters apart, on a tile of its own.
                 let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::Monospace).font_size(28.0).foreground(palette.text).centered())
@@ -484,20 +484,18 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
                     Text::new(title, palette).font_size(16.0).render().font_family(FontFamily::SansBold),
                     Text::new(detail, palette).muted().render(),
                 ]).gap(4.0);
-                let ways = vec![
-                    way(t!("desktop-handoff-computer"), t!("desktop-handoff-computer-detail")),
-                    code,
-                    Element::row(vec![copy]),
-                    Element::spacer().size(None, Some(4.0)),
-                    way(t!("desktop-handoff-phone"), t!("desktop-handoff-phone-detail")),
-                ];
+                let mut ways = vec![way(t!("desktop-handoff-computer"), t!("desktop-handoff-computer-detail")), code, Element::row(vec![copy])];
+                // Without a QR, the code alone.
+                if qr.is_some() {
+                    ways.extend([Element::spacer().size(None, Some(4.0)), way(t!("desktop-handoff-phone"), t!("desktop-handoff-phone-detail"))]);
+                }
                 // Beside the QR where there is room for both; under it on a phone.
-                body.push(if form >= 2.0 * HANDOFF_CODE + 120.0 {
-                    Element::row(vec![qr, Element::column(ways).gap(8.0).flex(1.0)]).gap(20.0)
-                } else {
-                    let mut ways = ways;
-                    ways.push(qr.centered_x());
-                    Element::column(ways).gap(8.0)
+                body.push(match qr {
+                    Some(qr) if form >= 2.0 * HANDOFF_CODE + 120.0 => Element::row(vec![qr, Element::column(ways).gap(8.0).flex(1.0)]).gap(20.0),
+                    qr => {
+                        ways.extend(qr.map(Element::centered_x));
+                        Element::column(ways).gap(8.0)
+                    }
                 });
             }
         }
@@ -577,7 +575,7 @@ pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts
 /// The side of the QR code a phone's camera reads.
 const HANDOFF_CODE: f32 = 168.0;
 /// What a code to type looks like, in its field before it is typed.
-pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX";
+pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX-XXXX";
 
 /// Changing the account's name.
 fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
@@ -818,44 +816,52 @@ fn welcome_wash() -> Option<limn::RasterImage> {
     limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, *length as u32, encoded.clone(), t!("common-welcome-title"))
 }
 
+/// The greeting's wash at `side` by `high`, or its first colour where it could not be made.
+fn wash(side: f32, high: f32) -> Element {
+    match welcome_wash() {
+        Some(wash) => Element::raster_image(wash).size(Some(side), Some(high)),
+        None => Element::spacer().size(Some(side), Some(high)).background(Color::rgb(86, 76, 236)),
+    }
+}
+
 pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     if !state.welcome {
         return window_tree;
     }
-    let side = (width - 48.0).clamp(240.0, 380.0);
-    let art = side * 0.76;
-    let mut layers = vec![match welcome_wash() {
-        Some(wash) => Element::raster_image(wash).size(Some(side), Some(art)),
-        None => Element::spacer().size(Some(side), Some(art)).background(Color::rgb(86, 76, 236)),
-    }];
-    // Covers of what the user already plays float around it, wherever they are in.
-    let own = state.collection.heard.iter().chain(&state.collection.liked).chain(state.collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
-    let mut covers: Vec<&String> = Vec::new();
-    for url in own.filter_map(|track| track.artwork_url.as_ref()).filter(|url| state.artwork.contains_key(*url)) {
-        if !covers.contains(&url) && covers.len() < 6 { covers.push(url); }
-    }
-    // A stack stretches each of its layers to its box: each piece keeps its own size at the
-    // box's corner, and is moved from there.
-    let placed = |piece: Element, x: f32, y: f32| Element::column(vec![Element::row(vec![piece, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
-        .translate(limn::Point::new(x, y));
-    for (url, (x, y, size)) in covers.into_iter().zip([(0.08, 0.06, 0.22), (0.72, 0.04, 0.19), (0.03, 0.55, 0.18), (0.80, 0.52, 0.16), (0.26, 0.74, 0.19), (0.62, 0.77, 0.15)]) {
-        let picture = cover(state, &Some(url.clone()), side * size, SCHEME.palette()).radius(10.0);
-        layers.push(placed(picture, side * x, art * y));
-    }
-    if let Some(picture) = import_picture() {
-        let (wide, high) = (side * 0.62, side * 0.62 * 260.0 / 920.0);
-        layers.push(placed(Element::raster_image(picture.cover()).size(Some(wide), Some(high)).radius(12.0), (side - wide) / 2.0, (art - high) / 2.0));
-    }
-    let art = Element::stack(layers).size(Some(side), Some(art));
-    promo_dialog(window_tree, side, art, [t!("common-welcome-title"), t!("common-welcome-detail"), t!("common-welcome-import")], ["welcome-import", "welcome-close", "welcome:dialog"])
+    let art = |side: f32| {
+        let art = side * 0.76;
+        let mut layers = vec![wash(side, art)];
+        // Covers of what the user already plays float around it, wherever they are in.
+        let own = state.collection.heard.iter().chain(&state.collection.liked).chain(state.collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
+        let mut covers: Vec<&String> = Vec::new();
+        for url in own.filter_map(|track| track.artwork_url.as_ref()).filter(|url| state.artwork.contains_key(*url)) {
+            if !covers.contains(&url) && covers.len() < 6 { covers.push(url); }
+        }
+        // A stack stretches each of its layers to its box: each piece keeps its own size at the
+        // box's corner, and is moved from there.
+        let placed = |piece: Element, x: f32, y: f32| Element::column(vec![Element::row(vec![piece, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
+            .translate(limn::Point::new(x, y));
+        for (url, (x, y, size)) in covers.into_iter().zip([(0.08, 0.06, 0.22), (0.72, 0.04, 0.19), (0.03, 0.55, 0.18), (0.80, 0.52, 0.16), (0.26, 0.74, 0.19), (0.62, 0.77, 0.15)]) {
+            let picture = cover(state, &Some(url.clone()), side * size, SCHEME.palette()).radius(10.0);
+            layers.push(placed(picture, side * x, art * y));
+        }
+        if let Some(picture) = import_picture() {
+            let (wide, high) = (side * 0.62, side * 0.62 * 260.0 / 920.0);
+            layers.push(placed(Element::raster_image(picture.cover()).size(Some(wide), Some(high)).radius(12.0), (side - wide) / 2.0, (art - high) / 2.0));
+        }
+        Element::stack(layers).size(Some(side), Some(art))
+    };
+    promo_dialog(window_tree, width, art, [t!("common-welcome-title"), t!("common-welcome-detail"), t!("common-welcome-import")], ["welcome-import", "welcome-close", "welcome:dialog"])
 }
 
 /// A card that stands over the window to offer one thing, as the greeting does: its picture
 /// over a deep violet, a bold title, a quiet line, a lavender button, and a way out under the
-/// card. `ids` are the button's, the way out's and the dialog's.
-fn promo_dialog(window_tree: Element, side: f32, art: Element, [title, about, action]: [std::borrow::Cow<'static, str>; 3], [go_id, close_id, dialog_id]: [&str; 3]) -> Element {
+/// card. `art` is drawn as wide as the card; `ids` are the button's, the way out's and the
+/// dialog's.
+fn promo_dialog(window_tree: Element, width: f32, art: impl FnOnce(f32) -> Element, [title, about, action]: [std::borrow::Cow<'static, str>; 3], [go_id, close_id, dialog_id]: [&str; 3]) -> Element {
     const VIOLET: Color = Color::rgb(36, 8, 138);
     const LAVENDER: Color = Color::rgb(222, 219, 255);
+    let side = (width - 48.0).clamp(240.0, 380.0);
     let on_violet = ComponentPalette { surface: VIOLET, text: Color::WHITE, muted: Color::rgba(255, 255, 255, 220), ..SCHEME.palette() };
     let named = title.clone();
     let title = Text::new(title, on_violet).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content();
@@ -865,7 +871,7 @@ fn promo_dialog(window_tree: Element, side: f32, art: Element, [title, about, ac
         .accessible(limn::Access::new(limn::Role::Button).name(action));
     let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(8.0)), go.centered_x()]).gap(12.0).padding(24.0);
     // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
-    let art = art.corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
+    let art = art(side).corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
     let card = Element::panel(Element::column(vec![art, copy]))
         .background(VIOLET).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
     let close = Element::clickable(close_id, Element::text(t!("common-close")).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
@@ -877,21 +883,18 @@ fn promo_dialog(window_tree: Element, side: f32, art: Element, [title, about, ac
 }
 
 /// A later version found while the app is open, offered over the window as the greeting is,
-/// until it is closed or followed to what it brings. One that has to be taken is said by its
-/// dialog.
+/// until it is closed or followed to what it brings, once no other dialog stands there. One
+/// that has to be taken is said by its dialog.
 fn update_offer(state: &State, window_tree: Element, width: f32) -> Element {
-    let Some(release) = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory) else { return window_tree };
-    let side = (width - 48.0).clamp(240.0, 380.0);
-    let high = side * 0.56;
+    let Some(release) = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory && !state.dialog_open()) else { return window_tree };
     // The release's first picture, edge to edge; the greeting's wash until it is in.
     let picture = release.notes.iter().find_map(|note| match note { Note::Picture(address) => state.artwork.get(address), _ => None });
-    let art = match (picture, welcome_wash()) {
-        (Some(picture), _) => Element::raster_image(picture.clone().cover()).size(Some(side), Some(high)),
-        (None, Some(wash)) => Element::raster_image(wash).size(Some(side), Some(high)),
-        (None, None) => Element::spacer().size(Some(side), Some(high)).background(Color::rgb(86, 76, 236)),
+    let art = |side: f32| match picture {
+        Some(picture) => Element::raster_image(picture.clone().cover()).size(Some(side), Some(side * 0.56)),
+        None => wash(side, side * 0.56),
     };
     let words = [t!("desktop-update-toast", version = release.version.as_str()), t!("desktop-update-toast-detail"), t!("desktop-update-see")];
-    promo_dialog(window_tree, side, art, words, ["update-toast", "update-toast-close", "update:dialog"])
+    promo_dialog(window_tree, width, art, words, ["update-toast", "update-toast-close", "update:dialog"])
 }
 
 /// What cannot be undone asks before it is done.
@@ -985,7 +988,7 @@ fn release_notes(state: &State, notes: &[Note], width: f32, palette: ComponentPa
         Note::Picture(address) => match state.artwork.get(address) {
             Some(picture) => {
                 // Its own proportions, no taller than a screen's: a tall one narrows instead.
-                let (wide, high) = picture_size(picture).map_or((16.0, 9.0), |(wide, high)| (wide as f32, high as f32));
+                let (wide, high) = state.picture_sizes.get(address).map_or((16.0, 9.0), |(wide, high)| (*wide as f32, *high as f32));
                 let shown = (width * high / wide).min(width * NOTE_PICTURE_TALLEST);
                 let (wide, high) = (shown * wide / high, shown);
                 Element::raster_image(picture.clone().full_resolution()).size(Some(wide), Some(high)).radius(radius)
@@ -1000,17 +1003,6 @@ fn release_notes(state: &State, notes: &[Note], width: f32, palette: ComponentPa
 /// The tallest a release's picture stands, for its width: a screen's proportions.
 const NOTE_PICTURE_TALLEST: f32 = 10.0 / 16.0;
 
-/// A picture's width and height in pixels, read once from its header.
-fn picture_size(picture: &limn::RasterImage) -> Option<(u32, u32)> {
-    use base64::Engine as _;
-    static SIZES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Option<(u32, u32)>>>> = std::sync::LazyLock::new(Default::default);
-    let mut sizes = SIZES.lock().ok()?;
-    *sizes.entry(picture.sha256().to_owned()).or_insert_with(|| {
-        let bytes = base64::engine::general_purpose::STANDARD.decode(picture.data_base64()).ok()?;
-        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()
-            .filter(|(wide, high)| *wide > 0 && *high > 0)
-    })
-}
 
 /// What each version brought, the latest first, as its release tells it; the one that runs
 /// says so.
@@ -4131,6 +4123,10 @@ mod tests {
             }).collect();
             (texts, frame.regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>())
         };
+        // Over the greeting, or another dialog, it waits for that to close.
+        state.welcome = true;
+        assert!(!shown(&state).1.iter().any(|id| id == "update-toast"), "not over the greeting");
+        state.welcome = false;
         let (texts, ids) = shown(&state);
         assert!(texts.concat().contains("Surco 9.0.0 está disponible") && ids.iter().any(|id| id == "update-toast") && ids.iter().any(|id| id == "update-toast-close"),
             "found, it is offered over the window as the greeting is: {texts:?}");
@@ -4381,6 +4377,17 @@ mod tests {
     }
 
     #[test]
+    fn without_a_qr_the_handoff_still_shows_its_code_to_type() {
+        let mut state = State::default();
+        let offer = crate::handoff::Offer { code: "0000-0000-0001".into(), link: "surco://receive?from=x".into() };
+        state.handoff = Some(crate::state::Handoff { offer: Some(Ok((offer, None))), ..Default::default() });
+        let size = Size::new(1400.0, 900.0);
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        assert!(frame.text_layouts().iter().any(|block| block.source == "0000-0000-0001"), "the code");
+        assert!(frame.regions.iter().any(|region| region.id == "handoff-copy"), "and its copy");
+    }
+
+    #[test]
     fn a_shelf_shows_its_bar_under_the_pointer_without_being_scrolled() {
         let state = State::default();
         let tiles = (0..20).map(|index| Element::spacer().size(Some(160.0 + index as f32), Some(160.0))).collect();
@@ -4396,15 +4403,9 @@ mod tests {
 
     #[test]
     fn a_release_picture_keeps_its_own_proportions() {
-        use base64::Engine as _;
-        use sha2::Digest as _;
-        let mut png = Vec::new();
-        image::RgbImage::new(30, 60).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
-        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
-        let picture = limn::RasterImage::new(sha2::Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect::<String>(), limn::RasterImageFormat::Png, png.len() as u32, encoded.into(), "Novedad").unwrap();
-        assert_eq!(picture_size(&picture), Some((30, 60)));
+        let picture = limn::RasterImage::new(format!("{:064x}", 1), limn::RasterImageFormat::Png, 1, "AA==".into(), "Novedad").unwrap();
         let mut state = State::default();
-        state.artwork.insert("tall".into(), picture);
+        state.apply(Event::Artwork { url: "tall".into(), image: picture, tint: None, size: Some((30, 60)) });
         let size = Size::new(800.0, 900.0);
         let mut tree = UiTree::new(Element::column(release_notes(&state, &[Note::Picture("tall".into())], 600.0, SCHEME.palette())));
         let frame = tree.layout(size);

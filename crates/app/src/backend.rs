@@ -224,7 +224,8 @@ pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
     /// Where the account is served, and the code a phone reads that from.
-    Offered(Result<(Offer, RasterImage), String>),
+    /// What is served, with its QR code when one could be made: the code to type is enough.
+    Offered(Result<(Offer, Option<RasterImage>), String>),
     /// An account read from another device, its pictures kept with the covers already.
     Fetched(Result<Bundle, String>),
     /// The artists found for the picker, under the key they were asked for with.
@@ -236,7 +237,8 @@ pub enum Event {
     Library { saved: Vec<Track>, saving: HashSet<String>, bytes: u64 },
     SaveFailed { title: String, message: String },
     /// A cover, and the color it lends to a card of its track when it could be read.
-    Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]> },
+    /// A picture, the colour it lends to a card and its width and height in pixels.
+    Artwork { url: String, image: RasterImage, tint: Option<[u8; 3]>, size: Option<(u32, u32)> },
     /// A cover that could not be had.
     ArtworkMissing(String),
     Outputs(Vec<AudioOutputDevice>),
@@ -680,11 +682,24 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                     current.replace(body);
                     return;
                 }
-                let offered = match handoff::serve(body).await {
+                // Guessed at too often, the bundle stops being served: the dialog says so, and
+                // the next part switched serves it anew under another code.
+                let watcher = shared.clone();
+                let stopped = move |offer: handoff::Offer| {
+                    tokio::spawn(async move {
+                        let mut serving = watcher.serving.lock().await;
+                        if serving.as_ref().is_some_and(|current| current.offer == offer) {
+                            *serving = None;
+                            (watcher.reply)(Event::Offered(Err(t!("backend-handoff-stopped").into_owned())));
+                        }
+                    });
+                };
+                let offered = match handoff::serve(body, stopped).await {
                     Ok(started) => {
                         let offer = started.offer.clone();
                         *serving = Some(started);
-                        code_image(&offer.link).map(|code| (offer, code)).ok_or_else(|| t!("backend-handoff-no-code").into_owned())
+                        let qr = code_image(&offer.link);
+                        Ok((offer, qr))
                     }
                     Err(message) => Err(message),
                 };
@@ -735,7 +750,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 let Ok(_turn) = shared.covers.acquire().await else { return };
                 // A cover that does not arrive leaves its placeholder instead of the pulse.
                 (shared.reply)(match artwork(&shared, &url).await {
-                    Some((image, tint)) => Event::Artwork { url, image, tint },
+                    Some((image, tint, size)) => Event::Artwork { url, image, tint, size },
                     None => Event::ArtworkMissing(url),
                 });
             });
@@ -1646,7 +1661,7 @@ fn tint_of(bytes: &[u8]) -> Option<[u8; 3]> {
     (weight > 0.0).then(|| sum.map(|channel| (channel / weight).round() as u8))
 }
 
-async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8; 3]>)> {
+async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8; 3]>, Option<(u32, u32)>)> {
     let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
         [0xFF, 0xD8, ..] => RasterImageFormat::Jpeg,
@@ -1662,7 +1677,9 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
         let image = RasterImage::new(digest, format, u32::try_from(bytes.len()).ok()?, encoded.into(), t!("backend-cover"))?;
 
-        Some((image, tint_of(&bytes)))
+        // Read from its header alone: a release's picture is laid out at its own proportions.
+        let size = image::ImageReader::new(std::io::Cursor::new(&bytes)).with_guessed_format().ok().and_then(|reader| reader.into_dimensions().ok());
+        Some((image, tint_of(&bytes), size))
     })
 }
 

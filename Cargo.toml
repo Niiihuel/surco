@@ -10,9 +10,10 @@ license = "GPL-3.0-or-later"
 repository = "https://github.com/Niiihuel/surco"
 
 # The oldest version that may keep running. A release carries it in its notes, and the
-# builds older than it must take that release in before they go on.
+# builds older than it must take that release in before they go on. 0.12.0 moves an account
+# by a short code that older builds cannot read, so every computer has to take it.
 [workspace.metadata.surco]
-minimum = "0.1.0"
+minimum = "0.12.0"
 
 # Thin LTO inlines across crates at a fraction of fat LTO's build time; dropping the
 # standard library's debug info saves megabytes while panics still name their functions.
