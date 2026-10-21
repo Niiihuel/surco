@@ -70,10 +70,6 @@ impl Queue {
         &self.list
     }
 
-    pub fn up_next(&self) -> impl Iterator<Item = &Track> {
-        self.up_next.iter()
-    }
-
     pub fn is_shuffled(&self) -> bool {
         self.shuffle.is_some()
     }
@@ -502,7 +498,7 @@ mod tests {
         q.start(tracks(&["m", "n", "o"]), 2, &mut rng());
         assert!(q.is_shuffled());
         assert_eq!(id(q.current()), Some("o"));
-        assert_eq!(q.up_next().count(), 0);
+        assert!(q.up_next.is_empty());
         let mut seen = vec![];
         while let Some(t) = q.advance() {
             seen.push(t.id.clone());

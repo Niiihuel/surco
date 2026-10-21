@@ -312,7 +312,6 @@ enum Command {
         volume: f32,
         muted: bool,
     },
-    Rate(f32),
     SetOutputDevice {
         id: Option<String>,
         reply: Sender<Result<(), String>>,
@@ -326,7 +325,6 @@ enum Command {
         track_id: String,
         reply: Sender<bool>,
     },
-    DropStandby,
     /// The output stream of this generation died. Sent by the stream's own error callback.
     StreamFailed(u64, String),
     DropActive,
@@ -468,18 +466,6 @@ impl NativeAudio {
         self.send(Command::Volume { volume, muted })
     }
 
-    /**
-     * Playback speed, 0.25 to 4.
-     *
-     * ponytail: this resamples, so it transposes — a song at 1.25x plays a little sharp. Rate
-     * is a podcast feature in a music app and defaults to 1. Add a time-stretcher between the
-     * decoder and the sink if it turns out to matter. Positions count time played, so away
-     * from 1 they also stop matching the place in the track.
-     */
-    pub fn set_rate(&self, rate: f32) -> Result<(), String> {
-        self.send(Command::Rate(rate))
-    }
-
     /// Hands playback to the standby deck, over an equal-power crossfade when `fade` is above
     /// zero and in a single step when it is not. False means `track_id` was not preloaded, or
     /// its download failed, and the caller should load normally.
@@ -496,16 +482,11 @@ impl NativeAudio {
         self.request(|reply| Command::HasStandby { track_id: track_id.to_string(), reply })
     }
 
-    pub fn drop_standby(&self) -> Result<(), String> {
-        self.send(Command::DropStandby)
-    }
-
     /**
      * Stops and clears the active deck only, leaving the standby deck untouched.
      *
-     * The narrow counterpart to `drop_standby`, and the one a cancelled *load* needs: `stop`
-     * clears both decks, which is right for an actual stop but wrong for a skip that lands
-     * mid-load — it would discard whatever the standby was decoding for the track the skip was
+     * The one a cancelled *load* needs: `stop` clears both decks, which is right for an actual
+     * stop but wrong for a skip that lands mid-load — it would discard whatever the standby was decoding for the track the skip was
      * heading towards.
      */
     pub fn drop_active(&self) -> Result<(), String> {
@@ -873,7 +854,6 @@ fn run(
         active: 0,
         volume: 1.0,
         muted: false,
-        rate: 1.0,
         playing: false,
         fade: None,
         output,
@@ -948,7 +928,6 @@ struct Engine {
     active: usize,
     volume: f32,
     muted: bool,
-    rate: f32,
     playing: bool,
     fade: Option<Fade>,
 }
@@ -998,14 +977,12 @@ impl Engine {
                  * swap starts it in the same tick it becomes active.
                  */
                 let volume = if standby { 0.0 } else { self.output_volume() };
-                let rate = self.rate;
 
                 let deck = &mut self.decks[index];
                 deck.sink.stop();
                 deck.sink.append(source);
                 deck.sink.pause();
                 deck.sink.set_volume(volume);
-                deck.sink.set_speed(rate);
                 if let Some(start_sec) = start_sec {
                     deck.seek(start_sec);
                 }
@@ -1065,12 +1042,6 @@ impl Engine {
                     self.decks[self.active].sink.set_volume(self.output_volume());
                 }
             }
-            Command::Rate(rate) => {
-                self.rate = rate.clamp(0.25, 4.0);
-                for deck in &self.decks {
-                    deck.sink.set_speed(self.rate);
-                }
-            }
             Command::Transition { track_id, fade, reply } => {
                 let standby = self.standby();
                 if self.decks[standby].track_id.as_deref() != Some(track_id.as_str()) {
@@ -1096,7 +1067,6 @@ impl Engine {
                 self.decks[standby]
                     .sink
                     .set_volume(if fade.is_zero() { target } else { 0.0 });
-                self.decks[standby].sink.set_speed(self.rate);
                 self.decks[standby].sink.play();
 
                 let outgoing = self.active;
@@ -1125,10 +1095,6 @@ impl Engine {
                     return false;
                 }
                 let _ = reply.send(matched);
-            }
-            Command::DropStandby => {
-                let standby = self.standby();
-                self.decks[standby].clear();
             }
             Command::DropActive => {
                 // A fade reads the active deck's volume every tick; cancel it first, or the
@@ -1322,7 +1288,7 @@ mod tests {
             stream: None, device_id: None, default_device: None, commands, generation: 1, opened_at: Instant::now(),
             reopen_after: Some(Instant::now() + STREAM_RETRY_WINDOW), lost_track: Some("a".into()),
             decks: [Deck::disconnected(), Deck::disconnected()], active: 0, volume: 1.0,
-            muted: false, rate: 1.0, playing: true, fade: None,
+            muted: false, playing: true, fade: None,
         };
         engine.decks[0].track_id = Some("a".into());
         // A disconnected mixer never iterates the queued source to its end.

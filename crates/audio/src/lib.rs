@@ -51,11 +51,10 @@
  *
  * - Engine: [`NativeAudio::start`]; dropping the handle shuts it down.
  * - Decks: [`load`](NativeAudio::load), [`transition`](NativeAudio::transition),
- *   [`has_standby`](NativeAudio::has_standby), [`drop_standby`](NativeAudio::drop_standby),
- *   [`drop_active`](NativeAudio::drop_active).
+ *   [`has_standby`](NativeAudio::has_standby), [`drop_active`](NativeAudio::drop_active).
  * - Transport: [`play`](NativeAudio::play), [`pause`](NativeAudio::pause),
  *   [`stop`](NativeAudio::stop), [`seek`](NativeAudio::seek),
- *   [`set_volume`](NativeAudio::set_volume), [`set_rate`](NativeAudio::set_rate).
+ *   [`set_volume`](NativeAudio::set_volume).
  * - Equaliser, process-global: [`equalizer::set_values`], [`equalizer::values`],
  *   [`equalizer::BAND_HZ`]. So are [`equalizer::set_mono`] and [`equalizer::set_normalize`].
  * - Output: [`list_output_devices`], [`NativeAudio::set_output_device`].

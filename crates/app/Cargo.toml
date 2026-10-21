@@ -40,7 +40,6 @@ futures-util = { version = "0.3", default-features = false, features = ["alloc"]
 # MIT/Apache-2.0. The words of the interface, in Spanish and English: Mozilla's Fluent,
 # with its plurals; the language the system speaks picks the first one.
 fluent-bundle = "0.16"
-unic-langid = "0.9"
 sys-locale = "0.3"
 # MIT/Apache-2.0. The code a phone's camera reads the address of an account handed over from.
 qrcode = { version = "0.14.1", default-features = false }
