@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.12.2
+
+### Fixed
+
+- On an iPhone, Settings › Move to another device and the profile's edit open again: they
+  opened to nothing, as no sheet of the system's draws them. They stand over the header
+  and the tab bar.
+
 ## 0.12.1
 
 ![Importing, on the card every dialog stands on](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.1/docs/releases/0.12.1/import.jpg)
