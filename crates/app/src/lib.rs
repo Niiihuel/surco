@@ -633,7 +633,7 @@ impl eframe::App for Host {
         }
         // The recent searches drop down from the field while it holds the keyboard, and stay
         // while one of them does: a press on a row takes the keyboard before its click lands.
-        let focused = !self.state.mobile && self.tree.focused_id().is_some_and(|id| id == search_field(&self.state) || id.starts_with("recent-search"));
+        let focused = !self.state.mobile && self.tree.focused_id().is_some_and(state::keeps_recent_searches);
         if focused != self.state.search_focused {
             self.state.search_focused = focused;
             acted = true;

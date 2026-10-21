@@ -27,4 +27,4 @@ state-import-nothing-found = We couldn't find any of the songs in that list.
 state-window-minimize = Minimize
 state-window-maximize = Maximize
 state-window-restore = Restore
-state-handoff-bad-address = That is not a Surco address. Copy it as the other device shows it.
+state-handoff-bad-address = That is not a Surco code. Type it as the other device shows it.

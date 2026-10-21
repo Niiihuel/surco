@@ -145,7 +145,7 @@ fn bring(state: &State, width: f32, palette: ComponentPalette) -> Element {
         parts.push(Text::new(t!("common-onboarding-bring-type"), palette).muted().render());
     }
     let field = ComponentPalette { raised: CHOSEN, border: Color::rgb(124, 124, 124), ..palette };
-    let address = TextField::new("handoff-address", &handoff.address, "192.168.1.20:48213/…", field).size(ControlSize::Spacious).render().size(None, Some(PILL)).flex(1.0);
+    let address = TextField::new("handoff-address", &handoff.address, super::HANDOFF_PLACEHOLDER, field).size(ControlSize::Spacious).render().size(None, Some(PILL)).flex(1.0);
     let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline)
         .sizing(limn::ButtonSizing { height: PILL, font_size: 16.0, ..ControlSize::Spacious.button_sizing() }).round().enabled(!handoff.fetching).render();
     parts.push(Element::row(vec![address, look]).gap(8.0));

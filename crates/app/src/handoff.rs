@@ -1,8 +1,8 @@
 //! Taking the account to another device: what of it travels, served over the local network
-//! while the dialog that offers it is open, behind a token only its code and its address
+//! while the dialog that offers it is open, behind a token only its QR code and its short code
 //! carry, and read by the other device from there.
 
-use std::net::{IpAddr, UdpSocket};
+use std::net::{IpAddr, Ipv4Addr, UdpSocket};
 use std::sync::{Arc, Mutex};
 
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,15 @@ pub const VERSION: u32 = 1;
 const SCHEME: &str = "surco://receive?from=";
 /// The most a request to the bundle may say before it is answered.
 const REQUEST_MOST: usize = 8 * 1024;
+/// The ports a bundle is served on, so a code names one by its place among them.
+const FIRST_PORT: u16 = 47_310;
+const PORTS: u16 = 8;
+/// The bits of a code: the last two parts of the address, the port's place and the token.
+const TOKEN_BITS: u32 = 21;
+/// Crockford's base 32: no I, L, O or U to misread.
+const DIGITS: &[u8; 32] = b"0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+/// Wrong tokens a bundle is asked for before it is no longer served: a code's token is short.
+const MISSES_MOST: usize = 64;
 
 /// What of an account travels, each part empty where it was left out.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -82,11 +91,11 @@ impl Parts {
     }
 }
 
-/// The address another computer types, and the code a phone's camera reads.
+/// The code another device types, and the link the QR code a phone's camera reads holds.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Offer {
-    /// `192.168.1.20:48213/3f9c…`, without a scheme to type.
-    pub address: String,
+    /// `7K2M-QX4P`: the address on the network and the token, short enough to type.
+    pub code: String,
     /// The link the code holds: Surco's own scheme, around the address.
     pub link: String,
 }
@@ -121,28 +130,63 @@ fn local_address() -> Option<IpAddr> {
     Some(socket.local_addr().ok()?.ip()).filter(|ip| !ip.is_loopback() && !ip.is_unspecified())
 }
 
+/// The code of a bundle served at `ip`, on the port at `slot` among the ones served on, behind
+/// `token`: what of the address the other device does not share with this one, and the token.
+fn encode(ip: Ipv4Addr, slot: u16, token: u32) -> String {
+    let [_, _, high, low] = ip.octets();
+    let value = (u64::from(high) << 32) | (u64::from(low) << 24) | (u64::from(slot) << TOKEN_BITS) | u64::from(token);
+    let digits: String = (0..8).rev().map(|place| DIGITS[(value >> (place * 5)) as usize & 31] as char).collect();
+    format!("{}-{}", &digits[..4], &digits[4..])
+}
+
+/// Where the bundle a code names is, from `own`, this device's address on the same network.
+// shortcut: the code carries only the address's last two parts, so both devices must share
+// the first two, as on any home network; carry them too if a larger one turns up.
+fn decode(code: &str, own: Ipv4Addr) -> Option<String> {
+    let mut value = 0u64;
+    let mut count = 0;
+    for c in code.chars().filter(|c| !matches!(c, '-' | ' ')) {
+        let c = match c.to_ascii_uppercase() { 'O' => '0', 'I' | 'L' => '1', c => c };
+        value = (value << 5) | DIGITS.iter().position(|digit| *digit as char == c)? as u64;
+        count += 1;
+    }
+    if count != 8 { return None; }
+    let [first, second, ..] = own.octets();
+    let ip = Ipv4Addr::new(first, second, (value >> 32) as u8, (value >> 24) as u8);
+    let slot = (value >> TOKEN_BITS) as u16 & (PORTS - 1);
+    let token = value as u32 & ((1 << TOKEN_BITS) - 1);
+    Some(format!("http://{ip}:{}/{token:06x}", FIRST_PORT + slot))
+}
+
 /// Starts answering `body` on the local network, to the one who has its token.
 pub async fn serve(body: Vec<u8>) -> Result<Serving, String> {
-    let ip = local_address().ok_or_else(|| t!("backend-handoff-no-network").into_owned())?;
-    let listener = TcpListener::bind((ip, 0)).await.map_err(|error| error.to_string())?;
-    let port = listener.local_addr().map_err(|error| error.to_string())?.port();
-    // Short enough to type; the dialog is open minutes, on one network.
-    let token = format!("{:016x}", fastrand::u64(..));
+    let Some(IpAddr::V4(ip)) = local_address() else { return Err(t!("backend-handoff-no-network").into_owned()) };
+    let mut bound = None;
+    for slot in 0..PORTS {
+        if let Ok(listener) = TcpListener::bind((ip, FIRST_PORT + slot)).await {
+            bound = Some((slot, listener));
+            break;
+        }
+    }
+    let (slot, listener) = bound.ok_or_else(|| t!("backend-handoff-no-port").into_owned())?;
+    let token = fastrand::u32(..1 << TOKEN_BITS);
     let body = Arc::new(Mutex::new(body));
     let served = body.clone();
-    let path = format!("/{token}");
+    let path = format!("/{token:06x}");
     let task = tokio::spawn(async move {
+        let misses = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         while let Ok((stream, _)) = listener.accept().await {
-            tokio::spawn(answer(stream, path.clone(), served.clone()));
+            if misses.load(std::sync::atomic::Ordering::Relaxed) >= MISSES_MOST { break; }
+            tokio::spawn(answer(stream, path.clone(), served.clone(), misses.clone()));
         }
     });
-    let address = format!("{ip}:{port}/{token}");
-    let link = format!("{SCHEME}{}", percent_encoding::utf8_percent_encode(&format!("http://{address}"), percent_encoding::NON_ALPHANUMERIC));
-    Ok(Serving { body, task, offer: Offer { address, link } })
+    let address = format!("http://{ip}:{}/{token:06x}", FIRST_PORT + slot);
+    let link = format!("{SCHEME}{}", percent_encoding::utf8_percent_encode(&address, percent_encoding::NON_ALPHANUMERIC));
+    Ok(Serving { body, task, offer: Offer { code: encode(ip, slot, token), link } })
 }
 
 /// One request: the bundle to `GET` its path, nothing to anything else.
-async fn answer(mut stream: tokio::net::TcpStream, path: String, body: Arc<Mutex<Vec<u8>>>) {
+async fn answer(mut stream: tokio::net::TcpStream, path: String, body: Arc<Mutex<Vec<u8>>>, misses: Arc<std::sync::atomic::AtomicUsize>) {
     let mut request = Vec::new();
     let mut chunk = [0u8; 1024];
     // Up to the end of the head, which is all that is read.
@@ -154,6 +198,7 @@ async fn answer(mut stream: tokio::net::TcpStream, path: String, body: Arc<Mutex
     }
     let line = String::from_utf8_lossy(&request);
     let asked = line.lines().next().is_some_and(|first| first.split(' ').take(2).eq(["GET", path.as_str()]));
+    if !asked { misses.fetch_add(1, std::sync::atomic::Ordering::Relaxed); }
     let (status, kind, body) = if asked { ("200 OK", "application/json", body.lock().unwrap().clone()) } else { ("404 Not Found", "text/plain", Vec::new()) };
     let head = format!("HTTP/1.1 {status}\r\nContent-Type: {kind}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len());
     let _ = stream.write_all(head.as_bytes()).await;
@@ -161,10 +206,13 @@ async fn answer(mut stream: tokio::net::TcpStream, path: String, body: Arc<Mutex
     let _ = stream.shutdown().await;
 }
 
-/// Where a bundle is, from what was typed or the code read: the address shown, with or
-/// without its scheme, or the link of the code.
+/// Where a bundle is, from what was typed or the QR code read: the short code, the link of the
+/// QR code, or the address an earlier version showed, with or without its scheme.
 pub fn locate(said: &str) -> Option<String> {
     let said = said.trim();
+    if let Some(IpAddr::V4(own)) = local_address() {
+        if let Some(found) = decode(said, own) { return Some(found); }
+    }
     let said = match said.strip_prefix(SCHEME) {
         Some(encoded) => percent_encoding::percent_decode_str(encoded).decode_utf8().ok()?.into_owned(),
         None => said.to_owned(),
@@ -220,6 +268,21 @@ mod tests {
     }
 
     #[test]
+    fn a_short_code_names_the_address_port_and_token_on_the_same_network() {
+        let code = encode(Ipv4Addr::new(192, 168, 1, 20), 3, 0x1a2b3);
+        assert_eq!(code.len(), 9);
+        let own = Ipv4Addr::new(192, 168, 7, 9);
+        assert_eq!(decode(&code, own).as_deref(), Some("http://192.168.1.20:47313/01a2b3"));
+        assert_eq!(decode(&code.to_lowercase().replace('-', " "), own), decode(&code, own), "typed as it comes");
+        assert_eq!(decode(&code.replace('0', "O"), own), decode(&code, own), "an O read for a zero");
+        assert_eq!(decode(&code[..8], own), None, "a character short");
+        assert_eq!(decode("192.168.1.20:48213/3f9cab", own), None);
+        // Wherever the largest values land, they come back.
+        let code = encode(Ipv4Addr::new(10, 0, 255, 255), PORTS - 1, (1 << TOKEN_BITS) - 1);
+        assert_eq!(decode(&code, Ipv4Addr::new(10, 0, 0, 2)).as_deref(), Some("http://10.0.255.255:47317/1fffff"));
+    }
+
+    #[test]
     fn a_bundle_reads_back_and_one_from_a_later_version_is_refused() {
         let bundle = Bundle { version: VERSION, liked: vec![Track { id: "a".into(), title: "A".into(), artist: "Ana".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 }], ..Bundle::default() };
         assert_eq!(read(&serde_json::to_vec(&bundle).unwrap()), Ok(bundle));
@@ -252,7 +315,9 @@ mod tests {
     async fn a_bundle_is_served_to_its_token_only_until_it_is_dropped() {
         // A machine with no network has nothing to serve on.
         let Ok(serving) = serve(b"{\"version\":1}".to_vec()).await else { return };
-        let address = serving.offer.address.clone();
+        let own = match local_address() { Some(IpAddr::V4(own)) => own, _ => return };
+        let address = decode(&serving.offer.code, own).unwrap().trim_start_matches("http://").to_owned();
+        assert_eq!(locate(&serving.offer.link).as_deref(), Some(format!("http://{address}").as_str()), "the QR code's link says the same");
         assert_eq!(get(&address).await.map(|(_, body)| body).as_deref(), Some(&b"{\"version\":1}"[..]));
         serving.replace(b"{\"version\":1,\"liked\":[]}".to_vec());
         assert_eq!(get(&address).await.map(|(_, body)| body).as_deref(), Some(&b"{\"version\":1,\"liked\":[]}"[..]), "another bundle in its place");

@@ -16,7 +16,7 @@ use limn::{
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, ScrollbarAppearance, SearchField, Select, SelectorSizing, Separator, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
-    TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
+    TextField, TextRole, Ticker, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
 };
 
 use crate::backend::{Release, Target};
@@ -356,18 +356,7 @@ pub fn view(state: &State, window: Size) -> Element {
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
-    let whole = update_dialog(state, confirm_dialog(state, welcome_dialog(state, imported, window.width), palette), palette);
-    Toast::layer(whole, update_toast(state, palette), PLAYER_HEIGHT + 12.0)
-}
-
-/// A later version found while the app is open, said over the window's corner until it
-/// is closed or followed. One that has to be taken is said by its dialog.
-fn update_toast(state: &State, palette: ComponentPalette) -> Vec<Element> {
-    let release = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory);
-    let card = |release: &Release| {
-        Toast::new(t!("desktop-update-toast", version = release.version.as_str()), palette).description(t!("desktop-update-toast-detail")).action("update-toast").dismissible("update-toast-close").render()
-    };
-    release.map(card).into_iter().collect()
+    update_dialog(state, confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), palette), palette)
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -484,20 +473,32 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         match &handoff.offer {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
-            Some(Ok((offer, code))) => {
-                let code = Element::panel(Element::raster_image(code.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
+            Some(Ok((offer, qr))) => {
+                let qr = Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
                     .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0);
-                let copy = Button::new("handoff-copy", t!("desktop-handoff-copy"), palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render();
-                let ways = Element::column(vec![
-                    Text::new(t!("desktop-handoff-phone"), palette).font_size(16.0).render().font_family(FontFamily::SansBold),
-                    Text::new(t!("desktop-handoff-phone-detail"), palette).muted().render(),
-                    Element::spacer().size(None, Some(8.0)),
-                    Text::new(t!("desktop-handoff-computer"), palette).font_size(16.0).render().font_family(FontFamily::SansBold),
-                    Text::new(t!("desktop-handoff-computer-detail"), palette).muted().render(),
-                    Element::text(&offer.address).font_family(FontFamily::Monospace).font_size(13.0).foreground(palette.text),
+                let copy = Button::new("handoff-copy", t!("desktop-handoff-copy"), palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Compact).round().render();
+                // The code as it is typed: large, its characters apart, on a tile of its own.
+                let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::Monospace).font_size(28.0).foreground(palette.text).centered())
+                    .background(palette.selected).radius(RadiusRole::Card.px()).padding(12.0);
+                let way = |title, detail| Element::column(vec![
+                    Text::new(title, palette).font_size(16.0).render().font_family(FontFamily::SansBold),
+                    Text::new(detail, palette).muted().render(),
+                ]).gap(4.0);
+                let ways = vec![
+                    way(t!("desktop-handoff-computer"), t!("desktop-handoff-computer-detail")),
+                    code,
                     Element::row(vec![copy]),
-                ]).gap(6.0).flex(1.0);
-                body.push(Element::row(vec![code, ways]).gap(20.0));
+                    Element::spacer().size(None, Some(4.0)),
+                    way(t!("desktop-handoff-phone"), t!("desktop-handoff-phone-detail")),
+                ];
+                // Beside the QR where there is room for both; under it on a phone.
+                body.push(if form >= 2.0 * HANDOFF_CODE + 120.0 {
+                    Element::row(vec![qr, Element::column(ways).gap(8.0).flex(1.0)]).gap(20.0)
+                } else {
+                    let mut ways = ways;
+                    ways.push(qr.centered_x());
+                    Element::column(ways).gap(8.0)
+                });
             }
         }
         let parts = handoff.parts;
@@ -512,7 +513,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
         ]);
     } else {
-        let field = TextField::new("handoff-address", &handoff.address, "192.168.1.20:48213/…", palette).size(ControlSize::Regular).render().flex(1.0);
+        let field = TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Regular).render().flex(1.0);
         let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
         body.push(Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render());
         if cfg!(target_os = "ios") || state.mobile {
@@ -573,8 +574,10 @@ pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts
     rows
 }
 
-/// The side of the code a phone's camera reads.
+/// The side of the QR code a phone's camera reads.
 const HANDOFF_CODE: f32 = 168.0;
+/// What a code to type looks like, in its field before it is typed.
+pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX";
 
 /// Changing the account's name.
 fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
@@ -819,8 +822,6 @@ pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) ->
     if !state.welcome {
         return window_tree;
     }
-    const VIOLET: Color = Color::rgb(36, 8, 138);
-    const LAVENDER: Color = Color::rgb(222, 219, 255);
     let side = (width - 48.0).clamp(240.0, 380.0);
     let art = side * 0.76;
     let mut layers = vec![match welcome_wash() {
@@ -845,23 +846,52 @@ pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) ->
         let (wide, high) = (side * 0.62, side * 0.62 * 260.0 / 920.0);
         layers.push(placed(Element::raster_image(picture.cover()).size(Some(wide), Some(high)).radius(12.0), (side - wide) / 2.0, (art - high) / 2.0));
     }
+    let art = Element::stack(layers).size(Some(side), Some(art));
+    promo_dialog(window_tree, side, art, [t!("common-welcome-title"), t!("common-welcome-detail"), t!("common-welcome-import")], ["welcome-import", "welcome-close", "welcome:dialog"])
+}
+
+/// A card that stands over the window to offer one thing, as the greeting does: its picture
+/// over a deep violet, a bold title, a quiet line, a lavender button, and a way out under the
+/// card. `ids` are the button's, the way out's and the dialog's.
+fn promo_dialog(window_tree: Element, side: f32, art: Element, [title, about, action]: [std::borrow::Cow<'static, str>; 3], [go_id, close_id, dialog_id]: [&str; 3]) -> Element {
+    const VIOLET: Color = Color::rgb(36, 8, 138);
+    const LAVENDER: Color = Color::rgb(222, 219, 255);
     let on_violet = ComponentPalette { surface: VIOLET, text: Color::WHITE, muted: Color::rgba(255, 255, 255, 220), ..SCHEME.palette() };
-    let title = Text::new(t!("common-welcome-title"), on_violet).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content();
-    let about = Text::new(t!("common-welcome-detail"), on_violet).font_size(15.0).line_height(21.0).muted().render().center_content();
-    let label = Element::text(t!("common-welcome-import")).font_family(FontFamily::SansBold).font_size(16.0).foreground(VIOLET).center_content();
-    let go = Element::clickable("welcome-import", Element::panel(label.centered()).background(LAVENDER).radius(26.0).size(Some(side * 0.62), Some(52.0)))
-        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-welcome-import")));
+    let named = title.clone();
+    let title = Text::new(title, on_violet).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content();
+    let about = Text::new(about, on_violet).font_size(15.0).line_height(21.0).muted().render().center_content();
+    let label = Element::text(action.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(VIOLET).center_content();
+    let go = Element::clickable(go_id, Element::panel(label.centered()).background(LAVENDER).radius(26.0).size(Some(side * 0.62), Some(52.0)))
+        .accessible(limn::Access::new(limn::Role::Button).name(action));
     let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(8.0)), go.centered_x()]).gap(12.0).padding(24.0);
     // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
-    let art = Element::stack(layers).size(Some(side), Some(art)).corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
+    let art = art.corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
     let card = Element::panel(Element::column(vec![art, copy]))
         .background(VIOLET).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
-    let close = Element::clickable("welcome-close", Element::text(t!("common-close")).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
+    let close = Element::clickable(close_id, Element::text(t!("common-close")).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
         .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close"))).size(Some(side), Some(48.0));
     // As wide as the card, so the window centres it.
     let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
-        .accessible(limn::Access::new(limn::Role::Dialog).id("welcome:dialog").name(t!("common-welcome-title")));
-    Element::popover(window_tree, dialog, "welcome-close", PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200))
+        .accessible(limn::Access::new(limn::Role::Dialog).id(dialog_id).name(named));
+    Element::popover(window_tree, dialog, close_id, PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200))
+}
+
+/// A later version found while the app is open, offered over the window as the greeting is,
+/// until it is closed or followed to what it brings. One that has to be taken is said by its
+/// dialog.
+fn update_offer(state: &State, window_tree: Element, width: f32) -> Element {
+    let Some(release) = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory) else { return window_tree };
+    let side = (width - 48.0).clamp(240.0, 380.0);
+    let high = side * 0.56;
+    // The release's first picture, edge to edge; the greeting's wash until it is in.
+    let picture = release.notes.iter().find_map(|note| match note { Note::Picture(address) => state.artwork.get(address), _ => None });
+    let art = match (picture, welcome_wash()) {
+        (Some(picture), _) => Element::raster_image(picture.clone().cover()).size(Some(side), Some(high)),
+        (None, Some(wash)) => Element::raster_image(wash).size(Some(side), Some(high)),
+        (None, None) => Element::spacer().size(Some(side), Some(high)).background(Color::rgb(86, 76, 236)),
+    };
+    let words = [t!("desktop-update-toast", version = release.version.as_str()), t!("desktop-update-toast-detail"), t!("desktop-update-see")];
+    promo_dialog(window_tree, side, art, words, ["update-toast", "update-toast-close", "update:dialog"])
 }
 
 /// What cannot be undone asks before it is done.
@@ -953,11 +983,33 @@ fn release_notes(state: &State, notes: &[Note], width: f32, palette: ComponentPa
         }
         Note::Text(text) => Markdown::new(text, palette).width(width).link_action_prefix(RELEASE_LINK).render().element,
         Note::Picture(address) => match state.artwork.get(address) {
-            Some(picture) => Element::raster_image(picture.clone().full_resolution()).size(Some(width), Some(width * 9.0 / 16.0)).radius(radius),
+            Some(picture) => {
+                // Its own proportions, no taller than a screen's: a tall one narrows instead.
+                let (wide, high) = picture_size(picture).map_or((16.0, 9.0), |(wide, high)| (wide as f32, high as f32));
+                let shown = (width * high / wide).min(width * NOTE_PICTURE_TALLEST);
+                let (wide, high) = (shown * wide / high, shown);
+                Element::raster_image(picture.clone().full_resolution()).size(Some(wide), Some(high)).radius(radius)
+                    .border(Color::rgba(255, 255, 255, 20), 1.0)
+            }
             None => Element::panel(Element::spacer()).background(palette.selected).radius(radius).size(Some(width), Some(width * 9.0 / 16.0)),
         },
     };
     notes.iter().enumerate().map(part).collect()
+}
+
+/// The tallest a release's picture stands, for its width: a screen's proportions.
+const NOTE_PICTURE_TALLEST: f32 = 10.0 / 16.0;
+
+/// A picture's width and height in pixels, read once from its header.
+fn picture_size(picture: &limn::RasterImage) -> Option<(u32, u32)> {
+    use base64::Engine as _;
+    static SIZES: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<String, Option<(u32, u32)>>>> = std::sync::LazyLock::new(Default::default);
+    let mut sizes = SIZES.lock().ok()?;
+    *sizes.entry(picture.sha256().to_owned()).or_insert_with(|| {
+        let bytes = base64::engine::general_purpose::STANDARD.decode(picture.data_base64()).ok()?;
+        image::ImageReader::new(std::io::Cursor::new(bytes)).with_guessed_format().ok()?.into_dimensions().ok()
+            .filter(|(wide, high)| *wide > 0 && *high > 0)
+    })
 }
 
 /// What each version brought, the latest first, as its release tells it; the one that runs
@@ -1040,7 +1092,9 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     .gap(4.0)];
     if let Some(release) = &state.update {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
-        sections.push(update_card(state, release, width - 24.0, raised));
+        // As wide as its notes read well, so its button stays beside its words.
+        let wide = (width - 24.0).min(NOTES_WIDTH + 32.0);
+        sections.push(Element::row(vec![update_card(state, release, wide, raised).size(Some(wide), None), Element::spacer().flex(1.0)]));
     }
     sections.push(Element::row(vec![Button::new("patches", t!("common-patches"), palette).variant(ButtonVariant::Secondary).size(ControlSize::Compact).render()]));
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {
@@ -1967,7 +2021,8 @@ fn headed_shelf(state: &State, id: &str, leading: Option<Element>, eyebrow: Opti
         // limn's carousel: dragged, or sideways on a touchpad, it glides on when let go, as
         // Threads' rows; a tile dragged is not opened. The cards' padding is the space between.
         // Its cut edge fades into the page where there is more to see, as Spotify's shelves.
-        Carousel::new(id, tiles, palette).gap(0.0).render().horizontal_edge_fade(palette.surface, SHELF_FADE)
+        // Its bar shows under the pointer as a panel's does, not only while it moves.
+        Carousel::new(id, tiles, palette).gap(0.0).render().horizontal_edge_fade(palette.surface, SHELF_FADE).scrollbar_visibility(SPOTIFY_BAR_SHOWS)
     };
     Element::column(vec![Element::row(header).gap(12.0), strip]).gap(8.0)
 }
@@ -4077,7 +4132,8 @@ mod tests {
             (texts, frame.regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>())
         };
         let (texts, ids) = shown(&state);
-        assert!(texts.iter().any(|text| text == "Surco 9.0.0 está disponible") && ids.iter().any(|id| id == "update-toast"), "found, it is said over the window: {texts:?}");
+        assert!(texts.concat().contains("Surco 9.0.0 está disponible") && ids.iter().any(|id| id == "update-toast") && ids.iter().any(|id| id == "update-toast-close"),
+            "found, it is offered over the window as the greeting is: {texts:?}");
         state.update(&limn::UiAction::Clicked { id: "update-toast".into() });
         let (texts, ids) = shown(&state);
         assert!(texts.iter().any(|text| text == "Actualización disponible") && ids.iter().any(|id| id == "update-get") && !ids.iter().any(|id| id == "update-toast"));
@@ -4215,7 +4271,7 @@ mod tests {
         let point = limn::Point::new(field.x + 40.0, field.y + field.height / 2.0);
         let frame = |state: &mut State, tree: &mut UiTree, event: Option<limn::UiEvent>| {
             for action in event.map(|event| tree.handle_event(event)).unwrap_or_default() { state.update(&action); }
-            state.search_focused = tree.focused_id().is_some_and(|id| id == "nav:search" || id.starts_with("recent-search"));
+            state.search_focused = tree.focused_id().is_some_and(crate::state::keeps_recent_searches);
             if std::mem::take(&mut state.mobile_ui.blur) { tree.clear_focus(); }
             tree.set_root(view(state, size));
             tree.layout(size);
@@ -4325,6 +4381,38 @@ mod tests {
     }
 
     #[test]
+    fn a_shelf_shows_its_bar_under_the_pointer_without_being_scrolled() {
+        let state = State::default();
+        let tiles = (0..20).map(|index| Element::spacer().size(Some(160.0 + index as f32), Some(160.0))).collect();
+        let shelf = headed_shelf(&state, "shelf", None, None, "Shelf", tiles, SCHEME.palette());
+        let size = Size::new(800.0, 400.0);
+        let mut tree = UiTree::new(Element::column(vec![shelf, Element::spacer().flex(1.0)]));
+        tree.set_reduced_motion(true);
+        let painted = |tree: &mut UiTree| tree.layout(size).commands.len();
+        let idle = painted(&mut tree);
+        tree.handle_event(limn::UiEvent::PointerMove(limn::Point::new(400.0, 120.0)));
+        assert!(painted(&mut tree) > idle, "under the pointer, its bar");
+    }
+
+    #[test]
+    fn a_release_picture_keeps_its_own_proportions() {
+        use base64::Engine as _;
+        use sha2::Digest as _;
+        let mut png = Vec::new();
+        image::RgbImage::new(30, 60).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+        let picture = limn::RasterImage::new(sha2::Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect::<String>(), limn::RasterImageFormat::Png, png.len() as u32, encoded.into(), "Novedad").unwrap();
+        assert_eq!(picture_size(&picture), Some((30, 60)));
+        let mut state = State::default();
+        state.artwork.insert("tall".into(), picture);
+        let size = Size::new(800.0, 900.0);
+        let mut tree = UiTree::new(Element::column(release_notes(&state, &[Note::Picture("tall".into())], 600.0, SCHEME.palette())));
+        let frame = tree.layout(size);
+        let shown = frame.commands.iter().find_map(|command| match command { limn::DrawCommand::RasterImage { rect, .. } => Some(*rect), _ => None });
+        assert!(shown.is_some_and(|rect| (rect.height - 375.0).abs() < 0.5 && (rect.width - 187.5).abs() < 0.5), "a tall one narrows to a screen's height: {shown:?}");
+    }
+
+    #[test]
     fn a_song_among_the_recent_searches_has_its_options_and_the_list_its_clear() {
         let mut state = State::default();
         state.search_focused = true;
@@ -4335,6 +4423,19 @@ mod tests {
         }
         assert!(!found.iter().any(|found| found == "more:recent-search:1"), "what was typed has no song's options");
         assert_eq!(state.track_at("recent-search:0").map(|track| track.id.as_str()), Some("a"), "its options act on the song");
+        // A press on the dots takes the keyboard from the field: the searches stay, and the menu opens.
+        let size = Size::new(1400.0, 900.0);
+        let mut tree = UiTree::new(view(&state, size));
+        let dots = tree.layout(size).access.iter().find(|node| node.id == "more:recent-search:0").unwrap().rect;
+        let point = limn::Point::new(dots.x + dots.width / 2.0, dots.y + dots.height / 2.0);
+        for event in [limn::UiEvent::PointerDown(point), limn::UiEvent::PointerUp(point)] {
+            for action in tree.handle_event(event) { state.update(&action); }
+            state.search_focused = tree.focused_id().is_some_and(crate::state::keeps_recent_searches);
+            tree.set_root(view(&state, size));
+            tree.layout(size);
+        }
+        assert!(state.recent_searches_shown(), "{:?}", tree.focused_id());
+        assert_eq!(state.menu.as_deref(), Some("recent-search:0"));
     }
 
     #[test]

@@ -1014,6 +1014,12 @@ fn desktop_alias(action: &UiAction) -> Option<UiAction> {
     }
 }
 
+/// Whether the keyboard at `id` keeps the recent searches dropped down: the desktop's field,
+/// a row, or its options' dots and menu, whose ids all carry the row's.
+pub fn keeps_recent_searches(id: &str) -> bool {
+    id == "nav:search" || id.contains("recent-search")
+}
+
 /// Where a name that reaches `reach` past its room stands `elapsed` after it showed, as
 /// Spotify's: still a while, along to its end at an even pace, still again, and back.
 pub fn marquee(elapsed: Duration, reach: f32) -> f32 {
@@ -2467,7 +2473,7 @@ impl State {
             }
             "handoff-scan" => vec![Command::ScanCode],
             "handoff-copy" => {
-                self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.address.clone());
+                self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.code.clone());
                 Vec::new()
             }
             "handoff-fetch" => {

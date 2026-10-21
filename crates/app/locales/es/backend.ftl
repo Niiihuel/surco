@@ -35,4 +35,5 @@ backend-handoff-unreadable = Lo que llegó no es una cuenta de Surco.
 backend-handoff-newer = Esa cuenta viene de un Surco más nuevo. Actualizá este para traerla.
 backend-handoff-unreachable = No se pudo llegar al otro dispositivo. Revisá que los dos estén en la misma red y que el diálogo siga abierto allá.
 backend-handoff-code = Código para pasar la cuenta
-backend-handoff-no-code = No se pudo hacer el código. Usá la dirección.
+backend-handoff-no-code = No se pudo hacer el QR. Usá el código.
+backend-handoff-no-port = No hay un puerto libre para pasar la cuenta. Cerrá otras ventanas de Surco y probá de nuevo.
