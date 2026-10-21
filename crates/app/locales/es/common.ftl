@@ -42,6 +42,7 @@ common-next-song = Siguiente canción
 common-create-playlist = Crear playlist
 common-import = Importar
 common-creator = Creador
+common-code = Código
 common-title = Título
 common-minutes = { $minutes } min
 common-hours-minutes = { $hours } h { $minutes } min

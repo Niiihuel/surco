@@ -442,6 +442,18 @@ fn dialog_palette() -> ComponentPalette {
     ComponentPalette { surface: Color::rgb(40, 40, 40), raised: Color::rgb(62, 62, 62), border: Color::rgba(0, 0, 0, 0), ..SCHEME.palette() }
 }
 
+/// A button as the cards' own: a pill, its words bold; what goes ahead white, the rest clear
+/// until the pointer makes them white too.
+fn card_button(id: impl Into<String>, words: impl Into<String>, ahead: bool) -> Button {
+    let palette = ComponentPalette { text: Color::WHITE, surface: Color::rgb(0, 0, 0), hover: Color::WHITE, selected: Color::rgb(222, 222, 222), ..dialog_palette() };
+    let button = Button::new(id, words, palette).sizing(CARD_BUTTON).round().font_family(FontFamily::SansBold);
+    if ahead { button } else { button.variant(ButtonVariant::Ghost).hover_ink(Color::rgb(0, 0, 0)) }
+}
+
+const CARD_BUTTON: limn::ButtonSizing = limn::ButtonSizing { height: 44.0, font_size: 15.0, icon_size: 16.0, horizontal_padding: 22.0, inner_spacing: 8.0 };
+/// A card button beside what it acts on, a step smaller.
+const CARD_BUTTON_SMALL: limn::ButtonSizing = limn::ButtonSizing { height: 36.0, font_size: 14.0, icon_size: 16.0, horizontal_padding: 16.0, inner_spacing: 6.0 };
+
 /// A dialog's footer: the way out first, what goes ahead last, at the end.
 fn dialog_footer(cancel: Element, confirm: Element) -> Element {
     ButtonGroup::new(vec![cancel, confirm]).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render()
@@ -451,18 +463,8 @@ fn dialog_footer(cancel: Element, confirm: Element) -> Element {
 fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(draft) = &state.creating else { return window_tree };
     if state.mobile {
-        let name = TextField::new(
-            "playlist-name",
-            &draft.name,
-            state.collection.default_name(),
-            palette,
-        )
-        .size(ControlSize::Spacious)
-        .render()
-        .size(None, Some(44.0));
-        let mut fields = FormField::new(t!("common-title"), name, palette)
-            .sizing(DIALOG_FIELD)
-            .rows();
+        let name = TextField::new("playlist-name", &draft.name, state.collection.default_name(), palette).label(t!("common-title")).size(ControlSize::Spacious).render();
+        let mut fields = vec![name];
         if let Some(track) = &draft.first {
             fields.push(
                 Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette)
@@ -470,13 +472,8 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
                     .render(),
             );
         }
-        let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette)
-            .variant(ButtonVariant::Outline)
-            .render()
-            .size(None, Some(44.0));
-        let create = Button::new("playlist-create", t!("desktop-create"), palette)
-            .render()
-            .size(None, Some(44.0));
+        let cancel = card_button("playlist-cancel", t!("common-cancel"), false).render();
+        let create = card_button("playlist-create", t!("desktop-create"), true).render();
         return limn::BottomSheet::new(
             window_tree,
             true,
@@ -494,7 +491,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
     }
     let palette = Card::palette(GREY_CARD);
     let form = Card::inner(width, 440.0);
-    let name = TextField::new("playlist-name", &draft.name, state.collection.default_name(), palette).size(ControlSize::Regular).render();
+    let name = TextField::new("playlist-name", &draft.name, state.collection.default_name(), palette).label(t!("common-title")).render();
     let kind = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let kinds = segments(
         "playlist-kind",
@@ -506,7 +503,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
     } else {
         t!("desktop-playlist-normal-detail")
     };
-    let mut fields: Vec<Element> = FormField::new(t!("common-title"), name, palette).sizing(DIALOG_FIELD).rows();
+    let mut fields = vec![name, Element::spacer().size(None, Some(4.0))];
     fields.extend(FormField::new(t!("desktop-playlist-kind"), kinds, palette).hint(about).sizing(DIALOG_FIELD).rows());
     if let Some(track) = &draft.first {
         fields.push(Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette).role(TextRole::Caption).muted().truncate().render());
@@ -532,7 +529,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     let mut body = vec![tabs];
     let collection = &state.collection;
-    let mut cancel = Button::new("handoff-close", t!("common-close"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
+    let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
     let mut confirm = None;
     if !handoff.receiving {
         match &handoff.offer {
@@ -541,7 +538,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             Some(Ok((offer, qr))) => {
                 let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
                     .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0));
-                let copy = Button::new("handoff-copy", t!("desktop-handoff-copy"), palette).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Compact).round().render();
+                let copy = card_button("handoff-copy", t!("desktop-handoff-copy"), false).icon(Icon::Copy).sizing(CARD_BUTTON_SMALL).render();
                 // The code as it is typed: large, its characters apart, on a tile of its own.
                 let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(28.0).foreground(palette.text).centered())
                     .background(palette.selected).radius(RadiusRole::Card.px()).padding(12.0);
@@ -581,14 +578,14 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             // A phone's: the camera first, then the code, each the width of the sheet and a
             // finger tall, with room between them.
             let tall = limn::ButtonSizing { height: 52.0, ..ControlSize::Spacious.button_sizing() };
-            body.push(Button::new("handoff-scan", t!("common-scan-code"), palette).icon(Icon::Custom(include_str!("../assets/icons/scan-qr.svg"))).sizing(tall).round().render().size(None, Some(52.0)));
+            body.push(card_button("handoff-scan", t!("common-scan-code"), true).icon(Icon::Custom(include_str!("../assets/icons/scan-qr.svg"))).sizing(tall).render().size(None, Some(52.0)));
             body.push(Text::new(t!("desktop-handoff-or-type"), palette).role(TextRole::Caption).muted().render().center_content());
-            body.push(TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Spacious).render().size(None, Some(52.0)));
-            body.push(Button::new("handoff-fetch", t!("desktop-handoff-take"), palette).variant(ButtonVariant::Outline).sizing(tall).round().enabled(!handoff.fetching && !handoff.address.trim().is_empty()).render().size(None, Some(52.0)));
+            body.push(TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).label(t!("common-code")).height(52.0).render());
+            body.push(card_button("handoff-fetch", t!("desktop-handoff-take"), false).sizing(tall).enabled(!handoff.fetching && !handoff.address.trim().is_empty()).render().size(None, Some(52.0)));
         } else {
-            let field = TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Regular).render().flex(1.0);
-            let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
-            body.push(Element::row(vec![field, look]).gap(8.0));
+            let field = TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).label(t!("common-code")).render().flex(1.0);
+            let look = card_button("handoff-fetch", t!("desktop-handoff-look"), false).enabled(!handoff.fetching).render();
+            body.push(Element::row(vec![field, look.centered_y()]).gap(8.0));
         }
         if handoff.fetching {
             body.push(Element::row(vec![Spinner::new("handoff-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
@@ -600,14 +597,14 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
                 rows.extend(came(bundle, handoff.parts));
                 rows.push(Text::new(t!("desktop-handoff-replace-detail"), palette).role(TextRole::Caption).muted().render());
                 body.extend(rows);
-                confirm = Some(Button::new("handoff-take", t!("desktop-handoff-take"), palette).size(ControlSize::Regular).round().render());
+                confirm = Some(card_button("handoff-take", t!("desktop-handoff-take"), true).render());
             }
             None => {}
         }
     }
     if confirm.is_none() {
         // Sending, the dialog only closes: the other device does the rest.
-        cancel = Button::new("handoff-close", t!("common-close"), palette).size(ControlSize::Regular).round().render();
+        cancel = card_button("handoff-close", t!("common-close"), true).render();
     }
     let footer = match confirm {
         Some(confirm) => dialog_footer(cancel, confirm),
@@ -652,16 +649,16 @@ pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX-XXXX";
 fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(draft) = &state.profile_draft else { return window_tree };
     let palette = if state.mobile { dialog_palette() } else { Card::palette(GREY_CARD) };
-    let name = TextField::new("profile-name", draft, "Surco", palette).size(ControlSize::Regular).render();
-    let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
-    let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).round().render();
+    let name = TextField::new("profile-name", draft, "Surco", palette).label(t!("desktop-profile-name")).render();
+    let cancel = card_button("profile-cancel", t!("common-cancel"), false).render();
+    let save = card_button("profile-save", t!("desktop-save"), true).render();
     // As Spotify's profile details: the face beside the name, with the way to change it.
-    let mut choices = vec![Button::new("profile-picture", t!("desktop-choose-photo"), palette).variant(ButtonVariant::Outline).size(ControlSize::Compact).round().render()];
+    let mut choices = vec![card_button("profile-picture", t!("desktop-choose-photo"), false).sizing(CARD_BUTTON_SMALL).render()];
     if state.profile.picture.is_some() {
-        choices.push(Button::new("profile-picture-remove", t!("desktop-remove-photo"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render());
+        choices.push(card_button("profile-picture-remove", t!("desktop-remove-photo"), false).sizing(CARD_BUTTON_SMALL).render());
     }
     let face = Element::column(vec![profile_face(state, DIALOG_FACE, palette).centered_x(), Element::column(choices).gap(4.0)]).gap(8.0);
-    let fields = Element::column(FormField::new(t!("desktop-profile-name"), name, palette).sizing(DIALOG_FIELD).rows()).gap(8.0).flex(1.0);
+    let fields = Element::column(vec![name]).flex(1.0);
     if state.mobile {
         return limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
             .max_height(560.0)
@@ -679,30 +676,14 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
 fn import_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(link) = &state.importing else { return window_tree };
     if state.mobile {
-        let field = TextField::new(
-            "import-link",
-            link,
-            t!("desktop-import-link-placeholder"),
-            palette,
-        )
-        .size(ControlSize::Spacious)
-        .render()
-        .size(None, Some(44.0));
+        let field = TextField::new("import-link", link, t!("desktop-import-link-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render();
         let mut fields = import_guide(state, width - 32.0, palette);
-        fields.extend(FormField::new(t!("desktop-import-link"), field, palette).sizing(DIALOG_FIELD).rows());
+        fields.push(field);
         if cfg!(any(target_os = "ios", test)) {
-            fields.push(Button::new("ios-paste:import-link", t!("desktop-paste-link"), palette)
-                .variant(ButtonVariant::Secondary).sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render());
+            fields.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
         }
-        let cancel = Button::new("import-cancel", t!("common-cancel"), palette)
-            .variant(ButtonVariant::Outline)
-            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
-            .render()
-            .size(None, Some(44.0));
-        let go = Button::new("import-go", t!("common-import"), palette)
-            .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round()
-            .render()
-            .size(None, Some(44.0));
+        let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
+        let go = card_button("import-go", t!("common-import"), true).render();
         return limn::BottomSheet::new(
             window_tree,
             true,
@@ -718,7 +699,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .render();
     }
     let palette = Card::palette(GREY_CARD);
-    let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
+    let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).label(t!("desktop-import-list-link")).render();
     let about = if state.import_unknown {
         t!("desktop-import-unknown-detail")
     } else {
@@ -726,7 +707,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     };
     let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
     let mut fields = import_guide(state, Card::inner(width, 480.0), palette);
-    fields.extend(FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows());
+    fields.extend([field, Text::new(about, palette).role(TextRole::Caption).muted().render()]);
     fields.push(out);
     Card { body: Some(Element::column(fields).gap(8.0)), go: Some(("import-go", t!("common-import"), true)), widest: 480.0, focus: Some("import-link"),
         ..Card::new("import", t!("desktop-import-title"), t!("desktop-import-detail"), ("import-cancel", t!("common-cancel"))) }
@@ -772,14 +753,8 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .iter()
             .map(|song| Text::new(song, palette).font_size(14.0).render())
             .collect();
-        let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette)
-            .variant(ButtonVariant::Outline)
-            .icon(Icon::Copy)
-            .render()
-            .size(None, Some(44.0));
-        let close = Button::new("import-missed-close", t!("common-close"), palette)
-            .render()
-            .size(None, Some(44.0));
+        let copy = card_button("import-missed-copy", t!("desktop-copy-list"), false).icon(Icon::Copy).render();
+        let close = card_button("import-missed-close", t!("common-close"), true).render();
         return limn::BottomSheet::new(
             window_tree,
             true,
@@ -830,8 +805,8 @@ fn import_card(width: f32, palette: ComponentPalette, native: bool) -> Element {
     };
     let title = Text::new(t!("desktop-import-card-title"), raised).font_size(18.0).render().font_family(FontFamily::SansBold);
     let about = Text::new(t!("desktop-import-card-detail"), raised).font_size(14.0).muted().render();
-    let go = Button::new("import-open", t!("common-import"), raised)
-        .sizing(limn::ButtonSizing { height: 44.0, ..ControlSize::Spacious.button_sizing() }).round().render();
+    // Beside UIKit's paste control on the narrowest phone.
+    let go = card_button("import-open", t!("common-import"), true).sizing(limn::ButtonSizing { horizontal_padding: 18.0, ..CARD_BUTTON }).render();
     let mut actions = vec![go];
     if native && cfg!(any(target_os = "ios", test)) {
         // UIKit draws and handles UIPasteControl in this slot. Pasting prepares
@@ -1070,13 +1045,8 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
         None => (String::new(), "".into(), "".into()),
     };
     if state.mobile {
-        let cancel = Button::new("confirm-cancel", t!("common-cancel"), palette)
-            .variant(ButtonVariant::Outline)
-            .render()
-            .size(None, Some(44.0));
-        let confirm = Button::new("confirm-yes", yes, palette)
-            .render()
-            .size(None, Some(44.0));
+        let cancel = card_button("confirm-cancel", t!("common-cancel"), false).render();
+        let confirm = card_button("confirm-yes", yes, true).render();
         return limn::BottomSheet::new(
             window_tree,
             state.confirm.is_some(),
@@ -1100,7 +1070,7 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
 /// The card of a later version: what stands, how far taking it in has got, and what the
 /// user can do about it. While it comes down, a bar under the words fills with it.
 fn update_card(state: &State, release: &Release, width: f32, palette: ComponentPalette) -> Element {
-    let button = |id: &str, label: &str| Button::new(id, label, palette).size(ControlSize::Regular).render().centered_y();
+    let button = |id: &str, label: &str| card_button(id, label, true).render().centered_y();
     let version = &release.version;
     let (title, about, action) = match &state.updating {
         Updating::Idle => {
@@ -1610,7 +1580,7 @@ fn recognize_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
             Element::column(vec![
                 Text::new(&found.title, raised).font_size(22.0).render().font_family(FontFamily::SansBold),
                 Text::new(about, raised).muted().render(),
-                Element::row(vec![Button::new("recognized-search", t!("common-recognize-search"), raised).icon(Icon::Custom(glyph::SEARCH)).size(ControlSize::Compact).round().render()]),
+                Element::row(vec![card_button("recognized-search", t!("common-recognize-search"), true).icon(Icon::Custom(glyph::SEARCH)).sizing(CARD_BUTTON_SMALL).render()]),
             ]).gap(6.0).flex(1.0).centered_y(),
         ]).gap(16.0);
         center.push(Element::panel(card).padding(16.0).background(CHOSEN).radius(8.0).size(Some((width - 24.0).min(560.0)), None).centered_x());
@@ -1651,14 +1621,14 @@ fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
         sections.push(card(vec![
             bold(t!("common-together-host")),
             Text::new(t!("common-together-host-detail"), raised).muted().render(),
-            Element::row(vec![Button::new("room-host", t!("common-together-host-go"), raised).icon(Icon::Custom(glyph::TOGETHER)).size(ControlSize::Regular).round().render()]),
+            Element::row(vec![card_button("room-host", t!("common-together-host-go"), true).icon(Icon::Custom(glyph::TOGETHER)).render()]),
         ]));
         let mut join = vec![
             bold(t!("common-together-join")),
             Text::new(t!("common-together-join-detail"), raised).muted().render(),
             Element::row(vec![
-                TextField::new("room-code", &state.room_code, "XXXX-XXXX-XXXX", raised).size(ControlSize::Regular).render().size(Some(inner.min(260.0)), None),
-                Button::new("room-join", t!("common-together-join-go"), raised).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().enabled(!state.room_code.trim().is_empty()).render(),
+                TextField::new("room-code", &state.room_code, "XXXX-XXXX-XXXX", raised).label(t!("common-code")).width(inner.min(260.0)).render(),
+                card_button("room-join", t!("common-together-join-go"), false).enabled(!state.room_code.trim().is_empty()).render().centered_y(),
             ]).gap(8.0),
         ];
         if let Some(why) = &state.room_error {
@@ -1677,13 +1647,12 @@ fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     };
     // The code, large, to be read out or copied.
     let code = Element::text(&room.code).font_family(FontFamily::SansBold).font_size(32.0).foreground(palette.text);
-    let copy = Button::new("room-copy", t!("common-together-copy"), raised).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Compact).round().render();
+    let copy = card_button("room-copy", t!("common-together-copy"), false).icon(Icon::Copy).sizing(CARD_BUTTON_SMALL).render();
     let mut head = vec![Text::new(phase, raised).muted().render(), Element::row(vec![code.centered_y(), copy.centered_y()]).gap(16.0).wrap().line_gap(8.0)];
     if room.hosting {
         head.push(mobile::settings::switch(&t!("common-together-open"), Some(&t!("common-together-open-detail")), "room-open", room.open));
     }
-    let leave = Button::new("room-leave", if room.hosting { t!("common-together-close") } else { t!("common-together-leave") }, raised)
-        .variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render();
+    let leave = card_button("room-leave", if room.hosting { t!("common-together-close") } else { t!("common-together-leave") }, false).sizing(CARD_BUTTON_SMALL).render();
     head.push(Element::row(vec![leave]));
     sections.push(card(head));
     // Who is in it.
@@ -1710,8 +1679,8 @@ fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     if lines.is_empty() { chat.push(Text::new(t!("common-together-chat-empty"), raised).muted().render()); }
     chat.extend(lines);
     chat.push(Element::row(vec![
-        TextField::new("room-chat", &state.room_chat, t!("common-together-chat-placeholder"), raised).size(ControlSize::Regular).render().flex(1.0),
-        Button::new("room-send", t!("common-together-send"), raised).size(ControlSize::Regular).round().enabled(!state.room_chat.trim().is_empty()).render(),
+        TextField::new("room-chat", &state.room_chat, "", raised).label(t!("common-together-chat-placeholder")).render().flex(1.0),
+        card_button("room-send", t!("common-together-send"), true).enabled(!state.room_chat.trim().is_empty()).render().centered_y(),
     ]).gap(8.0));
     if !room.hosting {
         chat.insert(1, Text::new(if room.open { t!("common-together-guest-open") } else { t!("common-together-guest-suggest") }, raised).role(TextRole::Caption).muted().render());
@@ -1793,10 +1762,10 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     let mut sections = vec![header];
     // A phone has no account menu: what it offers is here.
     if state.mobile {
-        let action = |id: &str, label: std::borrow::Cow<'static, str>| Button::new(id, label, palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render();
+        let action = |id: &str, label: std::borrow::Cow<'static, str>| card_button(id, label, false).render();
         sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see")), action("together", t!("common-together"))]).gap(8.0).wrap().line_gap(8.0));
     } else {
-        sections.push(Element::row(vec![Button::new("profile-replay", t!("common-replay-see"), palette).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render()]));
+        sections.push(Element::row(vec![card_button("profile-replay", t!("common-replay-see"), false).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).render()]));
     }
     let artists: Vec<Element> = discover::top_artists(&collection.heard, crate::state::TOP_ARTISTS).iter().enumerate()
         .map(|(index, track)| tile(state, format!("top-artist:{index}"), &track.artist, Some(t!("common-artist").into_owned()), &track.artwork_url, true, palette))
@@ -1822,11 +1791,10 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
         .collect();
     if playlists.is_empty() {
         // Never an empty page: the way to a first playlist, made or brought in, as Spotify's.
-        let white = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
         let actions = Element::row(vec![
-            Button::new("profile-playlist-new", t!("common-create-playlist"), white).dispatch_as("playlist-new").variant(ButtonVariant::Subtle).size(ControlSize::Regular).round().render(),
-            Button::new("profile-import", t!("common-import"), raised).dispatch_as("import-open").variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render(),
+            card_button("profile-playlist-new", t!("common-create-playlist"), true).dispatch_as("playlist-new").render(),
+            card_button("profile-import", t!("common-import"), false).dispatch_as("import-open").render(),
         ]).gap(8.0);
         let card = Element::column(vec![
             Text::new(t!("desktop-profile-first-playlist"), raised).font_size(18.0).render().font_family(FontFamily::SansBold),

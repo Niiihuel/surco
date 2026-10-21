@@ -91,9 +91,9 @@ pub(in crate::view) fn scrobbling(state: &State, width: f32) -> Element {
     let form = &state.scrobble_form;
     let white = Color::WHITE;
     let field = |id: &str, value: &str, placeholder: std::borrow::Cow<'static, str>, hidden: bool|
-        TextField::new(id, value, placeholder, palette).password(hidden).size(ControlSize::Regular).render().size(Some(width), None);
-    let connect = |id: &str, busy: bool, ready: bool| Button::new(id, if busy { t!("common-scrobble-connecting") } else { t!("common-scrobble-connect") }, palette)
-        .size(ControlSize::Compact).round().enabled(ready && form.busy.is_none()).render();
+        TextField::new(id, value, "", palette).label(placeholder).password(hidden).width(width).render();
+    let connect = |id: &str, busy: bool, ready: bool| super::super::card_button(id, if busy { t!("common-scrobble-connecting") } else { t!("common-scrobble-connect") }, true)
+        .sizing(super::super::CARD_BUTTON_SMALL).enabled(ready && form.busy.is_none()).render();
     let signed = |id: &str, name: &str, user: &str, waiting: usize| {
         let detail = if waiting > 0 { t!("common-scrobble-signed-waiting", user = user, count = waiting) } else { t!("common-scrobble-signed", user = user) };
         action(id, name, Some(&detail), Some(value(&t!("common-scrobble-sign-out"))), true, true)

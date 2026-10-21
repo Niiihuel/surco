@@ -145,9 +145,8 @@ fn bring(state: &State, width: f32, palette: ComponentPalette) -> Element {
         parts.push(Text::new(t!("common-onboarding-bring-type"), palette).muted().render());
     }
     let field = ComponentPalette { raised: CHOSEN, border: Color::rgb(124, 124, 124), ..palette };
-    let address = TextField::new("handoff-address", &handoff.address, super::HANDOFF_PLACEHOLDER, field).size(ControlSize::Spacious).render().size(None, Some(PILL)).flex(1.0);
-    let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline)
-        .sizing(limn::ButtonSizing { height: PILL, font_size: 16.0, ..ControlSize::Spacious.button_sizing() }).round().enabled(!handoff.fetching).render();
+    let address = TextField::new("handoff-address", &handoff.address, super::HANDOFF_PLACEHOLDER, field).label(t!("common-code")).height(PILL).render().flex(1.0);
+    let look = super::card_button("handoff-fetch", t!("desktop-handoff-look"), false).sizing(limn::ButtonSizing { height: PILL, font_size: 16.0, ..super::CARD_BUTTON }).enabled(!handoff.fetching).render();
     parts.push(Element::row(vec![address, look]).gap(8.0));
     if handoff.fetching {
         parts.push(Element::row(vec![Spinner::new("onboarding-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
@@ -169,7 +168,7 @@ fn bring(state: &State, width: f32, palette: ComponentPalette) -> Element {
 fn name(onboarding: &Onboarding, width: f32, palette: ComponentPalette) -> Element {
     // A field of Spotify's sign-up: a darker fill and a grey ring.
     let field = ComponentPalette { raised: CHOSEN, border: Color::rgb(124, 124, 124), ..palette };
-    let input = TextField::new("onboarding-name", &onboarding.name, t!("common-onboarding-name-placeholder"), field).size(ControlSize::Spacious).width(width).render().size(Some(width), Some(PILL));
+    let input = TextField::new("onboarding-name", &onboarding.name, "", field).label(t!("common-onboarding-name-placeholder")).width(width).height(PILL).render();
     Element::column(vec![
         Element::spacer().size(None, Some(24.0)),
         heading(&t!("common-onboarding-name"), Some(&t!("common-onboarding-name-detail")), palette),
