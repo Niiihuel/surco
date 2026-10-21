@@ -175,9 +175,17 @@ common-replay-night = Sos de la noche: tu música se enciende cuando oscurece.
 common-replay-morning = Sos de la mañana: arrancás el día con música.
 common-replay-day = Te acompaña todo el día.
 common-replay-evening = Las tardes son tu momento de darle play.
-common-replay-streak = { $days } días seguidos escuchando música.
-common-replay-busiest = Tu día con más música: { $day }, { $minutes } min.
-common-replay-on-repeat = En repetición: «{ $title }», { $times } veces en un mismo día.
+common-replay-streak = días seguidos con música
+common-replay-busiest = Tu día con más música · { $minutes } min
+common-replay-on-repeat = En repetición · { $times } veces en un mismo día
+common-replay-days = { $count ->
+    [one] { $count } día
+   *[other] { $count } días
+}
+common-replay-hours = { $count ->
+    [one] Más de una hora
+   *[other] Más de { $count } horas
+}
 
 ## Scrobbling
 common-scrobble = Scrobbling

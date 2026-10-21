@@ -174,9 +174,17 @@ common-replay-night = Night owl: your music comes alive after dark.
 common-replay-morning = Early bird: you start the day with a soundtrack.
 common-replay-day = Your music keeps you company all day.
 common-replay-evening = Evenings are when you press play.
-common-replay-streak = { $days } days in a row with music.
-common-replay-busiest = Your busiest day: { $day }, { $minutes } min.
-common-replay-on-repeat = On repeat: “{ $title }”, { $times } times in one day.
+common-replay-streak = days in a row with music
+common-replay-busiest = Your busiest day · { $minutes } min
+common-replay-on-repeat = On repeat · { $times } times in one day
+common-replay-days = { $count ->
+    [one] { $count } day
+   *[other] { $count } days
+}
+common-replay-hours = { $count ->
+    [one] Over an hour
+   *[other] Over { $count } hours
+}
 
 ## Scrobbling
 common-scrobble = Scrobbling
