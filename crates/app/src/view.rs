@@ -421,6 +421,7 @@ fn window_view(state: &State, window: Size) -> Element {
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
     let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
+    let whole = wrapped::story(state, whole, window);
     Toast::layer(whole, skip_notice(state, palette), PLAYER_HEIGHT + 12.0)
 }
 

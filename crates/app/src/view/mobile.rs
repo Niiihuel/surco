@@ -190,7 +190,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
-    dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces)
+    // Replay's story stands over everything, the whole screen, on every platform.
+    super::wrapped::story(state, dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
 }
 
 /// The phone's dialogs over `tree`. UIKit owns its sheets when its bridge is ready, `uikit`;

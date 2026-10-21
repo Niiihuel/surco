@@ -179,6 +179,11 @@ common-replay-minutes-hours = { $count ->
 }
 common-replay-top-artist = Your top artist
 common-replay-streak-title = Days in a row
+common-replay-story = Watch your Replay
+common-replay-intro =
+    You listened.
+    We counted.
+common-replay-everyone-else = Everyone else
 common-replay-top-songs = What you played most
 common-replay-top-artists = Your artists
 common-replay-when = When you listen

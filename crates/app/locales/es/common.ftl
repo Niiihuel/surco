@@ -180,6 +180,11 @@ common-replay-minutes-hours = { $count ->
 }
 common-replay-top-artist = Tu artista #1
 common-replay-streak-title = Días seguidos
+common-replay-story = Ver tu Replay
+common-replay-intro =
+    Escuchaste.
+    Nosotros contamos.
+common-replay-everyone-else = El resto
 common-replay-top-songs = Lo que más escuchaste
 common-replay-top-artists = Tus artistas
 common-replay-when = Cuándo escuchás

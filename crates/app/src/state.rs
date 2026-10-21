@@ -778,6 +778,9 @@ impl Side {
 /// How many of an artist's songs their page lists; playing one still queues them all.
 pub const ARTIST_SONGS_SHOWN: usize = 10;
 
+/// How long a step of Replay's story stays before the next.
+pub const STORY_STEP: Duration = Duration::from_secs(7);
+
 pub struct State {
     /// Use the phone layout; desktop previews can opt in without a second player.
     pub mobile: bool,
@@ -1020,6 +1023,8 @@ pub struct State {
     listening: Option<Listening>,
     /// The stretch Replay looks over.
     pub replay_period: crate::replay::Period,
+    /// Replay told as a story: the step on screen, and since when.
+    pub replay_story: Option<(usize, Instant)>,
     /// The Last.fm and ListenBrainz accounts signed in to, kept apart from the collection
     /// that travels to another device: they are credentials.
     pub scrobbling: crate::scrobble::Accounts,
@@ -1399,6 +1404,7 @@ impl Default for State {
             skip_notice: None,
             listening: None,
             replay_period: crate::replay::Period::default(),
+            replay_story: None,
             scrobbling: crate::scrobble::Accounts::default(),
             scrobble_form: ScrobbleForm::default(),
             hearing: None,
@@ -1662,6 +1668,16 @@ impl State {
             || self.wash.is_active(now)
             || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
             || self.lyric_card.is_active(now)
+            // A story's step fills its bar as it is on screen.
+            || self.replay_story.is_some()
+    }
+
+    /// A story's step goes on to the next once it has been on screen its while; the last stays.
+    pub fn story_tick(&mut self, now: Instant) {
+        let Some((step, since)) = self.replay_story else { return };
+        if now.duration_since(since) >= STORY_STEP && step + 1 < self.replay().story().len() {
+            self.replay_story = Some((step + 1, now));
+        }
     }
 
     /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
@@ -2807,6 +2823,24 @@ impl State {
                 if self.page != Page::Replay { self.go(Page::Replay); }
                 Vec::new()
             }
+            "replay-story" => {
+                if !self.replay().story().is_empty() { self.replay_story = Some((0, Instant::now())); }
+                Vec::new()
+            }
+            // Past the last step the story ends; before the first it starts that one again.
+            "story-next" => {
+                let steps = self.replay().story().len();
+                self.replay_story = self.replay_story.and_then(|(step, _)| (step + 1 < steps).then(|| (step + 1, Instant::now())));
+                Vec::new()
+            }
+            "story-back" => {
+                self.replay_story = self.replay_story.map(|(step, _)| (step.saturating_sub(1), Instant::now()));
+                Vec::new()
+            }
+            "story-close" => {
+                self.replay_story = None;
+                Vec::new()
+            }
             _ if id.starts_with("replay-period:") => {
                 if let Some(period) = crate::replay::Period::from_slug(&id["replay-period:".len()..]) { self.replay_period = period; }
                 Vec::new()
@@ -3676,7 +3710,7 @@ impl State {
     /// Whether a dialog of the app's own stands over the window, the first run's included:
     /// what offers itself over the window waits for it to close.
     pub fn dialog_open(&self) -> bool {
-        self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
+        self.replay_story.is_some() || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
             || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
     }
 

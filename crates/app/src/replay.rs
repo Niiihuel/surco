@@ -74,6 +74,9 @@ pub struct Summary {
     pub top_artists: Vec<Ranked>,
     /// Minutes in each hour of the day.
     pub hours: [u64; 24],
+    /// The same of each of the artists heard most, the first few, in their order; what is
+    /// left of `hours` is everyone else's.
+    pub hours_of: Vec<[u64; 24]>,
     pub busiest_day: Option<(NaiveDate, u64)>,
     /// The most days in a row with something heard.
     pub streak: u32,
@@ -83,6 +86,33 @@ pub struct Summary {
 
 /// How many songs and artists the tops hold.
 const TOP: usize = 10;
+/// How many of the artists heard most have hours of their own, the rest summed.
+const STACKED: usize = 3;
+
+/// A step of Replay told as a story, as Wrapped's are: one thing at a time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Step {
+    Intro,
+    Minutes,
+    TopArtist,
+    Songs,
+    Artists,
+    Hours,
+    Facts,
+    Tops,
+}
+
+impl Summary {
+    /// The steps there is something to tell in, in the order they are told; none without plays.
+    pub fn story(&self) -> Vec<Step> {
+        if self.plays == 0 { return Vec::new(); }
+        let artists = !self.top_artists.is_empty();
+        let facts = self.streak > 1 || self.busiest_day.is_some() || self.on_repeat.is_some();
+        [(Step::Intro, true), (Step::Minutes, true), (Step::TopArtist, artists), (Step::Songs, !self.top_songs.is_empty()),
+            (Step::Artists, artists), (Step::Hours, true), (Step::Facts, facts), (Step::Tops, true)]
+            .into_iter().filter_map(|(step, told)| told.then_some(step)).collect()
+    }
+}
 
 /// The plays of `period` seen from `now`, summed up.
 pub fn summarize(plays: &[Play], period: Period, now: DateTime<FixedOffset>) -> Summary {
@@ -136,6 +166,14 @@ pub fn summarize(plays: &[Play], period: Period, now: DateTime<FixedOffset>) -> 
     top_artists.truncate(TOP);
     let mut top_songs = rank(by_song);
     top_songs.truncate(TOP);
+    let hours_of = top_artists.iter().take(STACKED).map(|artist| {
+        let name = artist.track.artist.to_lowercase();
+        let mut seconds = [0u64; 24];
+        for play in window.iter().filter(|play| main_artist(&play.track.artist).to_lowercase() == name) {
+            if let Some(at) = local(play) { seconds[at.hour() as usize] += u64::from(play.seconds); }
+        }
+        seconds.map(|seconds| seconds / 60)
+    }).collect();
     Summary {
         minutes: minutes(&window),
         plays: window.len(),
@@ -144,6 +182,7 @@ pub fn summarize(plays: &[Play], period: Period, now: DateTime<FixedOffset>) -> 
         top_songs,
         top_artists,
         hours: hours.map(|seconds| seconds / 60),
+        hours_of,
         busiest_day,
         streak,
         on_repeat,
@@ -175,6 +214,14 @@ pub fn part_of_day(hours: &[u64; 24]) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_story_tells_only_what_there_is_to_tell() {
+        use super::Step::*;
+        assert!(super::Summary::default().story().is_empty(), "nothing heard, nothing told");
+        let lone = super::Summary { plays: 1, ..Default::default() };
+        assert_eq!(lone.story(), [Intro, Minutes, Hours, Tops]);
+    }
+
     use super::*;
 
     fn track(id: &str, artist: &str) -> Track {
@@ -208,6 +255,9 @@ mod tests {
         assert_eq!(summary.on_repeat.as_ref().map(|(track, count)| (track.id.as_str(), *count)), Some(("a", 2)));
         assert_eq!(summary.busiest_day.map(|(day, _)| day.day()), Some(19));
         assert_eq!(summary.hours[23], 8, "in local hours");
+        // Each artist heard most has their own hours, never more than all of them together.
+        assert_eq!(summary.hours_of.len(), 2);
+        assert!((0..24).all(|hour| summary.hours_of.iter().map(|hours| hours[hour]).sum::<u64>() <= summary.hours[hour]));
         assert_eq!(part_of_day(&summary.hours), Some("common-replay-night"));
         assert_eq!(summarize(&plays, Period::All, now).plays, 6);
         assert_eq!(summarize(&[], Period::Year, now), Summary::default());
