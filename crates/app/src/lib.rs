@@ -550,13 +550,14 @@ impl eframe::App for Host {
         }
         // A story is gone through by the keyboard as by taps: on, back, and Escape out of it.
         if self.state.replay_story.is_some() {
-            let keys = [(egui::Key::ArrowRight, "story-next"), (egui::Key::Space, "story-next"), (egui::Key::ArrowLeft, "story-back"), (egui::Key::Escape, "story-close")];
+            let keys = [(egui::Key::ArrowRight, "story-next"), (egui::Key::Space, "story-pause"), (egui::Key::ArrowLeft, "story-back"), (egui::Key::Escape, "story-close")];
             if let Some(id) = ctx.input(|input| keys.into_iter().find(|(key, _)| input.key_pressed(*key)).map(|(_, id)| id)) {
                 let commands = self.state.update(&UiAction::Clicked { id: id.into() });
                 self.send(commands);
             }
         }
-        self.state.story_tick(Instant::now());
+        let commands = self.state.story_tick(Instant::now());
+        self.send(commands);
         if self.fullscreen != self.state.cinema {
             self.fullscreen = self.state.cinema;
             // A scripted run keeps the window it was given.

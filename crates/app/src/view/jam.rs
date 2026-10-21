@@ -68,6 +68,34 @@ fn adder<'a>(room: &'a RoomView, id: &str) -> Option<&'a str> {
     room.added.iter().rev().find(|(added, _)| added == id).map(|(_, name)| name.as_str())
 }
 
+/// How the way to listening together reads where it is offered, beside the devices and over
+/// the queue: out of a room, what it is; in one, the room.
+pub(crate) fn entry(state: &State) -> (String, String) {
+    match &state.room {
+        Some(room) => (room_name(room), t!("common-together-listening", count = room.members.len().max(1)).into_owned()),
+        None => (t!("common-together").into_owned(), t!("common-together-entry").into_owned()),
+    }
+}
+
+/// The way to the room at the head of the queue, as Spotify's Jam offers it there.
+pub(super) fn queue_entry(state: &State, palette: ComponentPalette) -> Element {
+    let (title, detail) = entry(state);
+    let leading = match &state.room {
+        Some(room) => faces(&names(room), 28.0, 3, CANVAS, palette),
+        None => Element::panel(Element::icon(Icon::Custom(glyph::TOGETHER)).foreground(palette.text).centered()).background(palette.selected).radius(20.0).size(Some(40.0), Some(40.0)),
+    };
+    let row = Element::row(vec![
+        leading.centered_y(),
+        Element::column(vec![
+            Text::new(title, palette).font_size(15.0).truncate().render().font_family(FontFamily::SansBold),
+            Text::new(detail, palette).role(TextRole::Caption).muted().truncate().render(),
+        ]).gap(2.0).flex(1.0).centered_y(),
+        Element::icon(Icon::Custom(glyph::CHEVRON_RIGHT)).foreground(palette.muted).centered_y(),
+    ]).gap(12.0);
+    Element::clickable("together", Element::panel(row).padding(12.0).radius(RadiusRole::Card.px()).background(Color { a: 14, ..palette.text }).hover_background(Color { a: 26, ..palette.text }))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-together")))
+}
+
 /// The page: out of a room, the two ways in; in one, the room.
 pub(super) fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.room {

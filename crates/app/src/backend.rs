@@ -92,6 +92,12 @@ pub enum Command {
     /// What played when the app was last closed: the list from its current track on, held
     /// paused so many seconds in until it is played. Nothing is fetched before then.
     Session { tracks: Vec<Track>, position: f64 },
+    /// A moment of a song, as Replay's story plays one: the song alone, from so many seconds
+    /// in, with nothing after it.
+    Preview { track: Track, at: f64 },
+    /// What played before a story, back as it was: the list from its track on, so many seconds
+    /// in, sounding or not.
+    Return { tracks: Vec<Track>, position: f64, playing: bool },
     PlayPause,
     Next,
     /// Play the n-th of the upcoming tracks, skipping the ones before it.

@@ -98,7 +98,7 @@ fn connections(state: &State, base: Element, palette: ComponentPalette) -> Eleme
     let volume = Element::column(vec![Text::new(t!("mobile-surco-volume"), palette).muted().render(),
         Slider::new("volume", state.volume, palette).render().size(None, Some(TAP)),
     ]).gap(8.0).padding(8.0);
-    let body = Element::column(vec![route, choose, Separator::horizontal(palette).render(), guide, volume]).gap(16.0);
+    let body = Element::column(vec![super::super::jam::queue_entry(state, palette), route, choose, Separator::horizontal(palette).render(), guide, volume]).gap(16.0);
     let done = Button::new("mobile-connections-close", t!("mobile-done"), palette).variant(ButtonVariant::Default)
         .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render();
     BottomSheet::new(base, state.mobile_ui.connections, t!("mobile-listen-on"), t!("mobile-listen-on-detail"), "mobile-connections-close", SCHEME.menu())

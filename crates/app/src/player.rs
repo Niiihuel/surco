@@ -175,6 +175,21 @@ impl Player {
         }
     }
 
+    /// `tracks` from the first, `at` seconds in, sounding or not; no radio is asked for after them.
+    fn restore(&mut self, tracks: Vec<Track>, at: f64, playing: bool) -> Vec<Effect> {
+        self.queue.start(tracks, 0, &mut self.rng);
+        let Some(track) = self.queue.current().cloned() else { return Vec::new() };
+        self.resume_at = None;
+        self.loaded = true;
+        self.playing = playing;
+        self.duration = track.duration_ms as f64 / 1000.0;
+        self.position = at.clamp(0.0, (self.duration - 1.0).max(0.0));
+        self.error = None;
+        self.preloading = None;
+        self.outgoing = None;
+        vec![Effect::Restore(track, self.position, playing)]
+    }
+
     fn start(&mut self, track: Option<Track>) -> Vec<Effect> {
         self.begin(track, 0.0)
     }
@@ -277,6 +292,8 @@ impl Player {
                 self.resume_at = Some(self.position);
                 Vec::new()
             }
+            Command::Preview { track, at } => self.restore(vec![track], at, true),
+            Command::Return { tracks, position, playing } if !tracks.is_empty() => self.restore(tracks, position, playing),
             Command::PlayPause if !self.loaded && self.resume_at.is_some() => {
                 let at = self.resume_at.unwrap_or(0.0);
                 let mut effects = self.start(self.queue.current().cloned());
@@ -619,6 +636,11 @@ mod tests {
     #[test]
     fn a_session_from_the_last_time_waits_paused_and_goes_on_from_where_it_was() {
         let mut player = Player::default();
+        // A story's moment, and back to what played, where it was.
+        let mut story = Player::default();
+        assert_eq!(story.command(Command::Preview { track: track("chorus"), at: 60.0 }), vec![Effect::Restore(track("chorus"), 60.0, true)]);
+        assert_eq!(story.command(Command::Return { tracks: vec![track("a"), track("b")], position: 12.0, playing: false }), vec![Effect::Restore(track("a"), 12.0, false)]);
+        assert_eq!(story.view().upcoming, vec![track("b")]);
         let session = Command::Session { tracks: vec![track("a"), track("b")], position: 73.0 };
         assert!(player.command(session).is_empty(), "nothing is fetched before it is played");
         let view = player.view();

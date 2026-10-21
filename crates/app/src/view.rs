@@ -7,6 +7,8 @@ mod wrapped;
 mod jam;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
+pub(crate) use jam::entry as jam_entry;
+#[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
 pub(crate) use mobile::{large_title as mobile_large_title, search_header_height as mobile_search_header};
 
@@ -3991,8 +3993,10 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
         }
         rows.insert(0, Element::panel(Element::row(vec![title(&t!("desktop-in-queue")), Element::spacer().flex(1.0), clear])).padding(PANEL_PAD / 2.0));
     }
-    if rows.is_empty() {
-        return centered(Empty::new(t!("desktop-queue-empty"), t!("desktop-queue-empty-detail"), palette).icon(Icon::Playlist).render());
+    // Listening with others, at its head.
+    rows.insert(0, Element::panel(jam::queue_entry(state, palette)).padding(PANEL_PAD / 2.0));
+    if rows.len() == 1 {
+        rows.push(centered(Empty::new(t!("desktop-queue-empty"), t!("desktop-queue-empty-detail"), palette).icon(Icon::Playlist).render()));
     }
     // The rows carry half the margin in themselves.
     let list = Element::column(rows).keep_leaving("upcoming-rows");
@@ -4159,7 +4163,17 @@ fn player(state: &State, width: f32, palette: ComponentPalette) -> Element {
     };
     let system = state.outputs.iter().find(|output| output.is_default)
         .map_or_else(|| t!("desktop-system-output").into_owned(), |output| t!("desktop-system-output-named", name = output.name.as_str()).into_owned());
-    let mut devices = vec![DropdownMenuEntry::Heading(t!("desktop-connect-device").into()), device("", &system)];
+    // Listening with others first, as Spotify offers its Jam beside its devices.
+    let (together, with) = jam::entry(state);
+    let mut devices = vec![
+        // In a room, how many are in it beside its name.
+        DropdownMenuEntry::Item({
+            let item = DropdownMenuItem::new("together", together).icon(Icon::Custom(glyph::TOGETHER));
+            if state.room.is_some() { item.annotation(with) } else { item }
+        }),
+        DropdownMenuEntry::Heading(t!("desktop-connect-device").into()),
+        device("", &system),
+    ];
     if state.outputs.is_empty() && state.outputs_loading {
         devices.push(DropdownMenuEntry::Loading { id: "device-loading".into(), rows: 2 });
     }

@@ -135,12 +135,14 @@ pub enum SettingsPart {
     Devices,
     Display,
     Library,
+    /// Accounts elsewhere the app speaks to, as Last.fm's and ListenBrainz's.
+    Connected,
     About,
     Storage,
 }
 
 impl SettingsPart {
-    pub const ALL: [SettingsPart; 7] = [Self::Playback, Self::Audio, Self::Devices, Self::Display, Self::Library, Self::About, Self::Storage];
+    pub const ALL: [SettingsPart; 8] = [Self::Playback, Self::Audio, Self::Devices, Self::Display, Self::Library, Self::Connected, Self::About, Self::Storage];
 
     /// How its row's id names it.
     pub fn slug(self) -> &'static str {
@@ -150,6 +152,7 @@ impl SettingsPart {
             Self::Devices => "devices",
             Self::Display => "display",
             Self::Library => "library",
+            Self::Connected => "connected",
             Self::About => "about",
             Self::Storage => "storage",
         }
@@ -778,6 +781,25 @@ impl Side {
 /// How many of an artist's songs their page lists; playing one still queues them all.
 pub const ARTIST_SONGS_SHOWN: usize = 10;
 
+/// A step of Replay's story on screen: which, since when it shows, and since when it is held.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Story {
+    pub step: usize,
+    pub since: Instant,
+    pub paused: Option<Instant>,
+}
+
+impl Story {
+    fn at_step(step: usize, now: Instant) -> Self {
+        Self { step, since: now, paused: None }
+    }
+
+    /// How long it has been on screen, in seconds, not counting while held.
+    pub fn at(&self, now: Instant) -> f32 {
+        self.paused.unwrap_or(now).saturating_duration_since(self.since).as_secs_f32()
+    }
+}
+
 /// How long a step of Replay's story stays before the next.
 pub const STORY_STEP: Duration = Duration::from_secs(7);
 
@@ -1023,8 +1045,13 @@ pub struct State {
     listening: Option<Listening>,
     /// The stretch Replay looks over.
     pub replay_period: crate::replay::Period,
-    /// Replay told as a story: the step on screen, and since when.
-    pub replay_story: Option<(usize, Instant)>,
+    /// Replay told as a story: the step on screen, since when, and whether it is held.
+    pub replay_story: Option<Story>,
+    /// What played before the story, to go back to when it ends: the list from its track on,
+    /// where it was, and whether it sounded.
+    story_return: Option<(Vec<Track>, f64, bool)>,
+    /// The song the story plays a moment of, and whether its chorus was gone to yet.
+    story_moment: Option<(String, bool)>,
     /// The Last.fm and ListenBrainz accounts signed in to, kept apart from the collection
     /// that travels to another device: they are credentials.
     pub scrobbling: crate::scrobble::Accounts,
@@ -1407,6 +1434,8 @@ impl Default for State {
             listening: None,
             replay_period: crate::replay::Period::default(),
             replay_story: None,
+            story_return: None,
+            story_moment: None,
             scrobbling: crate::scrobble::Accounts::default(),
             scrobble_form: ScrobbleForm::default(),
             hearing: None,
@@ -1684,12 +1713,53 @@ impl State {
         cover_requests(&mut self.covers, &urls)
     }
 
-    /// A story's step goes on to the next once it has been on screen its while; the last stays.
-    pub fn story_tick(&mut self, now: Instant) {
-        let Some((step, since)) = self.replay_story else { return };
-        if now.duration_since(since) >= STORY_STEP && step + 1 < self.replay().story().len() {
-            self.replay_story = Some((step + 1, now));
+    /// A story's step goes on to the next once it has been on screen its while, unless it is
+    /// held; the last stays. The next step's song comes in with it.
+    pub fn story_tick(&mut self, now: Instant) -> Vec<Command> {
+        let Some(story) = self.replay_story.filter(|story| story.paused.is_none()) else { return Vec::new() };
+        if story.at(now) >= STORY_STEP.as_secs_f32() && story.step + 1 < self.replay().story().len() {
+            self.replay_story = Some(Story::at_step(story.step + 1, now));
+            return self.story_sound();
         }
+        Vec::new()
+    }
+
+    /// The song a step of the story plays a moment of, as Wrapped's do: the song heard most
+    /// for most of them, the artist heard most's for theirs, the next songs further on.
+    fn story_song(&self) -> Option<Track> {
+        use crate::replay::Step;
+        let summary = self.replay();
+        let step = *summary.story().get(self.replay_story?.step)?;
+        let song = |index: usize| summary.top_songs.get(index).or(summary.top_songs.first()).map(|ranked| ranked.track.clone());
+        match step {
+            Step::TopArtist | Step::Artists => summary.top_artists.first().map(|ranked| ranked.track.clone()),
+            Step::Hours => song(1),
+            Step::Facts => summary.on_repeat.as_ref().map(|(track, _)| track.clone()).or_else(|| song(2)),
+            Step::Intro | Step::Minutes | Step::Songs | Step::Tops => song(0),
+        }
+    }
+
+    /// The step's song, from its moment, unless it already plays.
+    fn story_sound(&mut self) -> Vec<Command> {
+        let Some(track) = self.story_song() else { return Vec::new() };
+        if self.current().is_some_and(|current| current.id == track.id) { return Vec::new(); }
+        self.story_play(track)
+    }
+
+    /// A moment of `track`: a third of the way in until its lyrics say where its chorus is.
+    fn story_play(&mut self, track: Track) -> Vec<Command> {
+        self.story_moment = Some((track.id.clone(), false));
+        let at = crate::replay::moment(track.duration_ms);
+        vec![Command::Preview { track, at }]
+    }
+
+    /// Once the lyrics of the story's song are in, its chorus is gone to, once.
+    fn story_chorus(&mut self) -> Vec<Command> {
+        let Some((id, false)) = self.story_moment.clone() else { return Vec::new() };
+        if self.current().is_none_or(|current| current.id != id) { return Vec::new(); }
+        let Some(at) = crate::replay::chorus(self.lines()) else { return Vec::new() };
+        self.story_moment = Some((id, true));
+        vec![Command::Seek(at)]
     }
 
     /// Opens the search of the page's tracks, with the keyboard in it, or shuts it and
@@ -2748,7 +2818,11 @@ impl State {
                 }
                 Vec::new()
             }
+            // From the account's menu, the devices, the queue or a phone's sheet of them.
             "together" => {
+                self.device_open = false;
+                self.account_open = false;
+                self.mobile_ui.connections = false;
                 if self.page != Page::Together { self.go(Page::Together); }
                 Vec::new()
             }
@@ -2851,22 +2925,61 @@ impl State {
                 self.replay_covers()
             }
             "replay-story" => {
-                if !self.replay().story().is_empty() { self.replay_story = Some((0, Instant::now())); }
-                self.replay_covers()
+                if self.replay().story().is_empty() { return Vec::new(); }
+                // What plays is put back as it was when the story ends.
+                self.story_return = self.current().cloned().map(|current| {
+                    (std::iter::once(current).chain(self.player.upcoming.iter().cloned()).collect(), self.player.position, self.player.playing)
+                });
+                self.replay_story = Some(Story::at_step(0, Instant::now()));
+                let mut commands = self.replay_covers();
+                commands.extend(self.story_sound());
+                commands
             }
             // Past the last step the story ends; before the first it starts that one again.
             "story-next" => {
-                let steps = self.replay().story().len();
-                self.replay_story = self.replay_story.and_then(|(step, _)| (step + 1 < steps).then(|| (step + 1, Instant::now())));
-                Vec::new()
+                let Some(story) = self.replay_story else { return Vec::new() };
+                if story.step + 1 >= self.replay().story().len() { return self.click("story-close"); }
+                self.replay_story = Some(Story::at_step(story.step + 1, Instant::now()));
+                self.story_sound()
             }
             "story-back" => {
-                self.replay_story = self.replay_story.map(|(step, _)| (step.saturating_sub(1), Instant::now()));
-                Vec::new()
+                let Some(story) = self.replay_story else { return Vec::new() };
+                self.replay_story = Some(Story::at_step(story.step.saturating_sub(1), Instant::now()));
+                self.story_sound()
+            }
+            // Held, its step stays and its song is quiet; let go, both go on.
+            "story-pause" => {
+                let Some(story) = self.replay_story.as_mut() else { return Vec::new() };
+                let now = Instant::now();
+                match story.paused.take() {
+                    Some(paused) => {
+                        story.since += now.duration_since(paused);
+                        if !self.player.playing && self.story_moment.is_some() { vec![Command::PlayPause] } else { Vec::new() }
+                    }
+                    None => {
+                        story.paused = Some(now);
+                        if self.player.playing { vec![Command::PlayPause] } else { Vec::new() }
+                    }
+                }
+            }
+            // A song of the story's lists: its moment, or held and let go again if it is the one playing.
+            _ if id.starts_with("story-song:") || id.starts_with("story-artist:") => {
+                let summary = self.replay();
+                let (list, index) = id.split_once(':').map_or(("", ""), |(list, index)| (list, index));
+                let ranked = if list == "story-song" { &summary.top_songs } else { &summary.top_artists };
+                let Some(track) = index.parse::<usize>().ok().and_then(|index| ranked.get(index)).map(|ranked| ranked.track.clone()) else { return Vec::new() };
+                if self.current().is_some_and(|current| current.id == track.id) { return vec![Command::PlayPause]; }
+                self.story_play(track)
             }
             "story-close" | "story-close:outside" => {
-                self.replay_story = None;
-                Vec::new()
+                if self.replay_story.take().is_none() { return Vec::new(); }
+                let moment = self.story_moment.take();
+                match self.story_return.take() {
+                    Some((tracks, position, playing)) => vec![Command::Return { tracks, position, playing }],
+                    // Nothing played before: the moment stops with the story.
+                    None if moment.is_some() && self.player.playing => vec![Command::PlayPause],
+                    None => Vec::new(),
+                }
             }
             _ if id.starts_with("replay-period:") => {
                 if let Some(period) = crate::replay::Period::from_slug(&id["replay-period:".len()..]) { self.replay_period = period; }
@@ -3410,7 +3523,7 @@ impl State {
                         *lyrics = lines.map_or(Lyrics::Missing, Lyrics::Lines);
                     }
                 }
-                Vec::new()
+                self.story_chorus()
             }
             Event::Translated { track_id, to, lines } => {
                 if let Some((asked, into, translation)) = &mut self.translation {
@@ -3502,7 +3615,8 @@ impl State {
         // The song's own video in its place is that song still.
         let song = self.swapped.clone().or_else(|| self.player.current.clone());
         let (playing, position, duration) = (self.player.playing, self.player.position, self.player.duration);
-        let scrobbles = self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp());
+        // A story's moments are Replay's own, not plays to count.
+        let scrobbles = if self.replay_story.is_some() { Vec::new() } else { self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp()) };
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         // And the panel of what plays shows what comes next.
@@ -4133,6 +4247,22 @@ mod tests {
         assert!(state.room.is_none());
         state.apply(Event::Room(Some(RoomView { phase: Phase::Live, ..RoomView::default() })));
         assert!(state.room.is_none(), "left, a late word does not bring it back");
+    }
+
+    #[test]
+    fn replays_story_plays_a_moment_of_each_step_and_gives_back_what_played() {
+        let mut state = State::default();
+        let now = chrono::Utc::now().timestamp();
+        state.collection.plays = vec![crate::replay::Play { track: track("a"), at: now - 60, seconds: 200 }];
+        state.show(PlayerView { current: Some(track("before")), upcoming: vec![track("after")], playing: true, position: 42.0, duration: 200.0, ..PlayerView::default() });
+        let opened = state.update(&limn::UiAction::Clicked { id: "replay-story".into() });
+        assert!(opened.iter().any(|command| matches!(command, Command::Preview { track, .. } if track.id == "a")), "{opened:?}");
+        // Held, the song is too; let go, it goes on.
+        assert_eq!(click(&mut state, "story-pause"), vec![Command::PlayPause]);
+        assert!(state.replay_story.is_some_and(|story| story.paused.is_some()));
+        let closed = click(&mut state, "story-close");
+        assert_eq!(closed, vec![Command::Return { tracks: vec![track("before"), track("after")], position: 42.0, playing: true }]);
+        assert!(state.replay_story.is_none());
     }
 
     #[test]

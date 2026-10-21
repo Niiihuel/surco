@@ -493,7 +493,10 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
     }
     if state.mobile_ui.connections {
         let mut sheet = shell(&t!("native-listen-on"), "", "mobile-connections-close");
-        sheet.rows = vec![Row::Route { title: t!("native-route-title").into_owned(), label: t!("native-choose-audio-device").into_owned(),
+        // Listening with others first, as Spotify offers its Jam beside its devices.
+        let (together, with) = crate::view::jam_entry(state);
+        sheet.rows = vec![Row::Action(Action { subtitle: Some(with), ..Action::new("together", together, "person.2.wave.2") }),
+            Row::Route { title: t!("native-route-title").into_owned(), label: t!("native-choose-audio-device").into_owned(),
                 subtitle: state.mobile_ui.route.as_ref().map_or(t!("native-system-output"), |(name, _)| name.as_str().into()).into_owned() },
             Row::Slider { id: "volume".into(), title: t!("native-volume").into_owned(), value: state.volume, min: 0.0, max: 1.0 }];
         sheet.actions.push(Action::new("mobile-connections-close", t!("native-done"), "checkmark"));

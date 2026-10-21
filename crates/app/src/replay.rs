@@ -189,6 +189,29 @@ pub fn summarize(plays: &[Play], period: Period, now: DateTime<FixedOffset>) -> 
     }
 }
 
+/// Where a song's chorus starts, from its synced lyrics: the first time the line sung most
+/// often is sung, in seconds. None without a line sung more than once.
+pub fn chorus(lines: &[surco_core::lyrics::Line]) -> Option<f64> {
+    let said = |line: &surco_core::lyrics::Line| line.text.trim().to_lowercase();
+    let mut counts: HashMap<String, (usize, u64)> = HashMap::new();
+    for line in lines.iter().filter(|line| said(line).chars().filter(|c| c.is_alphanumeric()).count() >= 4) {
+        let entry = counts.entry(said(line)).or_insert((0, line.at_ms));
+        entry.0 += 1;
+        entry.1 = entry.1.min(line.at_ms);
+    }
+    counts.into_values().filter(|(count, _)| *count >= 2)
+        // The most sung; of as many, the earliest.
+        .max_by(|a, b| a.0.cmp(&b.0).then(b.1.cmp(&a.1)))
+        .map(|(_, at)| at as f64 / 1000.0)
+}
+
+/// Where a song's moment is guessed to be before its lyrics say: a third of the way in, or
+/// its start if it is short.
+pub fn moment(duration_ms: u64) -> f64 {
+    let seconds = duration_ms as f64 / 1000.0;
+    if seconds > 90.0 { (seconds * 0.35).round() } else { 0.0 }
+}
+
 /// The first of the artists a song's credit names.
 fn main_artist(credit: &str) -> &str {
     let mut first = credit;
@@ -214,6 +237,17 @@ pub fn part_of_day(hours: &[u64; 24]) -> Option<&'static str> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_chorus_is_where_the_line_sung_most_is_first_sung() {
+        let line = |at_ms: u64, text: &str| surco_core::lyrics::Line { at_ms, text: text.into() };
+        let lines = [line(10_000, "First verse here"), line(40_000, "Oh oh, the chorus"), line(50_000, "Second verse"),
+            line(80_000, "Oh oh, the chorus"), line(90_000, "oh"), line(95_000, "oh"), line(120_000, "OH OH, the chorus ")];
+        assert_eq!(super::chorus(&lines), Some(40.0), "short shouts do not count, case and spaces do not part lines");
+        assert_eq!(super::chorus(&lines[..1]), None);
+        assert_eq!(super::moment(200_000), 70.0);
+        assert_eq!(super::moment(60_000), 0.0);
+    }
+
     #[test]
     fn the_story_tells_only_what_there_is_to_tell() {
         use super::Step::*;

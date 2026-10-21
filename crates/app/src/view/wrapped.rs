@@ -234,7 +234,8 @@ fn song_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPale
             display_cut(&song.track.title, (side * 0.22).max(14.0), CREAM),
             plain(&song.track.artist, (side * 0.16).max(12.0), CREAM).font_family(FontFamily::SansMedium),
         ]).gap(2.0).flex(1.0).centered_y();
-        entering(ranked(state, format!("replay-song:{index}"), index, &song.track.title, framed(state, &song.track.artwork_url, side, CREAM, false, palette), words, side, CREAM), at, format!("story:song:{index}"))
+        let (id, words) = playable(state, at, "song", index, &song.track, words, CREAM);
+        entering(ranked(state, id, index, &song.track.title, framed(state, &song.track.artwork_url, side, CREAM, false, palette), words, side, CREAM), at, format!("story:song:{index}"))
     }).collect()
 }
 
@@ -252,8 +253,18 @@ fn artist_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPa
     summary.top_artists.iter().take(5).enumerate().map(|(index, artist)| {
         if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
         let name = Element::row(vec![block(&artist.track.artist, (side * 0.24).max(14.0), CREAM, COAL)]).flex(1.0).centered_y();
-        entering(ranked(state, format!("replay-artist:{index}"), index, &artist.track.artist, framed(state, &artist.track.artwork_url, side, COAL, false, palette), name, side, COAL), at, format!("story:artist:{index}"))
+        let (id, name) = playable(state, at, "artist", index, &artist.track, name, COAL);
+        entering(ranked(state, id, index, &artist.track.artist, framed(state, &artist.track.artwork_url, side, COAL, false, palette), name, side, COAL), at, format!("story:artist:{index}"))
     }).collect()
+}
+
+/// A ranking's row on the page plays the list from it; in a story, `at` its time in, it plays
+/// a moment of its song, or holds it, and says which with a glyph at its end.
+fn playable(state: &State, at: Option<f32>, list: &str, index: usize, track: &Track, words: Element, ink: Color) -> (String, Element) {
+    if at.is_none() { return (format!("replay-{list}:{index}"), words); }
+    let sounding = state.player.playing && state.current().is_some_and(|current| current.id == track.id);
+    let glyph = Element::icon(if sounding { Icon::PauseFill } else { Icon::PlayFill }).foreground(ink).centered_y();
+    (format!("story-{list}:{index}"), Element::row(vec![words, glyph]).gap(10.0).flex(1.0))
 }
 
 /// A row of a ranking: its place large, the picture, what it is; it plays when chosen.
@@ -411,11 +422,13 @@ fn facts(state: &State, summary: &Summary, palette: ComponentPalette, at: Option
 /// step laid out in two halves; on a phone the whole screen, a step one above the other.
 pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Element {
     use crate::replay::Step;
-    let Some((index, since)) = state.replay_story else { return window_tree };
+    let Some(story) = state.replay_story else { return window_tree };
+    let (index, since) = (story.step, story.since);
     let summary = state.replay();
     let steps = summary.story();
     let Some(&step) = steps.get(index) else { return window_tree };
-    let at = since.elapsed().as_secs_f32();
+    // Held, its time stands still: the bar, the counts and the moment of arrival.
+    let at = story.at(std::time::Instant::now());
     let palette = SCHEME.palette();
     // Wide where the window is: a desktop's own layout; a narrow one keeps the phone's shape.
     let tall = (window.height - 96.0).clamp(420.0, 760.0);
@@ -433,7 +446,7 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
     // runs past its foot scrolls rather than being cut.
     let room = height - STORY_TOP - notch - 16.0;
     let fit = width.min(room * 0.6);
-    let (fill, content) = if wide { wide_step(state, &summary, step, width, room, since) } else { match step {
+    let (fill, content) = if wide { wide_step(state, &summary, step, width, room, since, at) } else { match step {
         Step::Intro => (COAL, intro(state, fit)),
         Step::Minutes => (COAL, minutes(&summary, fit, shown)),
         Step::TopArtist => (COAL, top_artist(state, &summary.top_artists[0], fit, palette, shown)),
@@ -469,12 +482,25 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
         };
         Element::panel(Element::row(vec![inside.flex(1.0)])).background(Color { a: 70, ..ink }).radius(1.5).size(None, Some(3.0)).flex(1.0)
     }).collect::<Vec<_>>();
-    let close = IconButton::new("story-close", Icon::Custom(glyph::CLOSE), ComponentPalette { text: ink, hover: Color { a: 30, ..ink }, selected: Color { a: 50, ..ink }, ..palette })
+    let on_bar = ComponentPalette { text: ink, hover: Color { a: 30, ..ink }, selected: Color { a: 50, ..ink }, ..palette };
+    let close = IconButton::new("story-close", Icon::Custom(glyph::CLOSE), on_bar)
         .round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(t!("common-close")).render();
-    let chrome = Element::column(vec![Element::spacer().size(None, Some(notch)), Element::row(bars).gap(4.0), Element::row(vec![Element::spacer().flex(1.0), close])]).gap(4.0).padding(16.0);
+    // Held or going on by itself, as the one choosing likes.
+    let held = story.paused.is_some();
+    let hold = IconButton::new("story-pause", if held { Icon::PlayFill } else { Icon::PauseFill }, on_bar)
+        .round().variant(ButtonVariant::Ghost).size(ControlSize::Regular).accessibility_label(if held { t!("common-replay-story-go-on") } else { t!("common-replay-story-hold") }).render();
+    let chrome = Element::column(vec![Element::spacer().size(None, Some(notch)), Element::row(bars).gap(4.0), Element::row(vec![Element::spacer().flex(1.0), hold, close]).gap(4.0)]).gap(4.0).padding(16.0);
     let tap = |id: &'static str, label: std::borrow::Cow<'static, str>, share: f32| Element::clickable(id, Element::spacer().size(None, Some(height)))
         .accessible(limn::Access::new(limn::Role::Button).name(label)).flex(share);
-    let taps = Element::row(vec![tap("story-back", t!("common-back"), 1.0), tap("story-next", t!("desktop-next"), 2.0)]).size(Some(width), Some(height));
+    // A tap on its left goes back and on its right on; where a list is, its middle is the list's,
+    // each song played from there.
+    let lists = matches!(step, Step::Songs | Step::Artists);
+    let middle = if lists { Element::spacer().flex(1.6) } else { tap("story-next", t!("desktop-next"), 1.6) };
+    let taps = if lists {
+        Element::row(vec![tap("story-back", t!("common-back"), 1.0), middle, tap("story-next", t!("desktop-next"), 1.0)])
+    } else {
+        Element::row(vec![tap("story-back", t!("common-back"), 1.0), middle])
+    }.size(Some(width), Some(height));
     let card = Element::panel(Element::stack(vec![screen, taps, Element::column(vec![chrome, Element::spacer().flex(1.0)]).size(Some(width), Some(height))]))
         .radius(if state.mobile { 0.0 } else { 16.0 }).clip_children().size(Some(width), Some(height));
     let dialog = if state.mobile {
@@ -502,10 +528,10 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
 
 /// A step of the story laid out for a wide screen `width` across with `room` under its bars,
 /// as two halves: what it says on one side, its picture or its rings on the other.
-fn wide_step(state: &State, summary: &Summary, step: crate::replay::Step, width: f32, room: f32, since: std::time::Instant) -> (Color, Element) {
+fn wide_step(state: &State, summary: &Summary, step: crate::replay::Step, width: f32, room: f32, since: std::time::Instant, at: f32) -> (Color, Element) {
     use crate::replay::Step;
     let palette = SCHEME.palette();
-    let at = Some(since.elapsed().as_secs_f32());
+    let at = Some(at);
     let half = (width - 3.0 * WIDE_GAP) / 2.0;
     let halves = |left: Element, right: Element| Element::row(vec![
         Element::column(vec![left]).size(Some(half), None).centered_y(),

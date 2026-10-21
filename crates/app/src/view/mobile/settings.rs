@@ -178,6 +178,7 @@ pub(in crate::view) fn part_title(part: SettingsPart) -> std::borrow::Cow<'stati
         SettingsPart::Devices => t!("common-settings-devices"),
         SettingsPart::Display => t!("common-settings-display"),
         SettingsPart::Library => t!("common-settings-library"),
+        SettingsPart::Connected => t!("common-settings-connected"),
         SettingsPart::About => t!("common-settings-about"),
         SettingsPart::Storage => t!("common-settings-storage"),
     }
@@ -191,10 +192,14 @@ fn part_about(part: SettingsPart) -> std::borrow::Cow<'static, str> {
         SettingsPart::Devices => t!("common-settings-devices-about"),
         SettingsPart::Display => t!("common-settings-display-about"),
         SettingsPart::Library => t!("common-settings-library-about"),
+        SettingsPart::Connected => t!("common-settings-connected-about"),
         SettingsPart::About => t!("common-settings-about-about", version = env!("CARGO_PKG_VERSION")),
         SettingsPart::Storage => t!("common-settings-storage-about"),
     }
 }
+
+/// Accounts elsewhere: two points joined to a third.
+const CONNECTED: &str = include_str!("../../../assets/icons/share-2.svg");
 
 fn part_glyph(part: SettingsPart) -> Icon {
     // A desktop draws Surco's own glyphs; a phone keeps the platform's.
@@ -206,6 +211,7 @@ fn part_glyph(part: SettingsPart) -> Icon {
             SettingsPart::Devices => glyph::DEVICE,
             SettingsPart::Display => glyph::DISPLAY,
             SettingsPart::Library => glyph::LIBRARY,
+            SettingsPart::Connected => CONNECTED,
             SettingsPart::About => glyph::INFO,
             SettingsPart::Storage => glyph::DOWNLOAD,
         });
@@ -216,6 +222,7 @@ fn part_glyph(part: SettingsPart) -> Icon {
         SettingsPart::Devices => Icon::Custom(AUDIO_ROUTE),
         SettingsPart::Display => Icon::Palette,
         SettingsPart::Library => Icon::Playlist,
+        SettingsPart::Connected => Icon::Custom(CONNECTED),
         SettingsPart::About => Icon::InfoCircle,
         SettingsPart::Storage => Icon::Custom(include_str!("../../../assets/icons/download.svg")),
     }
@@ -328,7 +335,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
 
     use SettingsPart::*;
     let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
-        (Display, display), (Display, language), (Library, library), (Library, bring), (Library, scrobbling(state, inner)), (About, about), (Storage, erase)];
+        (Display, display), (Display, language), (Library, library), (Library, bring), (Connected, scrobbling(state, inner)), (About, about), (Storage, erase)];
     ScrollArea::new("settings", Element::column(arrange(state, sections, false, SCHEME.palette())).gap(24.0).padding(GUTTER)).render().flex(1.0)
 }
 
@@ -430,7 +437,7 @@ mod tests {
         state.mobile = true;
         let frames = every_page(&mut state, 390.0);
         let parts: Vec<_> = frames[0].access.iter().filter(|node| node.id.starts_with("settings-part:")).map(|node| node.id.as_str()).collect();
-        assert_eq!(parts.len(), 7);
+        assert_eq!(parts.len(), 8);
         assert_eq!(parts.last(), Some(&"settings-part:storage"), "erasing is the last part");
         assert!(ROWS.iter().all(|id| !frames[0].access.iter().any(|node| node.id == *id)), "the list holds the parts, not their settings");
         let groups = frames[1..].iter().flat_map(|frame| frame.access.iter().filter(|node| node.id.starts_with("settings-group:"))).count();
