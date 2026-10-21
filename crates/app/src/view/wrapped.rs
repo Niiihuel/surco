@@ -69,7 +69,7 @@ pub(super) fn page(state: &State, width: f32, palette: ComponentPalette) -> Elem
         sections.push(pair(top, Some(tops(state, &summary, half, palette, None))));
     }
     sections.push(hours(&summary, inner, "replay-hours", palette, None));
-    let facts = facts(state, &summary, palette, None);
+    let facts = facts(state, &summary, palette, None, 56.0);
     if !facts.is_empty() {
         let row = if paired { Element::row(facts.into_iter().map(|fact| fact.flex(1.0)).collect()).gap(16.0) } else { Element::column(facts).gap(16.0) };
         sections.push(row);
@@ -128,6 +128,8 @@ fn card(fill: Color, behind: Vec<Element>, content: Element, at: Option<f32>) ->
 /// Bands round one centre, Wrapped's rings: `count` of them `band` wide with as much between,
 /// the outermost `side` across, the one at `accent` in its own colour.
 fn rings(side: f32, count: usize, band: f32, ink: Color, accent: Option<(usize, Color)>) -> Element {
+    // A corner is kept in a byte: past this a circle's would square off.
+    let (side, band) = (side.min(RINGS_WIDEST), band * side.min(RINGS_WIDEST) / side.max(1.0));
     let bands = (0..count).filter_map(|index| {
         let across = side - index as f32 * band * 4.0;
         (across > band * 2.0).then(|| {
@@ -137,6 +139,9 @@ fn rings(side: f32, count: usize, band: f32, ink: Color, accent: Option<(usize, 
     }).collect();
     Element::stack(bands).size(Some(side), Some(side))
 }
+
+/// The widest rings stand, still round.
+const RINGS_WIDEST: f32 = 500.0;
 
 /// Something laid in a card's corner and moved by `by`, out past its edge, taking no room.
 fn corner(element: Element, top: bool, left: bool, by: Point) -> Element {
@@ -183,17 +188,9 @@ fn grouped(value: u64) -> String {
 
 /// "My Minutes Listened": the minutes, huge, in lavender on coal, and what they come to.
 fn minutes(summary: &Summary, width: f32, at: Option<f32>) -> Element {
-    let size = (width * 0.22).clamp(56.0, 168.0);
-    let days = summary.minutes / (24 * 60);
-    let came = if days >= 1 { t!("common-replay-minutes-days", count = days) } else { t!("common-replay-minutes-hours", count = summary.minutes / 60) };
     let ring = (width * 0.42).clamp(180.0, 360.0);
-    let mut words = vec![
-        Element::spacer().size(None, Some(ring * 0.2)),
-        display(t!("common-replay-minutes-title"), (size * 0.24).max(20.0), CREAM).center_content(),
-        // In a story the count runs up to it.
-        display(grouped(at.map_or(summary.minutes, |at| (summary.minutes as f32 * landing(at, 1.6)).round() as u64)), size, LAVENDER).center_content(),
-    ];
-    if summary.minutes >= 60 && at.is_none_or(|at| at >= 1.6) { words.push(entering(plain(came, 16.0, CREAM).center_content(), at, "story:minutes-came".into())); }
+    let mut words = vec![Element::spacer().size(None, Some(ring * 0.2))];
+    words.extend(minutes_words(summary, (width * 0.22).clamp(56.0, 168.0), at));
     words.push(Element::spacer().size(None, Some(ring * 0.2)));
     let behind = vec![
         corner(rings(ring, 4, ring / 18.0, CREAM, Some((1, LAVENDER))), true, false, Point::new(ring * 0.5, -ring * 0.6)),
@@ -202,35 +199,61 @@ fn minutes(summary: &Summary, width: f32, at: Option<f32>) -> Element {
     card(COAL, behind, Element::column(words).gap(8.0).padding(16.0), at)
 }
 
+/// The minutes' words: what they are, the count `size` high, and what they come to.
+fn minutes_words(summary: &Summary, size: f32, at: Option<f32>) -> Vec<Element> {
+    let days = summary.minutes / (24 * 60);
+    let came = if days >= 1 { t!("common-replay-minutes-days", count = days) } else { t!("common-replay-minutes-hours", count = summary.minutes / 60) };
+    let mut words = vec![
+        display(t!("common-replay-minutes-title"), (size * 0.24).max(20.0), CREAM).center_content(),
+        // In a story the count runs up to it.
+        display(grouped(at.map_or(summary.minutes, |at| (summary.minutes as f32 * landing(at, 1.6)).round() as u64)), size, LAVENDER).center_content(),
+    ];
+    if summary.minutes >= 60 && at.is_none_or(|at| at >= 1.6) { words.push(entering(plain(came, 16.0, CREAM).center_content(), at, "story:minutes-came".into())); }
+    words
+}
+
 /// "My Top Songs": ranked large, each cover framed in cream, the strip of them unbroken.
 fn songs(state: &State, summary: &Summary, width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
-    let side = (width * 0.2).clamp(48.0, 104.0);
     let ring = (width * 0.5).clamp(160.0, 300.0);
-    let mut rows = vec![Element::spacer().size(None, Some(ring * 0.3)), block(t!("common-replay-top-songs"), (width * 0.05).clamp(18.0, 26.0), COAL, CREAM).centered_x(), Element::spacer().size(None, Some(12.0))];
-    rows.extend(summary.top_songs.iter().take(5).enumerate().map(|(index, song)| {
-        let words = Element::column(vec![
-            display_cut(&song.track.title, (side * 0.22).max(14.0), CREAM),
-            plain(&song.track.artist, (side * 0.16).max(12.0), CREAM).font_family(FontFamily::SansMedium),
-        ]).gap(2.0).flex(1.0).centered_y();
-        if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
-        entering(ranked(state, format!("replay-song:{index}"), index, &song.track.title, framed(state, &song.track.artwork_url, side, CREAM, false, palette), words, side, CREAM), at, format!("story:song:{index}"))
-    }));
+    let mut rows = vec![Element::spacer().size(None, Some(ring * 0.3)), headline(t!("common-replay-top-songs"), width, COAL, CREAM).centered_x(), Element::spacer().size(None, Some(12.0))];
+    rows.extend(song_rows(state, summary, (width * 0.2).clamp(48.0, 104.0), palette, at));
     let behind = vec![corner(rings(ring, 4, ring / 16.0, CREAM, Some((2, LAVENDER))), true, true, Point::new(-ring * 0.45, -ring * 0.62))];
     card(COAL, behind, Element::column(rows), at)
 }
 
+/// A card's headline on its block.
+fn headline(words: std::borrow::Cow<'static, str>, width: f32, ink: Color, fill: Color) -> Element {
+    block(words, (width * 0.05).clamp(18.0, 26.0), ink, fill)
+}
+
+/// The five songs heard most, a row each with its cover `side` across, arriving one by one in a story.
+fn song_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPalette, at: Option<f32>) -> Vec<Element> {
+    summary.top_songs.iter().take(5).enumerate().map(|(index, song)| {
+        if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
+        let words = Element::column(vec![
+            display_cut(&song.track.title, (side * 0.22).max(14.0), CREAM),
+            plain(&song.track.artist, (side * 0.16).max(12.0), CREAM).font_family(FontFamily::SansMedium),
+        ]).gap(2.0).flex(1.0).centered_y();
+        entering(ranked(state, format!("replay-song:{index}"), index, &song.track.title, framed(state, &song.track.artwork_url, side, CREAM, false, palette), words, side, CREAM), at, format!("story:song:{index}"))
+    }).collect()
+}
+
 /// "My Top Artists": the names on blocks, the faces framed, on lavender.
 fn artists(state: &State, summary: &Summary, width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
-    let side = (width * 0.2).clamp(48.0, 104.0);
     let ring = (width * 0.5).clamp(160.0, 300.0);
-    let mut rows = vec![Element::spacer().size(None, Some(ring * 0.3)), block(t!("common-replay-top-artists"), (width * 0.05).clamp(18.0, 26.0), CREAM, COAL).centered_x(), Element::spacer().size(None, Some(12.0))];
-    rows.extend(summary.top_artists.iter().take(5).enumerate().map(|(index, artist)| {
-        let name = Element::row(vec![block(&artist.track.artist, (side * 0.24).max(14.0), CREAM, COAL)]).flex(1.0).centered_y();
-        if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
-        entering(ranked(state, format!("replay-artist:{index}"), index, &artist.track.artist, framed(state, &artist.track.artwork_url, side, COAL, false, palette), name, side, COAL), at, format!("story:artist:{index}"))
-    }));
+    let mut rows = vec![Element::spacer().size(None, Some(ring * 0.3)), headline(t!("common-replay-top-artists"), width, CREAM, COAL).centered_x(), Element::spacer().size(None, Some(12.0))];
+    rows.extend(artist_rows(state, summary, (width * 0.2).clamp(48.0, 104.0), palette, at));
     let behind = vec![corner(rings(ring, 4, ring / 16.0, COAL, Some((1, CREAM))), true, false, Point::new(ring * 0.45, -ring * 0.62))];
     card(LAVENDER, behind, Element::column(rows), at)
+}
+
+/// The five artists heard most, a row each with their picture `side` across.
+fn artist_rows(state: &State, summary: &Summary, side: f32, palette: ComponentPalette, at: Option<f32>) -> Vec<Element> {
+    summary.top_artists.iter().take(5).enumerate().map(|(index, artist)| {
+        if !arrived(at, index) { return Element::spacer().size(None, Some(side)); }
+        let name = Element::row(vec![block(&artist.track.artist, (side * 0.24).max(14.0), CREAM, COAL)]).flex(1.0).centered_y();
+        entering(ranked(state, format!("replay-artist:{index}"), index, &artist.track.artist, framed(state, &artist.track.artwork_url, side, COAL, false, palette), name, side, COAL), at, format!("story:artist:{index}"))
+    }).collect()
 }
 
 /// A row of a ranking: its place large, the picture, what it is; it plays when chosen.
@@ -244,8 +267,15 @@ fn ranked(state: &State, id: String, index: usize, name: &str, picture: Element,
 /// "My Top Artist": the face round under rings stacked like records, the name in a frame,
 /// and the minutes spent with them.
 fn top_artist(state: &State, artist: &Ranked, width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
-    let side = (width * 0.58).clamp(96.0, 340.0);
-    // The rings rise behind the face, each a step higher than the one before.
+    let face = top_artist_face(state, artist, (width * 0.58).clamp(96.0, 340.0), palette, at);
+    let (name, listened) = top_artist_about(artist, width, at);
+    let open = Element::clickable("replay-artist:0", Element::column(vec![face, name]))
+        .accessible(limn::Access::new(limn::Role::Button).name(artist.track.artist.clone()));
+    card(COAL, Vec::new(), Element::column(vec![open, listened]).gap((width * 0.05).clamp(12.0, 24.0)), at)
+}
+
+/// The artist heard most, round, `side` across, under rings that rise behind it.
+fn top_artist_face(state: &State, artist: &Ranked, side: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
     let mut stack: Vec<Element> = (1..=4).rev().map(|step| {
         Element::panel(Element::spacer()).border(CREAM, 2.0).radius(side / 2.0).size(Some(side), Some(side)).translate(Point::new(0.0, -(step as f32) * side * 0.09))
     }).collect();
@@ -255,7 +285,11 @@ fn top_artist(state: &State, artist: &Ranked, width: f32, palette: ComponentPale
         Some(at) => face.animate_scale_about("story:top-artist", if at < 0.05 { 0.6 } else { 1.0 }, Point::new(0.5, 0.5)),
         None => face,
     });
-    let face = Element::column(vec![Element::spacer().size(None, Some(side * 0.36)), Element::stack(stack).size(Some(side), Some(side)).centered_x()]);
+    Element::column(vec![Element::spacer().size(None, Some(side * 0.36)), Element::stack(stack).size(Some(side), Some(side)).centered_x()])
+}
+
+/// Their name in a frame, and the minutes and plays they had, which come in after it in a story.
+fn top_artist_about(artist: &Ranked, width: f32, at: Option<f32>) -> (Element, Element) {
     let name = Element::panel(Element::column(vec![
         display(t!("common-replay-top-artist"), 18.0, CREAM).center_content(),
         display_cut(&artist.track.artist, (width * 0.075).clamp(20.0, 40.0), CREAM).center_content(),
@@ -265,40 +299,51 @@ fn top_artist(state: &State, artist: &Ranked, width: f32, palette: ComponentPale
         display(grouped(artist.minutes), (width * 0.14).clamp(32.0, 72.0), CREAM).center_content(),
         plain(t!("common-replay-plays-of", count = artist.plays), 16.0, CREAM).center_content(),
     ]).gap(4.0);
-    let open = Element::clickable("replay-artist:0", Element::column(vec![face, name]).gap(0.0))
-        .accessible(limn::Access::new(limn::Role::Button).name(artist.track.artist.clone()));
     let listened = if at.is_none_or(|at| at >= 0.9) { entering(listened, at, "story:top-artist-minutes".into()) } else { Element::spacer() };
-    card(COAL, Vec::new(), Element::column(vec![open, listened]).gap((width * 0.05).clamp(12.0, 24.0)), at)
+    (name, listened)
 }
 
 /// "The Tops": the card to keep, on cream: the artist heard most framed, the five artists and
 /// songs, the minutes and the longest run of days.
 fn tops(state: &State, summary: &Summary, width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
     let side = (width * 0.52).clamp(110.0, 320.0);
-    let artwork = summary.top_artists.first().map(|artist| artist.track.artwork_url.clone()).unwrap_or_default();
-    let list = |label: std::borrow::Cow<'static, str>, names: Vec<&str>| {
-        let mut lines = vec![plain(label, 14.0, COAL)];
-        lines.extend(names.into_iter().enumerate().map(|(index, name)| {
-            Element::truncated_text(format!("{}  {name}", index + 1)).font_family(FontFamily::SansBold).font_size(if width < 360.0 { 14.0 } else { 16.0 }).foreground(COAL)
-        }));
-        Element::column(lines).gap(if width < 360.0 { 2.0 } else { 4.0 }).flex(1.0)
-    };
-    let artists = list(t!("common-replay-top-artists"), summary.top_artists.iter().take(5).map(|artist| artist.track.artist.as_str()).collect());
-    let songs = list(t!("common-replay-top-songs"), summary.top_songs.iter().take(5).map(|song| song.track.title.as_str()).collect());
-    let figure = |label: std::borrow::Cow<'static, str>, value: String| Element::column(vec![plain(label, 14.0, COAL), display(value, (width * 0.09).clamp(24.0, 44.0), COAL)]).gap(4.0).flex(1.0);
-    let streak = if summary.streak > 1 { t!("common-replay-days", count = summary.streak).into_owned() } else { grouped(summary.plays as u64) };
-    let streak_label = if summary.streak > 1 { t!("common-replay-streak-title") } else { t!("common-replay-plays", count = summary.plays) };
     let ring = side * 0.9;
     let behind = vec![
         corner(rings(ring, 4, ring / 16.0, YELLOW, None), true, true, Point::new(-ring * 0.5, -ring * 0.2)),
         corner(rings(ring, 4, ring / 16.0, COAL, None), true, false, Point::new(ring * 0.55, -ring * 0.1)),
     ];
     card(CREAM, behind, Element::column(vec![
-        framed(state, &artwork, side, COAL, false, palette).centered_x(),
+        tops_picture(state, summary, side, palette).centered_x(),
         Element::spacer().size(None, Some(8.0)),
+        tops_details(summary, width),
+    ]).gap((width * 0.04).clamp(10.0, 20.0)), at)
+}
+
+/// The artist heard most, framed in coal.
+fn tops_picture(state: &State, summary: &Summary, side: f32, palette: ComponentPalette) -> Element {
+    let artwork = summary.top_artists.first().map(|artist| artist.track.artwork_url.clone()).unwrap_or_default();
+    framed(state, &artwork, side, COAL, false, palette)
+}
+
+/// The five artists and songs side by side, and under them the minutes and the run of days.
+fn tops_details(summary: &Summary, width: f32) -> Element {
+    let small = width < 360.0;
+    let list = |label: std::borrow::Cow<'static, str>, names: Vec<&str>| {
+        let mut lines = vec![plain(label, 14.0, COAL)];
+        lines.extend(names.into_iter().enumerate().map(|(index, name)| {
+            Element::truncated_text(format!("{}  {name}", index + 1)).font_family(FontFamily::SansBold).font_size(if small { 14.0 } else { 16.0 }).foreground(COAL)
+        }));
+        Element::column(lines).gap(if small { 2.0 } else { 4.0 }).flex(1.0)
+    };
+    let artists = list(t!("common-replay-top-artists"), summary.top_artists.iter().take(5).map(|artist| artist.track.artist.as_str()).collect());
+    let songs = list(t!("common-replay-top-songs"), summary.top_songs.iter().take(5).map(|song| song.track.title.as_str()).collect());
+    let figure = |label: std::borrow::Cow<'static, str>, value: String| Element::column(vec![plain(label, 14.0, COAL), display(value, (width * 0.09).clamp(24.0, 44.0), COAL)]).gap(4.0).flex(1.0);
+    let streak = if summary.streak > 1 { t!("common-replay-days", count = summary.streak).into_owned() } else { grouped(summary.plays as u64) };
+    let streak_label = if summary.streak > 1 { t!("common-replay-streak-title") } else { t!("common-replay-plays", count = summary.plays) };
+    Element::column(vec![
         Element::row(vec![artists, songs]).gap(16.0),
         Element::row(vec![figure(t!("common-replay-minutes", count = summary.minutes), grouped(summary.minutes)), figure(streak_label, streak)]).gap(16.0),
-    ]).gap((width * 0.04).clamp(10.0, 20.0)), at)
+    ]).gap((width * 0.04).clamp(10.0, 20.0))
 }
 
 /// When in the day, on cream, as ECharts' stacked areas with a gradient: the artists heard
@@ -328,32 +373,42 @@ fn hours(summary: &Summary, width: f32, id: &str, palette: ComponentPalette, at:
     card(CREAM, Vec::new(), Element::column(parts).gap(10.0), at)
 }
 
-/// A few things worth knowing, a card of colour each: the run of days, the busiest day, the
-/// song played again and again in one.
-fn facts(state: &State, summary: &Summary, palette: ComponentPalette, at: Option<f32>) -> Vec<Element> {
-    let fact = |fill: Color, leading: Option<Element>, value: String, label: String| {
-        let words = Element::column(vec![display_cut(value, 32.0, COAL), plain(label, 15.0, COAL)]).gap(4.0).flex(1.0).centered_y();
-        let mut row = Vec::from_iter(leading.map(Element::centered_y));
-        row.push(words);
-        card(fill, Vec::new(), Element::row(row).gap(14.0), None)
+/// A few things worth knowing, each a moment of its own as the template's "My Minutes
+/// Listened" is: what it is in the display face, the figure huge in a colour, and a line under
+/// it. The run of days in yellow on coal, the busiest day in red on cream, the song on repeat
+/// framed on lavender with its name on a block. `size` is how high the figures stand.
+fn facts(state: &State, summary: &Summary, palette: ComponentPalette, at: Option<f32>, size: f32) -> Vec<Element> {
+    let moment = |fill: Color, ink: Color, title: std::borrow::Cow<'static, str>, figure: Element, line: String, leading: Option<Element>| {
+        let mut parts = Vec::from_iter(leading.map(Element::centered_x));
+        parts.extend([
+            display(title, (size * 0.3).max(16.0), ink).center_content(),
+            figure.centered_x(),
+            plain(line, 15.0, ink).center_content(),
+        ]);
+        card(fill, Vec::new(), Element::column(parts).gap(10.0), None)
     };
     let mut facts = Vec::new();
     if summary.streak > 1 {
-        facts.push(fact(YELLOW, None, t!("common-replay-days", count = summary.streak).into_owned(), t!("common-replay-streak").into_owned()));
+        facts.push(moment(COAL, CREAM, t!("common-replay-streak-title"), display(summary.streak.to_string(), size, YELLOW),
+            t!("common-replay-streak").into_owned(), None));
     }
     if let Some((day, minutes)) = summary.busiest_day {
-        facts.push(fact(GREEN, None, day.format("%d/%m/%Y").to_string(), t!("common-replay-busiest", minutes = minutes).into_owned()));
+        facts.push(moment(CREAM, COAL, t!("common-replay-busiest-title"), display(day.format("%d/%m").to_string(), size, RED),
+            t!("common-replay-busiest-line", minutes = minutes, year = day.format("%Y").to_string()).into_owned(), None));
     }
     if let Some((track, times)) = &summary.on_repeat {
-        facts.push(fact(RED, Some(framed(state, &track.artwork_url, 64.0, COAL, false, palette)), track.title.clone(), t!("common-replay-on-repeat", times = *times).into_owned()));
+        let cover = framed(state, &track.artwork_url, (size * 1.4).clamp(64.0, 160.0), COAL, false, palette);
+        let name = Element::row(vec![block(&track.title, (size * 0.32).max(16.0), CREAM, COAL)]);
+        facts.push(moment(LAVENDER, COAL, t!("common-replay-on-repeat-title"), name,
+            t!("common-replay-on-repeat-line", times = *times).into_owned(), Some(cover)));
     }
     facts.into_iter().enumerate().filter(|(index, _)| arrived(at, *index)).map(|(index, fact)| entering(fact, at, format!("story:fact:{index}"))).collect()
 }
 
 /// Replay told as a story over the window, as Wrapped is: a step at a time, each with a bar
 /// along the top that fills while it is on screen. A tap or a click on its right goes on, on its
-/// left back, as the arrows beside it do. A card a phone's shape on a desktop; the whole
-/// screen on a phone.
+/// left back, as the arrows beside it do. On a desktop a wide screen of its own, centred, each
+/// step laid out in two halves; on a phone the whole screen, a step one above the other.
 pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Element {
     use crate::replay::Step;
     let Some((index, since)) = state.replay_story else { return window_tree };
@@ -362,11 +417,14 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
     let Some(&step) = steps.get(index) else { return window_tree };
     let at = since.elapsed().as_secs_f32();
     let palette = SCHEME.palette();
-    let (width, height) = if state.mobile {
-        (window.width, window.height)
-    } else {
-        let tall = (window.height - 64.0).clamp(480.0, 860.0);
-        ((tall * 9.0 / 16.0).min(window.width - 160.0), tall)
+    // Wide where the window is: a desktop's own layout; a narrow one keeps the phone's shape.
+    let tall = (window.height - 96.0).clamp(420.0, 760.0);
+    let across = (tall * 16.0 / 9.0).min(window.width - 176.0);
+    let wide = !state.mobile && across >= tall * 1.25;
+    let (width, height) = match (state.mobile, wide) {
+        (true, _) => (window.width, window.height),
+        (false, true) => (across, tall),
+        (false, false) => ((tall * 9.0 / 16.0).min(window.width - 176.0).max(280.0), tall),
     };
     let shown = Some(at);
     // On a phone the bars sit under the status bar and the island, not behind them.
@@ -375,22 +433,27 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
     // runs past its foot scrolls rather than being cut.
     let room = height - STORY_TOP - notch - 16.0;
     let fit = width.min(room * 0.6);
-    let (fill, content) = match step {
+    let (fill, content) = if wide { wide_step(state, &summary, step, width, room, since) } else { match step {
         Step::Intro => (COAL, intro(state, fit)),
         Step::Minutes => (COAL, minutes(&summary, fit, shown)),
         Step::TopArtist => (COAL, top_artist(state, &summary.top_artists[0], fit, palette, shown)),
         Step::Songs => (COAL, songs(state, &summary, fit, palette, shown)),
         Step::Artists => (LAVENDER, artists(state, &summary, fit, palette, shown)),
         Step::Hours => (CREAM, hours(&summary, fit, &format!("story-hours:{since:?}"), palette, shown)),
-        Step::Facts => (COAL, Element::column(facts(state, &summary, palette, shown)).gap(12.0).padding(16.0)),
+        Step::Facts => {
+            let mut parts = vec![headline(t!("common-replay-highlights"), fit, COAL, CREAM).centered_x()];
+            parts.extend(facts(state, &summary, palette, shown, (fit * 0.14).clamp(40.0, 72.0)));
+            (COAL, Element::column(parts).gap(12.0).padding(16.0))
+        }
         Step::Tops => (CREAM, tops(state, &summary, fit, palette, shown)),
-    };
+    } };
     let ink = if fill == CREAM { COAL } else { CREAM };
-    // The room under the bars is kept inside what scrolls, so the rings run on to the screen's top edge.
-    let content = Element::column(vec![Element::spacer().size(None, Some(STORY_TOP + notch)), Element::spacer().flex(1.0), content, Element::spacer().flex(1.0)])
-        .min_size(0.0, height - 16.0).animate_enter(format!("story-step:{index}:{since:?}"));
-    let content = panel_scroll(&format!("story-scroll:{index}"), content).render().size(Some(width), Some(height));
-    let screen = Element::panel(content).background(fill).size(Some(width), Some(height));
+    // Under the bars an unseen line: nothing of a step reaches over it, its rings cut there.
+    let under = height - STORY_TOP - notch;
+    let content = Element::column(vec![Element::spacer().flex(1.0), content, Element::spacer().flex(1.0)])
+        .min_size(0.0, under).animate_enter(format!("story-step:{index}:{since:?}"));
+    let content = panel_scroll(&format!("story-scroll:{index}"), content).render().size(Some(width), Some(under));
+    let screen = Element::panel(Element::column(vec![Element::spacer().size(None, Some(STORY_TOP + notch)), content])).background(fill).size(Some(width), Some(height));
     // A bar a step: those gone full, this one filling, those to come empty, sharing the width.
     let bars = (0..steps.len()).map(|position| {
         let share = match position.cmp(&index) {
@@ -430,8 +493,84 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
         ]).gap(24.0)
     };
     let dialog = dialog.accessible(limn::Access::new(limn::Role::Dialog).id("replay-story").name(t!("common-replay")));
-    Element::popover(window_tree, dialog, "story-close", PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 235))
+    // Centred in the whole window, over a backdrop that closes it when pressed.
+    let backdrop = Element::clickable("story-close:outside", Element::spacer().size(Some(window.width), Some(window.height)));
+    let centred = Element::column(vec![Element::spacer().flex(1.0), dialog.centered_x(), Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    let whole = Element::stack(vec![backdrop, centred]).size(Some(window.width), Some(window.height));
+    Element::popover(window_tree, whole, "story-close", PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 235))
 }
+
+/// A step of the story laid out for a wide screen `width` across with `room` under its bars,
+/// as two halves: what it says on one side, its picture or its rings on the other.
+fn wide_step(state: &State, summary: &Summary, step: crate::replay::Step, width: f32, room: f32, since: std::time::Instant) -> (Color, Element) {
+    use crate::replay::Step;
+    let palette = SCHEME.palette();
+    let at = Some(since.elapsed().as_secs_f32());
+    let half = (width - 3.0 * WIDE_GAP) / 2.0;
+    let halves = |left: Element, right: Element| Element::row(vec![
+        Element::column(vec![left]).size(Some(half), None).centered_y(),
+        Element::column(vec![right]).size(Some(half), None).centered_y(),
+    ]).gap(WIDE_GAP).padding(WIDE_GAP / 2.0);
+    let stretch = || match state.replay_period { Period::Month => t!("common-replay-month"), Period::Year => t!("common-replay-year"), Period::All => t!("common-replay-all") };
+    match step {
+        Step::Intro => {
+            let size = (room * 0.12).clamp(32.0, 72.0);
+            let ring = room * 1.1;
+            let words = Element::column(vec![
+                display(t!("common-replay-intro"), size, CREAM).line_height(size * 1.15).animate_enter("story:intro"),
+                plain(stretch(), 18.0, CREAM),
+            ]).gap(16.0);
+            let behind = vec![corner(rings(ring, 7, ring / 28.0, CREAM, Some((2, LAVENDER))), false, false, Point::new(ring * 0.2, ring * 0.3))];
+            (COAL, card(COAL, behind, halves(words, Element::spacer()), at))
+        }
+        Step::Minutes => {
+            let ring = (room * 0.8).min(half);
+            let words = Element::column(minutes_words(summary, (room * 0.3).clamp(64.0, 200.0), at)).gap(12.0);
+            (COAL, card(COAL, Vec::new(), halves(words, rings(ring, 5, ring / 20.0, CREAM, Some((1, LAVENDER))).centered_x()), at))
+        }
+        Step::TopArtist => {
+            let artist = &summary.top_artists[0];
+            let side = (room * 0.55).min(half * 0.8);
+            let (name, listened) = top_artist_about(artist, half, at);
+            let face = Element::clickable("replay-artist:0", top_artist_face(state, artist, side, palette, at))
+                .accessible(limn::Access::new(limn::Role::Button).name(artist.track.artist.clone()));
+            (COAL, card(COAL, Vec::new(), halves(face, Element::column(vec![name, listened]).gap(24.0)), at))
+        }
+        Step::Songs => {
+            let cover = summary.top_songs.first().map(|song| song.track.artwork_url.clone()).unwrap_or_default();
+            let first = Element::column(vec![
+                headline(t!("common-replay-top-songs"), half, COAL, CREAM).centered_x(),
+                framed(state, &cover, (room * 0.6).min(half * 0.8), CREAM, false, palette).centered_x(),
+            ]).gap(20.0);
+            let rows = Element::column(song_rows(state, summary, (room * 0.15).clamp(48.0, 104.0), palette, at));
+            (COAL, card(COAL, Vec::new(), halves(first, rows), at))
+        }
+        Step::Artists => {
+            let picture = summary.top_artists.first().map(|artist| artist.track.artwork_url.clone()).unwrap_or_default();
+            let first = Element::column(vec![
+                headline(t!("common-replay-top-artists"), half, CREAM, COAL).centered_x(),
+                framed(state, &picture, (room * 0.6).min(half * 0.8), COAL, false, palette).centered_x(),
+            ]).gap(20.0);
+            let rows = Element::column(artist_rows(state, summary, (room * 0.15).clamp(48.0, 104.0), palette, at));
+            (LAVENDER, card(LAVENDER, Vec::new(), halves(rows, first), at))
+        }
+        Step::Hours => (CREAM, hours(summary, width - WIDE_GAP, &format!("story-hours:{since:?}"), palette, at)),
+        Step::Facts => {
+            // Side by side, each a column of its own.
+            let moments: Vec<Element> = facts(state, summary, palette, at, (room * 0.16).clamp(48.0, 112.0)).into_iter().map(|fact| fact.flex(1.0)).collect();
+            let parts = vec![headline(t!("common-replay-highlights"), half, COAL, CREAM).centered_x(), Element::row(moments).gap(16.0)];
+            (COAL, Element::column(parts).gap(24.0).padding(WIDE_GAP / 2.0))
+        }
+        Step::Tops => {
+            let picture = tops_picture(state, summary, (room * 0.7).min(half * 0.8), palette).centered_x();
+            let behind = vec![corner(rings(room * 0.8, 4, room / 20.0, YELLOW, None), true, true, Point::new(-room * 0.4, -room * 0.2))];
+            (CREAM, card(CREAM, behind, halves(picture, tops_details(summary, half)), at))
+        }
+    }
+}
+
+/// Between the halves of a wide step, and round them.
+const WIDE_GAP: f32 = 48.0;
 
 /// The story's first words, as Wrapped's: that it was all heard, and over which stretch.
 fn intro(state: &State, width: f32) -> Element {

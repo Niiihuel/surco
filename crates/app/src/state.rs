@@ -1672,6 +1672,15 @@ impl State {
             || self.replay_story.is_some()
     }
 
+    /// The covers Replay shows over the stretch chosen: the songs, the artists and the one on repeat.
+    fn replay_covers(&mut self) -> Vec<Command> {
+        let summary = self.replay();
+        let urls: Vec<Option<String>> = summary.top_songs.iter().chain(&summary.top_artists).map(|ranked| ranked.track.artwork_url.clone())
+            .chain(summary.on_repeat.map(|(track, _)| track.artwork_url))
+            .collect();
+        cover_requests(&mut self.covers, &urls)
+    }
+
     /// A story's step goes on to the next once it has been on screen its while; the last stays.
     pub fn story_tick(&mut self, now: Instant) {
         let Some((step, since)) = self.replay_story else { return };
@@ -2821,11 +2830,11 @@ impl State {
             }
             "replay" => {
                 if self.page != Page::Replay { self.go(Page::Replay); }
-                Vec::new()
+                self.replay_covers()
             }
             "replay-story" => {
                 if !self.replay().story().is_empty() { self.replay_story = Some((0, Instant::now())); }
-                Vec::new()
+                self.replay_covers()
             }
             // Past the last step the story ends; before the first it starts that one again.
             "story-next" => {
@@ -2837,13 +2846,13 @@ impl State {
                 self.replay_story = self.replay_story.map(|(step, _)| (step.saturating_sub(1), Instant::now()));
                 Vec::new()
             }
-            "story-close" => {
+            "story-close" | "story-close:outside" => {
                 self.replay_story = None;
                 Vec::new()
             }
             _ if id.starts_with("replay-period:") => {
                 if let Some(period) = crate::replay::Period::from_slug(&id["replay-period:".len()..]) { self.replay_period = period; }
-                Vec::new()
+                self.replay_covers()
             }
             // The songs heard most play as a list, from the one chosen.
             _ if id.starts_with("replay-song:") => {
@@ -4110,8 +4119,10 @@ mod tests {
             crate::replay::Play { track: track("b"), at: now - 30, seconds: 100 },
             crate::replay::Play { track: track("a"), at: now - 10, seconds: 200 },
         ];
-        click(&mut state, "replay");
+        let covers = state.update(&limn::UiAction::Clicked { id: "replay".into() });
         assert_eq!(state.page, Page::Replay);
+        // Its covers are fetched as it opens, as any page's are.
+        assert!(covers.iter().any(|command| matches!(command, Command::FetchArtwork(_))), "{covers:?}");
         assert_eq!(state.replay().top_songs[0].track.id, "a");
         assert_eq!(click(&mut state, "replay-song:0"), vec![Command::PlayList { tracks: vec![track("a"), track("b")], index: 0 }]);
         click(&mut state, "replay-period:all");

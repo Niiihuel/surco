@@ -184,6 +184,11 @@ common-replay-intro =
     You listened.
     We counted.
 common-replay-everyone-else = Everyone else
+common-replay-highlights = Highlights
+common-replay-busiest-title = Your busiest day
+common-replay-busiest-line = { $minutes } min, in { $year }.
+common-replay-on-repeat-title = On repeat
+common-replay-on-repeat-line = { $times } times in one day.
 common-replay-top-songs = What you played most
 common-replay-top-artists = Your artists
 common-replay-when = When you listen
@@ -192,8 +197,6 @@ common-replay-morning = Early bird: you start the day with a soundtrack.
 common-replay-day = Your music keeps you company all day.
 common-replay-evening = Evenings are when you press play.
 common-replay-streak = days in a row with music
-common-replay-busiest = Your busiest day · { $minutes } min
-common-replay-on-repeat = On repeat · { $times } times in one day
 common-replay-days = { $count ->
     [one] { $count } day
    *[other] { $count } days
