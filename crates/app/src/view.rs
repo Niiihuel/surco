@@ -317,7 +317,10 @@ pub fn view(state: &State, window: Size) -> Element {
     let peek = window.width >= PANEL_FROM && right_slide == 0.0;
     // The side panels give way before the content does.
     let right_whole = state.right_width.min(window.width - 4.0 * GAP - RAIL_WIDTH - CONTENT_MIN_WIDTH);
-    let right = right_whole * right_slide;
+    // Shutting, it narrows to the room the strip that peeks takes, so nothing moves when the
+    // strip takes its place; opening, it grows out of it.
+    let shut = PEEK_WIDTH - GAP;
+    let right = if right_slide > 0.0 { shut + (right_whole - shut) * right_slide } else { 0.0 };
     let left_whole = state.left_width.min(window.width - 4.0 * GAP - right - CONTENT_MIN_WIDTH).max(RAIL_WIDTH);
     let left = RAIL_WIDTH + (left_whole - RAIL_WIDTH) * unfold;
     // Only a panel at rest can be resized; a folded library is dragged open from its edge.
@@ -325,8 +328,12 @@ pub fn view(state: &State, window: Size) -> Element {
 
     let mut columns = vec![gap()];
     let mut content = window.width - 2.0 * GAP - left - GAP;
-    let library = if unfold > 0.0 {
+    // Folding, it is the rail from the first frame, as Spotify's, while its width closes on it:
+    // the whole library cut down to a rail's width and then swapped for one flickers.
+    let library = if unfold > 0.0 && state.library_open {
         sliding(library(state, false, left_whole, palette), left_whole, left)
+    } else if unfold > 0.0 {
+        sliding(library(state, true, RAIL_WIDTH, palette), RAIL_WIDTH, left)
     } else {
         surface(library(state, true, RAIL_WIDTH, palette)).size(Some(RAIL_WIDTH), None).clip_children()
     };
@@ -4437,6 +4444,24 @@ mod tests {
             let twice: Vec<&String> = found.iter().filter(|id| !seen.insert(*id)).collect();
             assert!(twice.is_empty(), "at {width}, more than one control answers to {twice:?}");
         }
+    }
+
+    #[test]
+    fn a_right_panel_almost_shut_takes_the_room_of_the_strip_that_peeks() {
+        let size = Size::new(1400.0, 900.0);
+        let album = Album { id: "lp".into(), title: "Album".into(), artist: "Artist".into(), artist_id: None, year: "2017".into(), artwork_url: None, tracks: vec![track("one")] };
+        let mut state = State::default();
+        state.page = Page::Album(album);
+        let edge = |state: &State| {
+            let frame = UiTree::new(view(state, size)).layout(size);
+            let page = frame.regions.iter().find(|region| region.id == "album").unwrap().rect;
+            page.x + page.width
+        };
+        state.restore_sides(true, false);
+        let shut = edge(&state);
+        // A breath from shut: the page stands where it will once the strip is there.
+        state.panel_slide = limn::ScalarTransition::new(0.001, std::time::Instant::now());
+        assert!((edge(&state) - shut).abs() < 1.0, "{} against {shut}", edge(&state));
     }
 
     #[test]
