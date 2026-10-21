@@ -319,6 +319,20 @@ const PAGE_TITLE: f32 = 26.0;
 const HERO_TITLE: f32 = 48.0;
 
 pub fn view(state: &State, window: Size) -> Element {
+    let tree = window_view(state, window);
+    // Bringing one's data stands over everything until it is in.
+    if !state.handoff.as_ref().is_some_and(|handoff| handoff.fetching) { return tree; }
+    let palette = SCHEME.palette();
+    let splash = Element::column(vec![
+        Spinner::new("handoff-bringing", palette.text).size(40.0).render().centered_x(),
+        Text::new(t!("desktop-handoff-bringing"), palette).font_size(22.0).render().font_family(FontFamily::SansBold).center_content(),
+        Text::new(t!("desktop-handoff-bringing-detail"), palette).muted().render().center_content(),
+    ]).gap(14.0).size(Some((window.width - 48.0).clamp(240.0, 420.0)), None)
+        .accessible(limn::Access::new(limn::Role::Dialog).id("handoff-bringing:dialog").name(t!("desktop-handoff-bringing")));
+    Element::popover(tree, splash, "handoff-bringing-wait", PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 235))
+}
+
+fn window_view(state: &State, window: Size) -> Element {
     // The first run's steps take the whole window; an account brought in comes over them, and
     // a version that has to be taken over anything.
     if let Some(steps) = &state.onboarding {
@@ -562,13 +576,20 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
         ]);
     } else {
-        let field = TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Regular).render().flex(1.0);
-        let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
         body.push(Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render());
         if cfg!(target_os = "ios") || state.mobile {
-            body.push(Button::new("handoff-scan", t!("common-scan-code"), palette).icon(Icon::Custom(include_str!("../assets/icons/scan-qr.svg"))).size(ControlSize::Regular).round().render());
+            // A phone's: the camera first, then the code, each the width of the sheet and a
+            // finger tall, with room between them.
+            let tall = limn::ButtonSizing { height: 52.0, ..ControlSize::Spacious.button_sizing() };
+            body.push(Button::new("handoff-scan", t!("common-scan-code"), palette).icon(Icon::Custom(include_str!("../assets/icons/scan-qr.svg"))).sizing(tall).round().render().size(None, Some(52.0)));
+            body.push(Text::new(t!("desktop-handoff-or-type"), palette).role(TextRole::Caption).muted().render().center_content());
+            body.push(TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Spacious).render().size(None, Some(52.0)));
+            body.push(Button::new("handoff-fetch", t!("desktop-handoff-take"), palette).variant(ButtonVariant::Outline).sizing(tall).round().enabled(!handoff.fetching && !handoff.address.trim().is_empty()).render().size(None, Some(52.0)));
+        } else {
+            let field = TextField::new("handoff-address", &handoff.address, HANDOFF_PLACEHOLDER, palette).size(ControlSize::Regular).render().flex(1.0);
+            let look = Button::new("handoff-fetch", t!("desktop-handoff-look"), palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).enabled(!handoff.fetching).render();
+            body.push(Element::row(vec![field, look]).gap(8.0));
         }
-        body.push(Element::row(vec![field, look]).gap(8.0));
         if handoff.fetching {
             body.push(Element::row(vec![Spinner::new("handoff-fetching", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-fetching"), palette).muted().render()]).gap(8.0));
         }
@@ -577,9 +598,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             Some(Ok(bundle)) => {
                 let mut rows = vec![Text::new(t!("desktop-handoff-came"), palette).muted().render()];
                 rows.extend(came(bundle, handoff.parts));
-                let mode = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
-                rows.push(segments("handoff-mode", form, vec![mode("handoff-mode:add", &t!("desktop-handoff-add"), !handoff.replace), mode("handoff-mode:replace", &t!("desktop-handoff-replace"), handoff.replace)]));
-                rows.push(Text::new(if handoff.replace { t!("desktop-handoff-replace-detail") } else { t!("desktop-handoff-add-detail") }, palette).role(TextRole::Caption).muted().render());
+                rows.push(Text::new(t!("desktop-handoff-replace-detail"), palette).role(TextRole::Caption).muted().render());
                 body.extend(rows);
                 confirm = Some(Button::new("handoff-take", t!("desktop-handoff-take"), palette).size(ControlSize::Regular).round().render());
             }
@@ -596,8 +615,8 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     };
     if state.mobile {
         return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
-            .max_height(640.0)
-            .body(Element::column(body).gap(10.0))
+            .max_height(820.0)
+            .body(Element::column(body).gap(16.0))
             .footer(footer)
             .render();
     }
@@ -895,7 +914,7 @@ pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) ->
         }
         Element::stack(layers).size(Some(side), Some(art))
     };
-    Card { art: Some(art), go: Some(("welcome-import", t!("common-welcome-import"), true)), colors: VIOLET_CARD, widest: 380.0,
+    Card { art: Some(art), go: Some(("welcome-import", t!("common-welcome-import"), true)), colors: VIOLET_CARD, widest: 380.0, inset_art: false,
         ..Card::new("welcome", t!("common-welcome-title"), t!("common-welcome-detail"), ("welcome-close", t!("common-close"))) }
         .render(window_tree, width)
 }
@@ -922,6 +941,8 @@ struct Card {
     id: &'static str,
     focus: Option<&'static str>,
     returns: Option<&'static str>,
+    /// Whether its picture stands inside the card's padding, rounded, rather than edge to edge.
+    inset_art: bool,
 }
 
 /// A card's colour, its words' and its button's.
@@ -943,7 +964,7 @@ const CARD_BODY_MOST: f32 = 440.0;
 
 impl Card {
     fn new(id: &'static str, title: impl Into<std::borrow::Cow<'static, str>>, about: impl Into<std::borrow::Cow<'static, str>>, way_out: (&'static str, std::borrow::Cow<'static, str>)) -> Self {
-        Self { title: title.into(), about: about.into(), way_out, dismiss: None, art: None, body: None, go: None, colors: GREY_CARD, widest: 420.0, id, focus: None, returns: None }
+        Self { title: title.into(), about: about.into(), way_out, dismiss: None, art: None, body: None, go: None, colors: GREY_CARD, widest: 420.0, id, focus: None, returns: None, inset_art: true }
     }
 
     /// How wide a card that stands at most `widest` is in a window `width` wide.
@@ -985,13 +1006,29 @@ impl Card {
             copy.extend([Element::spacer().size(None, Some(8.0)), go.centered_x()]);
         }
         let mut parts = Vec::new();
-        // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
-        parts.extend(self.art.map(|art| art.corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children()));
+        parts.extend(self.art.map(|art| if self.inset_art {
+            // In the card's grey all round, its corners its own.
+            let gap = |width: f32, height: f32| Element::spacer().size(Some(width), Some(height));
+            Element::column(vec![gap(0.0, CARD_PAD), Element::row(vec![gap(CARD_PAD, 0.0), art.radius(12.0).clip_children(), gap(CARD_PAD, 0.0)])])
+        } else {
+            // Edge to edge, it keeps the card's top corners, which it would otherwise cover.
+            art.corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children()
+        }));
         parts.push(Element::column(copy).gap(12.0).padding(CARD_PAD));
         let card = Element::panel(Element::column(parts)).background(self.colors.surface).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
         let (close_id, close_words) = self.way_out;
-        let close = Element::clickable(close_id, Element::text(close_words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
-            .accessible(limn::Access::new(limn::Role::Button).name(close_words)).size(Some(side), Some(48.0));
+        // The way out, a pill of its own size that turns white under the pointer, as the button
+        // above it is.
+        let words = |ink: Color| Element::row(vec![
+            Element::spacer().size(Some(22.0), None),
+            Element::text(close_words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(ink).centered_y(),
+            Element::spacer().size(Some(22.0), None),
+        ]);
+        let pill = |fill: Color, ink: Color| Element::panel(words(ink)).background(fill).radius(22.0).size(None, Some(44.0));
+        let close = Element::clickable(close_id, Element::stack(vec![
+            pill(Color::rgba(0, 0, 0, 0), Color::WHITE).conceal_on_hover(format!("{close_id}:rest")),
+            pill(Color::WHITE, Color::rgb(0, 0, 0)).reveal_on_hover(format!("{close_id}:over")),
+        ])).hover_region().accessible(limn::Access::new(limn::Role::Button).name(close_words)).centered_x();
         // As wide as the card, so the window centres it.
         let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
             .accessible(limn::Access::new(limn::Role::Dialog).id(format!("{}:dialog", self.id)).name(named));
@@ -1015,7 +1052,7 @@ fn release_art(state: &State, release: &Release, side: f32) -> Element {
 /// that has to be taken is said by its dialog.
 fn update_offer(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory && !state.dialog_open()) else { return window_tree };
-    Card { art: Some(release_art(state, release, Card::side(width, 380.0))), go: Some(("update-toast", t!("desktop-update-see"), true)), widest: 380.0,
+    Card { art: Some(release_art(state, release, Card::inner(width, 380.0))), go: Some(("update-toast", t!("desktop-update-see"), true)), widest: 380.0,
         ..Card::new("update", t!("desktop-update-toast", version = release.version.as_str()), t!("desktop-update-toast-detail"), ("update-toast-close", t!("common-close"))) }
         .render(window_tree, width)
 }
@@ -1086,8 +1123,16 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
     }
     head.extend(action);
     parts.insert(0, Element::row(head).gap(12.0));
-    parts.extend(release_notes(state, &release.notes, (width - 32.0).min(NOTES_WIDTH), palette));
+    parts.extend(notes_column(state, &release.notes, width, palette));
     Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(palette.surface).radius(RadiusRole::Panel.px())
+}
+
+/// What a release says of itself, in a card `width` wide: a column as wide as reads well, in
+/// the middle of it.
+fn notes_column(state: &State, notes: &[Note], width: f32, palette: ComponentPalette) -> Option<Element> {
+    let wide = (width - 32.0).min(NOTES_WIDTH);
+    let notes = release_notes(state, notes, wide, palette);
+    (!notes.is_empty()).then(|| Element::column(notes).gap(12.0).size(Some(wide), None).centered_x())
 }
 
 /// The widest what a release says of itself is set: a line longer than this is hard to read.
@@ -1144,7 +1189,6 @@ fn patches_page(state: &State, width: f32, palette: ComponentPalette) -> Element
         Some(Ok(patches)) => patches,
     };
     let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let notes = (width - 24.0 - 32.0).min(NOTES_WIDTH);
     let mut sections = vec![title];
     for patch in patches {
         let mut about = match patch.date.splitn(3, '-').collect::<Vec<_>>()[..] {
@@ -1158,7 +1202,7 @@ fn patches_page(state: &State, width: f32, palette: ComponentPalette) -> Element
             Text::new(format!("Surco {}", patch.version), raised).font_size(20.0).render(),
             Text::new(about, raised).muted().render(),
         ]).gap(2.0)];
-        parts.extend(release_notes(state, &patch.notes, notes, raised));
+        parts.extend(notes_column(state, &patch.notes, width - 24.0, raised));
         sections.push(Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(raised.surface).radius(RadiusRole::Panel.px()));
     }
     page_scroll("patches", Element::column(sections).gap(16.0).padding(12.0))
@@ -1182,7 +1226,7 @@ fn update_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         _ => None,
     };
     // Escape and a click beside it do nothing: it has to be taken.
-    Card { art: Some(release_art(state, release, Card::side(width, 380.0))), body, go: Some((go_id, action, go_id != "update-wait")), dismiss: Some("update-wait"), widest: 380.0,
+    Card { art: Some(release_art(state, release, Card::inner(width, 380.0))), body, go: Some((go_id, action, go_id != "update-wait")), dismiss: Some("update-wait"), widest: 380.0,
         ..Card::new("update-mandatory", t!("desktop-update-mandatory"), about, ("update-page", t!("desktop-see-release"))) }
         .render(window_tree, width)
 }
@@ -1202,8 +1246,7 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if let Some(release) = &state.update {
         let raised = ComponentPalette { surface: CHOSEN, ..palette };
         // As wide as its notes read well, so its button stays beside its words.
-        let wide = (width - 24.0).min(NOTES_WIDTH + 32.0);
-        sections.push(Element::row(vec![update_card(state, release, wide, raised).size(Some(wide), None), Element::spacer().flex(1.0)]));
+        sections.push(update_card(state, release, width - 24.0, raised));
     }
     sections.push(Element::row(vec![Button::new("patches", t!("common-patches"), palette).variant(ButtonVariant::Secondary).size(ControlSize::Compact).render()]));
     let row = |(index, (release, _)): (usize, &(AlbumRef, bool))| {

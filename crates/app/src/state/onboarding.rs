@@ -79,13 +79,11 @@ impl State {
                 Vec::new()
             }
             // The account comes from the other device, as the dialog that moves it reads it,
-            // here a step of its own; it takes the place of what is here only when nothing is,
-            // since an older version's music may be.
+            // here a step of its own; what comes takes the place of what is here, as bringing
+            // one's data is meant to.
             "onboarding-bring" => {
                 onboarding.step = Step::Bring;
-                let collection = &self.collection;
-                let empty = collection.kept.is_empty() && collection.playlists.is_empty() && collection.liked.is_empty() && collection.heard.is_empty();
-                self.handoff = Some(Handoff { receiving: true, replace: empty, ..Handoff::default() });
+                self.handoff = Some(Handoff { receiving: true, ..Handoff::default() });
                 self.focus = Some("handoff-address".to_owned());
                 Vec::new()
             }
@@ -289,13 +287,11 @@ mod tests {
     }
 
     #[test]
-    fn music_from_a_version_before_the_steps_does_not_skip_them_nor_is_replaced() {
+    fn music_from_a_version_before_the_steps_does_not_skip_them() {
         let mut state = State::default();
         state.collection.heard = vec![Track { id: "a".into(), title: "A".into(), artist: "Ana".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 }];
         assert!(state.first_run(), "heard before, but never named nor through the steps");
         state.begin_onboarding(false);
-        click(&mut state, "onboarding-bring");
-        assert!(!state.handoff.as_ref().unwrap().replace, "what is here is joined, not lost");
         state.profile.name = "Nihuel".into();
         assert!(!state.first_run());
     }
@@ -306,7 +302,7 @@ mod tests {
         state.begin_onboarding(false);
         click(&mut state, "onboarding-bring");
         assert_eq!(state.onboarding.as_ref().unwrap().step, Step::Bring);
-        assert!(state.handoff.as_ref().is_some_and(|handoff| handoff.receiving && handoff.replace), "nothing here to join");
+        assert!(state.handoff.as_ref().is_some_and(|handoff| handoff.receiving));
         assert_eq!(click(&mut state, "handoff-scan"), vec![Command::ScanCode], "a phone reads the code with its camera");
         click(&mut state, "onboarding-back");
         assert!(state.handoff.is_none() && state.onboarding.as_ref().unwrap().step == Step::Welcome, "back where it started");

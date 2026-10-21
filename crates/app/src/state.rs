@@ -461,8 +461,14 @@ pub struct Handoff {
     pub fetching: bool,
     /// What came from the other device, or why nothing did.
     pub fetched: Option<Result<Bundle, String>>,
-    /// Whether what comes takes the place of what is here rather than joining it.
-    pub replace: bool,
+}
+
+/// A code as it is typed, shown as it is read: in capitals, in fours with dashes between, as
+/// far as it goes. An address or a link pasted as an earlier version showed them stays as it is.
+pub fn shaped_code(typed: &str, most: usize) -> String {
+    if typed.contains([':', '/', '.']) { return typed.to_owned(); }
+    let code: Vec<char> = typed.chars().filter(char::is_ascii_alphanumeric).map(|c| c.to_ascii_uppercase()).take(most).collect();
+    code.chunks(4).map(|chunk| chunk.iter().collect::<String>()).collect::<Vec<_>>().join("-")
 }
 
 /// An app a list is brought in from.
@@ -1541,31 +1547,19 @@ impl State {
         }
     }
 
-    /// Joins an account from another device to this one: each part chosen is added to what
-    /// is here, or takes its place when `replace`. The profile, the settings and the equaliser
-    /// take the place of these.
-    fn take_in(&mut self, bundle: Bundle, parts: Parts, replace: bool) -> Vec<Command> {
+    /// Takes an account from another device in: each part chosen takes the place of what is
+    /// here, as bringing one's data is meant to; what was not chosen stays as it was.
+    fn take_in(&mut self, bundle: Bundle, parts: Parts) -> Vec<Command> {
         let collection = &mut self.collection;
         if parts.playlists {
-            if replace { collection.playlists.clear(); }
+            collection.playlists.clear();
             // Each goes first: from the last, they keep their order.
             bundle.playlists.into_iter().rev().for_each(|playlist| collection.adopt(playlist));
         }
-        if parts.liked {
-            if replace { collection.liked.clear(); }
-            for track in bundle.liked {
-                if !collection.liked.iter().any(|held| held.id == track.id) { collection.liked.push(track); }
-            }
-        }
-        if parts.library {
-            if replace { collection.kept.clear(); }
-            for entry in bundle.kept {
-                if !collection.keeps(&entry) { collection.kept.push(entry); }
-            }
-        }
+        if parts.liked { collection.liked = bundle.liked; }
+        if parts.library { collection.kept = bundle.kept; }
         if parts.history {
-            if replace { collection.heard.clear(); }
-            collection.heard.extend(bundle.heard);
+            collection.heard = bundle.heard;
             collection.heard.truncate(HEARD_KEPT);
         }
         let mut commands = Vec::new();
@@ -1587,7 +1581,7 @@ impl State {
     /// reads hands it over, and asks for it.
     #[cfg(any(target_os = "ios", test))]
     pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
-        self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), replace: self.onboarding.is_some(), ..Handoff::default() });
+        self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
         // On the first run it is the step that brings an account.
         if let Some(onboarding) = self.onboarding.as_mut() { onboarding.step = onboarding::Step::Bring; }
         self.click("handoff-fetch")
@@ -2022,7 +2016,7 @@ impl State {
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "room-code" || id == "room-chat" => {
-                if id == "room-code" { self.room_code = value.clone(); } else { self.room_chat = value.clone(); }
+                if id == "room-code" { self.room_code = shaped_code(value, 12); } else { self.room_chat = value.clone(); }
                 Vec::new()
             }
             UiAction::Submitted { id, .. } if id == "room-chat" => self.click("room-send"),
@@ -2041,7 +2035,7 @@ impl State {
                 Vec::new()
             }
             UiAction::InputChanged { id, value } if id == "handoff-address" => {
-                if let Some(handoff) = self.handoff.as_mut() { handoff.address = value.clone(); }
+                if let Some(handoff) = self.handoff.as_mut() { handoff.address = shaped_code(value, 12); }
                 Vec::new()
             }
             UiAction::Submitted { id, .. } if id == "handoff-address" => self.click("handoff-fetch"),
@@ -2643,10 +2637,6 @@ impl State {
                 let parts = handoff.parts;
                 vec![Command::Serve(self.bundle(parts))]
             }
-            "handoff-mode:add" | "handoff-mode:replace" => {
-                if let Some(handoff) = self.handoff.as_mut() { handoff.replace = id == "handoff-mode:replace"; }
-                Vec::new()
-            }
             "handoff-scan" => vec![Command::ScanCode],
             "handoff-copy" => {
                 self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.code.clone());
@@ -2670,7 +2660,7 @@ impl State {
                 let Some(handoff) = self.handoff.take() else { return Vec::new() };
                 match handoff.fetched {
                     Some(Ok(bundle)) => {
-                        let commands = self.take_in(bundle, handoff.parts, handoff.replace);
+                        let commands = self.take_in(bundle, handoff.parts);
                         // An account brought in on the first run is the end of its steps.
                         if self.onboarding.is_some() { self.end_first_run(); }
                         commands
@@ -4061,7 +4051,7 @@ mod tests {
         let mut state = State::default();
         assert!(click(&mut state, "room-join").is_empty() && state.room_error.is_some(), "no code, no room");
         state.update(&UiAction::InputChanged { id: "room-code".into(), value: "k7qx m2pa 9dte".into() });
-        assert!(matches!(click(&mut state, "room-join").as_slice(), [Command::RoomJoin { code, .. }] if code == "k7qx m2pa 9dte"));
+        assert!(matches!(click(&mut state, "room-join").as_slice(), [Command::RoomJoin { code, .. }] if code == "K7QX-M2PA-9DTE"), "shaped as it was typed");
         state.apply(Event::Room(Some(RoomView { code: "K7QX-M2PA-9DTE".into(), phase: Phase::Live, ..RoomView::default() })));
         let ask = |action: &str, track: Option<Track>| Command::RoomOrder(Order::Ask { action: action.into(), pos: 0, track });
         assert_eq!(state.update(&UiAction::Clicked { id: "next".into() }), Vec::<Command>::new(), "the room keeps its place");
@@ -4357,7 +4347,7 @@ mod tests {
     }
 
     #[test]
-    fn an_account_from_another_device_joins_this_one_or_takes_its_place() {
+    fn an_account_from_another_device_takes_the_place_of_what_is_here_in_each_part_chosen() {
         let list = |id: u64, name: &str, tracks: Vec<Track>| Playlist { id, name: name.into(), collaborative: false, picture: None, tracks };
         let mut there = State::default();
         there.profile.name = "Nihuel".into();
@@ -4369,21 +4359,31 @@ mod tests {
 
         let mut here = State::default();
         here.collection.playlists = vec![list(1, "Mía", vec![track("z")]), list(9, "Viaje", vec![track("a")])];
-        here.collection.liked = vec![track("c")];
-        let commands = here.take_in(bundle.clone(), Parts::default(), false);
+        here.collection.liked = vec![track("z")];
+        here.collection.heard = vec![track("h")];
+        let commands = here.take_in(bundle.clone(), Parts::default());
         let names: Vec<&str> = here.collection.playlists.iter().map(|playlist| playlist.name.as_str()).collect();
-        assert_eq!(names, ["Noche", "Mía", "Viaje"], "a list already here is not taken twice, and another keeps its order");
-        let ids: HashSet<u64> = here.collection.playlists.iter().map(|playlist| playlist.id).collect();
-        assert_eq!(ids.len(), 3, "a list that came takes an id of this device's");
-        assert_eq!(here.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["c", "a"]);
+        assert_eq!(names, ["Viaje", "Noche"], "what came, in its order, and nothing of what was here");
+        assert_eq!(here.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
+        assert_eq!(here.collection.heard, vec![track("h")], "what was not chosen stays");
         assert_eq!(here.profile.name, "Nihuel");
         assert!(!here.settings.autoplay && commands.contains(&Command::Autoplay(false)), "the settings take their place and reach the player");
 
-        let mut replaced = State::default();
-        replaced.collection.liked = vec![track("z")];
-        replaced.take_in(bundle, Parts { liked: true, ..Parts { profile: false, playlists: false, liked: false, library: false, history: false, settings: false, equalizer: false } }, true);
-        assert_eq!(replaced.collection.liked.iter().map(|track| track.id.as_str()).collect::<Vec<_>>(), ["a", "c"]);
-        assert!(replaced.profile.name.is_empty() && replaced.collection.playlists.is_empty(), "only what was chosen");
+        let mut only = State::default();
+        only.collection.playlists = vec![list(1, "Mía", Vec::new())];
+        only.take_in(bundle, Parts { liked: true, ..Parts { profile: false, playlists: false, liked: false, library: false, history: false, settings: false, equalizer: false } });
+        assert_eq!(only.collection.liked.len(), 2);
+        assert!(only.profile.name.is_empty() && only.collection.playlists.len() == 1, "only what was chosen");
+    }
+
+    #[test]
+    fn a_code_is_shown_in_capitals_and_fours_as_it_is_typed() {
+        assert_eq!(shaped_code("r2m0", 12), "R2M0");
+        assert_eq!(shaped_code("r2m03", 12), "R2M0-3");
+        assert_eq!(shaped_code("R2M0-3S8X-NJ2C", 12), "R2M0-3S8X-NJ2C");
+        assert_eq!(shaped_code("r2 m0 3s8x nj2c extra", 12), "R2M0-3S8X-NJ2C", "no more than a code holds");
+        assert_eq!(shaped_code("R2M0-", 12), "R2M0", "a dash deleted is not put back alone");
+        assert_eq!(shaped_code("192.168.1.20:48213/abc", 12), "192.168.1.20:48213/abc", "an address an earlier version showed");
     }
 
     #[test]

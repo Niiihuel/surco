@@ -654,6 +654,14 @@ impl eframe::App for Host {
             self.tree.set_input_value(search_field(&self.state), self.state.query.clone());
             acted = true;
         }
+        // A code is shown as it is read, in capitals and fours, as it is typed.
+        let codes = [("handoff-address", self.state.handoff.as_ref().map(|handoff| handoff.address.clone())), ("room-code", Some(self.state.room_code.clone()))];
+        for (field, shaped) in codes {
+            if let Some(shaped) = shaped.filter(|shaped| self.tree.input_value(field).is_some_and(|shown| shown != *shaped)) {
+                self.tree.set_input_value(field, shaped);
+                acted = true;
+            }
+        }
         // The recent searches drop down from the field while it holds the keyboard, and stay
         // while one of them does: a press on a row takes the keyboard before its click lands.
         let focused = !self.state.mobile && self.tree.focused_id().is_some_and(state::keeps_recent_searches);
