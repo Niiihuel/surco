@@ -3,7 +3,7 @@
 ## Updates
 desktop-update-toast = Surco { $version } está disponible
 desktop-update-toast-detail = Mirá qué trae y actualizá cuando quieras.
-desktop-update-see = VER NOVEDADES
+desktop-update-see = Ver novedades
 desktop-update-current = Surco { $version } · tenés la { $current }
 desktop-update-available = Actualización disponible
 desktop-update = Actualizar

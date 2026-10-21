@@ -199,7 +199,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = share_dialog(state, tree, window.width, palette);
     let tree = super::profile_dialog(state, super::handoff_dialog(state, playlist_dialog(state, tree, window.width, palette), window.width), window.width);
     let tree = missed_dialog(state, import_dialog(state, tree, window.width, palette), window.width, palette);
-    confirm_dialog(state, tree, palette)
+    confirm_dialog(state, tree, window.width, palette)
 }
 
 /// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.

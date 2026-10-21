@@ -11,7 +11,7 @@ pub(crate) use mobile::{large_title as mobile_large_title, search_header_height 
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    Alert, AlertDialog, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
+    Alert, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
@@ -286,16 +286,21 @@ const PAGE_TITLE: f32 = 26.0;
 const HERO_TITLE: f32 = 48.0;
 
 pub fn view(state: &State, window: Size) -> Element {
-    // The first run's steps take the whole window; an account brought in comes over them.
+    // The first run's steps take the whole window; an account brought in comes over them, and
+    // a version that has to be taken over anything.
     if let Some(steps) = &state.onboarding {
-        return handoff_dialog(state, onboarding::view(state, steps, window), window.width);
+        let steps = onboarding::view(state, steps, window);
+        if state.update.as_ref().is_some_and(|release| release.mandatory) {
+            return update_dialog(state, steps, window.width);
+        }
+        return handoff_dialog(state, steps, window.width);
     }
     if state.mobile {
         return mobile::view(state, window);
     }
     let palette = SCHEME.palette();
     if state.cinema {
-        return update_dialog(state, cinema(state, window, palette), palette);
+        return update_dialog(state, cinema(state, window, palette), window.width);
     }
     let surface = |element: Element| Element::panel(element).background(SCHEME.canvas).radius(PANEL_RADIUS);
     let gap = || Element::spacer().size(Some(GAP), None);
@@ -353,10 +358,14 @@ pub fn view(state: &State, window: Size) -> Element {
     let window_tree = Element::panel(Element::column(vec![top_bar(state, window.width, palette), Element::row(columns).flex(1.0), player(state, window.width, palette)]))
         .background(CANVAS)
         .size(Some(window.width), Some(window.height));
+    // One that has to be taken stands alone: nothing else is offered behind it.
+    if state.update.as_ref().is_some_and(|release| release.mandatory) {
+        return update_dialog(state, window_tree, window.width);
+    }
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
     let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
-    update_dialog(state, confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), palette), palette)
+    confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette)
 }
 
 /// How a form's field reads in a dialog: its label a step up, its hint under the control.
@@ -418,10 +427,8 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .return_focus("playlist-new")
         .render();
     }
-    let palette = dialog_palette();
-    let dialog = Modal::fit_width(width, 440.0).max(240.0);
-    // This dialog is short enough never to scroll: its form reaches both paddings.
-    let form = Modal::fitted_body_width(dialog);
+    let palette = Card::palette(GREY_CARD);
+    let form = Card::inner(width, 440.0);
     let name = TextField::new("playlist-name", &draft.name, state.collection.default_name(), palette).size(ControlSize::Regular).render();
     let kind = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let kinds = segments(
@@ -439,15 +446,9 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
     if let Some(track) = &draft.first {
         fields.push(Text::new(t!("desktop-playlist-starts-with", title = track.title.as_str()), palette).role(TextRole::Caption).muted().truncate().render());
     }
-    let cancel = Button::new("playlist-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
-    let create = Button::new("playlist-create", t!("desktop-create"), palette).size(ControlSize::Regular).round().render();
-    Modal::new(window_tree, true, t!("desktop-new-playlist"), t!("desktop-new-playlist-detail"), "playlist-cancel", palette)
-        .width(dialog)
-        .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, create))
-        .initial_focus("playlist-name")
-        .return_focus("playlist-new")
-        .render()
+    Card { body: Some(Element::column(fields).gap(8.0)), go: Some(("playlist-create", t!("desktop-create"), true)), widest: 440.0, focus: Some("playlist-name"), returns: Some("playlist-new"),
+        ..Card::new("playlist", t!("desktop-new-playlist"), t!("desktop-new-playlist-detail"), ("playlist-cancel", t!("common-cancel"))) }
+        .render(window_tree, width)
 }
 
 /// Taking the account to another device on the same network, as Spotify's devices dialog
@@ -461,8 +462,7 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     if state.onboarding.as_ref().is_some_and(|steps| steps.step == crate::state::onboarding::Step::Bring) { return window_tree; }
     let palette = dialog_palette();
     let _dense = (!state.mobile).then(mobile::settings::Dense::on);
-    let dialog = Modal::fit_width(width, 560.0).max(280.0);
-    let form = Modal::fitted_body_width(dialog);
+    let form = if state.mobile { Modal::fitted_body_width(Modal::fit_width(width, 560.0).max(280.0)) } else { Card::inner(width, HANDOFF_WIDEST) };
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     let mut body = vec![tabs];
@@ -550,13 +550,14 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             .footer(footer)
             .render();
     }
-    Modal::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
-        .width(dialog)
-        .body(ScrollArea::new("handoff", Element::column(body).gap(10.0)).render())
-        .footer(footer)
-        .return_focus("account")
-        .render()
+    let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
+    Card { body: Some(Element::column(body).gap(10.0)), go: take.then(|| ("handoff-take", t!("desktop-handoff-take"), true)), widest: HANDOFF_WIDEST, returns: Some("account"),
+        ..Card::new("handoff", t!("desktop-handoff"), t!("desktop-handoff-detail"), ("handoff-close", t!("common-close"))) }
+        .render(window_tree, width)
 }
+
+/// The widest the card to move an account stands: room for its QR beside its code.
+const HANDOFF_WIDEST: f32 = 600.0;
 
 /// What came from another device, a switch a part: whether it is taken in.
 pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts) -> Vec<Element> {
@@ -580,7 +581,7 @@ pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX-XXXX";
 /// Changing the account's name.
 fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(draft) = &state.profile_draft else { return window_tree };
-    let palette = dialog_palette();
+    let palette = if state.mobile { dialog_palette() } else { Card::palette(GREY_CARD) };
     let name = TextField::new("profile-name", draft, "Surco", palette).size(ControlSize::Regular).render();
     let cancel = Button::new("profile-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
     let save = Button::new("profile-save", t!("desktop-save"), palette).size(ControlSize::Regular).round().render();
@@ -599,13 +600,9 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             .initial_focus("profile-name")
             .render();
     }
-    Modal::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
-        .width(Modal::fit_width(width, 480.0).max(240.0))
-        .body(Element::row(vec![face, fields]).gap(16.0))
-        .footer(dialog_footer(cancel, save))
-        .initial_focus("profile-name")
-        .return_focus("profile-edit")
-        .render()
+    Card { body: Some(Element::row(vec![face, fields]).gap(16.0)), go: Some(("profile-save", t!("desktop-save"), true)), widest: 480.0, focus: Some("profile-name"), returns: Some("profile-edit"),
+        ..Card::new("profile", t!("desktop-profile-details"), t!("desktop-profile-details-detail"), ("profile-cancel", t!("common-cancel"))) }
+        .render(window_tree, width)
 }
 
 /// Bringing a list in from another app: its link there.
@@ -650,27 +647,24 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .initial_focus("import-link")
         .render();
     }
-    let palette = dialog_palette();
+    let palette = Card::palette(GREY_CARD);
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).size(ControlSize::Regular).render();
     let about = if state.import_unknown {
         t!("desktop-import-unknown-detail")
     } else {
         t!("desktop-import-hint")
     };
-    let cancel = Button::new("import-cancel", t!("common-cancel"), palette).variant(ButtonVariant::Ghost).size(ControlSize::Regular).round().render();
-    let go = Button::new("import-go", t!("common-import"), palette).size(ControlSize::Regular).round().render();
     let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
-    let dialog = Modal::fit_width(width, 480.0).max(240.0);
-    let mut fields = import_guide(state, Modal::fitted_body_width(dialog), palette);
+    let mut fields = import_guide(state, Card::inner(width, 480.0), palette);
     fields.extend(FormField::new(t!("desktop-import-list-link"), field, palette).hint(about).sizing(DIALOG_FIELD).rows());
     fields.push(out);
-    Modal::new(window_tree, true, t!("desktop-import-title"), t!("desktop-import-detail"), "import-cancel", palette)
-        .width(dialog)
-        .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, go))
-        .initial_focus("import-link")
-        .render()
+    Card { body: Some(Element::column(fields).gap(8.0)), go: Some(("import-go", t!("common-import"), true)), widest: 480.0, focus: Some("import-link"),
+        ..Card::new("import", t!("desktop-import-title"), t!("desktop-import-detail"), ("import-cancel", t!("common-cancel"))) }
+        .render(window_tree, width)
 }
+
+/// The panel the import's steps stand on, a step lighter than its card.
+const STEPS_PANEL: Color = Color::rgb(52, 52, 52);
 
 /// Where a list is brought in from, and the way to copy its link there, step by step: the
 /// app chosen, or the one a link pasted is of.
@@ -683,18 +677,20 @@ fn import_guide(state: &State, width: f32, palette: ComponentPalette) -> Vec<Ele
         ImportSource::Apple => t!("desktop-import-step-copy-apple"),
         ImportSource::YouTube => t!("desktop-import-step-copy-youtube"),
     };
+    // Each step a line of its own on a lifted panel, its number in a round badge beside it.
     let step = |number: usize, text: std::borrow::Cow<'static, str>| {
-        let badge = Element::panel(Element::text(number.to_string()).font_family(FontFamily::SansBold).font_size(12.0).foreground(SCHEME.canvas).centered())
-            .background(palette.text).radius(10.0).size(Some(20.0), Some(20.0));
-        Element::row(vec![badge, Text::new(text, palette).render().flex(1.0).centered_y()]).gap(10.0)
+        let badge = Element::panel(Element::text(number.to_string()).font_family(FontFamily::SansBold).font_size(13.0).foreground(SCHEME.canvas).centered())
+            .background(palette.text).radius(13.0).size(Some(26.0), Some(26.0));
+        Element::row(vec![badge.centered_y(), Text::new(text, palette).font_size(14.0).render().flex(1.0).centered_y()]).gap(12.0)
     };
+    let steps = Element::column(vec![
+        step(1, t!("desktop-import-step-open", app = chosen.name())),
+        step(2, copy),
+        step(3, t!("desktop-import-step-paste")),
+    ]).gap(14.0).padding(16.0);
     vec![
         segments("import-source", width, tabs),
-        Element::column(vec![
-            step(1, t!("desktop-import-step-open", app = chosen.name())),
-            step(2, copy),
-            step(3, t!("desktop-import-step-paste")),
-        ]).gap(8.0).padding(4.0),
+        Element::panel(steps).background(STEPS_PANEL).radius(12.0),
     ]
 }
 
@@ -727,15 +723,11 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .footer(dialog_footer(copy, close))
         .render();
     }
-    let palette = dialog_palette();
+    let palette = Card::palette(GREY_CARD);
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
-    let copy = Button::new("import-missed-copy", t!("desktop-copy-list"), palette).variant(ButtonVariant::Ghost).icon(Icon::Copy).size(ControlSize::Regular).round().render();
-    let close = Button::new("import-missed-close", t!("common-close"), palette).size(ControlSize::Regular).round().render();
-    Modal::new(window_tree, true, t!("desktop-missed-title"), t!("desktop-missed-detail"), "import-missed-close", palette)
-        .width(Modal::fit_width(width, 460.0).max(240.0))
-        .body(Element::column(rows).gap(6.0))
-        .footer(dialog_footer(copy, close))
-        .render()
+    Card { body: Some(Element::column(rows).gap(6.0)), go: Some(("import-missed-copy", t!("desktop-copy-list"), true)), widest: 460.0,
+        ..Card::new("missed", t!("desktop-missed-title"), t!("desktop-missed-detail"), ("import-missed-close", t!("common-close"))) }
+        .render(window_tree, width)
 }
 
 /// The picture on the library's offer to bring music in, drawn for it (`assets/import.svg`)
@@ -828,7 +820,8 @@ pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) ->
     if !state.welcome {
         return window_tree;
     }
-    let art = |side: f32| {
+    let side = Card::side(width, 380.0);
+    let art = {
         let art = side * 0.76;
         let mut layers = vec![wash(side, art)];
         // Covers of what the user already plays float around it, wherever they are in.
@@ -851,35 +844,119 @@ pub(crate) fn welcome_dialog(state: &State, window_tree: Element, width: f32) ->
         }
         Element::stack(layers).size(Some(side), Some(art))
     };
-    promo_dialog(window_tree, width, art, [t!("common-welcome-title"), t!("common-welcome-detail"), t!("common-welcome-import")], ["welcome-import", "welcome-close", "welcome:dialog"])
+    Card { art: Some(art), go: Some(("welcome-import", t!("common-welcome-import"), true)), colors: VIOLET_CARD, widest: 380.0,
+        ..Card::new("welcome", t!("common-welcome-title"), t!("common-welcome-detail"), ("welcome-close", t!("common-close"))) }
+        .render(window_tree, width)
 }
 
-/// A card that stands over the window to offer one thing, as the greeting does: its picture
-/// over a deep violet, a bold title, a quiet line, a lavender button, and a way out under the
-/// card. `art` is drawn as wide as the card; `ids` are the button's, the way out's and the
-/// dialog's.
-fn promo_dialog(window_tree: Element, width: f32, art: impl FnOnce(f32) -> Element, [title, about, action]: [std::borrow::Cow<'static, str>; 3], [go_id, close_id, dialog_id]: [&str; 3]) -> Element {
-    const VIOLET: Color = Color::rgb(36, 8, 138);
-    const LAVENDER: Color = Color::rgb(222, 219, 255);
-    let side = (width - 48.0).clamp(240.0, 380.0);
-    let on_violet = ComponentPalette { surface: VIOLET, text: Color::WHITE, muted: Color::rgba(255, 255, 255, 220), ..SCHEME.palette() };
-    let named = title.clone();
-    let title = Text::new(title, on_violet).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content();
-    let about = Text::new(about, on_violet).font_size(15.0).line_height(21.0).muted().render().center_content();
-    let label = Element::text(action.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(VIOLET).center_content();
-    let go = Element::clickable(go_id, Element::panel(label.centered()).background(LAVENDER).radius(26.0).size(Some(side * 0.62), Some(52.0)))
-        .accessible(limn::Access::new(limn::Role::Button).name(action));
-    let copy = Element::column(vec![title, about, Element::spacer().size(None, Some(8.0)), go.centered_x()]).gap(12.0).padding(24.0);
-    // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
-    let art = art(side).corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children();
-    let card = Element::panel(Element::column(vec![art, copy]))
-        .background(VIOLET).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
-    let close = Element::clickable(close_id, Element::text(t!("common-close")).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
-        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close"))).size(Some(side), Some(48.0));
-    // As wide as the card, so the window centres it.
-    let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
-        .accessible(limn::Access::new(limn::Role::Dialog).id(dialog_id).name(named));
-    Element::popover(window_tree, dialog, close_id, PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200))
+/// A dialog of the app's own, drawn as the offers' card: a picture edge to edge when it has
+/// one, a bold title and a quiet line in the middle, what it holds under them, scrolling with
+/// the panels' bar when it is long, a round button for what goes ahead, and the way out in
+/// words under the card. Only one stands at a time.
+struct Card {
+    title: std::borrow::Cow<'static, str>,
+    about: std::borrow::Cow<'static, str>,
+    /// The way out under the card: its id and its words.
+    way_out: (&'static str, std::borrow::Cow<'static, str>),
+    /// What Escape or a click beside the card does, when it is not the way out.
+    dismiss: Option<&'static str>,
+    art: Option<Element>,
+    body: Option<Element>,
+    /// The button for what goes ahead: its id, its words and whether it answers.
+    go: Option<(&'static str, std::borrow::Cow<'static, str>, bool)>,
+    colors: CardColors,
+    /// The widest the card stands, short of the window.
+    widest: f32,
+    /// The id it is known by, for its dialog and its scroll.
+    id: &'static str,
+    focus: Option<&'static str>,
+    returns: Option<&'static str>,
+}
+
+/// A card's colour, its words' and its button's.
+#[derive(Clone, Copy)]
+struct CardColors {
+    surface: Color,
+    muted: Color,
+    button: Color,
+    ink: Color,
+}
+
+/// The greeting's deep violet, with a lavender button.
+const VIOLET_CARD: CardColors = CardColors { surface: Color::rgb(36, 8, 138), muted: Color::rgba(255, 255, 255, 220), button: Color::rgb(222, 219, 255), ink: Color::rgb(36, 8, 138) };
+/// A dialog's own grey, with a white button.
+const GREY_CARD: CardColors = CardColors { surface: Color::rgb(40, 40, 40), muted: Color::rgb(179, 179, 179), button: Color::WHITE, ink: Color::rgb(0, 0, 0) };
+/// Around what a card holds, and the most of it shown before it scrolls.
+const CARD_PAD: f32 = 24.0;
+const CARD_BODY_MOST: f32 = 440.0;
+
+impl Card {
+    fn new(id: &'static str, title: impl Into<std::borrow::Cow<'static, str>>, about: impl Into<std::borrow::Cow<'static, str>>, way_out: (&'static str, std::borrow::Cow<'static, str>)) -> Self {
+        Self { title: title.into(), about: about.into(), way_out, dismiss: None, art: None, body: None, go: None, colors: GREY_CARD, widest: 420.0, id, focus: None, returns: None }
+    }
+
+    /// How wide a card that stands at most `widest` is in a window `width` wide.
+    fn side(width: f32, widest: f32) -> f32 {
+        (width - 48.0).clamp(240.0, widest)
+    }
+
+    /// How wide what it holds is.
+    fn inner(width: f32, widest: f32) -> f32 {
+        Self::side(width, widest) - 2.0 * CARD_PAD
+    }
+
+    /// What goes inside it, on its own colours: a dialog's.
+    fn palette(colors: CardColors) -> ComponentPalette {
+        ComponentPalette { surface: colors.surface, text: Color::WHITE, muted: colors.muted, ..dialog_palette() }
+    }
+
+    fn render(self, window_tree: Element, width: f32) -> Element {
+        let side = Self::side(width, self.widest);
+        let palette = Self::palette(self.colors);
+        let named = self.title.clone();
+        let mut copy = vec![
+            Text::new(self.title, palette).font_size(22.0).line_height(28.0).render().font_family(FontFamily::SansBold).center_content(),
+        ];
+        if !self.about.is_empty() {
+            copy.push(Text::new(self.about, palette).font_size(15.0).line_height(21.0).muted().render().center_content());
+        }
+        if let Some(body) = self.body {
+            let scroll = ScrollArea::new(format!("{}:body", self.id), body).appearance(spotify_bar()).visibility(SPOTIFY_BAR_SHOWS);
+            copy.push(scroll.render().max_height(CARD_BODY_MOST));
+        }
+        if let Some((id, words, answers)) = self.go {
+            // One that does not answer yet is faded.
+            let faded = |color: Color| if answers { color } else { Color { a: color.a / 2, ..color } };
+            let label = Element::text(words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(faded(self.colors.ink)).center_content();
+            let pill = Element::panel(label.centered()).background(faded(self.colors.button)).radius(26.0).size(Some(side * 0.62), Some(52.0));
+            let said = limn::Access::new(limn::Role::Button).name(words).disabled(!answers);
+            let go = if answers { Element::clickable(id, pill).accessible(said) } else { pill.accessible(said) };
+            copy.extend([Element::spacer().size(None, Some(8.0)), go.centered_x()]);
+        }
+        let mut parts = Vec::new();
+        // Round all round: the picture keeps the card's top corners, which it would otherwise cover.
+        parts.extend(self.art.map(|art| art.corner_radii(limn::CornerRadii::top(WELCOME_RADIUS)).clip_children()));
+        parts.push(Element::column(copy).gap(12.0).padding(CARD_PAD));
+        let card = Element::panel(Element::column(parts)).background(self.colors.surface).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
+        let (close_id, close_words) = self.way_out;
+        let close = Element::clickable(close_id, Element::text(close_words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content().centered())
+            .accessible(limn::Access::new(limn::Role::Button).name(close_words)).size(Some(side), Some(48.0));
+        // As wide as the card, so the window centres it.
+        let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
+            .accessible(limn::Access::new(limn::Role::Dialog).id(format!("{}:dialog", self.id)).name(named));
+        let mut popover = Element::popover(window_tree, dialog, self.dismiss.unwrap_or(close_id), PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200));
+        if let Some(focus) = self.focus { popover = popover.popover_initial_focus(focus); }
+        if let Some(returns) = self.returns { popover = popover.popover_return_focus(returns); }
+        popover
+    }
+}
+
+/// A release's card art: its first picture, edge to edge, or the greeting's wash until it is in.
+fn release_art(state: &State, release: &Release, side: f32) -> Element {
+    match release.notes.iter().find_map(|note| match note { Note::Picture(address) => state.artwork.get(address), _ => None }) {
+        Some(picture) => Element::raster_image(picture.clone().cover()).size(Some(side), Some(side * 0.56)),
+        None => wash(side, side * 0.56),
+    }
 }
 
 /// A later version found while the app is open, offered over the window as the greeting is,
@@ -887,18 +964,13 @@ fn promo_dialog(window_tree: Element, width: f32, art: impl FnOnce(f32) -> Eleme
 /// that has to be taken is said by its dialog.
 fn update_offer(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| state.update_toast && !release.mandatory && !state.dialog_open()) else { return window_tree };
-    // The release's first picture, edge to edge; the greeting's wash until it is in.
-    let picture = release.notes.iter().find_map(|note| match note { Note::Picture(address) => state.artwork.get(address), _ => None });
-    let art = |side: f32| match picture {
-        Some(picture) => Element::raster_image(picture.clone().cover()).size(Some(side), Some(side * 0.56)),
-        None => wash(side, side * 0.56),
-    };
-    let words = [t!("desktop-update-toast", version = release.version.as_str()), t!("desktop-update-toast-detail"), t!("desktop-update-see")];
-    promo_dialog(window_tree, width, art, words, ["update-toast", "update-toast-close", "update:dialog"])
+    Card { art: Some(release_art(state, release, Card::side(width, 380.0))), go: Some(("update-toast", t!("desktop-update-see"), true)), widest: 380.0,
+        ..Card::new("update", t!("desktop-update-toast", version = release.version.as_str()), t!("desktop-update-toast-detail"), ("update-toast-close", t!("common-close"))) }
+        .render(window_tree, width)
 }
 
 /// What cannot be undone asks before it is done.
-fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
+fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let (title, about, yes) = match &state.confirm {
         Some(Confirm::DeletePlaylist(id)) => {
             let name = state.collection.playlist(*id).map_or_else(|| t!("desktop-this-playlist").into_owned(), |playlist| playlist.name.clone());
@@ -931,10 +1003,10 @@ fn confirm_dialog(state: &State, window_tree: Element, palette: ComponentPalette
         .backdrop_dismiss(false)
         .render();
     }
-    AlertDialog::new(window_tree, state.confirm.is_some(), title, about, "confirm-yes", "confirm-cancel", dialog_palette())
-        .confirm_label(yes)
-        .cancel_label(t!("common-cancel"))
-        .render()
+    if state.confirm.is_none() { return window_tree; }
+    Card { go: Some(("confirm-yes", yes, true)), focus: Some("confirm-cancel"),
+        ..Card::new("confirm", title, about, ("confirm-cancel", t!("common-cancel"))) }
+        .render(window_tree, width)
 }
 
 /// The card of a later version: what stands, how far taking it in has got, and what the
@@ -1042,32 +1114,26 @@ fn patches_page(state: &State, width: f32, palette: ComponentPalette) -> Element
 }
 
 /// A version that may not keep running stands in front of everything until the later one
-/// is taken in.
-/// How wide the notice of a version that has to be taken is, and how tall the room in it
-/// for what the version says of itself, which scrolls.
-const UPDATE_DIALOG: f32 = 520.0;
-const UPDATE_NOTES_ROOM: f32 = 240.0;
-
-fn update_dialog(state: &State, window_tree: Element, palette: ComponentPalette) -> Element {
+/// is taken in, on the card the offers stand on: there is no way to close it, only the
+/// release's own page under it, and while it comes down a bar fills under its words.
+fn update_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(release) = state.update.as_ref().filter(|release| release.mandatory) else { return window_tree };
-    let (about, action) = match &state.updating {
-        Updating::Idle if release.program.is_some() => (t!("desktop-update-mandatory-install", version = release.version.as_str()), ("update-get", t!("desktop-update-now"))),
-        Updating::Idle => (t!("desktop-update-mandatory-download", version = release.version.as_str()), ("update-get", t!("desktop-download"))),
-        Updating::Fetching(done) => (t!("desktop-update-downloading-percent", version = release.version.as_str(), percent = format!("{:.0}", done * 100.0)), ("update-wait", t!("desktop-downloading"))),
-        Updating::Ready => (t!("desktop-update-installed", version = release.version.as_str()), ("update-restart", t!("desktop-restart-now"))),
-        Updating::Failed(why) => (t!("desktop-update-failed-why", why = why.as_str()), ("update-get", t!("common-retry"))),
+    let version = release.version.as_str();
+    let (about, go_id, action) = match &state.updating {
+        Updating::Idle if release.program.is_some() => (t!("desktop-update-mandatory-install", version = version), "update-get", t!("desktop-update-now")),
+        Updating::Idle => (t!("desktop-update-mandatory-download", version = version), "update-get", t!("desktop-download")),
+        Updating::Fetching(done) => (t!("desktop-update-downloading-percent", version = version, percent = format!("{:.0}", done * 100.0)), "update-wait", t!("desktop-downloading")),
+        Updating::Ready => (t!("desktop-update-installed", version = version), "update-restart", t!("desktop-restart-now")),
+        Updating::Failed(why) => (t!("desktop-update-failed-why", why = why.as_str()), "update-get", t!("common-retry")),
     };
-    let mut body = Vec::new();
-    if let Updating::Fetching(done) = &state.updating {
-        body.push(Progress::new(*done, palette).height(6.0).render());
-    }
-    let notes = release_notes(state, &release.notes, UPDATE_DIALOG - 48.0, palette);
-    if !notes.is_empty() {
-        body.push(ScrollArea::new("update-notes", Element::column(notes).gap(12.0)).render().size(None, Some(UPDATE_NOTES_ROOM)));
-    }
-    // No way around it: the other button leads to the release's own page.
-    let dialog = AlertDialog::new(window_tree, true, t!("desktop-update-mandatory"), about, action.0, "update-page", dialog_palette()).confirm_label(action.1).cancel_label(t!("desktop-see-release")).width(UPDATE_DIALOG);
-    if body.is_empty() { dialog } else { dialog.body(Element::column(body).gap(12.0)) }.render()
+    let body = match &state.updating {
+        Updating::Fetching(done) => Some(Progress::new(*done, Card::palette(GREY_CARD)).height(6.0).render()),
+        _ => None,
+    };
+    // Escape and a click beside it do nothing: it has to be taken.
+    Card { art: Some(release_art(state, release, Card::side(width, 380.0))), body, go: Some((go_id, action, go_id != "update-wait")), dismiss: Some("update-wait"), widest: 380.0,
+        ..Card::new("update-mandatory", t!("desktop-update-mandatory"), about, ("update-page", t!("desktop-see-release"))) }
+        .render(window_tree, width)
 }
 
 /// A release in the feed of what is new: a row around its cover, larger than a track's.
@@ -1206,16 +1272,13 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         .footer(copy)
         .render();
     }
-    let (card, link) = match &state.sharing {
-        Some(track) => (media_card(state, "share-card", track, palette), share_link(track)),
-        None => (Element::spacer(), String::new()),
-    };
-    let copy = if state.copied { Button::new("share-copy", t!("common-link-copied"), palette).icon(Icon::Check) } else { Button::new("share-copy", t!("desktop-copy-link"), palette).icon(Icon::Copy) };
-    Modal::new(window_tree, state.sharing.is_some(), t!("common-share-song"), t!("desktop-share-detail"), "share-close", dialog_palette())
-        .width(Modal::fit_width(width, 420.0))
-        .body(Element::column(vec![card.centered_x(), Text::new(link, palette).mono().muted().truncate().render()]).gap(12.0))
-        .footer(ButtonGroup::new(vec![copy.size(ControlSize::Regular).render()]).align_end().render())
-        .render()
+    let Some(track) = &state.sharing else { return window_tree };
+    let palette = Card::palette(GREY_CARD);
+    let body = Element::column(vec![media_card(state, "share-card", track, palette).centered_x(), Text::new(share_link(track), palette).mono().muted().truncate().render()]).gap(12.0);
+    let copy = if state.copied { t!("common-link-copied") } else { t!("desktop-copy-link") };
+    Card { body: Some(body), go: Some(("share-copy", copy, true)),
+        ..Card::new("share", t!("common-share-song"), t!("desktop-share-detail"), ("share-close", t!("common-close"))) }
+        .render(window_tree, width)
 }
 
 /// The side of the chip on the bell's corner.
@@ -4374,6 +4437,24 @@ mod tests {
             let twice: Vec<&String> = found.iter().filter(|id| !seen.insert(*id)).collect();
             assert!(twice.is_empty(), "at {width}, more than one control answers to {twice:?}");
         }
+    }
+
+    #[test]
+    fn an_update_that_has_to_be_taken_stands_alone_and_cannot_be_put_away() {
+        let size = Size::new(1400.0, 900.0);
+        let mut state = State::default();
+        state.welcome = true;
+        state.apply(Event::Update(Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: true, notes: Vec::new() }));
+        let ids = |state: &State| UiTree::new(view(state, size)).layout(size).regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>();
+        let found = ids(&state);
+        assert!(found.iter().any(|id| id == "update-get") && found.iter().any(|id| id == "update-page"), "its button and the release's page: {found:?}");
+        assert!(!found.iter().any(|id| id == "welcome-import" || id == "welcome-close"), "nothing behind it");
+        let mut tree = UiTree::new(view(&state, size));
+        tree.layout(size);
+        for action in tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false }) { state.update(&action); }
+        assert!(ids(&state).iter().any(|id| id == "update-get"), "Escape does not put it away");
+        state.update(&limn::UiAction::Clicked { id: "update-get".into() });
+        assert!(ids(&state).iter().any(|id| id == "update-wait"), "while it comes down, its button waits");
     }
 
     #[test]
