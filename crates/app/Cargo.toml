@@ -30,6 +30,13 @@ sha1 = "0.10"
 # MIT/Apache-2.0, RustCrypto's as sha1 and sha2 are, over the same digest: Last.fm signs every
 # write with the MD5 of its parameters.
 md-5 = "0.10"
+# Listening together, over public Nostr relays as Opentune's rooms are. MIT: a WebSocket client
+# over the rustls and system roots already in the tree. Apache-2.0/MIT: the BIP-340 signature
+# every Nostr event carries, over secp256k1. ISC-style, already in the tree through rustls: the
+# room's AES-256-GCM and the PBKDF2 that makes its key from its code.
+tokio-tungstenite = { version = "0.28", default-features = false, features = ["connect", "rustls-tls-native-roots"] }
+k256 = { version = "0.13", default-features = false, features = ["schnorr", "std"] }
+ring = "0.17"
 # The index of what is kept for offline listening.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

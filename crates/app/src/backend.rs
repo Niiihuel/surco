@@ -109,6 +109,11 @@ pub enum Command {
     MoveQueue(usize, usize),
     /// Pass by the silence a song opens and closes with.
     SkipSilence(bool),
+    /// Host a room listened in together, or join one by its code, as `name`.
+    RoomHost { name: String },
+    RoomJoin { code: String, name: String },
+    /// What the window asks of the room it is in.
+    RoomOrder(crate::room::Order),
     /// Listen through the microphone for the song that plays nearby, until it is named.
     Recognize,
     StopRecognizing,
@@ -241,6 +246,8 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// How the room listened in together stands; none once it is left.
+    Room(Option<crate::room::RoomView>),
     /// How loud what the microphone hears is, 0 to 1, and for how long it has listened.
     Hearing { level: f32, seconds: f32 },
     /// The song heard, none when Shazam did not know it, or why it could not be asked.
@@ -313,6 +320,8 @@ enum Input {
     Engine(surco_audio::Event),
     Media(MediaEvent),
     Radio { seed: String, tracks: Vec<Track> },
+    /// A command for the player from elsewhere than the window: a room's.
+    Command(Box<Command>),
     /// The SponsorBlock segments of a video, to be jumped over while it plays.
     Segments { track_id: String, segments: Vec<crate::sponsorblock::Segment> },
 }
@@ -357,6 +366,10 @@ struct Shared {
     /// The microphone while it listens for a song, and which listening it is: an older one's
     /// answer is not said.
     microphone: Mutex<Option<surco_audio::microphone::Microphone>>,
+    /// The room listened in together, by the way to it, while one is.
+    room: Mutex<Option<tokio::sync::mpsc::UnboundedSender<crate::room::Order>>>,
+    /// What the player shows, as a room says it to its guests.
+    views: watch::Receiver<PlayerView>,
     listening: AtomicU64,
     segments: Mutex<HashMap<String, Vec<crate::sponsorblock::Segment>>>,
     downloads: Mutex<Downloads>,
@@ -540,6 +553,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
     let (commands, mut inbox) = unbounded_channel::<Command>();
     let (outbox, events) = channel::<Event>();
     let (views, player_view) = watch::channel(PlayerView::default());
+    let player_view_own = player_view.clone();
     let window = ctx.clone();
     let reply = move |event: Event| {
         // The window is gone when this fails, and the worker goes with its channel.
@@ -552,7 +566,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
             let runtime = tokio::runtime::Builder::new_multi_thread().worker_threads(2).enable_all().build().expect("a tokio runtime");
             runtime.block_on(async move {
                 let (inputs, mut inbox_own) = unbounded_channel();
-                let shared = start(reply.clone(), inputs.clone(), library).map(Arc::new);
+                let shared = start(reply.clone(), inputs.clone(), library, player_view_own).map(Arc::new);
                 if let Ok(shared) = &shared {
                     shared.announce();
                 }
@@ -604,6 +618,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                                 player.radio(&seed, tracks);
                                 Vec::new()
                             }
+                            Input::Command(command) => handle(&shared, &reply, &mut player, *command),
                             Input::Segments { track_id, segments } => {
                                 player.segments(&track_id, segments);
                                 Vec::new()
@@ -645,7 +660,7 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
     (commands, events, player_view)
 }
 
-fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<Input>, library: PathBuf) -> Result<Shared, String> {
+fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<Input>, library: PathBuf, views: watch::Receiver<PlayerView>) -> Result<Shared, String> {
     let youtube = YouTube::new().map_err(|error| error.to_string())?;
     let events = inputs.clone();
     let audio = NativeAudio::start(None, move |event| drop(events.send(Input::Engine(event))))
@@ -667,6 +682,8 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
         volume: Mutex::new((1.0, 1.0)),
         sponsor: std::sync::atomic::AtomicU8::new(crate::sponsorblock::DEFAULT),
         microphone: Mutex::new(None),
+        room: Mutex::new(None),
+        views,
         listening: AtomicU64::new(0),
         segments: Mutex::new(HashMap::new()),
         serving: tokio::sync::Mutex::new(None),
@@ -813,6 +830,12 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
         (Command::SkipSilence(on), _) => surco_audio::silence::set_skip_silence(on),
+        (Command::RoomHost { name }, Ok(shared)) => enter_room(shared, None, name),
+        (Command::RoomJoin { code, name }, Ok(shared)) => enter_room(shared, Some(code), name),
+        (Command::RoomOrder(order), Ok(shared)) => {
+            if let Some(room) = shared.room.lock().unwrap().as_ref() { let _ = room.send(order); }
+        }
+        (Command::RoomHost { .. } | Command::RoomJoin { .. } | Command::RoomOrder(_), Err(_)) => reply(Event::Room(None)),
         (Command::Recognize, Ok(shared)) => recognize(shared),
         (Command::StopRecognizing, Ok(shared)) => {
             shared.listening.fetch_add(1, Ordering::SeqCst);
@@ -1050,6 +1073,26 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
         }
     };
     content.map_err(|error| error.to_string())
+}
+
+/// Hosts a room, or joins the one `code` names, leaving any other first.
+fn enter_room(shared: &Arc<Shared>, code: Option<String>, name: String) {
+    if let Some(room) = shared.room.lock().unwrap().take() { let _ = room.send(crate::room::Order::Leave); }
+    let (orders, inbox) = tokio::sync::mpsc::unbounded_channel();
+    *shared.room.lock().unwrap() = Some(orders.clone());
+    let shared = shared.clone();
+    tokio::spawn(async move {
+        // The key is stretched from the code: a moment's work, off the runtime's threads.
+        let hosting = code.is_none();
+        let room = tokio::task::spawn_blocking(move || code.map_or_else(|| Some(crate::together::Room::new()), |code| crate::together::Room::from_code(&code))).await.ok().flatten();
+        let Some(room) = room else { return (shared.reply)(Event::Room(None)) };
+        let commands = shared.inputs.clone();
+        let reply = shared.clone();
+        crate::room::run(room, hosting, name, inbox, shared.views.clone(), move |command| drop(commands.send(Input::Command(Box::new(command)))),
+            move |view| (reply.reply)(Event::Room(view))).await;
+        let mut held = shared.room.lock().unwrap();
+        if held.as_ref().is_some_and(|room| room.same_channel(&orders)) { *held = None; }
+    });
 }
 
 /// Listens for the song that plays nearby: the fingerprint grows as the sound comes in, and

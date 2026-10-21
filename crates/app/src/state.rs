@@ -70,6 +70,8 @@ pub enum Page {
     Replay,
     /// Naming the song that plays nearby, from what the microphone hears.
     Recognize,
+    /// Listening together: hosting a room, or joining one by its code.
+    Together,
 }
 
 /// A list the home makes out of what the user plays, opened and played as a playlist is.
@@ -1020,6 +1022,13 @@ pub struct State {
     pub hearing: Option<(f32, f32)>,
     /// The song last named, none when it was not known, or why it could not be asked.
     pub recognized: Option<Result<Option<crate::recognize::Recognized>, String>>,
+    /// The room listened in together, while in one; and what is typed for it.
+    pub room: Option<crate::room::RoomView>,
+    pub room_code: String,
+    pub room_chat: String,
+    pub room_error: Option<String>,
+    /// Whether a room was asked for and not left: what a room says after it is left is not news.
+    room_wanted: bool,
 }
 
 /// How many songs named by the microphone are remembered.
@@ -1388,6 +1397,11 @@ impl Default for State {
             scrobble_form: ScrobbleForm::default(),
             hearing: None,
             recognized: None,
+            room: None,
+            room_code: String::new(),
+            room_chat: String::new(),
+            room_error: None,
+            room_wanted: false,
         }
     }
 }
@@ -1933,6 +1947,23 @@ impl State {
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
         let mut commands = self.handle(action);
+        // A guest's choices go to the room's host: a song chosen is suggested, or played for
+        // everyone where the host lets guests play; skipping and seeking are asked for, or left
+        // to the room. Pausing is the guest's own.
+        if let Some(room) = self.room.as_ref().filter(|room| !room.hosting && room.phase != crate::room::Phase::Ended) {
+            use crate::room::Order;
+            let open = room.open;
+            let ask = |action: &str, pos: u64, track: Option<Track>| Command::RoomOrder(Order::Ask { action: action.into(), pos, track });
+            commands = commands.into_iter().filter_map(|command| match command {
+                Command::Enqueue(track) | Command::PlayNext(track) => Some(ask("add", 0, Some(track))),
+                Command::PlayList { tracks, index } => tracks.get(index).cloned().map(|track| ask(if open { "play" } else { "add" }, 0, Some(track))),
+                Command::Next if open => Some(ask("next", 0, None)),
+                Command::Previous if open => Some(ask("previous", 0, None)),
+                Command::Seek(seconds) if open => Some(ask("seek", (seconds * 1000.0) as u64, None)),
+                Command::Next | Command::Previous | Command::Seek(_) | Command::Jump(_) => None,
+                other => Some(other),
+            }).collect();
+        }
         // The microphone listens only while its page is open.
         if self.hearing.is_some() && self.page != Page::Recognize {
             self.hearing = None;
@@ -1990,6 +2021,12 @@ impl State {
                 self.onboarding_type(value, Instant::now());
                 Vec::new()
             }
+            UiAction::InputChanged { id, value } if id == "room-code" || id == "room-chat" => {
+                if id == "room-code" { self.room_code = value.clone(); } else { self.room_chat = value.clone(); }
+                Vec::new()
+            }
+            UiAction::Submitted { id, .. } if id == "room-chat" => self.click("room-send"),
+            UiAction::Submitted { id, .. } if id == "room-code" => self.click("room-join"),
             UiAction::InputChanged { id, value } if id.starts_with("scrobble-") => {
                 let form = &mut self.scrobble_form;
                 let field = match id.as_str() {
@@ -2693,6 +2730,42 @@ impl State {
                 }
                 Vec::new()
             }
+            "together" => {
+                if self.page != Page::Together { self.go(Page::Together); }
+                Vec::new()
+            }
+            "room-host" => {
+                self.room_error = None;
+                self.room_wanted = true;
+                vec![Command::RoomHost { name: self.profile.shown().to_owned() }]
+            }
+            "room-join" => {
+                if !crate::together::code_shape(&self.room_code) {
+                    self.room_error = Some(t!("common-together-bad-code").into_owned());
+                    return Vec::new();
+                }
+                self.room_error = None;
+                self.room_wanted = true;
+                vec![Command::RoomJoin { code: self.room_code.clone(), name: self.profile.shown().to_owned() }]
+            }
+            "room-leave" => {
+                self.room = None;
+                self.room_wanted = false;
+                vec![Command::RoomOrder(crate::room::Order::Leave)]
+            }
+            "room-open" => {
+                let Some(room) = self.room.as_ref() else { return Vec::new() };
+                vec![Command::RoomOrder(crate::room::Order::Open(!room.open))]
+            }
+            "room-send" => {
+                let text = std::mem::take(&mut self.room_chat);
+                if text.trim().is_empty() { return Vec::new(); }
+                vec![Command::RoomOrder(crate::room::Order::Chat(text.trim().to_owned()))]
+            }
+            "room-copy" => {
+                self.copy = self.room.as_ref().map(|room| room.code.clone());
+                Vec::new()
+            }
             // Opened, it listens at once, as Shazam's does; again, it starts over.
             "recognize" | "recognize-again" => {
                 if self.page != Page::Recognize { self.go(Page::Recognize); }
@@ -3163,6 +3236,15 @@ impl State {
                 covers
             }
             Event::ArtistsFound { key, artists } => self.onboarding_found(&key, artists),
+            Event::Room(view) => {
+                // One left meanwhile stays left; one that could not be entered is said so.
+                if self.room_wanted {
+                    if view.is_none() && self.room.is_none() { self.room_error = Some(t!("common-together-failed").into_owned()); }
+                    self.room_wanted = view.is_some();
+                    self.room = view;
+                }
+                Vec::new()
+            }
             Event::Hearing { level, seconds } => {
                 if self.hearing.is_some() { self.hearing = Some((level, seconds)); }
                 Vec::new()
@@ -3971,6 +4053,28 @@ mod tests {
         assert_eq!(click(&mut state, "home"), vec![Command::StopRecognizing]);
         state.apply(Event::Recognized(Ok(Some(Recognized { title: "Late".into(), ..song.clone() }))));
         assert_eq!(state.collection.recognized.len(), 1);
+    }
+
+    #[test]
+    fn a_guests_choices_go_to_the_host_and_its_pause_is_its_own() {
+        use crate::room::{Order, Phase, RoomView};
+        let mut state = State::default();
+        assert!(click(&mut state, "room-join").is_empty() && state.room_error.is_some(), "no code, no room");
+        state.update(&UiAction::InputChanged { id: "room-code".into(), value: "k7qx m2pa 9dte".into() });
+        assert!(matches!(click(&mut state, "room-join").as_slice(), [Command::RoomJoin { code, .. }] if code == "k7qx m2pa 9dte"));
+        state.apply(Event::Room(Some(RoomView { code: "K7QX-M2PA-9DTE".into(), phase: Phase::Live, ..RoomView::default() })));
+        let ask = |action: &str, track: Option<Track>| Command::RoomOrder(Order::Ask { action: action.into(), pos: 0, track });
+        assert_eq!(state.update(&UiAction::Clicked { id: "next".into() }), Vec::<Command>::new(), "the room keeps its place");
+        assert_eq!(state.update(&UiAction::Clicked { id: "play-pause".into() }), vec![Command::PlayPause], "pausing is its own");
+        state.page = Page::Album(Album { id: "lp".into(), title: "LP".into(), artist: "A".into(), artist_id: None, year: String::new(), artwork_url: None, tracks: vec![track("a")] });
+        assert_eq!(state.update(&UiAction::Clicked { id: "page-track:0".into() }), vec![ask("add", Some(track("a")))], "a song chosen is suggested");
+        state.room.as_mut().unwrap().open = true;
+        assert_eq!(state.update(&UiAction::Clicked { id: "page-track:0".into() }), vec![ask("play", Some(track("a")))], "or played, where the host lets it");
+        assert_eq!(state.update(&UiAction::Clicked { id: "next".into() }), vec![ask("next", None)]);
+        assert_eq!(click(&mut state, "room-leave"), vec![Command::RoomOrder(Order::Leave)]);
+        assert!(state.room.is_none());
+        state.apply(Event::Room(Some(RoomView { phase: Phase::Live, ..RoomView::default() })));
+        assert!(state.room.is_none(), "left, a late word does not bring it back");
     }
 
     #[test]

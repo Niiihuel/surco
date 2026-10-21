@@ -229,6 +229,7 @@ mod glyph {
     pub const SETTINGS: &str = include_str!("../assets/icons/glyph/settings.svg");
     pub const REPLAY: &str = include_str!("../assets/icons/glyph/replay.svg");
     pub const LISTEN: &str = include_str!("../assets/icons/glyph/listen.svg");
+    pub const TOGETHER: &str = include_str!("../assets/icons/glyph/together.svg");
     pub const EQUALIZER: &str = include_str!("../assets/icons/glyph/equalizer.svg");
     pub const VOLUME_OFF: &str = include_str!("../assets/icons/glyph/volume-off.svg");
     pub const VOLUME_LOW: &str = include_str!("../assets/icons/glyph/volume-low.svg");
@@ -1389,6 +1390,7 @@ fn account(state: &State, palette: ComponentPalette) -> Element {
         DropdownMenuEntry::Heading(state.profile.shown().to_owned()),
         item("account-profile", t!("desktop-profile"), glyph::PROFILE),
         item("replay", t!("common-replay"), glyph::REPLAY),
+        item("together", t!("common-together"), glyph::TOGETHER),
         item("account-handoff", t!("desktop-handoff"), glyph::HANDOFF),
         item("settings", t!("common-settings"), glyph::SETTINGS),
     ];
@@ -1540,6 +1542,94 @@ fn recognize_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
     page_scroll("recognize", Element::column(sections).gap(16.0).padding(12.0))
 }
 
+/// Listening together: a room to host, or to join by its code; in one, its code to share, who
+/// is in it, what it says, and the way out.
+fn together_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    use crate::room::{Phase, Said};
+    let raised = ComponentPalette { surface: CHOSEN, ..palette };
+    let card = |parts: Vec<Element>| Element::panel(Element::column(parts).gap(10.0)).padding(16.0).background(CHOSEN).radius(8.0);
+    let bold = |text: std::borrow::Cow<'static, str>| Text::new(text, raised).font_size(16.0).render().font_family(FontFamily::SansBold);
+    let inner = (width - 24.0 - 32.0).min(520.0);
+    let mut sections = Vec::new();
+    if !state.mobile {
+        sections.push(Element::column(vec![
+            Text::new(t!("common-together"), palette).font_size(PAGE_TITLE).render(),
+            Text::new(t!("common-together-detail"), palette).muted().render(),
+        ]).gap(4.0));
+    }
+    let Some(room) = &state.room else {
+        sections.push(card(vec![
+            bold(t!("common-together-host")),
+            Text::new(t!("common-together-host-detail"), raised).muted().render(),
+            Element::row(vec![Button::new("room-host", t!("common-together-host-go"), raised).icon(Icon::Custom(glyph::TOGETHER)).size(ControlSize::Regular).round().render()]),
+        ]));
+        let mut join = vec![
+            bold(t!("common-together-join")),
+            Text::new(t!("common-together-join-detail"), raised).muted().render(),
+            Element::row(vec![
+                TextField::new("room-code", &state.room_code, "XXXX-XXXX-XXXX", raised).size(ControlSize::Regular).render().size(Some(inner.min(260.0)), None),
+                Button::new("room-join", t!("common-together-join-go"), raised).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().enabled(!state.room_code.trim().is_empty()).render(),
+            ]).gap(8.0),
+        ];
+        if let Some(why) = &state.room_error {
+            join.push(Alert::new(t!("common-together-join"), why, palette).id("room-error").compact(true).render());
+        }
+        sections.push(card(join));
+        return page_scroll("together", Element::column(sections).gap(16.0).padding(12.0));
+    };
+    let phase = match room.phase {
+        Phase::Connecting => t!("common-together-connecting"),
+        Phase::Waiting => t!("common-together-waiting"),
+        Phase::Live if room.hosting => t!("common-together-hosting", relays = room.relays),
+        Phase::Live => t!("common-together-live", relays = room.relays),
+        Phase::LostHost => t!("common-together-lost"),
+        Phase::Ended => t!("common-together-ended"),
+    };
+    // The code, large, to be read out or copied.
+    let code = Element::text(&room.code).font_family(FontFamily::Monospace).font_size(30.0).foreground(palette.text);
+    let copy = Button::new("room-copy", t!("common-together-copy"), raised).variant(ButtonVariant::Outline).icon(Icon::Copy).size(ControlSize::Compact).round().render();
+    let mut head = vec![Text::new(phase, raised).muted().render(), Element::row(vec![code.centered_y(), copy.centered_y()]).gap(16.0).wrap().line_gap(8.0)];
+    if room.hosting {
+        head.push(mobile::settings::switch(&t!("common-together-open"), Some(&t!("common-together-open-detail")), "room-open", room.open));
+    }
+    let leave = Button::new("room-leave", if room.hosting { t!("common-together-close") } else { t!("common-together-leave") }, raised)
+        .variant(ButtonVariant::Ghost).size(ControlSize::Compact).round().render();
+    head.push(Element::row(vec![leave]));
+    sections.push(card(head));
+    // Who is in it.
+    let members = room.members.iter().map(|member| {
+        let host = if member.host { format!(" · {}", t!("common-together-host-tag")) } else { String::new() };
+        Text::new(format!("{}{host}", member.name), raised).render()
+    }).collect::<Vec<_>>();
+    if !members.is_empty() {
+        let mut parts = vec![bold(t!("common-together-members"))];
+        parts.extend(members);
+        sections.push(card(parts));
+    }
+    // What is said in it, the latest last, and what to say.
+    let lines = room.chat.iter().rev().take(40).rev().map(|line| {
+        let said = match line.said {
+            Said::Chat => format!("{}: {}", line.name, line.text),
+            Said::Joined => t!("common-together-joined", name = line.name.as_str()).into_owned(),
+            Said::Suggested => t!("common-together-suggested", name = line.name.as_str(), title = line.text.as_str()).into_owned(),
+        };
+        let text = Text::new(said, raised);
+        if line.said == Said::Chat { text.render() } else { text.muted().render() }
+    }).collect::<Vec<_>>();
+    let mut chat = vec![bold(t!("common-together-chat"))];
+    if lines.is_empty() { chat.push(Text::new(t!("common-together-chat-empty"), raised).muted().render()); }
+    chat.extend(lines);
+    chat.push(Element::row(vec![
+        TextField::new("room-chat", &state.room_chat, t!("common-together-chat-placeholder"), raised).size(ControlSize::Regular).render().flex(1.0),
+        Button::new("room-send", t!("common-together-send"), raised).size(ControlSize::Regular).round().enabled(!state.room_chat.trim().is_empty()).render(),
+    ]).gap(8.0));
+    if !room.hosting {
+        chat.insert(1, Text::new(if room.open { t!("common-together-guest-open") } else { t!("common-together-guest-suggest") }, raised).role(TextRole::Caption).muted().render());
+    }
+    sections.push(card(chat));
+    page_scroll("together", Element::column(sections).gap(16.0).padding(12.0))
+}
+
 /// The side of the recognising disc at rest.
 const RECOGNIZE_DISC: f32 = 168.0;
 
@@ -1610,7 +1700,7 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     // A phone has no account menu: what it offers is here.
     if state.mobile {
         let action = |id: &str, label: std::borrow::Cow<'static, str>| Button::new(id, label, palette).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render();
-        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see"))]).gap(8.0).wrap().line_gap(8.0));
+        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see")), action("together", t!("common-together"))]).gap(8.0).wrap().line_gap(8.0));
     } else {
         sections.push(Element::row(vec![Button::new("profile-replay", t!("common-replay-see"), palette).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).variant(ButtonVariant::Outline).size(ControlSize::Regular).round().render()]));
     }
@@ -2867,6 +2957,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Profile => "page:profile".to_owned(),
         Page::Replay => format!("page:replay:{}", state.replay_period.slug()),
         Page::Recognize => "page:recognize".to_owned(),
+        Page::Together => "page:together".to_owned(),
         Page::Equalizer => "page:equalizer".to_owned(),
     };
     let page = page(state, width, palette).animate_enter(entering);
@@ -2958,6 +3049,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Profile => profile_page(state, palette),
         Page::Replay => replay_page(state, width, palette),
         Page::Recognize => recognize_page(state, width, palette),
+        Page::Together => together_page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
             None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
