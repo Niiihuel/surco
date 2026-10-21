@@ -136,3 +136,5 @@ common-sponsorblock-preview = Adelantos y resúmenes
 common-sponsorblock-filler = Relleno y chistes
 common-sponsorblock-segment = Una parte
 common-sponsorblock-skipped = Se saltó: { $what }
+common-skip-silence = Saltar silencios
+common-skip-silence-detail = Pasa de largo el silencio con que empieza y termina cada canción.

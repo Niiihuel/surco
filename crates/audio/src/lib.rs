@@ -70,6 +70,7 @@ pub mod equalizer;
 mod media_buffer;
 pub mod meter;
 mod opus_source;
+pub mod silence;
 
 pub use audio::{list_output_devices, AudioOutputDevice, Event, Load, NativeAudio, TICK};
 pub use media_buffer::MediaBuffer;

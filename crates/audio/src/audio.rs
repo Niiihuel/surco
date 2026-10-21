@@ -35,6 +35,7 @@ use symphonia::core::io::MediaSource;
 
 use crate::equalizer::EqualizedSource;
 use crate::opus_source::{self, OpusSource};
+use crate::silence::{self, Heard, Quiet};
 use crate::{warn, MediaBuffer};
 
 /// How often position is reported and the end of a track is checked for. A slower feed would
@@ -230,19 +231,30 @@ impl Seek for BufferReader {
  * The duration is read *before* wrapping: it is what the caller reports to the UI, and reading
  * it through two adapters is one more place for it to go missing.
  */
-fn equalized<S>(source: S, gain: f32) -> (BoxedSource, Option<f64>)
+/// `trim` drops the silence the track opens with, for one played from its beginning.
+fn equalized<S>(source: S, gain: f32, trim: bool) -> (BoxedSource, Option<f64>, Arc<Heard>)
 where
     S: Source + Send + 'static,
 {
     let duration = source.total_duration().map(|value| value.as_secs_f64());
-    let shaped = EqualizedSource::new(source, gain).limit(rodio::source::LimitSettings::new());
-    (Box::new(shaped), duration)
+    let (quiet, heard) = Quiet::new(source, trim);
+    let shaped = EqualizedSource::new(quiet, gain).limit(rodio::source::LimitSettings::new());
+    (Box::new(shaped), duration, heard)
 }
+
+/// A track whose last seconds are this silent is over: the next comes in.
+const SILENT_END: f64 = 2.5;
+/// How near its end a track's silence is taken for its end, and not a quiet passage.
+const SILENT_TAIL: f64 = 20.0;
 
 struct Deck {
     sink: Player,
     track_id: Option<String>,
     duration_sec: Option<f64>,
+    /// What its track's silence told: the opening passed by, and when it last sounded.
+    heard: Option<Arc<Heard>>,
+    /// Whether its silent end was already reported.
+    silenced: bool,
     /**
      * The deck's window onto its own download.
      *
@@ -258,13 +270,27 @@ impl Deck {
     fn disconnected() -> Self {
         let (sink, _) = Player::new();
         sink.pause();
-        Self { sink, track_id: None, duration_sec: None, buffer: None }
+        Self { sink, track_id: None, duration_sec: None, heard: None, silenced: false, buffer: None }
+    }
+
+    /// Where its track is, in the track's own seconds: the opening passed by counts.
+    fn position(&self) -> f64 {
+        self.sink.get_pos().as_secs_f64() + self.heard.as_ref().map_or(0.0, |heard| heard.skipped())
+    }
+
+    /// Whether its track has gone silent for good, so near its end that nothing is to come.
+    fn silent_end(&self) -> bool {
+        let (Some(duration), Some(heard)) = (self.duration_sec, self.heard.as_ref()) else { return false };
+        let at = self.position();
+        silence::enabled() && !self.silenced && duration - at <= SILENT_TAIL && duration - at > TICK.as_secs_f64() && at - heard.last() >= SILENT_END
     }
 
     fn clear(&mut self) {
         self.sink.stop();
         self.track_id = None;
         self.duration_sec = None;
+        self.heard = None;
+        self.silenced = false;
         self.buffer = None;
     }
 
@@ -302,6 +328,7 @@ enum Command {
         start_sec: Option<f64>,
         standby: bool,
         buffer: MediaBuffer,
+        heard: Arc<Heard>,
         reply: Sender<Result<(), String>>,
     },
     Play(Sender<Result<(), String>>),
@@ -408,8 +435,11 @@ impl NativeAudio {
          * Not a preference — symphonia has no Opus decoder at all, and rodio can only offer
          * what symphonia implements.
          */
+        // Only a track played from its beginning passes its opening by: one resumed or handed
+        // over, as a song's own video taking its place, goes on exactly where it was.
+        let trim = silence::enabled() && load.start_sec.is_none_or(|start| start <= 0.0);
         let decoded = if opus_source::is_opus(mime_type) {
-            OpusSource::new(Box::new(reader), mime_type).map(|source| equalized(source, load.gain))
+            OpusSource::new(Box::new(reader), mime_type).map(|source| equalized(source, load.gain, trim))
         } else {
             let total = load.buffer.total();
             let builder = rodio::Decoder::builder().with_data(reader);
@@ -424,10 +454,10 @@ impl NativeAudio {
                 None => builder,
             }
             .build()
-            .map(|source| equalized(source, load.gain))
+            .map(|source| equalized(source, load.gain, trim))
             .map_err(|error| format!("audio decode failed: {error}"))
         };
-        let (source, decoded_duration) = decoded?;
+        let (source, decoded_duration, heard) = decoded?;
 
         let known = |value: &f64| *value > 0.0;
         let duration_sec = decoded_duration.filter(known).or(load.duration_sec.filter(known));
@@ -439,6 +469,7 @@ impl NativeAudio {
             start_sec: load.start_sec,
             standby: load.standby,
             buffer: load.buffer,
+            heard,
             reply,
         })??;
         Ok(duration_sec)
@@ -807,7 +838,7 @@ fn open_output(
     let deck = || {
         let sink = Player::connect_new(stream.mixer());
         sink.pause();
-        Deck { sink, track_id: None, duration_sec: None, buffer: None }
+        Deck { sink, track_id: None, duration_sec: None, heard: None, silenced: false, buffer: None }
     };
     let decks = [deck(), deck()];
     Ok((stream, decks))
@@ -948,7 +979,7 @@ impl Engine {
     /// Returns true when the thread should stop.
     fn handle(&mut self, command: Command) -> bool {
         match command {
-            Command::Load { output_epoch, track_id, source, duration_sec, start_sec, standby, buffer, reply } => {
+            Command::Load { output_epoch, track_id, source, duration_sec, start_sec, standby, buffer, heard, reply } => {
                 if !self.output.accepts(output_epoch) {
                     let _ = reply.send(Err("audio load was cancelled when its output was released".to_owned()));
                     return false;
@@ -989,6 +1020,8 @@ impl Engine {
                 deck.track_id = Some(track_id);
                 deck.duration_sec = duration_sec;
                 deck.buffer = Some(buffer);
+                deck.heard = Some(heard);
+                deck.silenced = false;
 
                 if !standby {
                     self.playing = false;
@@ -1229,7 +1262,7 @@ impl Engine {
         self.playing
             && self.fade.is_none()
             && deck.duration_sec.is_some_and(|duration| {
-                duration - deck.sink.get_pos().as_secs_f64() < TICK.as_secs_f64()
+                duration - deck.position() < TICK.as_secs_f64()
             })
     }
 
@@ -1265,9 +1298,16 @@ impl Engine {
         }
         let index = self.active;
         let Some(track_id) = self.decks[index].track_id.clone() else { return };
+        // Its last seconds silent, a track is over: the player goes on as at its end, while
+        // the silence plays on until the next takes the deck.
+        if self.fade.is_none() && self.decks[index].silent_end() {
+            self.decks[index].silenced = true;
+            (self.emit)(Event::Ended { track_id });
+            return;
+        }
         (self.emit)(Event::Position {
             track_id,
-            position_sec: self.decks[index].sink.get_pos().as_secs_f64(),
+            position_sec: self.decks[index].position(),
             duration_sec: self.decks[index].duration_sec,
         });
     }
@@ -1276,6 +1316,21 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_deck_counts_the_opening_it_passed_by_and_hears_its_silent_end_only_near_it() {
+        silence::set_skip_silence(true);
+        let mut deck = Deck::disconnected();
+        deck.duration_sec = Some(20.0);
+        deck.heard = Some(Arc::new(Heard::at(5.0, 1.0)));
+        assert_eq!(deck.position(), 5.0, "where the track is, with its silent opening");
+        assert!(deck.silent_end(), "four seconds silent in its last fifteen");
+        deck.heard = Some(Arc::new(Heard::at(5.0, 4.0)));
+        assert!(!deck.silent_end(), "a second of quiet is not an end");
+        deck.duration_sec = Some(200.0);
+        deck.heard = Some(Arc::new(Heard::at(5.0, 1.0)));
+        assert!(!deck.silent_end(), "a quiet passage far from its end is not one either");
+    }
 
     #[test]
     fn released_outputs_do_not_advance_the_queue_or_accept_late_loads() {
@@ -1308,7 +1363,7 @@ mod tests {
         let (reply, result) = mpsc::channel();
         engine.handle(Command::Load {
             output_epoch: token, track_id: "late".into(), source: Box::new(rodio::source::Empty::new()),
-            duration_sec: None, start_sec: None, standby: false, buffer: MediaBuffer::new(None), reply,
+            duration_sec: None, start_sec: None, standby: false, buffer: MediaBuffer::new(None), heard: Default::default(), reply,
         });
         assert!(result.recv().unwrap().is_err());
         assert!(engine.stream.is_none(), "a stale load must not touch the sound card");

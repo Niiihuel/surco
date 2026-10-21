@@ -135,3 +135,5 @@ common-sponsorblock-preview = Previews and recaps
 common-sponsorblock-filler = Filler and jokes
 common-sponsorblock-segment = A section
 common-sponsorblock-skipped = Skipped: { $what }
+common-skip-silence = Skip silence
+common-skip-silence-detail = Passes by the silence each song opens and closes with.

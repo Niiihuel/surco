@@ -107,6 +107,8 @@ pub enum Command {
     ClearQueue,
     /// Move the n-th of the upcoming tracks to where the m-th is.
     MoveQueue(usize, usize),
+    /// Pass by the silence a song opens and closes with.
+    SkipSilence(bool),
     /// Which SponsorBlock categories are jumped over, a bit each; none, nothing is asked.
     SponsorBlock(u8),
     /// Stop the music after so long, or with the song that plays, or not.
@@ -787,6 +789,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
+        (Command::SkipSilence(on), _) => surco_audio::silence::set_skip_silence(on),
         (Command::SponsorBlock(mask), Ok(shared)) => {
             shared.sponsor.store(mask, Ordering::SeqCst);
             shared.segments.lock().unwrap().clear();

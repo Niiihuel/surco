@@ -239,6 +239,7 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
     let sound = group(&t!("common-settings-sound"), vec![
         switch(&t!("mobile-normalize"), None, "setting:normalize", state.settings.normalize),
         switch(&t!("mobile-mono"), None, "setting:mono", state.settings.mono),
+        switch(&t!("common-skip-silence"), Some(&t!("common-skip-silence-detail")), "setting:skip-silence", state.settings.skip_silence),
         action("equalizer", &t!("common-equalizer"), None,
             Some(Element::row(vec![value(&equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
     ], "");

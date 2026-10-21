@@ -346,6 +346,8 @@ pub struct Settings {
     pub onboarded: bool,
     /// The SponsorBlock categories jumped over in a video, a bit each; none, it is off.
     pub sponsorblock: u8,
+    /// Pass by the silence a song opens and closes with.
+    pub skip_silence: bool,
 }
 
 /// The order the library lists what is not pinned in.
@@ -431,7 +433,7 @@ pub const CROSSFADE_MAX: f32 = 12.0;
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false, onboarded: false, sponsorblock: crate::sponsorblock::DEFAULT }
+        Self { autoplay: true, reduce_motion: false, crossfade: 0.0, quality: Quality::High, clips: true, library_sort: Sort::Added, library_view: LibraryView::List, mono: false, normalize: true, import_dismissed: false, language: None, translate_lyrics: false, welcomed: false, onboarded: false, sponsorblock: crate::sponsorblock::DEFAULT, skip_silence: false }
     }
 }
 
@@ -1493,7 +1495,7 @@ impl State {
         if let Some(settings) = bundle.settings.filter(|_| parts.settings) {
             self.settings = settings;
             if let Some(language) = settings.language { crate::i18n::set(language); }
-            commands.extend([Command::Autoplay(settings.autoplay), Command::Crossfade(f64::from(settings.crossfade)), Command::Quality(settings.quality.bps()), Command::Mono(settings.mono), Command::Normalize(settings.normalize), Command::SponsorBlock(settings.sponsorblock)]);
+            commands.extend([Command::Autoplay(settings.autoplay), Command::Crossfade(f64::from(settings.crossfade)), Command::Quality(settings.quality.bps()), Command::Mono(settings.mono), Command::Normalize(settings.normalize), Command::SponsorBlock(settings.sponsorblock), Command::SkipSilence(settings.skip_silence)]);
         }
         if let Some(equalizer) = bundle.equalizer.as_deref().filter(|_| parts.equalizer).and_then(equalizer_from) {
             self.equalizer = equalizer;
@@ -2636,6 +2638,10 @@ impl State {
             "setting:normalize" => {
                 self.settings.normalize = !self.settings.normalize;
                 vec![Command::Normalize(self.settings.normalize)]
+            }
+            "setting:skip-silence" => {
+                self.settings.skip_silence = !self.settings.skip_silence;
+                vec![Command::SkipSilence(self.settings.skip_silence)]
             }
             // On, it skips what most listeners want skipped; off, nothing is asked.
             "setting:sponsorblock" => {
