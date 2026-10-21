@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.12.1
+
+![Importing, on the card every dialog stands on](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.1/docs/releases/0.12.1/import.jpg)
+
+### Changed
+
+- Every dialog stands on one card, as the offer to import does: a bold title and a quiet
+  line in the middle, what it holds scrolling with the panels' bar, a round button for
+  what goes ahead and the way out under the card. One stands at a time.
+- An update that has to be taken stands alone on that card, over the first run too, and
+  Escape does not put it away.
+- The import's steps stand on a panel of their own, each number in a round badge.
+
+![Moving an account, on the same card](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.1/docs/releases/0.12.1/handoff.jpg)
+
+### Fixed
+
+- The side panels no longer flicker as they shut: the library folds into its rail from the
+  first frame, and the right panel narrows to the strip that peeks instead of past it.
+
 ## 0.12.0
 
 ![Moving an account by a code or its QR](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.0/docs/releases/0.12.0/handoff.jpg)
