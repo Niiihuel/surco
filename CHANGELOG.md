@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.12.0
+
+![Moving an account by a code or its QR](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.0/docs/releases/0.12.0/handoff.jpg)
+
+### Changed
+
+- An account moves to another device by a code of twelve characters, typed in Settings ›
+  Move to another device › Receive, or by its QR: on a computer or a phone, either way. The
+  address it used to show is gone.
+- A later version is offered over the window as the import is, with its first picture and
+  a way to see what it brings, once no other dialog stands there.
+- What's new shows a release's pictures at their own proportions, and its card as wide as
+  its notes.
+- Home's shelves show their bar under the pointer, as the panels do.
+
+![The same on a phone](https://raw.githubusercontent.com/Niiihuel/surco/v0.12.0/docs/releases/0.12.0/handoff-phone.jpg)
+
+### Fixed
+
+- A song's dots among the recent searches open its options instead of closing the search.
+
+### Removed
+
+- Versions before 0.12.0 have to take this one in: they cannot read the code.
+
 ## 0.11.1
 
 ![The first run, in Figtree](https://raw.githubusercontent.com/Niiihuel/surco/v0.11.1/docs/releases/0.11.1/welcome.jpg)

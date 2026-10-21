@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  LIMN_REF: 73fe4eed0ad0709afa02a213b250d22d18d9f3e7 # menus close on a scroll outside them
+  LIMN_REF: e3e64e68f2889a68a8048804b775ee82ef3990e4 # the UI faces egui paints are limn's in force
   # App Store Connect requires SDK 26+. SDK 27 also requires a UIScene migration.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'

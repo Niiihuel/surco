@@ -26,8 +26,8 @@ plays it; a playlist is shared as a link that carries it whole.
   read up to 100 tracks; songs that cannot be matched are reported after the import.
 - A bell for what the artists followed release, and for later versions of the app.
 - A local profile with a picture of its own, and the account moved to a phone or another
-  computer on the same network: the phone's camera reads a code, a computer types an
-  address.
+  computer on the same network, either way: a camera reads its QR, or its twelve-character
+  code is typed.
 
 | | |
 |---|---|
