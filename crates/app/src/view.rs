@@ -1663,10 +1663,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
             let artwork = playlist.cover();
-            let picture = match artwork {
-                Some(url) => cover(state, &Some(url.clone()), LIBRARY_TILE, palette),
-                None => library_tile(Icon::Playlist, palette),
-            };
+            let picture = playlist_cover(state, playlist, LIBRARY_TILE, palette).unwrap_or_else(|| library_tile(Icon::Playlist, palette));
             let about = format!("{} · {}", if playlist.collaborative { t!("desktop-collaborative-playlist") } else { t!("common-playlist") }, songs(playlist.tracks.len()));
             entries.push(LibraryEntry { id: format!("playlist:{index}"), key: format!("playlist:{}", playlist.id), picture, artwork, round: false, name: &playlist.name, about, creator: "", here: state.page == Page::Playlist(playlist.id) });
         }
@@ -2923,8 +2920,8 @@ fn length(minutes: u64) -> String {
 fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: ComponentPalette) -> Element {
     if state.mobile { return mobile::details::playlist(state, playlist, width, palette); }
     let length = length(playlist.tracks.iter().map(|track| track.duration_ms).sum::<u64>() / 60_000);
-    let picture = match playlist.cover() {
-        Some(url) => cover(state, &Some(url.clone()), ALBUM_COVER, palette),
+    let picture = match playlist_cover(state, playlist, ALBUM_COVER, palette) {
+        Some(picture) => picture,
         None => Element::panel(Element::icon(Icon::Playlist).large_icon(48.0).foreground(palette.muted).centered())
             .background(CHOSEN)
             .radius(limn::tokens().radius.control)
@@ -3063,7 +3060,7 @@ fn suggested(state: &State, playlist: &Playlist, width: f32, palette: ComponentP
     let refresh = Button::new("suggested-refresh", t!("common-recommended-refresh"), palette).variant(ButtonVariant::Ghost)
         .ink(palette.muted).size(ControlSize::Regular).round().render();
     // Thirty above it, as Spotify's, and twenty-four between its parts.
-    Some(Element::column(vec![Element::spacer().size(None, Some(14.0)), heading, Element::column(rows), Element::row(vec![Element::spacer().flex(1.0), refresh])]).gap(24.0))
+    Some(Element::column(vec![Element::spacer().size(None, Some(14.0)), heading, Element::column(rows), refresh.centered_x()]).gap(24.0))
 }
 
 /// A size on disk as people read it.
@@ -4005,6 +4002,15 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
 
 fn cover(state: &State, artwork: &Option<String>, side: f32, palette: ComponentPalette) -> Element {
     picture(state, artwork, side, false, palette)
+}
+
+/// A playlist's picture `side` across: the one chosen, its first four albums' covers two by
+/// two as Spotify's, or its first song's; with no song, none.
+fn playlist_cover(state: &State, playlist: &Playlist, side: f32, palette: ComponentPalette) -> Option<Element> {
+    let Some([a, b, c, d]) = playlist.grid() else { return playlist.cover().map(|url| cover(state, &Some(url.clone()), side, palette)) };
+    let piece = |url: &String| picture(state, &Some(url.clone()), side / 2.0, false, palette).radius(0.0);
+    let grid = Element::column(vec![Element::row(vec![piece(a), piece(b)]), Element::row(vec![piece(c), piece(d)])]);
+    Some(Element::panel(grid).radius(limn::tokens().radius.control).clip_children().size(Some(side), Some(side)))
 }
 
 /// A cover shown large and alone, decoded whole: limn decodes the rest at 384 pixels a side,

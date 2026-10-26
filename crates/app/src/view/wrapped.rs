@@ -63,7 +63,7 @@ pub(super) fn page(state: &State, width: f32, palette: ComponentPalette) -> Elem
         None => left,
     };
     sections.push(minutes(&summary, inner, None));
-    let top = summary.top_artists.first().map(|artist| top_artist(state, artist, half, palette, None));
+    let top = (!summary.top_artists.is_empty()).then(|| top_artist(state, &summary.top_artists, half, palette, None));
     sections.push(pair(songs(state, &summary, half, palette, None), Some(artists(state, &summary, half, palette, None))));
     if let Some(top) = top {
         sections.push(pair(top, Some(tops(state, &summary, half, palette, None))));
@@ -290,34 +290,67 @@ fn ranked(state: &State, id: String, index: usize, name: &str, picture: Element,
     Element::clickable(id, row).hover_region().accessible(limn::Access::new(limn::Role::Button).name(name.to_owned()))
 }
 
-/// "My Top Artist": the face round under rings stacked like records, the name in a frame,
-/// and the minutes spent with them.
-fn top_artist(state: &State, artist: &Ranked, width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
-    let face = top_artist_face(state, artist, (width * 0.58).clamp(96.0, 340.0), palette, at);
-    let (name, listened) = top_artist_about(artist, width, at);
-    let open = Element::clickable("replay-artist:0", Element::column(vec![face, name]))
-        .accessible(limn::Access::new(limn::Role::Button).name(artist.track.artist.clone()));
-    card(COAL, Vec::new(), Element::column(vec![open, listened]).gap((width * 0.05).clamp(12.0, 24.0)), at)
+/// "My Top Artist": the faces of the artists heard most round, stacked like records, the one
+/// in front named in a frame with the minutes spent with them. On the page its name opens them.
+fn top_artist(state: &State, artists: &[Ranked], width: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
+    let front = deck_front(state, artists);
+    let face = top_artist_face(state, artists, (width * 0.58).clamp(96.0, 340.0), palette, at);
+    let (name, listened) = top_artist_about(&artists[front], front, width, at);
+    let name = match at {
+        Some(_) => name,
+        None => Element::clickable(format!("replay-artist:{front}"), name).accessible(limn::Access::new(limn::Role::Button).name(artists[front].track.artist.clone())),
+    };
+    card(COAL, Vec::new(), Element::column(vec![Element::column(vec![face, name]), listened]).gap((width * 0.05).clamp(12.0, 24.0)), at)
 }
 
-/// The artist heard most, round, `side` across, under rings that rise behind it.
-fn top_artist_face(state: &State, artist: &Ranked, side: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
-    let mut stack: Vec<Element> = (1..=4).rev().map(|step| {
-        Element::panel(Element::spacer()).border(CREAM, 2.0).radius(side / 2.0).size(Some(side), Some(side)).translate(Point::new(0.0, -(step as f32) * side * 0.09))
+/// The most faces stacked; the places past the artists there are stand as rings.
+const DECK: usize = 5;
+
+/// Which of the artists heard most is in front: it changes half way through a turn.
+fn deck_front(state: &State, artists: &[Ranked]) -> usize {
+    state.replay_deck(std::time::Instant::now()).round() as usize % artists.len().clamp(1, DECK)
+}
+
+/// The faces of the artists heard most, round, `side` across, each a step higher behind the
+/// one before. A click or a tap deals them: the one in front swings out to the side and
+/// comes down behind the others as they move up a place.
+fn top_artist_face(state: &State, artists: &[Ranked], side: f32, palette: ComponentPalette, at: Option<f32>) -> Element {
+    let count = artists.len().clamp(1, DECK);
+    let turns = state.replay_deck(std::time::Instant::now()).max(0.0);
+    let (whole, part) = (turns.floor() as usize % count, turns.fract());
+    let step = side * 0.09;
+    let up = |depth: f32| Point::new(0.0, -depth * step);
+    let mut layers: Vec<Element> = (count..DECK).rev().map(|depth| {
+        Element::panel(Element::spacer()).border(CREAM, 2.0).radius(side / 2.0).size(Some(side), Some(side)).translate(up(depth as f32))
     }).collect();
-    let face = framed(state, &artist.track.artwork_url, side, CREAM, true, palette);
+    let face = |index: usize| framed(state, &artists[index].track.artwork_url, side, CREAM, true, palette);
+    // The one going behind: past half way it is under the rest, out at the side where it covers least.
+    let swing = std::f32::consts::PI * part;
+    let leaving = (part > 0.0).then(|| face(whole).translate(Point::new(swing.sin() * side * 0.55, -part * (count - 1) as f32 * step - swing.sin() * side * 0.12)));
+    let mut staying: Vec<(f32, usize)> = (0..count).filter_map(|index| {
+        let place = (index + count - whole) % count;
+        (place > 0 || part == 0.0).then_some((place as f32 - if place > 0 { part } else { 0.0 }, index))
+    }).collect();
+    staying.sort_by(|a, b| b.0.total_cmp(&a.0));
+    let (under, over) = if part >= 0.5 { (leaving, None) } else { (None, leaving) };
+    layers.extend(under);
+    layers.extend(staying.into_iter().map(|(depth, index)| face(index).translate(up(depth))));
+    layers.extend(over);
+    let deck = Element::stack(layers).size(Some(side), Some(side));
     // In a story it swells from smaller into its place.
-    stack.push(match at {
-        Some(at) => face.animate_scale_about("story:top-artist", if at < 0.05 { 0.6 } else { 1.0 }, Point::new(0.5, 0.5)),
-        None => face,
-    });
-    Element::column(vec![Element::spacer().size(None, Some(side * 0.36)), Element::stack(stack).size(Some(side), Some(side)).centered_x()])
+    let deck = match at {
+        Some(at) => deck.animate_scale_about("story:top-artist", if at < 0.05 { 0.6 } else { 1.0 }, Point::new(0.5, 0.5)),
+        None => deck,
+    };
+    let deck = if count > 1 { Element::clickable("replay-deck", deck).accessible(limn::Access::new(limn::Role::Button).name(t!("common-replay-deal"))) } else { deck };
+    Element::column(vec![Element::spacer().size(None, Some(side * 0.36)), deck.centered_x()])
 }
 
-/// Their name in a frame, and the minutes and plays they had, which come in after it in a story.
-fn top_artist_about(artist: &Ranked, width: f32, at: Option<f32>) -> (Element, Element) {
+/// Their name in a frame, ranked `index` from the first, and the minutes and plays they had,
+/// which come in after it in a story.
+fn top_artist_about(artist: &Ranked, index: usize, width: f32, at: Option<f32>) -> (Element, Element) {
     let name = Element::panel(Element::column(vec![
-        display(t!("common-replay-top-artist"), 18.0, CREAM).center_content(),
+        display(t!("common-replay-top-artist", rank = index + 1), 18.0, CREAM).center_content(),
         display_cut(&artist.track.artist, (width * 0.075).clamp(20.0, 40.0), CREAM).center_content(),
     ]).gap(8.0).padding((width * 0.045).clamp(12.0, 20.0))).background(COAL).border(CREAM, 4.0);
     let listened = Element::column(vec![
@@ -464,7 +497,7 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
     let (fill, content) = if wide { wide_step(state, &summary, step, width, room, since, at) } else { match step {
         Step::Intro => (COAL, intro(state, fit)),
         Step::Minutes => (COAL, minutes(&summary, fit, shown)),
-        Step::TopArtist => (COAL, top_artist(state, &summary.top_artists[0], fit, palette, shown)),
+        Step::TopArtist => (COAL, top_artist(state, &summary.top_artists, fit, palette, shown)),
         Step::Songs => (COAL, songs(state, &summary, fit, palette, shown)),
         Step::Artists => (LAVENDER, artists(state, &summary, fit, palette, shown)),
         Step::Hours => (CREAM, hours(&summary, fit, &format!("story-hours:{since:?}"), palette, shown)),
@@ -508,8 +541,8 @@ pub(super) fn story(state: &State, window_tree: Element, window: Size) -> Elemen
     let tap = |id: &'static str, label: std::borrow::Cow<'static, str>, share: f32| Element::clickable(id, Element::spacer().size(None, Some(height)))
         .accessible(limn::Access::new(limn::Role::Button).name(label)).flex(share);
     // A tap on its left goes back and on its right on; where a list is, its middle is the list's,
-    // each song played from there.
-    let lists = matches!(step, Step::Songs | Step::Artists);
+    // each song played from there, and the faces' to deal where they are stacked.
+    let lists = matches!(step, Step::Songs | Step::Artists | Step::TopArtist);
     let middle = if lists { Element::spacer().flex(1.6) } else { tap("story-next", t!("desktop-next"), 1.6) };
     let taps = if lists {
         Element::row(vec![tap("story-back", t!("common-back"), 1.0), middle, tap("story-next", t!("desktop-next"), 1.0)])
@@ -570,11 +603,10 @@ fn wide_step(state: &State, summary: &Summary, step: crate::replay::Step, width:
             (COAL, card(COAL, Vec::new(), halves(words, rings(ring, 5, ring / 20.0, CREAM, Some((1, LAVENDER))).centered_x()), at))
         }
         Step::TopArtist => {
-            let artist = &summary.top_artists[0];
+            let front = deck_front(state, &summary.top_artists);
             let side = (room * 0.55).min(half * 0.8);
-            let (name, listened) = top_artist_about(artist, half, at);
-            let face = Element::clickable("replay-artist:0", top_artist_face(state, artist, side, palette, at))
-                .accessible(limn::Access::new(limn::Role::Button).name(artist.track.artist.clone()));
+            let (name, listened) = top_artist_about(&summary.top_artists[front], front, half, at);
+            let face = top_artist_face(state, &summary.top_artists, side, palette, at);
             (COAL, card(COAL, Vec::new(), halves(face, Element::column(vec![name, listened]).gap(24.0)), at))
         }
         Step::Songs => {

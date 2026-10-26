@@ -310,6 +310,18 @@ impl Playlist {
     pub fn cover(&self) -> Option<&String> {
         self.picture.as_ref().or_else(|| self.tracks.first().and_then(|track| track.artwork_url.as_ref()))
     }
+
+    /// The covers of its first four albums, when it has that many and no picture is chosen:
+    /// Spotify lays a list's picture out from them, two by two.
+    pub fn grid(&self) -> Option<[&String; 4]> {
+        if self.picture.is_some() { return None; }
+        let mut covers: Vec<&String> = Vec::new();
+        for url in self.tracks.iter().filter_map(|track| track.artwork_url.as_ref()) {
+            if covers.len() == 4 { break; }
+            if !covers.contains(&url) { covers.push(url); }
+        }
+        covers.try_into().ok()
+    }
 }
 
 /// A playlist being made in the dialog.
@@ -802,6 +814,8 @@ impl Story {
 
 /// How long a step of Replay's story stays before the next.
 pub const STORY_STEP: Duration = Duration::from_secs(7);
+/// How long a face of Replay's artist heard most takes to go behind the others.
+const DECK_TURN: Duration = Duration::from_millis(650);
 
 pub struct State {
     /// Use the phone layout; desktop previews can opt in without a second player.
@@ -1047,6 +1061,9 @@ pub struct State {
     pub replay_period: crate::replay::Period,
     /// Replay told as a story: the step on screen, since when, and whether it is held.
     pub replay_story: Option<Story>,
+    /// How many times the faces of the artists heard most have been dealt, the one in front
+    /// sent behind the rest; between whole turns it is on its way.
+    replay_deck: ScalarTransition,
     /// What played before the story, to go back to when it ends: the list from its track on,
     /// where it was, and whether it sounded.
     story_return: Option<(Vec<Track>, f64, bool)>,
@@ -1434,6 +1451,7 @@ impl Default for State {
             listening: None,
             replay_period: crate::replay::Period::default(),
             replay_story: None,
+            replay_deck: ScalarTransition::new(0.0, Instant::now()),
             story_return: None,
             story_moment: None,
             scrobbling: crate::scrobble::Accounts::default(),
@@ -1548,7 +1566,12 @@ impl State {
     /// The covers of everything the library and the home page show.
     pub fn collection_covers(&mut self) -> Vec<Command> {
         let collection = &self.collection;
-        let pictures = collection.playlists.iter().map(|playlist| &playlist.picture).chain([&self.profile.picture]);
+        // A list's picture is asked for with the library, not only once its page is opened.
+        let firsts = collection.playlists.iter().flat_map(|playlist| match playlist.grid() {
+            Some(grid) => grid.to_vec(),
+            None => playlist.cover().into_iter().collect(),
+        }).cloned().map(Some).collect::<Vec<_>>();
+        let pictures = collection.playlists.iter().map(|playlist| &playlist.picture).chain([&self.profile.picture]).chain(&firsts);
         let searched = collection.searches.iter().filter_map(|searched| match searched {
             Searched::Query(_) => None,
             Searched::Track { track } => Some(&track.artwork_url),
@@ -1702,6 +1725,12 @@ impl State {
             || self.lyric_card.is_active(now)
             // A story's step fills its bar as it is on screen.
             || self.replay_story.is_some()
+            || self.replay_deck.is_active(now)
+    }
+
+    /// How many turns the artists' faces have been dealt at `now`, part of one while one is on its way.
+    pub fn replay_deck(&self, now: Instant) -> f32 {
+        self.replay_deck.value(now)
     }
 
     /// The covers Replay shows over the stretch chosen: the songs, the artists and the one on repeat.
@@ -2962,8 +2991,18 @@ impl State {
                     }
                 }
             }
-            // A song of the story's lists: its moment, or held and let go again if it is the one playing.
+            // The face in front goes behind the others, the next comes forward. In the story its
+            // step is held while it is looked at, as it is for a song chosen from a list.
+            "replay-deck" => {
+                let now = Instant::now();
+                self.replay_deck.retarget_with_motion(self.replay_deck.target() + 1.0, now, DECK_TURN, !self.motion);
+                if let Some(story) = self.replay_story.as_mut() { story.paused.get_or_insert(now); }
+                Vec::new()
+            }
+            // A song of the story's lists: its moment, or held and let go again if it is the one
+            // playing. The step is held, so the story does not go on while it is heard.
             _ if id.starts_with("story-song:") || id.starts_with("story-artist:") => {
+                if let Some(story) = self.replay_story.as_mut() { story.paused.get_or_insert(Instant::now()); }
                 let summary = self.replay();
                 let (list, index) = id.split_once(':').map_or(("", ""), |(list, index)| (list, index));
                 let ranked = if list == "story-song" { &summary.top_songs } else { &summary.top_artists };
@@ -4260,6 +4299,10 @@ mod tests {
         // Held, the song is too; let go, it goes on.
         assert_eq!(click(&mut state, "story-pause"), vec![Command::PlayPause]);
         assert!(state.replay_story.is_some_and(|story| story.paused.is_some()));
+        click(&mut state, "story-pause");
+        // A song chosen from a list holds the step while it is heard, its sound let alone.
+        assert!(matches!(click(&mut state, "story-song:0").as_slice(), [Command::Preview { track, .. }] if track.id == "a"));
+        assert!(state.replay_story.is_some_and(|story| story.paused.is_some()));
         let closed = click(&mut state, "story-close");
         assert_eq!(closed, vec![Command::Return { tracks: vec![track("before"), track("after")], position: 42.0, playing: true }]);
         assert!(state.replay_story.is_none());
@@ -4282,6 +4325,11 @@ mod tests {
         assert_eq!(click(&mut state, "replay-song:0"), vec![Command::PlayList { tracks: vec![track("a"), track("b")], index: 0 }]);
         click(&mut state, "replay-period:all");
         assert_eq!(state.replay_period, crate::replay::Period::All);
+        // The artists' faces are dealt a turn at a time.
+        state.motion = true;
+        click(&mut state, "replay-deck");
+        assert!(state.is_sliding(Instant::now()));
+        assert_eq!(state.replay_deck(Instant::now() + Duration::from_secs(1)), 1.0);
     }
 
     fn click(state: &mut State, id: &str) -> Vec<Command> {
@@ -4634,6 +4682,21 @@ mod tests {
         assert!(state.peeks() && state.wants_footage());
         state.settings.clips = false;
         assert!(!state.wants_footage(), "nor when videos are off");
+    }
+
+    #[test]
+    fn a_list_of_four_albums_or_more_wears_them_two_by_two_and_asks_for_them_with_the_library() {
+        let mut state = State::default();
+        let tracks: Vec<Track> = ["a", "a", "b", "c", "d", "e"].into_iter().map(track).collect();
+        let mut list = Playlist { id: 3, name: "L".into(), collaborative: false, picture: None, tracks };
+        let grid = list.grid().map(|grid| grid.map(String::as_str));
+        assert_eq!(grid, Some(["https://img/a", "https://img/b", "https://img/c", "https://img/d"]), "one cover an album, the first four");
+        state.collection.playlists.push(list.clone());
+        assert_eq!(state.collection_covers().len(), 4);
+        list.tracks.truncate(4);
+        assert!(list.grid().is_none(), "three albums are its first song's cover");
+        list.picture = Some("surco:picture:1".into());
+        assert!(list.grid().is_none(), "a picture chosen is its own");
     }
 
     #[test]

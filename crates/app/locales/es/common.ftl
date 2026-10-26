@@ -180,7 +180,8 @@ common-replay-minutes-hours = { $count ->
     [one] Eso es una hora.
    *[other] Eso es { $count } horas.
 }
-common-replay-top-artist = Tu artista #1
+common-replay-top-artist = Tu artista #{ $rank }
+common-replay-deal = Siguiente artista
 common-replay-streak-title = Días seguidos
 common-replay-story = Ver tu Replay
 common-replay-intro =
