@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.14.3
+
+### Added
+
+- Replay's artist heard most stands in front of the next four's faces, stacked like records:
+  a click or a tap deals them, the one in front going behind the rest, its name and minutes
+  following.
+- A playlist with no picture chosen wears its first four albums' covers two by two.
+
+### Changed
+
+- In Replay's story, a song chosen from a list holds the step while it is heard.
+
+### Fixed
+
+- A playlist's picture shows in the library before its page is opened.
+- The recommended songs' refresh is centred under them.
+
 ## 0.14.2
 
 ### Changed
