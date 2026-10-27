@@ -58,8 +58,11 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
+      # Restored here and saved after the build even when a check fails (not when cancelled, which
+      # may stop cargo halfway): the simulator job rarely passed, so it never saved and rebuilt every crate.
       - name: Rust build cache
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: rust-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -81,6 +84,16 @@ jobs:
         env:
           SURCO_IOS_NATIVE_UI_TESTS: ${{ matrix.platform == 'simulator' && '1' || '0' }}
         run: python3 scripts/build-ios.py "${{ matrix.platform }}"
+
+      - name: Save Rust build cache
+        if: ${{ !cancelled() && steps.rust-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            surco/target
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
 
       - name: Apps, screenshot and logs
         if: always()
