@@ -2,6 +2,13 @@
 #import <MediaPlayer/MediaPlayer.h>
 #import <UIKit/UIKit.h>
 #include <stdio.h>
+#import "SurcoSurfaces.h"
+
+NSNotificationName const SurcoArtworkDidChange = @"SurcoArtworkDidChange";
+// Rust sends the cover from its own cache, so the mini-player shows it offline too.
+static NSString *SurcoLastArtworkURL;
+static UIImage *SurcoLastArtwork;
+UIImage *SurcoArtwork(NSString *url) { return url.length && [url isEqualToString:SurcoLastArtworkURL] ? SurcoLastArtwork : nil; }
 
 typedef int (*SurcoMediaCallback)(int kind, double value);
 
@@ -224,6 +231,9 @@ void surco_media_artwork(const char *track, const char *url, const unsigned char
             MPMediaItemArtwork *artwork = [[MPMediaItemArtwork alloc] initWithBoundsSize:image.size
                                                                        requestHandler:^UIImage *(CGSize size) { return image; }];
             dispatch_async(dispatch_get_main_queue(), ^{
+                SurcoLastArtworkURL = artworkURL;
+                SurcoLastArtwork = image;
+                [NSNotificationCenter.defaultCenter postNotificationName:SurcoArtworkDidChange object:artworkURL];
                 SurcoMedia *owner = SurcoSystemMedia;
                 if (![owner.trackID isEqualToString:trackID] || ![owner.artworkURL isEqualToString:artworkURL]) return;
                 owner.artwork = artwork;

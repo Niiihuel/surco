@@ -169,6 +169,18 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     SurcoChromeView *_tabs;
     UIStackView *_tabRow;
     UITabBar *_tabBar;
+    SurcoChromeView *_mini;
+    UIVisualEffectView *_miniGlass;
+    UIButton *_miniOpen;
+    UIImageView *_miniCover;
+    UILabel *_miniTitle;
+    UILabel *_miniSubtitle;
+    UIStackView *_miniButtons;
+    NSDictionary *_miniModel;
+    NSString *_miniArtwork;
+    UIScrollView *_filters;
+    UIStackView *_filterRow;
+    NSArray *_filterItems;
     NSArray *_tabItems;
     NSMutableArray<NSDictionary *> *_events;
     void (^_wake)(void);
@@ -217,7 +229,9 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     _interaction = nil;
     [_sheet dismissViewControllerAnimated:NO completion:nil];
     _sheet = nil;
-    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _largeClip ?: NSNull.null, _tabs ?: NSNull.null]) {
+    [NSNotificationCenter.defaultCenter removeObserver:self name:SurcoArtworkDidChange object:nil];
+    for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _largeClip ?: NSNull.null, _tabs ?: NSNull.null,
+                             _mini ?: NSNull.null, _filters ?: NSNull.null]) {
         if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
     }
     _view = nil;
@@ -305,6 +319,10 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     [self updateBackdrop:(scrolled ? edge : 0)];
     [self updateHeader:model rect:header];
     [self updateTabs:SurcoArray(model[@"items"]) rect:tabs];
+    NSDictionary *mini = SurcoDictionary(model[@"mini"]);
+    NSDictionary *filters = SurcoDictionary(model[@"filters"]);
+    [self updateMini:mini rect:live ? [self rect:mini[@"rect"]] : CGRectNull];
+    [self updateFilters:SurcoArray(filters[@"items"]) rect:live ? [self rect:filters[@"rect"]] : CGRectNull];
 }
 - (void)updateBackdrop:(CGFloat)edge {
     if (@available(iOS 26.0, *)) {
@@ -612,6 +630,187 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 - (void)tabBar:(UITabBar *)tabBar didSelectItem:(UITabBarItem *)item {
     if (item.accessibilityIdentifier.length) [self emit:@{@"kind":@"chrome", @"id":item.accessibilityIdentifier}];
+}
+- (UIButton *)miniButton:(NSDictionary *)item {
+    NSString *identifier = SurcoString(item[@"id"]);
+    __weak SurcoSurfaces *weakSelf = self;
+    UIButtonConfiguration *configuration = [UIButtonConfiguration plainButtonConfiguration];
+    configuration.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
+    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:19 weight:UIImageSymbolWeightSemibold];
+    configuration.baseForegroundColor = UIColor.whiteColor;
+    UIButton *button = [UIButton buttonWithConfiguration:configuration primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}];
+    }]];
+    button.accessibilityIdentifier = identifier;
+    button.accessibilityLabel = SurcoString(item[@"title"]);
+    [button.widthAnchor constraintEqualToConstant:44].active = YES;
+    return button;
+}
+- (void)makeMini API_AVAILABLE(ios(26.0)) {
+    // Apple Music's mini-player: a Liquid Glass capsule floating above the tab bar, the song
+    // opening the player and its buttons beside it.
+    // https://developer.apple.com/documentation/uikit/uiglasseffect
+    _mini = [SurcoChromeView new];
+    _mini.alpha = 0;
+    _mini.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+    UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+    glass.interactive = YES;
+    _miniGlass = [[UIVisualEffectView alloc] initWithEffect:glass];
+    _miniGlass.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    _miniGlass.layer.cornerCurve = kCACornerCurveContinuous;
+    _miniGlass.clipsToBounds = YES;
+    [_mini addSubview:_miniGlass];
+    __weak SurcoSurfaces *weakSelf = self;
+    _miniOpen = [UIButton buttonWithType:UIButtonTypeCustom];
+    [_miniOpen addAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+        [weakSelf emit:@{@"kind":@"chrome", @"id":@"mobile-playing"}];
+    }] forControlEvents:UIControlEventTouchUpInside];
+    _miniOpen.accessibilityIdentifier = @"mobile-playing";
+    _miniCover = [UIImageView new];
+    _miniCover.contentMode = UIViewContentModeScaleAspectFill;
+    _miniCover.clipsToBounds = YES;
+    _miniCover.layer.cornerRadius = 8;
+    _miniCover.layer.cornerCurve = kCACornerCurveContinuous;
+    _miniCover.backgroundColor = [UIColor colorWithWhite:1 alpha:0.12];
+    _miniCover.tintColor = [UIColor colorWithWhite:1 alpha:0.6];
+    _miniTitle = [UILabel new];
+    _miniTitle.textColor = UIColor.whiteColor;
+    _miniTitle.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
+        scaledFontForFont:[UIFont systemFontOfSize:14 weight:UIFontWeightSemibold] maximumPointSize:18];
+    _miniSubtitle = [UILabel new];
+    _miniSubtitle.textColor = [UIColor colorWithWhite:1 alpha:0.6];
+    _miniSubtitle.font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleFootnote]
+        scaledFontForFont:[UIFont systemFontOfSize:12] maximumPointSize:16];
+    for (UILabel *label in @[_miniTitle, _miniSubtitle]) label.adjustsFontForContentSizeCategory = YES;
+    UIStackView *words = [[UIStackView alloc] initWithArrangedSubviews:@[_miniTitle, _miniSubtitle]];
+    words.axis = UILayoutConstraintAxisVertical;
+    words.spacing = 1;
+    UIStackView *song = [[UIStackView alloc] initWithArrangedSubviews:@[_miniCover, words]];
+    song.spacing = 10;
+    song.alignment = UIStackViewAlignmentCenter;
+    song.userInteractionEnabled = NO;
+    song.translatesAutoresizingMaskIntoConstraints = NO;
+    [_miniOpen addSubview:song];
+    _miniButtons = [UIStackView new];
+    // The song takes what the buttons leave.
+    [_miniOpen setContentHuggingPriority:UILayoutPriorityDefaultLow - 1 forAxis:UILayoutConstraintAxisHorizontal];
+    [_miniOpen setContentCompressionResistancePriority:UILayoutPriorityDefaultLow forAxis:UILayoutConstraintAxisHorizontal];
+    [_miniButtons setContentHuggingPriority:UILayoutPriorityRequired forAxis:UILayoutConstraintAxisHorizontal];
+    UIStackView *row = [[UIStackView alloc] initWithArrangedSubviews:@[_miniOpen, _miniButtons]];
+    row.alignment = UIStackViewAlignmentFill;
+    row.translatesAutoresizingMaskIntoConstraints = NO;
+    UIView *content = _miniGlass.contentView;
+    [content addSubview:row];
+    [NSLayoutConstraint activateConstraints:@[
+        [row.leadingAnchor constraintEqualToAnchor:content.leadingAnchor constant:8],
+        [row.trailingAnchor constraintEqualToAnchor:content.trailingAnchor constant:-6],
+        [row.topAnchor constraintEqualToAnchor:content.topAnchor],
+        [row.bottomAnchor constraintEqualToAnchor:content.bottomAnchor],
+        [song.leadingAnchor constraintEqualToAnchor:_miniOpen.leadingAnchor],
+        [song.trailingAnchor constraintEqualToAnchor:_miniOpen.trailingAnchor],
+        [song.centerYAnchor constraintEqualToAnchor:_miniOpen.centerYAnchor],
+        [_miniCover.widthAnchor constraintEqualToConstant:38],
+        [_miniCover.heightAnchor constraintEqualToConstant:38],
+    ]];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(artworkDidChange:) name:SurcoArtworkDidChange object:nil];
+}
+- (void)artworkDidChange:(NSNotification *)notification {
+    if ([notification.object isEqual:_miniArtwork]) [self showArtwork];
+}
+- (void)showArtwork {
+    UIImage *image = SurcoArtwork(_miniArtwork);
+    _miniCover.image = image ?: [UIImage systemImageNamed:@"music.note"];
+    _miniCover.contentMode = image ? UIViewContentModeScaleAspectFill : UIViewContentModeCenter;
+}
+- (void)updateMini:(NSDictionary *)model rect:(CGRect)rect {
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect)) { [self setChrome:_mini shown:NO]; return; }
+    if (@available(iOS 26.0, *)) {
+        if (!_mini) [self makeMini];
+    } else return;
+    if (_mini.superview != _view) [_view addSubview:_mini];
+    _mini.frame = rect;
+    _miniGlass.frame = _mini.bounds;
+    _miniGlass.layer.cornerRadius = CGRectGetHeight(rect) / 2;
+    [self setChrome:_mini shown:YES];
+    if ([_miniModel isEqual:model]) return;
+    _miniModel = model;
+    _miniTitle.text = SurcoString(model[@"title"]);
+    _miniSubtitle.text = SurcoString(model[@"subtitle"]);
+    _miniOpen.accessibilityLabel = SurcoString(SurcoDictionary(model[@"open"])[@"title"]);
+    NSString *artwork = SurcoString(model[@"artwork"]);
+    if (![_miniArtwork isEqualToString:artwork]) { _miniArtwork = [artwork copy]; [self showArtwork]; }
+    for (UIView *view in _miniButtons.arrangedSubviews) { [_miniButtons removeArrangedSubview:view]; [view removeFromSuperview]; }
+    for (id item in SurcoArray(model[@"buttons"])) [_miniButtons addArrangedSubview:[self miniButton:SurcoDictionary(item)]];
+}
+- (void)updateFilters:(NSArray *)items rect:(CGRect)rect {
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect) || !items.count) { [self setChrome:_filters shown:NO]; return; }
+    // Only iOS 26 offers this slot; its chips are glass buttons.
+    if (@available(iOS 26.0, *)) {} else return;
+    if (!_filters) {
+        // Search's chips as glass capsules, the chosen one prominent, scrolling past both edges.
+        _filters = [UIScrollView new];
+        _filters.alpha = 0;
+        _filters.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _filters.showsHorizontalScrollIndicator = NO;
+        _filters.alwaysBounceHorizontal = YES;
+        _filters.clipsToBounds = NO;
+        _filters.contentInset = UIEdgeInsetsMake(0, 8, 0, 8);
+        _filterRow = [UIStackView new];
+        _filterRow.spacing = 8;
+        _filterRow.alignment = UIStackViewAlignmentCenter;
+        _filterRow.translatesAutoresizingMaskIntoConstraints = NO;
+        [_filters addSubview:_filterRow];
+        [NSLayoutConstraint activateConstraints:@[
+            [_filterRow.leadingAnchor constraintEqualToAnchor:_filters.contentLayoutGuide.leadingAnchor],
+            [_filterRow.trailingAnchor constraintEqualToAnchor:_filters.contentLayoutGuide.trailingAnchor],
+            [_filterRow.topAnchor constraintEqualToAnchor:_filters.contentLayoutGuide.topAnchor],
+            [_filterRow.bottomAnchor constraintEqualToAnchor:_filters.contentLayoutGuide.bottomAnchor],
+            [_filterRow.heightAnchor constraintEqualToAnchor:_filters.frameLayoutGuide.heightAnchor],
+        ]];
+    }
+    if (_filters.superview != _view) [_view addSubview:_filters];
+    _filters.frame = rect;
+    [self setChrome:_filters shown:YES];
+    if ([_filterItems isEqual:items]) return;
+    _filterItems = [items copy];
+    NSArray<UIView *> *buttons = _filterRow.arrangedSubviews;
+    BOOL same = buttons.count == items.count;
+    for (NSUInteger index = 0; same && index < items.count; index++) {
+        same = [buttons[index].accessibilityIdentifier isEqualToString:SurcoString(SurcoDictionary(items[index])[@"id"])];
+    }
+    if (!same) {
+        for (UIView *view in buttons) { [_filterRow removeArrangedSubview:view]; [view removeFromSuperview]; }
+        __weak SurcoSurfaces *weakSelf = self;
+        for (id value in items) {
+            NSString *identifier = SurcoString(SurcoDictionary(value)[@"id"]);
+            UIButton *button = [UIButton buttonWithConfiguration:[UIButtonConfiguration plainButtonConfiguration]
+                primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+                    [weakSelf emit:@{@"kind":@"chrome", @"id":identifier}];
+                }]];
+            button.accessibilityIdentifier = identifier;
+            button.tintColor = UIColor.whiteColor;
+            [_filterRow addArrangedSubview:button];
+        }
+    }
+    UIFont *font = [[UIFontMetrics metricsForTextStyle:UIFontTextStyleSubheadline]
+        scaledFontForFont:[UIFont systemFontOfSize:14 weight:UIFontWeightMedium] maximumPointSize:18];
+    for (NSUInteger index = 0; index < items.count; index++) {
+        NSDictionary *item = SurcoDictionary(items[index]);
+        UIButton *button = (UIButton *)_filterRow.arrangedSubviews[index];
+        BOOL selected = [item[@"selected"] isKindOfClass:NSNumber.class] && [item[@"selected"] boolValue];
+        UIButtonConfiguration *configuration = nil;
+        if (@available(iOS 26.0, *)) {
+            configuration = selected ? [UIButtonConfiguration prominentGlassButtonConfiguration] : [UIButtonConfiguration glassButtonConfiguration];
+        }
+        configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+        configuration.contentInsets = NSDirectionalEdgeInsetsMake(7, 14, 7, 14);
+        // Lit while chosen, as the canvas chip: white glass, dark words.
+        configuration.baseForegroundColor = selected ? UIColor.blackColor : UIColor.whiteColor;
+        configuration.attributedTitle = [[NSAttributedString alloc] initWithString:SurcoString(item[@"title"]) attributes:@{NSFontAttributeName: font}];
+        button.configuration = configuration;
+        button.accessibilityLabel = SurcoString(item[@"title"]);
+        button.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
+    }
 }
 - (BOOL)searchIsLive {
     return _valid && !_updatingSearch && _searchSession.length && !_searchBar.hidden && _view.window;

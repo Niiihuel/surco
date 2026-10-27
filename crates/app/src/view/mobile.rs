@@ -146,7 +146,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         bottom_height += lyrics::FOOTER_HEIGHT;
     } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
-            bottom.push(mini_player(state, track, palette));
+            bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, palette) });
             bottom_height += MINI_HEIGHT;
         }
     }
@@ -368,6 +368,31 @@ pub(crate) fn header_buttons(state: &State) -> (Vec<HeaderButton>, Vec<HeaderBut
 
 #[cfg(any(target_os = "ios", test))]
 pub(crate) fn surface_tint(state: &State) -> Color { page_surface(state).0 }
+
+/// UIKit draws iOS 26's bars in Liquid Glass, their content its own.
+pub(super) fn glass(state: &State) -> bool {
+    state.mobile_ui.native_surfaces && state.mobile_ui.glass
+}
+
+/// The mini-player's place under Liquid Glass, where UIKit floats its capsule above the tabs.
+fn mini_slot(track: &Track) -> Element {
+    let slot = Element::spacer().size(None, Some(MINI_HEIGHT - 10.0))
+        .accessible(limn::Access::new(limn::Role::Group).id("ios-mini").name(t!("mobile-open-player", title = track.title.as_str())));
+    Element::column(vec![Element::spacer().size(None, Some(4.0)), horizontal_inset(slot, 8.0, 8.0),
+        Element::spacer().size(None, Some(6.0))]).size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
+}
+
+/// The native mini-player's buttons after the song: id, label and SF Symbol.
+#[cfg(any(target_os = "ios", test))]
+pub(crate) fn mini_buttons(state: &State) -> [HeaderButton; 3] {
+    let liked = state.current().is_some_and(|track| state.is_liked(&track.id));
+    let playing = state.player.playing;
+    [
+        ("mobile-connections", crate::i18n::fixed(t!("mobile-connect-device")), "airplay.audio"),
+        ("like", crate::i18n::fixed(if liked { t!("mobile-unlike") } else { t!("common-like") }), if liked { "heart.fill" } else { "heart" }),
+        ("play-pause", crate::i18n::fixed(if playing { t!("common-pause") } else { t!("common-play") }), if playing { "pause.fill" } else { "play.fill" }),
+    ]
+}
 
 fn mini_player(state: &State, track: &Track, palette: ComponentPalette) -> Element {
     let tint = track.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied();

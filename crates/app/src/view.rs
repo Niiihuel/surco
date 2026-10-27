@@ -9,7 +9,7 @@ pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use jam::entry as jam_entry;
 #[cfg(any(target_os = "ios", test))]
-pub(crate) use mobile::{header_buttons, surface_tint, tabs, title as mobile_title};
+pub(crate) use mobile::{header_buttons, mini_buttons, search::filters as search_filters, surface_tint, tabs, title as mobile_title};
 pub(crate) use mobile::{large_title as mobile_large_title, search_header_height as mobile_search_header};
 
 use surco_audio::equalizer::BAND_HZ;

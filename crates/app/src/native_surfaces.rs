@@ -41,7 +41,29 @@ pub(crate) struct Chrome {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tabs: Option<[f32; 4]>,
     pub items: Vec<Action>,
+    /// iOS 26's Liquid Glass mini-player, floating above the tabs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mini: Option<Mini>,
+    /// Search's result chips in glass, on iOS 26.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub filters: Option<Strip>,
 }
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct Mini {
+    pub rect: [f32; 4],
+    /// The capsule's tap, which opens the player.
+    pub open: Action,
+    pub title: String,
+    pub subtitle: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artwork: Option<String>,
+    pub buttons: Vec<Action>,
+}
+
+/// A row of buttons in its slot, the chosen one `selected`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct Strip { pub rect: [f32; 4], pub items: Vec<Action> }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct Menu { pub id: String, pub title: String, pub rect: [f32; 4], pub items: Vec<Action> }
@@ -231,14 +253,28 @@ impl Controller {
             crate::view::tabs(state).into_iter().map(|(id, _, symbol, title, selected)|
                 Action { selected, ..Action::new(id, title, symbol) }).collect()
         } else { Vec::new() };
+        let mini = node("ios-mini").and_then(|node| screen_rect(node.rect, origin)).zip(state.current()).map(|(rect, track)| Mini {
+            rect,
+            open: Action::new("mobile-playing", t!("mobile-open-player", title = track.title.as_str()), "chevron.up"),
+            title: track.title.clone(),
+            subtitle: state.player.error.clone().unwrap_or_else(|| track.artist.clone()),
+            artwork: track.artwork_url.clone(),
+            buttons: crate::view::mini_buttons(state).into_iter().map(action).collect(),
+        });
+        let filters = node("ios-filters").and_then(|node| screen_rect(node.rect, origin)).map(|rect| Strip {
+            rect,
+            items: crate::view::search_filters(state).into_iter().map(|(id, title, selected)| Action { selected, symbol: None, ..Action::new(id, title, "") }).collect(),
+        });
         self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
+        self.chrome.extend(mini.iter().flat_map(|mini| std::iter::once(&mini.open).chain(&mini.buttons)).map(|item| item.id.clone()));
+        self.chrome.extend(filters.iter().flat_map(|filters| &filters.items).map(|item| item.id.clone()));
         let tint = crate::view::surface_tint(state);
         // A detail page's bar is nameless until its own title has scrolled under it.
         let hero = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
         let title = if hero && !state.mobile_ui.compact_header { String::new() } else { crate::view::mobile_title(state).into() };
         Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, scrolled: state.mobile_ui.scrolled, tint: [tint.r, tint.g, tint.b], header,
             title, compact: state.mobile_ui.compact_header, large: crate::view::mobile_large_title(state), scroll: state.mobile_ui.page_scroll,
-            search: state.page == Page::Search && state.mobile_search, leading, trailing, tabs, items })
+            search: state.page == Page::Search && state.mobile_search, leading, trailing, tabs, items, mini, filters })
     }
 
     pub fn apply(&mut self, state: &mut State, event: Event) -> Vec<Command> {
@@ -878,6 +914,45 @@ mod tests {
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
         assert!(controller.payload(&state, &frame, Pos2::ZERO).chrome.is_none(), "the player keeps its own bars");
         assert!(controller.apply(&mut state, Event::Chrome { id: "home".into() }).is_empty() && state.page == state::Page::Playing);
+    }
+
+    #[test]
+    fn liquid_glass_hands_the_mini_player_and_search_chips_to_uikit() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.glass = true;
+        state.player.current = Some(track("a"));
+        let size = Size::new(390.0, 844.0);
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        for id in ["mobile-playing", "play-pause", "mobile-connections"] {
+            assert!(!frame.regions.iter().any(|region| region.id == id), "{id} is UIKit's");
+        }
+        let mut controller = Controller::default();
+        let chrome = controller.payload(&state, &frame, Pos2::ZERO).chrome.unwrap();
+        let mini = chrome.mini.unwrap();
+        let tabs = chrome.tabs.unwrap();
+        assert!(mini.rect[1] + mini.rect[3] <= tabs[1] && mini.rect[3] >= 44.0, "the capsule floats above the tabs");
+        assert_eq!((mini.title.as_str(), mini.subtitle.as_str(), mini.open.id.as_str()), ("Track a", "Artist", "mobile-playing"));
+        assert_eq!(mini.buttons.iter().map(|item| item.symbol.as_deref().unwrap()).collect::<Vec<_>>(), ["airplay.audio", "heart", "play.fill"]);
+        controller.apply(&mut state, Event::Chrome { id: "like".into() });
+        assert!(state.is_liked("a"));
+        controller.apply(&mut state, Event::Chrome { id: "mobile-playing".into() });
+        assert_eq!(state.page, state::Page::Playing);
+
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.glass = true;
+        state.mobile_search = true;
+        state.submitted = Some("consulta".into());
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        assert!(!frame.regions.iter().any(|region| region.id.starts_with("search-filter:")), "the chips are UIKit's");
+        let filters = controller.payload(&state, &frame, Pos2::ZERO).chrome.unwrap().filters.unwrap();
+        assert!(filters.rect[3] >= 44.0);
+        assert_eq!(filters.items.iter().map(|item| (item.id.as_str(), item.selected)).collect::<Vec<_>>(),
+            [("search-filter:all", true), ("search-filter:tracks", false), ("search-filter:artists", false), ("search-filter:albums", false)]);
+        controller.apply(&mut state, Event::Chrome { id: "search-filter:artists".into() });
+        assert_eq!(state.search_filter, crate::state::mobile::SearchFilter::Artists);
+        assert!(controller.apply(&mut state, Event::Chrome { id: "search-filter:nothing".into() }).is_empty());
     }
 
     #[test]

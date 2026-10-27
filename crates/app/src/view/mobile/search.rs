@@ -43,6 +43,17 @@ fn section(title: &str, palette: ComponentPalette) -> Element {
     Text::new(title, palette).role(TextRole::Heading).font_size(17.0).render().font_family(FontFamily::SansBold)
 }
 
+/// Each result chip's id, label and whether it is chosen, shared with the native glass chips.
+pub(crate) fn filters(state: &State) -> [(&'static str, &'static str, bool); 4] {
+    let chosen = state.search_filter;
+    [
+        ("search-filter:all", crate::i18n::fixed(t!("common-all")), chosen == SearchFilter::All),
+        ("search-filter:tracks", crate::i18n::fixed(t!("common-songs-heading")), chosen == SearchFilter::Tracks),
+        ("search-filter:artists", crate::i18n::fixed(t!("common-artists")), chosen == SearchFilter::Artists),
+        ("search-filter:albums", crate::i18n::fixed(t!("common-albums")), chosen == SearchFilter::Albums),
+    ]
+}
+
 pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let pending = state.searching || state.search_due.is_some();
     let has_results = !state.found.tracks.is_empty() || !state.found.artists.is_empty() || !state.found.albums.is_empty();
@@ -50,13 +61,16 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
         return idle(state, width, palette);
     }
     let chosen = state.search_filter;
-    // Spotify's chips: a 32pt pill, lit while chosen, on a touch target of full height.
-    let tab = |key: &str, label: &str, value| super::chip(format!("search-filter:{key}"), label, chosen == value, limn::Role::Tab, palette);
-    // The chips start on the page's 16pt margin and scroll out past both edges.
-    let filters = Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(vec![
-        tab("all", &t!("common-all"), SearchFilter::All), tab("tracks", &t!("common-songs-heading"), SearchFilter::Tracks),
-        tab("artists", &t!("common-artists"), SearchFilter::Artists), tab("albums", &t!("common-albums"), SearchFilter::Albums),
-    ]).gap(8.0), 8.0, 8.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR);
+    // Under Liquid Glass UIKit lays its glass chips over this slot.
+    let filters = if super::glass(state) {
+        Element::spacer().size(None, Some(TAP)).accessible(limn::Access::new(limn::Role::Group).id("ios-filters").name(t!("common-search")))
+    } else {
+        // Spotify's chips: a 32pt pill, lit while chosen, on a touch target of full height.
+        let chips = filters(state).map(|(id, label, on)| super::chip(id.into(), label, on, limn::Role::Tab, palette));
+        // The chips start on the page's 16pt margin and scroll out past both edges.
+        Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(chips.into()).gap(8.0), 8.0, 8.0))
+            .drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR)
+    };
     let found = &state.found;
     let mut rows = Vec::new();
     // Songs are played as a list's: the big play plays them all, and a song the ones after it.

@@ -78,7 +78,12 @@ Liquid Glass circles on iOS 26 (a translucent circle before). On iOS 26 the tab
 bar is the system's own `UITabBar`, a floating Liquid Glass capsule whose glass
 selection follows the finger; the canvas only deepens by the home indicator, so
 rows stay seen through it, and sheets show the system's glass instead of a
-material of their own. Before iOS 26 the tab bar uses the Spotify iPhone kit:
+material of their own. The mini-player there is UIKit's too, Apple Music's
+Liquid Glass capsule floating above the tabs over the `ios-mini` slot: Rust sends
+the song, its cover's URL and the buttons' ids, labels and symbols; the cover is
+the one Rust already hands Now Playing from its cache, so it shows offline.
+Search's result chips are glass buttons over the `ios-filters` slot, the chosen
+one prominent. Before iOS 26 the tab bar uses the Spotify iPhone kit:
 SF Symbols with labels, white when selected, over a canvas scrim that is clear
 above the mini-player and solid by the tab labels.
 Both fade instead of popping while the player slides over them.
