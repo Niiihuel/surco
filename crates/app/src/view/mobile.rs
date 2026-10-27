@@ -132,7 +132,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         home::content(state, width, palette)
     } else if state.page == Page::Lyrics {
         // What the lines are seen through, between the header and the transport.
-        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::FOOTER_HEIGHT, palette)
+        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(state), palette)
+    } else if state.page == Page::Playing && glass(state) {
+        player::glass(state, width, window.height - top_height - insets.bottom, palette)
     } else {
         page(state, width, palette)
     };
@@ -145,7 +147,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let mut bottom_height = insets.bottom;
     if state.page == Page::Lyrics {
         bottom.push(lyrics::footer(state, palette));
-        bottom_height += lyrics::FOOTER_HEIGHT;
+        bottom_height += lyrics::footer_height(state);
     } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, palette) });
@@ -384,6 +386,17 @@ pub(super) fn glass(state: &State) -> bool {
 /// Glass the field is at the foot instead and the header stays a plain one.
 pub(crate) fn search_in_header(state: &State) -> bool {
     state.page == Page::Search && state.mobile_search && !glass(state)
+}
+
+/// UIKit's search of the page's songs, at its top as dnmusic's lists keep it: scrolled away
+/// under the header with the page, Cancel empties it.
+pub(in crate::view) fn page_search_slot(state: &State) -> Option<Element> {
+    // A search that finds nothing keeps its field, to be emptied.
+    let songs = !state.page_rows().is_empty() || !state.page_search.is_empty();
+    // Under Liquid Glass only: older iOS keeps limn's magnifier.
+    (cfg!(any(target_os = "ios", test)) && state.mobile && glass(state) && songs)
+        .then(|| Element::spacer().size(None, Some(TAP))
+            .accessible(limn::Access::new(limn::Role::Group).id("ios-page-search").name(t!("desktop-search-page"))))
 }
 
 /// The mini-player's place under Liquid Glass, where UIKit floats its capsule above the tabs.

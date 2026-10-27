@@ -125,7 +125,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 @end
 
-@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate> {
+@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate, UITabBarDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
     NSArray<NSDictionary *> *_menus;
@@ -169,8 +169,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     NSArray *_headerButtons;
     SurcoChromeView *_tabs;
     UIStackView *_tabRow;
-    UIVisualEffectView *_tabGlass;
-    UIView *_tabPill;
+    UITabBar *_tabBar;
     SurcoChromeView *_mini;
     UIButton *_fold;
     NSDictionary *_foldItem;
@@ -559,51 +558,28 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 - (void)updateTabs:(NSArray *)items rect:(CGRect)rect {
     if (CGRectIsNull(rect) || CGRectIsEmpty(rect) || !items.count) { [self setChrome:_tabs shown:NO]; return; }
+    if (@available(iOS 26.0, *)) { [self updateSystemTabs:items rect:rect]; return; }
     if (!_tabs) {
         _tabs = [SurcoChromeView new];
         _tabs.alpha = 0;
         _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
         UIView *container = _tabs;
-        if (@available(iOS 26.0, *)) {
-            // A Liquid Glass capsule of our own, with a glass pill under the chosen tab: a lone
-            // UITabBar outside its controller sizes itself past its slot and drops its items' ids.
-            UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
-            glass.interactive = YES;
-            _tabGlass = [[UIVisualEffectView alloc] initWithEffect:glass];
-            _tabGlass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-            _tabGlass.layer.cornerCurve = kCACornerCurveContinuous;
-            _tabGlass.clipsToBounds = YES;
-            [_tabs addSubview:_tabGlass];
-            _tabPill = [UIView new];
-            _tabPill.userInteractionEnabled = NO;
-            _tabPill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
-            _tabPill.layer.cornerCurve = kCACornerCurveContinuous;
-            [_tabGlass.contentView addSubview:_tabPill];
-            container = _tabGlass.contentView;
-        }
         _tabRow = [UIStackView new];
         _tabRow.axis = UILayoutConstraintAxisHorizontal;
         _tabRow.distribution = UIStackViewDistributionFillEqually;
         _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
         [container addSubview:_tabRow];
-        CGFloat inset = _tabGlass ? 4 : 0;
         [NSLayoutConstraint activateConstraints:@[
-            [_tabRow.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:inset],
-            [_tabRow.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-inset],
-            [_tabRow.topAnchor constraintEqualToAnchor:container.topAnchor constant:inset],
-            [_tabRow.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-inset],
+            [_tabRow.leadingAnchor constraintEqualToAnchor:container.leadingAnchor],
+            [_tabRow.trailingAnchor constraintEqualToAnchor:container.trailingAnchor],
+            [_tabRow.topAnchor constraintEqualToAnchor:container.topAnchor],
+            [_tabRow.bottomAnchor constraintEqualToAnchor:container.bottomAnchor],
         ]];
     }
     if (_tabs.superview != _view) [_view addSubview:_tabs];
     _tabs.frame = rect;
-    if (_tabGlass) {
-        // Apple Music's proportions: a capsule as tall as the slot, a tab's width per tab, centred.
-        CGFloat width = MIN(CGRectGetWidth(rect) - 32, 96 * items.count);
-        _tabGlass.frame = CGRectMake((CGRectGetWidth(rect) - width) / 2, 0, width, CGRectGetHeight(rect));
-        _tabGlass.layer.cornerRadius = CGRectGetHeight(rect) / 2;
-    }
     [self setChrome:_tabs shown:YES];
-    if ([_tabItems isEqual:items]) { [self placeTabPill:NO]; return; }
+    if ([_tabItems isEqual:items]) return;
     NSString *(^selection)(NSArray *) = ^NSString *(NSArray *list) {
         for (id value in list) if ([SurcoDictionary(value)[@"selected"] boolValue]) return SurcoString(SurcoDictionary(value)[@"id"]);
         return nil;
@@ -646,25 +622,66 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
                 options:UIViewAnimationOptionAllowUserInteraction animations:^{ glyph.transform = CGAffineTransformIdentity; } completion:nil];
         }
     }
-    [self placeTabPill:moved];
 }
-// The glass pill rests under the chosen tab, sliding there when the choice moves.
-- (void)placeTabPill:(BOOL)animated {
-    if (!_tabPill) return;
-    [_tabGlass.contentView layoutIfNeeded];
-    UIView *chosen = nil;
-    for (UIView *button in _tabRow.arrangedSubviews) if (button.accessibilityTraits & UIAccessibilityTraitSelected) chosen = button;
-    _tabPill.hidden = !chosen;
-    if (!chosen) return;
-    CGRect frame = [_tabGlass.contentView convertRect:chosen.bounds fromView:chosen];
-    if (CGRectEqualToRect(_tabPill.frame, frame)) return;
-    void (^place)(void) = ^{
-        self->_tabPill.frame = frame;
-        self->_tabPill.layer.cornerRadius = CGRectGetHeight(frame) / 2;
-    };
-    if (!animated || CGRectIsEmpty(_tabPill.frame)) { place(); return; }
-    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.78 initialSpringVelocity:0.4
-        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:place completion:nil];
+// iOS 26: the system's own tab bar, as dnmusic's. UIKit draws its Liquid Glass and slides the
+// selection; Rust still names the tabs and decides where a tap goes.
+// https://developer.apple.com/documentation/uikit/uitabbar
+- (void)updateSystemTabs:(NSArray *)items rect:(CGRect)rect API_AVAILABLE(ios(26.0)) {
+    if (!_tabs) {
+        _tabs = [SurcoChromeView new];
+        _tabs.alpha = 0;
+        _tabBar = [UITabBar new];
+        _tabBar.delegate = self;
+        _tabBar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+        _tabBar.tintColor = UIColor.whiteColor;
+        _tabBar.unselectedItemTintColor = [UIColor colorWithWhite:0.70 alpha:1];
+        [_tabs addSubview:_tabBar];
+    }
+    if (_tabs.superview != _view) [_view addSubview:_tabs];
+    // Down to the screen's foot, as a controller's bar: UIKit floats its capsule above the home indicator.
+    rect.size.height = MAX(CGRectGetHeight(rect), CGRectGetMaxY(_view.bounds) - CGRectGetMinY(rect));
+    _tabs.frame = rect;
+    _tabBar.frame = _tabs.bounds;
+    [self setChrome:_tabs shown:YES];
+    if ([_tabItems isEqual:items]) return;
+    _tabItems = [items copy];
+    BOOL same = _tabBar.items.count == items.count;
+    for (NSUInteger index = 0; same && index < items.count; index++) {
+        same = [_tabBar.items[index].accessibilityIdentifier isEqualToString:SurcoString(SurcoDictionary(items[index])[@"id"])];
+    }
+    if (!same) {
+        NSMutableArray<UITabBarItem *> *tabs = [NSMutableArray array];
+        for (NSUInteger index = 0; index < items.count; index++) {
+            UITabBarItem *tab = [[UITabBarItem alloc] initWithTitle:nil image:nil tag:(NSInteger)index];
+            tab.accessibilityIdentifier = SurcoString(SurcoDictionary(items[index])[@"id"]);
+            [tabs addObject:tab];
+        }
+        _tabBar.items = tabs;
+    }
+    UIImageSymbolConfiguration *size = [UIImageSymbolConfiguration configurationWithPointSize:22 weight:UIImageSymbolWeightRegular];
+    for (NSUInteger index = 0; index < items.count; index++) {
+        NSDictionary *item = SurcoDictionary(items[index]);
+        UITabBarItem *tab = _tabBar.items[index];
+        // dnmusic's tabs are glyphs alone, their names spoken; Rust sends the filled glyph for the chosen one.
+        tab.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"]) withConfiguration:size];
+        tab.selectedImage = tab.image;
+        tab.accessibilityLabel = SurcoString(item[@"title"]);
+    }
+    [self selectSystemTab];
+}
+- (void)selectSystemTab {
+    UITabBarItem *chosen = nil;
+    for (NSUInteger index = 0; index < _tabItems.count && index < _tabBar.items.count; index++) {
+        if ([SurcoDictionary(_tabItems[index])[@"selected"] boolValue]) chosen = _tabBar.items[index];
+    }
+    if (_tabBar.selectedItem != chosen) _tabBar.selectedItem = chosen;
+}
+- (void)tabBar:(UITabBar *)tabBar didSelectItem:(UITabBarItem *)item {
+    if (tabBar != _tabBar || !item.accessibilityIdentifier.length) return;
+    // UIKit stays on the touched tab; should Rust not go there, its own choice comes back shortly.
+    [self emit:@{@"kind":@"chrome", @"id":item.accessibilityIdentifier}];
+    __weak SurcoSurfaces *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)), dispatch_get_main_queue(), ^{ [weakSelf selectSystemTab]; });
 }
 - (UIButton *)miniButton:(NSDictionary *)item {
     NSString *identifier = SurcoString(item[@"id"]);

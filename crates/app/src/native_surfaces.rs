@@ -148,7 +148,9 @@ struct MenuBinding { target: CardContext, actions: HashSet<String> }
 
 struct SheetBinding { key: String, sheet: Sheet }
 
-struct SearchBinding { session: String, revision: u64, intent: u64 }
+/// `page`: the route whose songs the field searches, rather than Search's catalog; `editing` is
+/// that field's own, as Search keeps its in the state.
+struct SearchBinding { session: String, revision: u64, intent: u64, page: Option<String>, editing: bool }
 
 #[derive(Default)]
 pub(crate) struct Controller {
@@ -184,22 +186,27 @@ impl Controller {
             return payload;
         }
         self.sheet = None;
-        let search_rect = search_visible(state).then(|| frame.access.iter().find(|node|
-            node.id == "ios-search" && !node.disabled)).flatten()
-            .and_then(|node| visible_rect(frame, 0, node.rect, true))
-            .and_then(|rect| screen_rect(rect, origin))
-            .filter(touch_sized);
-        if let Some(rect) = search_rect {
-            if self.search.as_ref().is_none_or(|binding| binding.intent != state.mobile_ui.search_intent) {
+        let slot = |id: &str| frame.access.iter().find(|node| node.id == id && !node.disabled);
+        let search_rect = if search_visible(state) {
+            slot("ios-search").and_then(|node| visible_rect(frame, 0, node.rect, true)).map(|rect| (rect, None))
+        } else if page_search_visible(state) {
+            // The page's field scrolls under the header; UIKit's goes while any of it is covered.
+            slot("ios-page-search").and_then(|node| visible_rect(frame, 0, node.rect, false)
+                .filter(|seen| seen.height >= node.rect.height - 0.5)).map(|rect| (rect, Some(crate::view::mobile_route_key(state))))
+        } else { None };
+        let search_rect = search_rect.and_then(|(rect, page)| screen_rect(rect, origin).filter(touch_sized).map(|rect| (rect, page)));
+        if let Some((rect, page)) = search_rect {
+            if self.search.as_ref().is_none_or(|binding| binding.intent != state.mobile_ui.search_intent || binding.page != page) {
                 self.next_search += 1;
                 self.search = Some(SearchBinding { session: format!("surco-search:{}", self.next_search), revision: 0,
-                    intent: state.mobile_ui.search_intent });
+                    intent: state.mobile_ui.search_intent, page, editing: false });
             }
             let binding = self.search.as_ref().unwrap();
-            payload.search = Some(SearchSlot { session: binding.session.clone(), rect,
-                text: state.query.clone(), editing: state.mobile_ui.search_editing,
-                revision: binding.revision,
-                placeholder: t!("native-search-placeholder").into_owned() });
+            let (text, editing, placeholder) = if binding.page.is_some() {
+                (state.page_search.clone(), binding.editing, t!("desktop-search-page"))
+            } else { (state.query.clone(), state.mobile_ui.search_editing, t!("native-search-placeholder")) };
+            payload.search = Some(SearchSlot { session: binding.session.clone(), rect, text, editing,
+                revision: binding.revision, placeholder: placeholder.into_owned() });
         } else { self.search = None; }
         for (index, region) in frame.regions.iter().enumerate() {
             if region.kind != limn::HitKind::Button { continue; }
@@ -293,22 +300,36 @@ impl Controller {
                 let binding = self.search.as_mut().unwrap();
                 if revision > binding.revision {
                     binding.revision = revision;
-                    return state.update(&UiAction::InputChanged { id: "search".into(), value: text });
+                    if binding.page.is_none() { return state.update(&UiAction::InputChanged { id: "search".into(), value: text }); }
+                    state.page_searching = true;
+                    return state.update(&UiAction::InputChanged { id: "page-query".into(), value: text });
                 }
             }
             Event::SearchFocus { session, revision, editing } if self.current_search(state, &session) => {
                 let binding = self.search.as_mut().unwrap();
                 if revision > binding.revision {
                     binding.revision = revision;
-                    state.mobile_ui.search_editing = editing;
+                    if binding.page.is_some() {
+                        binding.editing = editing;
+                        // Kept open as the field is: only Cancel shuts the search and forgets it.
+                        state.page_searching |= editing;
+                    } else { state.mobile_ui.search_editing = editing; }
                     state.mobile_ui.blur = !editing;
                     state.focus = None;
                 }
             }
             Event::SearchSubmit { session } if self.current_search(state, &session) => {
+                // The page's songs are already filtered as typed; Return only puts the keyboard away.
+                if self.search.as_ref().is_some_and(|binding| binding.page.is_some()) { return Vec::new(); }
                 return state.update(&UiAction::Submitted { id: "search".into(), value: state.query.clone() });
             }
             Event::SearchCancel { session } if self.current_search(state, &session) => {
+                if self.search.as_ref().is_some_and(|binding| binding.page.is_some()) {
+                    if !state.page_searching { return Vec::new(); }
+                    let commands = state.update(&UiAction::Clicked { id: "page-search".into() });
+                    state.focus = None;
+                    return commands;
+                }
                 return state.update(&UiAction::Clicked { id: "mobile-search-cancel".into() });
             }
             Event::MenuOpen { id } if sheet_spec(state).is_none() => {
@@ -367,8 +388,11 @@ impl Controller {
     }
 
     fn current_search(&self, state: &State, session: &str) -> bool {
-        search_visible(state) && self.search.as_ref().is_some_and(|binding|
-            binding.session == session && binding.intent == state.mobile_ui.search_intent)
+        self.search.as_ref().is_some_and(|binding| binding.session == session && binding.intent == state.mobile_ui.search_intent
+            && match &binding.page {
+                None => search_visible(state),
+                Some(page) => page_search_visible(state) && *page == crate::view::mobile_route_key(state),
+            })
     }
 
     fn current_sheet(&self, state: &State, id: &str) -> Option<Sheet> {
@@ -583,6 +607,12 @@ fn paste_valid(state: &State, target: &str) -> bool {
 fn search_visible(state: &State) -> bool {
     state.mobile && state.mobile_ui.native_surfaces && state.page == state::Page::Search
         && state.mobile_search && !has_sheet(state)
+}
+
+/// A detail page's songs, searched by UIKit's field at its top.
+fn page_search_visible(state: &State) -> bool {
+    state.mobile && state.mobile_ui.native_surfaces && state.mobile_ui.glass && !has_sheet(state)
+        && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_) | Page::Liked | Page::Downloads)
 }
 
 #[cfg(test)]
@@ -855,6 +885,43 @@ mod tests {
         controller.apply(&mut state, Event::SearchSubmit { session: search.session });
         assert!(matches!(&state.page, state::Page::Loading(crate::backend::Target::Song(id)) if id == "a-song"),
             "the explicit Return gesture opens the pasted link");
+    }
+
+    #[test]
+    fn a_pages_songs_are_searched_by_the_native_field_at_its_top_until_cancel() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.glass = true;
+        state.collection.playlists.push(state::Playlist { id: 3, name: "Lista".into(), collaborative: false, picture: None,
+            tracks: vec![track("a"), track("b")] });
+        state.page = Page::Playlist(3);
+        let size = Size::new(390.0, 844.0);
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        assert!(!frame.access.iter().any(|node| node.id == "page-search"), "no limn magnifier beside UIKit's field");
+        let mut controller = Controller::default();
+        let search = controller.payload(&state, &frame, Pos2::ZERO).search.expect("the field at the page's top");
+        assert_eq!(search.placeholder, "Buscar en esta página");
+        assert!(!search.editing && search.text.is_empty());
+
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
+        assert!(state.page_searching && state.focus.is_none());
+        controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2, text: "Track b".into() });
+        assert_eq!(state.page_rows().len(), 1, "the songs are filtered as typed");
+        assert!(controller.apply(&mut state, Event::SearchSubmit { session: search.session.clone() }).is_empty());
+        let refreshed = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
+        assert_eq!((refreshed.session.as_str(), refreshed.text.as_str(), refreshed.editing), (search.session.as_str(), "Track b", true));
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 3, editing: false });
+        assert_eq!(state.page_search, "Track b", "the filter outlives the keyboard");
+
+        controller.apply(&mut state, Event::SearchCancel { session: search.session.clone() });
+        assert!(!state.page_searching && state.page_search.is_empty() && state.page_rows().len() == 2, "Cancel empties it");
+
+        controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 4, editing: true });
+        state.page = Page::Library;
+        let library = UiTree::new(crate::view::view(&state, size)).layout(size);
+        assert!(controller.payload(&state, &library, Pos2::ZERO).search.is_none());
+        controller.apply(&mut state, Event::SearchEdit { session: search.session, revision: 5, text: "late".into() });
+        assert!(state.page_search.is_empty(), "a page left takes no typing");
     }
 
     #[test]

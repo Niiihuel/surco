@@ -22,6 +22,11 @@ pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
                 Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
             ]).gap(1.0).centered_y().flex(1.0),
             translate(state, palette),
+            // dnmusic's lyrics keep the song's heart beside its name.
+            if glass(state) {
+                let liked = state.is_liked(&track.id);
+                icon("like", if liked { Icon::HeartFill } else { Icon::Heart }, &if liked { t!("mobile-unlike") } else { t!("common-like") }, palette)
+            } else { Element::spacer().size(Some(0.0), Some(0.0)) },
             icon("mobile-lyrics-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"),
         ],
         None => vec![close, Element::spacer().flex(1.0)],
@@ -41,8 +46,19 @@ fn translate(state: &State, palette: ComponentPalette) -> Element {
     if on { Element::panel(button).background(Color::rgba(255, 255, 255, 40)).radius(22.0).centered_y() } else { button.centered_y() }
 }
 
+/// Under Liquid Glass the player's own controls, its foot too, stay under the lyrics.
+pub(super) const GLASS_FOOTER_HEIGHT: f32 = 212.0;
+
+pub(super) fn footer_height(state: &State) -> f32 {
+    if glass(state) { GLASS_FOOTER_HEIGHT } else { FOOTER_HEIGHT }
+}
+
 pub(super) fn footer(state: &State, palette: ComponentPalette) -> Element {
-    if state.current().is_none() { return Element::spacer().size(None, Some(FOOTER_HEIGHT)); }
+    if state.current().is_none() { return Element::spacer().size(None, Some(footer_height(state))); }
+    if glass(state) {
+        let controls = Element::column(vec![player::timeline(state, palette), player::transport(state, palette), player::foot(state, palette)]);
+        return horizontal_inset(controls.gap(8.0).padding(8.0), 16.0, 16.0).size(None, Some(GLASS_FOOTER_HEIGHT));
+    }
     let skip = |id: &str, glyph, label: &str, action: &str| controls::action(id, glyph, label, 28.0, palette).dispatch_as(action).centered_y();
     let transport = Element::row(vec![
         icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette).centered_y(),

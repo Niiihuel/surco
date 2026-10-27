@@ -56,6 +56,20 @@ beside it. While typing the circle and the mini-player go and the field rides th
 keyboard, which the bottom inset makes room for. UIKit no longer clips the field
 there; it is a glass capsule of its own.
 
+On iOS 26 a detail page (album, artist, playlist, mix, liked songs, downloads) keeps the
+same `UISearchBar` at its top, as dnmusic's lists, over the `ios-page-search`
+slot, instead of limn's magnifier. Its session is bound to the page's route, so a
+page left takes no late typing. Typing filters the page's songs at once; Return
+only puts the keyboard away; Cancel empties the search. The field leaves as soon
+as the header covers any of it and returns when the page is scrolled back.
+
+On iOS 26 the full player follows dnmusic's iPhone player: no scrolling page, the
+cover in all the room the controls leave, springing back to 82% while paused,
+the song with its heart under it, the timeline and transport, and a foot with the
+lyrics, the audio route, the sleep timer and the queue. The lyrics button swaps
+the cover for the lyrics in place and keeps the same controls under them (share
+takes the queue's place there); lit, it puts the cover back.
+
 The playlist migration card uses a native `UIPasteControl` on iOS 16 and later.
 Its recipient accepts the representations supported by
 `NSString` and `NSURL`, including UTF-16 text. A URL representation that cannot be
@@ -82,12 +96,13 @@ the id of a button from the last payload, which Rust validates before acting.
 Rows scroll beneath both bars. The header follows iOS 26's scroll-edge
 convention: a blur and the page's tint fade out below it, and its buttons are
 Liquid Glass circles on iOS 26 (a translucent circle before). On iOS 26 the tab
-bar is a floating Liquid Glass capsule (`UIGlassEffect`) with a glass pill that
-slides under the chosen tab. A lone `UITabBar` outside its controller sized itself
-past its slot and dropped its items' accessibility ids there, so the tabs are
-the same buttons as before inside the glass; the canvas only deepens by the home indicator, so
-rows stay seen through it, and sheets show the system's glass instead of a
-material of their own. The mini-player there is UIKit's too, Apple Music's
+bar is the system's own `UITabBar`, as dnmusic's: glyphs alone (their names are
+spoken), framed down to the screen's foot so UIKit floats its Liquid Glass
+capsule above the home indicator and slides the selection itself. Each item
+carries its Rust id as its accessibility id and a tap is sent as that id; if Rust
+does not go there, the bar returns to Rust's tab half a second later. The canvas
+only deepens by the home indicator, so rows stay seen through it, and sheets show
+the system's glass instead of a material of their own. The mini-player there is UIKit's too, Apple Music's
 Liquid Glass capsule floating above the tabs over the `ios-mini` slot: Rust sends
 the song, its cover's URL and the buttons' ids, labels and symbols; the cover is
 the one Rust already hands Now Playing from its cache, so it shows offline.

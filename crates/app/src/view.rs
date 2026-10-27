@@ -3360,6 +3360,8 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
     actions.extend(own.into_iter().map(Element::centered_y));
     if state.mobile {
         actions.push(Element::spacer().flex(1.0));
+        // UIKit's field at the page's top searches it instead, as dnmusic's lists.
+        if mobile::page_search_slot(state).is_some() { return Element::row(actions).gap(12.0); }
         return Element::column(vec![Element::row(actions).gap(12.0), Element::row(page_search(state, palette)).gap(8.0)]).gap(8.0);
     }
     actions.extend(page_search(state, palette));
@@ -3494,12 +3496,13 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
         (saved, 0) => t!("desktop-downloads-count", count = saved),
         (saved, saving) => t!("desktop-downloads-saving", saved = saved, saving = saving),
     };
-    let mut sections = vec![Element::column(vec![
+    let mut sections: Vec<_> = mobile::page_search_slot(state).into_iter().collect();
+    sections.push(Element::column(vec![
         Text::new(t!("common-downloads"), palette).font_size(HERO_TITLE).render(),
         Text::new(count, palette).muted().render(),
         play_buttons(state, None, palette),
     ])
-    .gap(10.0)];
+    .gap(10.0));
     sections.extend(failure);
     // A download that is removed closes where it was.
     sections.push(track_table(state, &state.page_rows(), true, Some("saved-row".into()), table_width(width), palette));
@@ -3520,7 +3523,8 @@ fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     .gap(10.0);
     // A track that loses its heart closes where it was.
     let list = track_table(state, &state.page_rows(), true, Some("liked-row".into()), table_width(width), palette);
-    page_scroll("liked", Element::column(vec![header, list]).gap(16.0).padding(12.0))
+    let sections = mobile::page_search_slot(state).into_iter().chain([header, list]).collect();
+    page_scroll("liked", Element::column(sections).gap(16.0).padding(12.0))
 }
 
 fn album_page(state: &State, album: &Album, width: f32, palette: ComponentPalette) -> Element {

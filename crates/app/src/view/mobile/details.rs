@@ -57,7 +57,8 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
     crate::view::windowed(built, range, count, crate::view::MOBILE_TRACK_PITCH, 4.0)
 }
 
-fn scroll(id: &str, sections: Vec<Element>) -> Element {
+fn scroll(state: &State, id: &str, sections: Vec<Element>) -> Element {
+    let sections = page_search_slot(state).into_iter().chain(sections).collect();
     ScrollArea::new(
         id,
         Element::column(sections).gap(24.0).padding(GUTTER),
@@ -113,6 +114,7 @@ pub(in crate::view) fn album(
         page_actions(state, vec![kept], palette)
     };
     scroll(
+        state,
         "mobile-album",
         vec![
             sole_cover(state, &album.artwork_url, side, palette)
@@ -181,7 +183,7 @@ pub(in crate::view) fn artist(
             palette,
         ));
     }
-    scroll("mobile-artist", sections)
+    scroll(state, "mobile-artist", sections)
 }
 
 /// A mix the home made, as a playlist reads: its picture, what it is and who it plays, and
@@ -195,7 +197,7 @@ pub(in crate::view) fn mix(state: &State, mix: &Mix, width: f32, palette: Compon
     ])
     .gap(4.0);
     let cover = crate::view::mix_cover(state, mix, cover_side(width), true, palette).centered_x();
-    scroll("mobile-mix", vec![cover, about, page_actions(state, Vec::new(), palette), tracks(state, palette)])
+    scroll(state, "mobile-mix", vec![cover, about, page_actions(state, Vec::new(), palette), tracks(state, palette)])
 }
 
 pub(in crate::view) fn playlist(
@@ -280,7 +282,7 @@ pub(in crate::view) fn playlist(
         sections.push(tracks(state, palette));
     }
     sections.extend(crate::view::suggested(state, playlist, width, palette));
-    scroll("mobile-playlist", sections)
+    scroll(state, "mobile-playlist", sections)
 }
 
 #[cfg(test)]

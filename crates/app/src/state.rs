@@ -587,6 +587,9 @@ const SUGGESTED_LOW: usize = 20;
 const RECENT_KEPT: usize = 8;
 /// How long the rows of the lyrics take to settle after the list jumps to a new line.
 const LYRIC_GLIDE: Duration = Duration::from_millis(560);
+/// dnmusic's paused cover, and the spring it steps back and forth on.
+const COVER_PAUSED: f32 = 0.82;
+const COVER_SPRING: Duration = Duration::from_millis(500);
 /// How much later each row sets off than the one nearer the line being sung, up to this many rows out.
 const LYRIC_RIPPLE: Duration = Duration::from_millis(34);
 const LYRIC_RIPPLE_ROWS: usize = 6;
@@ -1041,6 +1044,8 @@ pub struct State {
     lyric_card: ScalarSpring,
     /// Whether the card was on screen at the last layout; one that appears is in place at once.
     lyric_card_shown: bool,
+    /// The full player's cover, whole while it plays and stepped back while paused, as Apple Music's.
+    cover_rest: ScalarSpring,
     /// Consumed by the Host before following the new track's first timed line.
     pub(crate) lyrics_scroll_reset: bool,
     pub outputs: Vec<AudioOutputDevice>,
@@ -1438,6 +1443,7 @@ impl Default for State {
             lyric_glide: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
             lyric_card: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
             lyric_card_shown: false,
+            cover_rest: ScalarSpring::new(COVER_PAUSED, Instant::now()).motion(SpringMotion::settling_in(COVER_SPRING)),
             lyrics_scroll_reset: false,
             outputs: Vec::new(),
             outputs_loading: false,
@@ -1723,6 +1729,7 @@ impl State {
             || self.wash.is_active(now)
             || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
             || self.lyric_card.is_active(now)
+            || self.cover_rest.is_active(now)
             // A story's step fills its bar as it is on screen.
             || self.replay_story.is_some()
             || self.replay_deck.is_active(now)
@@ -3650,7 +3657,12 @@ impl State {
         if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str()) && self.swapped.is_none()) {
             self.collection.heard(track);
         }
-        self.player = player;
+        let was_playing = std::mem::replace(&mut self.player, player).playing;
+        if self.player.playing != was_playing {
+            let (to, now) = (if self.player.playing { 1.0 } else { COVER_PAUSED }, Instant::now());
+            if self.motion { self.cover_rest.release(self.cover_rest.value(now), self.cover_rest.velocity(now), to, now) }
+            else { self.cover_rest.snap_to(to, now) }
+        }
         // The song's own video in its place is that song still.
         let song = self.swapped.clone().or_else(|| self.player.current.clone());
         let (playing, position, duration) = (self.player.playing, self.player.position, self.player.duration);
@@ -4108,6 +4120,11 @@ impl State {
         }
         self.lyric_card_shown = true;
         true
+    }
+
+    /// How large the full player's cover stands, a fraction of its whole side.
+    pub fn cover_rest(&self, now: Instant) -> f32 {
+        self.cover_rest.value(now)
     }
 
     pub fn lyric_card_offset(&self, now: Instant) -> f32 {
