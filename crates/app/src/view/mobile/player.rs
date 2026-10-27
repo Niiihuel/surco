@@ -23,7 +23,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     }
     controls.extend([timeline(state, palette), transport(state, palette), tools(state, palette)]);
     let main = Element::column(vec![
-        sole_cover(state, &largest(state, track), side, palette).radius(8.0).centered_x()
+        sung_over(state, sole_cover(state, &largest(state, track), side, palette).radius(8.0), side, palette).centered_x()
             .animate_enter(format!("mobile-player-cover:{}", track.id)),
         Element::column(controls).gap(12.0),
     ]).gap(32.0);
@@ -82,9 +82,32 @@ fn tools(state: &State, palette: ComponentPalette) -> Element {
 const LYRIC_CARD_LINE: f32 = 30.0;
 const LYRIC_CARD_GAP: f32 = 18.0;
 
+/// The line being sung over the foot of the cover, as words over a song's video, on a scrim.
+fn sung_over(state: &State, cover: Element, side: f32, palette: ComponentPalette) -> Element {
+    let Some((index, line)) = state.active_line().and_then(|index| state.lines().get(index).map(|line| (index, line)))
+        .filter(|(_, line)| !line.text.trim().is_empty()) else { return cover };
+    let words = Text::new(&line.text, palette).font_size(20.0).line_height(26.0).render()
+        .font_family(FontFamily::SansBold).animate_enter(format!("mobile-cover-line:{index}"));
+    let foot = Element::column(vec![Element::spacer().flex(1.0), words]).padding(16.0).size(None, Some(side * 0.45))
+        .vertical_gradient(vec![Color::rgba(0, 0, 0, 0), COVER_SCRIM]);
+    Element::panel(Element::stack(vec![cover, Element::column(vec![Element::spacer().flex(1.0), foot])]))
+        .radius(8.0).clip_children().size(Some(side), Some(side))
+}
+
+/// The lyrics card's own buttons: round, on a faint glass of their own.
+fn card_button(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
+    controls::action(id, glyph, label, 18.0, palette).background(Color::rgba(255, 255, 255, 22))
+}
+
 fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
-    let card = ComponentPalette { surface: SCHEME.raised, ..palette };
-    let mut parts = vec![Text::new(t!("mobile-lyrics-preview"), card).font_size(16.0).render()];
+    // Translucent over the song's colour, as a pane of glass rather than a grey slab.
+    let card = ComponentPalette { surface: Color::rgba(255, 255, 255, 20), ..palette };
+    let share = card_button("lyrics-share", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), &t!("common-share-song"), card)
+        .dispatch_as("do:share:current");
+    let mut parts = vec![Element::row(vec![
+        Text::new(t!("mobile-lyrics"), card).font_size(16.0).render().font_family(FontFamily::SansBold).centered_y().flex(1.0),
+        share, card_button("lyrics", Icon::Expand, &t!("mobile-show-lyrics"), card),
+    ]).gap(8.0)];
     let lines = state.lines();
     if !lines.is_empty() {
         // Every line, in a window four lines tall that slides them up so the one being sung
@@ -122,12 +145,7 @@ fn lyric_preview(state: &State, palette: ComponentPalette) -> Element {
                 .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render());
         }
     }
-    parts.push(Element::row(vec![
-        Button::new("lyrics", t!("mobile-show-lyrics"), card).variant(ButtonVariant::Outline)
-            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render(),
-        Element::spacer().flex(1.0),
-    ]));
-    Element::panel(Element::column(parts).gap(18.0).padding(20.0)).background(card.surface).radius(16.0)
+    Element::panel(Element::column(parts).gap(14.0).padding(20.0)).background(card.surface).radius(20.0)
 }
 
 fn artist_card(state: &State, width: f32, palette: ComponentPalette) -> Option<Element> {
@@ -214,6 +232,22 @@ mod tests {
         let stale = frame(&state);
         assert!(!has_text(&stale, "Segunda línea real"), "a previous track cannot appear in the new card");
         assert!(stale.access.iter().any(|node| node.id == "lyrics"));
+    }
+
+    #[test]
+    fn the_line_being_sung_stands_over_the_cover_once_and_only_while_it_is_sung() {
+        let mut state = state();
+        let painted = |frame: &Frame, text: &str| frame.commands.iter()
+            .filter(|command| matches!(command, DrawCommand::Text { text: painted, .. } if painted == text)).count();
+        assert_eq!(painted(&frame(&state), "Segunda línea real"), 0);
+        state.lyrics = Some(("song".into(), Lyrics::Lines(vec![
+            Line { at_ms: 5_000, text: "Primera línea real".into() },
+            Line { at_ms: 25_000, text: "Segunda línea real".into() },
+        ])));
+        // Over the cover and in the card beneath.
+        assert_eq!(painted(&frame(&state), "Segunda línea real"), 2);
+        state.lyrics = Some(("song".into(), Lyrics::Lines(vec![Line { at_ms: 25_000, text: "  ".into() }])));
+        assert_eq!(painted(&frame(&state), "♪"), 1, "a silent line is the card's note alone; the cover stays bare");
     }
 
     #[test]
