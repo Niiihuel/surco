@@ -143,6 +143,31 @@ else
 fi
 record recreated
 
+# Scenario 6: a song kept offline plays and pauses, sound and all. YouTube refuses a CI
+# runner its streams, so a generated tone stands in the downloads, as Surco keeps them.
+tone_id=smoke-tone
+tone="$out/tone.wav"
+python3 - "$tone" <<'PY'
+import math, struct, sys, wave
+with wave.open(sys.argv[1], "wb") as out:
+    out.setnchannels(1); out.setsampwidth(2); out.setframerate(44100)
+    out.writeframes(b"".join(struct.pack("<h", int(8000 * math.sin(2 * math.pi * 440 * i / 44100))) for i in range(44100 * 30)))
+PY
+printf '[{"track":{"id":"%s","title":"Smoke tone","artist":"Surco","artist_id":null,"album":null,"album_id":null,"artwork_url":null,"duration_ms":30000},"mime":"audio/wav","loudness_db":null}]' "$tone_id" > "$out/index.json"
+adb shell am force-stop "$pkg"
+seed
+adb push "$tone" /data/local/tmp/tone.wav >/dev/null
+adb push "$out/index.json" /data/local/tmp/index.json >/dev/null
+adb shell "run-as $pkg sh -c 'mkdir -p files/offline && cp /data/local/tmp/index.json files/offline/index.json && cp /data/local/tmp/tone.wav files/offline/$(printf %s "$tone_id" | sha256sum | cut -d' ' -f1)'"
+launch "--click,downloads@4000,--click,page-play@7000,--click,mobile-playing@10000,--click,play-pause@20000"
+sleep 16
+shot 11-offline-playing.png
+playing media-offline-playing.txt
+sleep 10
+shot 12-offline-paused.png
+playing media-offline-paused.txt
+record offline
+
 stop_logcat
 grep -E 'Surco|AndroidRuntime|FATAL|DEBUG|libc|wgpu|panicked' "$out/logcat.txt" > "$out/logcat-surco.txt" || true
 
