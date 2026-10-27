@@ -1731,13 +1731,22 @@ async fn saved(shared: &Arc<Shared>, track: &Track, standby: bool) -> Option<(Lo
     Some((load, Download { track_id: track.id.clone(), task: tokio::spawn(async {}), buffer }))
 }
 
+/// An error with every cause under it, as the log needs: reqwest's own says only "error sending
+/// request", its reason (DNS, TLS, a timeout) being a source below.
+fn causes(error: &(dyn std::error::Error + 'static)) -> String {
+    std::iter::successors(Some(error), |error| error.source()).map(ToString::to_string).collect::<Vec<_>>().join(": ")
+}
+
 /// Resolves the track and starts downloading it into the buffer the returned load reads from,
 /// unless the library already holds it.
 async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Load, Download), String> {
     if let Some(ready) = saved(shared, track, standby).await {
         return Ok(ready);
     }
-    let stream = shared.youtube.stream(&track.id).await.map_err(|error| error.to_string())?;
+    let stream = shared.youtube.stream(&track.id).await.map_err(|error| {
+        eprintln!("Surco stream {}: {}", track.id, causes(&*error));
+        error.to_string()
+    })?;
     let best = stream.at_most(shared.quality.load(Ordering::SeqCst)).ok_or_else(|| t!("backend-no-audio"))?.clone();
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     let load = Load {
@@ -1883,7 +1892,7 @@ async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
         None => {
             let fetched = async { shared.youtube.http().get(cover_at(url, COVER_SIDE)).send().await?.error_for_status()?.bytes().await }.await;
             // The placeholder alone says nothing of why: the log does, where a phone keeps it.
-            if let Err(error) = &fetched { eprintln!("Surco cover {url}: {error}"); }
+            if let Err(error) = &fetched { eprintln!("Surco cover {url}: {}", causes(error)); }
             Some(fetched.ok()?.to_vec())
         }
     }
@@ -1928,6 +1937,22 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 #[cfg(test)]
 mod tests {
     use super::tint_of;
+
+    #[test]
+    fn a_logged_error_names_every_cause_under_it() {
+        let inner = std::io::Error::new(std::io::ErrorKind::TimedOut, "connect timed out");
+        let outer = std::io::Error::other(Wrapped(inner));
+        assert_eq!(super::causes(&outer), "error sending request: connect timed out");
+    }
+
+    #[derive(Debug)]
+    struct Wrapped(std::io::Error);
+    impl std::fmt::Display for Wrapped {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { formatter.write_str("error sending request") }
+    }
+    impl std::error::Error for Wrapped {
+        fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.0) }
+    }
 
     #[test]
     fn a_picture_chosen_is_kept_as_its_middle_square() {

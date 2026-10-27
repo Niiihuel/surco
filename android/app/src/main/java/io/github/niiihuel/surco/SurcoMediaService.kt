@@ -91,6 +91,9 @@ class SurcoMediaService : MediaSessionService() {
         super.onCreate()
         player = SurcoPlayer()
         session = MediaSession.Builder(this, player).build()
+        // Started rather than bound, the service knows its session only once added: without it
+        // Media3 never posts the notification, and Android kills the app for never calling startForeground.
+        addSession(session)
         SurcoMedia.attach(this, player)
     }
 
