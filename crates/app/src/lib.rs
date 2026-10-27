@@ -12,7 +12,16 @@ mod clip;
 mod handoff;
 mod i18n;
 mod import;
-#[cfg(any(target_os = "ios", test))]
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(any(target_os = "android", test))]
+mod android_ime;
+#[cfg(any(target_os = "android", test))]
+mod android_media;
+#[cfg(any(target_os = "android", test))]
+mod android_system;
+// Its Now Playing snapshot is Android's media session's too.
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 mod ios_media;
 mod library;
 mod media_keys;
@@ -84,6 +93,8 @@ struct Host {
     surfaces: native_surfaces::Controller,
     #[cfg(target_os = "ios")]
     keyboard_inset: limn::ScalarTransition,
+    #[cfg(target_os = "android")]
+    ime: android_ime::Sync,
 }
 
 /// What the command line asked the window to do by itself.
@@ -264,6 +275,33 @@ fn mobile_content_insets(canvas: egui::Rect, content: egui::Rect, keyboard: f32)
 }
 
 impl Host {
+    /// Keeps the focused field and GameActivity's input method in step: winit shows the
+    /// keyboard but drops what the input method types, which GameActivity keeps instead.
+    #[cfg(target_os = "android")]
+    fn android_text(&mut self, ctx: &egui::Context) {
+        use android_activity::input::{TextInputState, TextSpan};
+        let Some(app) = android::app() else { return };
+        let editing = ctx.output(|output| output.ime.is_some());
+        let focused = self.tree.focused_id().filter(|_| editing)
+            .and_then(|id| Some((id.to_owned(), self.tree.input_value(id)?.to_owned())));
+        let ime = app.text_input_state().text;
+        let step = self.ime.step(focused.as_ref().map(|(id, value)| android_ime::Focused { id, value }), &ime);
+        match step.keyboard {
+            Some(true) => app.show_soft_input(true),
+            Some(false) => app.hide_soft_input(true),
+            None => {}
+        }
+        if let Some(text) = step.set_text {
+            let end = android_ime::end_of(&text);
+            app.set_text_input_state(TextInputState { text, selection: TextSpan { start: end, end }, compose_region: None });
+        }
+        if let Some((id, value)) = step.changed {
+            let commands = self.state.update(&UiAction::InputChanged { id, value });
+            self.send(commands);
+            ctx.request_repaint();
+        }
+    }
+
     fn send(&self, commands: Vec<Command>) {
         for command in commands {
             // The backend only goes away when the window does.
@@ -421,6 +459,17 @@ impl eframe::App for Host {
         // Decoded covers are only a cache: short of memory, they are decoded again when seen.
         #[cfg(target_os = "ios")]
         if ios_ui::take_memory_warning() { limn_egui::clear_image_cache(); }
+        // Android's Back: the player shuts, a page goes back, and with nowhere left the app goes
+        // to the background, as Android's apps do.
+        #[cfg(target_os = "android")]
+        for (kind, _) in android::take_events() {
+            if kind != "window.back" { continue; }
+            let id = if self.state.page == state::Page::Playing { "mobile-player-dismiss" }
+                else if self.state.can_go_back() { "back" }
+                else { android_system::leave(); continue };
+            let commands = self.state.update(&UiAction::Clicked { id: id.into() });
+            self.send(commands);
+        }
         // A code read by the camera opens the account another device serves.
         #[cfg(target_os = "ios")]
         if let Some(link) = ios_ui::take_opened_link() {
@@ -488,9 +537,17 @@ impl eframe::App for Host {
             if self.keyboard_inset.is_active(now) { ctx.request_repaint(); }
             self.keyboard_inset.value(now)
         };
-        #[cfg(not(target_os = "ios"))]
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
         let keyboard_inset = 0.0;
         let safe_content = ctx.content_rect();
+        // Android draws edge to edge: the activity says what its bars and keyboard cover.
+        #[cfg(target_os = "android")]
+        let (safe_content, keyboard_inset) = {
+            let insets = android::insets();
+            self.state.mobile_ui.keyboard_visible = insets.ime > insets.bottom;
+            (egui::Rect::from_min_max(area.min + egui::vec2(insets.left, insets.top), area.max - egui::vec2(insets.right, insets.bottom)),
+                (insets.ime - insets.bottom).max(0.0))
+        };
         #[cfg(target_os = "ios")]
         let safe_content = self.native_ui.as_ref()
             .and_then(|native| native.safe_content_rect(area))
@@ -709,6 +766,12 @@ impl eframe::App for Host {
                     self.state.list_exported = None;
                 }
             }
+            // egui's clipboard does not reach Android's.
+            #[cfg(target_os = "android")]
+            if let Err(error) = android_system::copy_text(&text) {
+                eprintln!("Surco clipboard: {error}");
+                self.state.mobile_ui.notice = Some(crate::i18n::t!("state-copy-failed").into_owned());
+            }
             ctx.copy_text(text);
         }
         if let Some(url) = self.state.open_url.take() {
@@ -777,6 +840,8 @@ impl eframe::App for Host {
         let native_sheet = self.state.mobile_ui.native_surfaces && native_surfaces_present(&self.state);
         if self.state.mobile && !native_sheet {
             mobile_input::update_ime(&ctx, &self.tree, &frame, area.min);
+            #[cfg(target_os = "android")]
+            self.android_text(&ctx);
         } else if native_sheet {
             ctx.output_mut(|output| { output.mutable_text_under_cursor = false; output.ime = None; });
         }
@@ -871,10 +936,10 @@ pub fn run() -> eframe::Result {
     update::running();
     limn::set_labels(limn::Labels::SPANISH);
     let mut script = Script { after: Duration::from_millis(900), ..Script::default() };
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let mut arguments = std::env::args().skip(1);
-    // UIKit may supply its own launch arguments; they are not desktop script commands.
-    #[cfg(target_os = "ios")]
+    // UIKit and Android may supply launch arguments of their own; they are not desktop script commands.
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     let mut arguments = std::iter::empty::<String>();
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().unwrap_or_else(|| {
@@ -907,7 +972,7 @@ pub fn run() -> eframe::Result {
             }
         }
     }
-    let mobile = cfg!(target_os = "ios") || script.mobile;
+    let mobile = cfg!(any(target_os = "ios", target_os = "android")) || script.mobile;
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     #[cfg(target_os = "windows")]
     backend::register_with_windows(&data);
@@ -922,15 +987,17 @@ pub fn run() -> eframe::Result {
         .with_title_shown(!overlaid)
         .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
         .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
-    // iOS shows the bundle's icon; decoding this one would only delay the first frame.
-    let viewport = if cfg!(target_os = "ios") { viewport } else { viewport.with_icon(icon()) };
+    // A phone shows its package's icon; decoding this one would only delay the first frame.
+    let viewport = if cfg!(any(target_os = "ios", target_os = "android")) { viewport } else { viewport.with_icon(icon()) };
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: graphics_configuration(),
         persist_window: !mobile,
         persistence_path: paths::persistence_path(&data),
         viewport,
-        run_and_return: !cfg!(target_os = "ios"),
+        run_and_return: !cfg!(any(target_os = "ios", target_os = "android")),
+        #[cfg(target_os = "android")]
+        android_app: android::app(),
         ..Default::default()
     };
     eframe::run_native(
@@ -946,6 +1013,8 @@ pub fn run() -> eframe::Result {
                 // Replay's headlines and figures, as Wrapped's: Dela Gothic One, its Latin letters only.
                 .face(limn::FontFamily::Display, limn::Font::from_static(include_bytes!("../assets/fonts/DelaGothicOne-Regular.ttf")).expect("Dela Gothic One is a font")));
             limn_egui::install_fonts(&creation.egui_ctx);
+            #[cfg(target_os = "android")]
+            android::set_repaint(&creation.egui_ctx);
             #[cfg(target_os = "ios")]
             ios_symbols::install();
             // A page is covers by the dozen: with limn's default of 16 a shelf decodes them again as it scrolls.
@@ -1014,11 +1083,28 @@ pub fn run() -> eframe::Result {
                 surfaces: native_surfaces::Controller::default(),
                 #[cfg(target_os = "ios")]
                 keyboard_inset: limn::ScalarTransition::new(0.0, Instant::now()),
+                #[cfg(target_os = "android")]
+                ime: android_ime::Sync::default(),
                 panel_song: None,
                 session,
             }))
         }),
     )
+}
+
+/// The activity's native thread enters the same application as the desktop binary, once the
+/// JNI bridge and the platform's certificate checks are ready.
+/// https://docs.rs/android-activity/0.6.1/android_activity/
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+fn android_main(app: android_activity::AndroidApp) {
+    if let Err(error) = android::start(app) {
+        eprintln!("Surco could not start: {error}");
+        return;
+    }
+    if let Err(error) = run() {
+        eprintln!("Surco could not start: {error}");
+    }
 }
 
 /// UIKit's main-thread bootstrap enters the same application as the desktop binary.

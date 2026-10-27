@@ -92,6 +92,14 @@ raw-window-handle = "0.6.2"
 log = "0.4"
 raw-window-handle = "0.6.2"
 
+# Apache-2.0/MIT. The activity the app runs in, GameActivity for its input methods' text, and
+# JNI to the Kotlin shell, the same version the TLS verifier reqwest already uses talks through.
+[target.'cfg(target_os = "android")'.dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["android-game-activity"] }
+android-activity = { version = "0.6.1", features = ["game-activity"] }
+jni = "0.22.4"
+rustls-platform-verifier = "0.7.1"
+
 # Only for the examples that check what the app does against the real services: decoding a
 # song's own audio, as the engine already does through it.
 [dev-dependencies]

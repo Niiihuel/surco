@@ -608,13 +608,16 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                             },
                             #[cfg(target_os = "ios")]
                             Input::Media(MediaEvent::Session(event)) => session.event(&shared, &mut player, event),
-                            #[cfg(target_os = "ios")]
+                            #[cfg(any(target_os = "ios", target_os = "android"))]
                             Input::Media(MediaEvent::Artwork { track_id, url }) => {
                                 if let Ok(shared) = &shared {
                                     let shared = shared.clone();
                                     tokio::spawn(async move {
                                         if let Some(bytes) = cover_bytes(&shared, &url).await.filter(|bytes| bytes.len() <= 16 * 1024 * 1024) {
+                                            #[cfg(target_os = "ios")]
                                             crate::ios_media::artwork(&track_id, &url, &bytes);
+                                            #[cfg(target_os = "android")]
+                                            crate::android_media::artwork(&track_id, &url, &bytes);
                                         }
                                     });
                                 }
@@ -1388,7 +1391,13 @@ fn start_menu_entry(program: &std::path::Path) -> windows::core::Result<()> {
     Ok(())
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+/// On Android, by its notifications, which the app asks leave to post the first time.
+#[cfg(target_os = "android")]
+fn announce_update(version: &str) {
+    crate::android_system::notify(&t!("backend-update-title"), &t!("backend-update-body", version = version));
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "android")))]
 fn announce_update(_version: &str) {}
 
 async fn latest_release(shared: &Shared) -> Option<Release> {
@@ -1829,7 +1838,21 @@ async fn pick_picture() -> Option<Vec<u8>> {
     }
 }
 
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "ios")))]
+/// On Android, from its photos, through the system's own picker.
+#[cfg(target_os = "android")]
+async fn pick_picture() -> Option<Vec<u8>> {
+    crate::android_system::pick_photo();
+    loop {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        match crate::android_system::take_picked_photo() {
+            crate::android_system::Picked::Open => continue,
+            crate::android_system::Picked::Photo(photo) => return Some(photo),
+            crate::android_system::Picked::Left => return None,
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos", target_os = "ios", target_os = "android")))]
 async fn pick_picture() -> Option<Vec<u8>> {
     None
 }

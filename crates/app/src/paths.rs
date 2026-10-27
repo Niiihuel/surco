@@ -4,9 +4,16 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 pub fn data_dir(app_id: &str) -> io::Result<PathBuf> {
-    #[cfg(not(target_os = "ios"))]
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
     {
         Ok(eframe::storage_dir(app_id).unwrap_or_else(std::env::temp_dir))
+    }
+    // eframe knows no folder of Android's: without the activity's own the library would be
+    // kept in a cache the system empties.
+    #[cfg(target_os = "android")]
+    {
+        let _ = app_id;
+        crate::android::data_dir().ok_or_else(|| io::Error::other("Android's app files directory is unavailable"))
     }
     #[cfg(target_os = "ios")]
     {
@@ -41,7 +48,7 @@ pub fn data_dir(app_id: &str) -> io::Result<PathBuf> {
 }
 
 pub fn persistence_path(data: &Path) -> Option<PathBuf> {
-    cfg!(target_os = "ios").then(|| data.join("app.ron"))
+    cfg!(any(target_os = "ios", target_os = "android")).then(|| data.join("app.ron"))
 }
 
 #[cfg(any(target_os = "ios", test))]

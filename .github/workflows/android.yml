@@ -1,0 +1,79 @@
+name: Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', '.github/workflows/android.yml']
+  pull_request:
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', '.github/workflows/android.yml']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
+  LIMN_REF: 70fb59ee6cbd3e4b6618dcc0ae6b0396576cd12e
+
+jobs:
+  apk:
+    name: Android · debug APK
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          path: surco
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: Niiihuel/limn
+          ref: ${{ env.LIMN_REF }}
+          path: lienzo
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: Rust build cache
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            surco/target
+          key: android-${{ runner.arch }}-${{ hashFiles('surco/Cargo.lock') }}
+          restore-keys: android-${{ runner.arch }}-
+
+      - name: Rust library
+        working-directory: surco
+        run: ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME" scripts/build-android.sh
+
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          gradle-version: 8.11.1
+
+      - name: APK
+        working-directory: surco
+        run: gradle -p android assembleDebug
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-debug-apk
+          path: surco/android/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+          retention-days: 14

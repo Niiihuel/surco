@@ -22,7 +22,7 @@ pub enum MediaEvent {
     Key(Key),
     #[cfg(target_os = "ios")]
     Session(crate::ios_media::SessionEvent),
-    #[cfg(target_os = "ios")]
+    #[cfg(any(target_os = "ios", target_os = "android"))]
     Artwork { track_id: String, url: String },
 }
 
@@ -46,6 +46,8 @@ pub struct MediaKeys {
     controls: Option<souvlaki::MediaControls>,
     #[cfg(target_os = "ios")]
     ios: crate::ios_media::Controls,
+    #[cfg(target_os = "android")]
+    android: crate::android_media::Controls,
     /// What the desktop was last told: the track, whether it plays, and the second it is at.
     shown: (Option<String>, bool, u64),
 }
@@ -81,13 +83,17 @@ impl MediaKeys {
         };
         #[cfg(target_os = "ios")]
         let ios = crate::ios_media::Controls::start(press);
-        #[cfg(not(any(target_os = "linux", target_os = "ios")))]
+        #[cfg(target_os = "android")]
+        let android = crate::android_media::Controls::start(press);
+        #[cfg(not(any(target_os = "linux", target_os = "ios", target_os = "android")))]
         drop(press);
         Self {
             #[cfg(target_os = "linux")]
             controls,
             #[cfg(target_os = "ios")]
             ios,
+            #[cfg(target_os = "android")]
+            android,
             shown: (None, false, 0),
         }
     }
@@ -96,6 +102,8 @@ impl MediaKeys {
     pub fn show(&mut self, view: &PlayerView) {
         #[cfg(target_os = "ios")]
         self.ios.show(view);
+        #[cfg(target_os = "android")]
+        self.android.show(view);
         let shown = (view.current.as_ref().map(|track| track.id.clone()), view.playing, view.position.max(0.0) as u64);
         if shown == self.shown {
             return;
