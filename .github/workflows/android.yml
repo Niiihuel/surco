@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', '.github/workflows/android.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', 'scripts/android-smoke.sh', '.github/workflows/android.yml']
   pull_request:
-    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', '.github/workflows/android.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'android/**', 'scripts/build-android.sh', 'scripts/android-smoke.sh', '.github/workflows/android.yml']
 
 permissions:
   contents: read

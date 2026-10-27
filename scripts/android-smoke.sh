@@ -106,6 +106,25 @@ shot 05-background.png
 playing media-background.txt
 record play
 
+# Scenario 4: the player's buttons under a real finger, not a scripted click. The points are
+# the pixel_6 profile's (1080x2400): repeat and play in the transport row, the heart above it.
+adb shell am force-stop "$pkg"
+seed
+launch "--search,The Marias Paranoia,--play,0,--click,mobile-playing@25000"
+sleep 35
+shot 06-player.png
+adb shell input tap 960 2060 >/dev/null || true
+sleep 3
+shot 07-tapped-repeat.png
+adb shell input tap 959 1446 >/dev/null || true
+sleep 3
+shot 08-tapped-heart.png
+adb shell input tap 540 2060 >/dev/null || true
+sleep 3
+shot 09-tapped-play.png
+playing media-tapped.txt
+record taps
+
 stop_logcat
 grep -E 'Surco|AndroidRuntime|FATAL|DEBUG|libc|wgpu|panicked' "$out/logcat.txt" > "$out/logcat-surco.txt" || true
 
