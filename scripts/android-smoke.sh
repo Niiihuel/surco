@@ -133,7 +133,7 @@ seed
 launch ""
 sleep 15
 # Clearing the task finishes the activity and starts a new one, in the process still running.
-adb shell "am start --activity-clear-task --activity-new-task -n $pkg/.MainActivity" >/dev/null || true
+adb shell "am start --activity-clear-task -n $pkg/.MainActivity" || true
 sleep 15
 shot 10-recreated.png
 if grep -q "recreated activity stops the previous backend" "$out/logcat.txt"; then
