@@ -130,15 +130,12 @@ record taps
 # engine would otherwise play on past every control.
 adb shell am force-stop "$pkg"
 seed
-adb shell settings put global always_finish_activities 1
 launch ""
 sleep 15
-adb shell input keyevent KEYCODE_HOME >/dev/null || true
-sleep 5
-launch ""
+# Clearing the task finishes the activity and starts a new one, in the process still running.
+adb shell "am start --activity-clear-task --activity-new-task -n $pkg/.MainActivity" >/dev/null || true
 sleep 15
 shot 10-recreated.png
-adb shell settings put global always_finish_activities 0
 if grep -q "recreated activity stops the previous backend" "$out/logcat.txt"; then
     echo "recreated: the old backend stopped" >> "$out/summary.txt"
 else
