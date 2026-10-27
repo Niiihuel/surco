@@ -89,7 +89,8 @@ fn sung_over(state: &State, cover: Element, side: f32, palette: ComponentPalette
     let words = Text::new(&line.text, palette).font_size(20.0).line_height(26.0).render()
         .font_family(FontFamily::SansBold).animate_enter(format!("mobile-cover-line:{index}"));
     let foot = Element::column(vec![Element::spacer().flex(1.0), words]).padding(16.0).size(None, Some(side * 0.45))
-        .vertical_gradient(vec![Color::rgba(0, 0, 0, 0), COVER_SCRIM]);
+        // Rounded as the cover: a gradient is not cut by its parent's corners, only by its own.
+        .vertical_gradient(vec![Color::rgba(0, 0, 0, 0), COVER_SCRIM]).radius(8.0);
     Element::panel(Element::stack(vec![cover, Element::column(vec![Element::spacer().flex(1.0), foot])]))
         .radius(8.0).clip_children().size(Some(side), Some(side))
 }
@@ -245,7 +246,19 @@ mod tests {
             Line { at_ms: 25_000, text: "Segunda línea real".into() },
         ])));
         // Over the cover and in the card beneath.
-        assert_eq!(painted(&frame(&state), "Segunda línea real"), 2);
+        let sung = frame(&state);
+        assert_eq!(painted(&sung, "Segunda línea real"), 2);
+        // The scrim's foot keeps the cover's rounded corners instead of squaring them in black.
+        let dark = |color: &Color| color.a > 100 && color.r == 0 && color.g == 0 && color.b == 0;
+        let band = sung.commands.iter().find_map(|command| match command {
+            DrawCommand::FillVerticalGradient { rect, bottom, .. } if dark(bottom) => Some(*rect),
+            _ => None,
+        }).unwrap();
+        let foot = sung.commands.iter().filter_map(|command| match command {
+            DrawCommand::FillRect { rect, color, .. } if dark(color) && rect.y >= band.y + band.height => Some(*rect),
+            _ => None,
+        }).max_by(|a, b| (a.y + a.height).total_cmp(&(b.y + b.height))).expect("the scrim's corners are painted rounded");
+        assert!(foot.x >= band.x + 2.0, "the lowest row is inset by the corner: {foot:?}");
         state.lyrics = Some(("song".into(), Lyrics::Lines(vec![Line { at_ms: 25_000, text: "  ".into() }])));
         assert_eq!(painted(&frame(&state), "♪"), 1, "a silent line is the card's note alone; the cover stays bare");
     }
