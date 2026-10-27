@@ -159,11 +159,15 @@ seed
 adb push "$tone" /data/local/tmp/tone.wav >/dev/null
 adb push "$out/index.json" /data/local/tmp/index.json >/dev/null
 adb shell "run-as $pkg sh -c 'mkdir -p files/offline && cp /data/local/tmp/index.json files/offline/index.json && cp /data/local/tmp/tone.wav files/offline/$(printf %s "$tone_id" | sha256sum | cut -d' ' -f1)'"
-launch "--click,downloads@4000,--click,page-play@7000,--click,mobile-playing@10000,--click,play-pause@20000"
-sleep 16
+launch "--click,downloads@4000"
+sleep 14
+# Real taps, on the pixel_6 profile's points: Downloads' play, then the mini-player's pause.
+adb shell input tap 106 622 >/dev/null || true
+sleep 8
 shot 11-offline-playing.png
 playing media-offline-playing.txt
-sleep 10
+adb shell input tap 990 2112 >/dev/null || true
+sleep 5
 shot 12-offline-paused.png
 playing media-offline-paused.txt
 record offline
