@@ -459,17 +459,20 @@ impl eframe::App for Host {
         // Decoded covers are only a cache: short of memory, they are decoded again when seen.
         #[cfg(target_os = "ios")]
         if ios_ui::take_memory_warning() { limn_egui::clear_image_cache(); }
-        // Android's Back: the player shuts, a page goes back, and with nowhere left the app goes
-        // to the background, as Android's apps do.
+        // Android's Back: what is open on top closes, then the queue, the player, a page goes back,
+        // and with nowhere left the app goes to the background, as Android's apps do.
         // A code read by Google's reader opens the account another device serves, as iOS's.
         #[cfg(target_os = "android")]
         for (kind, body) in android::take_events() {
             let commands = match kind.as_str() {
                 "window.back" => {
-                    let id = if self.state.page == state::Page::Playing { "mobile-player-dismiss" }
-                        else if self.state.can_go_back() { "back" }
-                        else { android_system::leave(); continue };
-                    self.state.update(&UiAction::Clicked { id: id.into() })
+                    // What stands on top (a sheet, a dialog, a menu) closes first, as Escape closes it.
+                    let closed = self.tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false });
+                    if !closed.is_empty() {
+                        closed.iter().flat_map(|action| self.state.update(action)).collect()
+                    } else if let Some(id) = back_target(&self.state) {
+                        self.state.update(&UiAction::Clicked { id: id.into() })
+                    } else { android_system::leave(); continue }
                 }
                 "system.scanned" => match android_system::scanned(&body) {
                     Some(link) => self.state.receive_from(&link),
@@ -1168,6 +1171,34 @@ fn phone_logging() {
     static LOGGER: StderrLogger = StderrLogger;
     if log::set_logger(&LOGGER).is_ok() {
         log::set_max_level(log::LevelFilter::Warn);
+    }
+}
+
+/// What Android's Back clicks once nothing on top closes: the queue back to its song, the
+/// player down, a page back; None when there is nowhere left to go.
+#[cfg(any(target_os = "android", test))]
+fn back_target(state: &State) -> Option<&'static str> {
+    if state.page == state::Page::Playing && state.queue_open { Some("queue") }
+    else if state.page == state::Page::Playing { Some("mobile-player-dismiss") }
+    else if state.can_go_back() { Some("back") }
+    else { None }
+}
+
+#[cfg(test)]
+mod back_tests {
+    use super::*;
+
+    #[test]
+    fn back_shuts_the_queue_then_the_player_then_goes_back_and_then_leaves() {
+        let mut state = State::default();
+        state.mobile = true;
+        assert_eq!(back_target(&state), None, "the first page has nowhere to go back to");
+        state.update(&UiAction::Clicked { id: "mobile-library".into() });
+        assert_eq!(back_target(&state), Some("back"));
+        state.page = state::Page::Playing;
+        assert_eq!(back_target(&state), Some("mobile-player-dismiss"));
+        state.queue_open = true;
+        assert_eq!(back_target(&state), Some("queue"));
     }
 }
 
