@@ -45,7 +45,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
-    implementation("androidx.media3:media3-session:1.6.1")
+    implementation("androidx.media3:media3-session:1.10.1")
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
     // Unversioned here: the version is the one Cargo.lock pins, see below.
     implementation("org.rustls:rustls-platform-verifier")
