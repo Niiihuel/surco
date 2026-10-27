@@ -89,5 +89,5 @@ CI's `emulator` job builds an x86_64 APK, starts it on an API 34 emulator and ru
 `scripts/android-smoke.sh APK OUT`. The script seeds the synthetic fixture from iOS into the app's
 `files/app.ron`, then starts Surco three ways: plain, opening the Search tab, and searching,
 playing the first result and opening the player before backgrounding. It writes `01-home.png`
-to `05-background.png`, `media_session.txt`, `logcat.txt`, `logcat-surco.txt` and `summary.txt`,
+to `05-background.png`, `media-foreground.txt`, `media-background.txt`, `logcat.txt`, `logcat-surco.txt` and `summary.txt`,
 and fails if any scenario's process is gone. The `android-emulator` artifact keeps them for 14 days.

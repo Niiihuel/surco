@@ -1880,7 +1880,12 @@ async fn cover_bytes(shared: &Shared, url: &str) -> Option<Vec<u8>> {
     let kept = tokio::task::block_in_place(|| shared.library.lock().unwrap().cover(url));
     match kept {
         Some(bytes) => Some(bytes),
-        None => Some(shared.youtube.http().get(cover_at(url, COVER_SIDE)).send().await.ok()?.error_for_status().ok()?.bytes().await.ok()?.to_vec()),
+        None => {
+            let fetched = async { shared.youtube.http().get(cover_at(url, COVER_SIDE)).send().await?.error_for_status()?.bytes().await }.await;
+            // The placeholder alone says nothing of why: the log does, where a phone keeps it.
+            if let Err(error) = &fetched { eprintln!("Surco cover {url}: {error}"); }
+            Some(fetched.ok()?.to_vec())
+        }
     }
 }
 

@@ -30,6 +30,9 @@ stop_logcat() {
 trap stop_logcat EXIT
 
 adb wait-for-device
+# The emulator's own launcher tends to stop answering under software rendering; its dialog
+# would cover the screenshots, and it is not the app's.
+adb shell settings put global hide_error_dialogs 1 || true
 adb logcat -c
 adb logcat -v threadtime > "$out/logcat.txt" 2>&1 &
 logcat_pid=$!
@@ -53,7 +56,13 @@ launch() {
 }
 
 shot() {
+    adb shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS >/dev/null 2>&1 || true
     adb exec-out screencap -p > "$out/$1" || true
+}
+
+# What the system says plays: the media session and the app's audio players.
+playing() {
+    { adb shell dumpsys media_session; echo; echo '--- audio players'; adb shell dumpsys audio | grep -iE -A2 'surco|AudioPlaybackConfiguration' ; } > "$out/$1" 2>&1 || true
 }
 
 record() {
@@ -83,15 +92,18 @@ record search
 # Scenario 3: search, play the first result, open the player, then background the app.
 adb shell am force-stop "$pkg"
 seed
-launch "--search,The Marias Paranoia,--play,0,--click,mobile-playing@12000"
-sleep 10
-shot 03-results.png
+# The song starts once the search has answered and its stream has come: the player is opened
+# well after, from the mini-player that appears then.
+launch "--search,The Marias Paranoia,--play,0,--click,mobile-playing@25000"
 sleep 12
+shot 03-results.png
+sleep 23
 shot 04-player.png
+playing media-foreground.txt
 adb shell input keyevent KEYCODE_HOME >/dev/null || true
-sleep 5
+sleep 10
 shot 05-background.png
-adb shell dumpsys media_session > "$out/media_session.txt" || true
+playing media-background.txt
 record play
 
 stop_logcat
