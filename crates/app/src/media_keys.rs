@@ -15,6 +15,8 @@ pub enum Key {
     /// Seconds from the start of the track.
     Seek(f64),
     /// Seconds from where it is, back when negative.
+    // Only the Linux desktop's media keys seek by an amount.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     SeekBy(f64),
 }
 

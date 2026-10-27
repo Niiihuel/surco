@@ -49,6 +49,19 @@ into `android/app/src/main/jniLibs/`, which Git ignores. The APK is in
 `android/app/build/outputs/apk/debug/`. The script assumes a Linux host for the NDK's
 prebuilt toolchain; on macOS, change `linux-x86_64` in it to `darwin-x86_64`.
 
+To check the Rust alone, without the SDK or Gradle, the NDK is enough:
+
+```sh
+cargo ndk -t arm64-v8a --platform 26 clippy -p surco --lib
+```
+
+On NixOS the NDK from Google's site does not run as it is; nixpkgs builds one patched for it:
+
+```sh
+nix-build -E 'with import <nixpkgs> { config = { android_sdk.accept_license = true; allowUnfree = true; }; }; androidenv.androidPkgs.ndk-bundle' -o ~/Android/ndk
+export ANDROID_NDK_HOME=$(readlink -f ~/Android/ndk/libexec/android-sdk/ndk-bundle)
+```
+
 CI runs the same two commands on `ubuntu-24.04` (`.github/workflows/android.yml`) and uploads the
 APK as `android-debug-apk`.
 

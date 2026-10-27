@@ -479,6 +479,11 @@ impl eframe::App for Host {
             };
             self.send(commands);
         }
+        // Android's own share sheet takes a song's link to any app, as iOS's does.
+        #[cfg(target_os = "android")]
+        if let Some(track) = self.state.sharing.take() {
+            android_system::share(&track.title, &state::share_link(&track));
+        }
         // A code read by the camera opens the account another device serves.
         #[cfg(target_os = "ios")]
         if let Some(link) = ios_ui::take_opened_link() {
@@ -548,6 +553,7 @@ impl eframe::App for Host {
         };
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
         let keyboard_inset = 0.0;
+        #[cfg(not(target_os = "android"))]
         let safe_content = ctx.content_rect();
         // Android draws edge to edge: the activity says what its bars and keyboard cover.
         #[cfg(target_os = "android")]

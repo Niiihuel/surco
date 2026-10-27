@@ -3,6 +3,8 @@
 use crate::player::PlayerView;
 use serde::Serialize;
 
+// The audio session is iOS's; Android shares only the Now Playing snapshot below.
+#[cfg(any(target_os = "ios", test))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SessionEvent {
     Interrupted,
@@ -12,6 +14,7 @@ pub enum SessionEvent {
     MediaReset,
 }
 
+#[cfg(any(target_os = "ios", test))]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SessionAction {
     None,
@@ -21,12 +24,14 @@ pub enum SessionAction {
     Reset,
 }
 
+#[cfg(any(target_os = "ios", test))]
 #[derive(Default)]
 pub struct Lifecycle {
     interrupted: bool,
     resume_track: Option<String>,
 }
 
+#[cfg(any(target_os = "ios", test))]
 impl Lifecycle {
     #[cfg(test)]
     pub fn interrupted(&self) -> bool {
