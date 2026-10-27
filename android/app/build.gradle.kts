@@ -17,7 +17,7 @@ val (versionMajor, versionMinor, versionPatch) = surcoVersion.split('.').map { i
 
 android {
     namespace = "io.github.niiihuel.surco"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         // Forks change this with -Psurco.applicationId; the Kotlin package stays, Rust finds it by name.

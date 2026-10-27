@@ -30,7 +30,7 @@ manifest lists those changes under `android:configChanges`.
 You need:
 
 - JDK 17, with `JAVA_HOME` set or `java` on the path.
-- The Android SDK, with `ANDROID_HOME` set, for compileSdk 35.
+- The Android SDK, with `ANDROID_HOME` set, for compileSdk 36.
 - Gradle 8.11.1. There is no wrapper in the repository; `gradle wrapper --gradle-version 8.11.1`
   in `android/` makes one if you want it.
 - An Android NDK (r27 or later), in `ANDROID_NDK_HOME`.
