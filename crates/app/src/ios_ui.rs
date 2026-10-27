@@ -100,6 +100,7 @@ mod native {
         fn surco_ui_copy_text(bytes: *const u8, length: usize) -> i32;
         fn surco_ui_paste_text(length: *mut usize) -> *mut u8;
         fn surco_reduce_motion_enabled() -> i32;
+        fn surco_liquid_glass() -> i32;
         fn surco_ui_on_screen() -> i32;
         fn surco_ui_take_memory_warning() -> i32;
         fn surco_ui_surfaces(handle: *mut c_void, bytes: *const u8, length: usize, scale: f64) -> i32;
@@ -158,6 +159,11 @@ mod native {
     /// https://developer.apple.com/documentation/uikit/uiaccessibility/isreducemotionenabled
     pub fn reduce_motion_enabled() -> bool {
         unsafe { surco_reduce_motion_enabled() != 0 }
+    }
+
+    /// iOS 26 or later, whose bars and sheets are Liquid Glass.
+    pub fn liquid_glass() -> bool {
+        unsafe { surco_liquid_glass() != 0 }
     }
 
     /// Whether the app is on screen rather than in the background or behind the lock

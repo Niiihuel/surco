@@ -180,7 +180,10 @@ static UIStackView *SheetStack(NSArray<UIView *> *views, UILayoutConstraintAxis 
 
 - (void)updateSurface {
     BOOL solid = UIAccessibilityIsReduceTransparencyEnabled();
-    _material.hidden = solid;
+    BOOL glass = NO;
+    if (@available(iOS 26.0, *)) glass = YES;
+    // iOS 26's sheet is Liquid Glass of its own; the material would only cover it.
+    _material.hidden = solid || glass;
     // Clear so the material shows through the sheet's own container.
     self.view.backgroundColor = solid ? SheetSurface() : UIColor.clearColor;
 }

@@ -123,7 +123,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 @end
 
-@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate> {
+@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate, UITabBarDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
     NSArray<NSDictionary *> *_menus;
@@ -168,6 +168,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     NSArray *_headerButtons;
     SurcoChromeView *_tabs;
     UIStackView *_tabRow;
+    UITabBar *_tabBar;
     NSArray *_tabItems;
     NSMutableArray<NSDictionary *> *_events;
     void (^_wake)(void);
@@ -506,22 +507,36 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     if (!_tabs) {
         _tabs = [SurcoChromeView new];
         _tabs.alpha = 0;
-        _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
-        _tabRow = [UIStackView new];
-        _tabRow.axis = UILayoutConstraintAxisHorizontal;
-        _tabRow.distribution = UIStackViewDistributionFillEqually;
-        _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
-        [_tabs addSubview:_tabRow];
-        [NSLayoutConstraint activateConstraints:@[
-            [_tabRow.leadingAnchor constraintEqualToAnchor:_tabs.leadingAnchor],
-            [_tabRow.trailingAnchor constraintEqualToAnchor:_tabs.trailingAnchor],
-            [_tabRow.topAnchor constraintEqualToAnchor:_tabs.topAnchor],
-            [_tabRow.bottomAnchor constraintEqualToAnchor:_tabs.bottomAnchor],
-        ]];
+        if (@available(iOS 26.0, *)) {
+            // The system's own tab bar: a floating Liquid Glass capsule, its selection a glass
+            // pill that follows a dragging finger. Older systems keep the row below.
+            // https://developer.apple.com/documentation/uikit/uitabbar
+            _tabBar = [UITabBar new];
+            _tabBar.delegate = self;
+            _tabBar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+            _tabBar.tintColor = UIColor.whiteColor;
+            _tabBar.frame = _tabs.bounds;
+            _tabBar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+            [_tabs addSubview:_tabBar];
+        } else {
+            _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
+            _tabRow = [UIStackView new];
+            _tabRow.axis = UILayoutConstraintAxisHorizontal;
+            _tabRow.distribution = UIStackViewDistributionFillEqually;
+            _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
+            [_tabs addSubview:_tabRow];
+            [NSLayoutConstraint activateConstraints:@[
+                [_tabRow.leadingAnchor constraintEqualToAnchor:_tabs.leadingAnchor],
+                [_tabRow.trailingAnchor constraintEqualToAnchor:_tabs.trailingAnchor],
+                [_tabRow.topAnchor constraintEqualToAnchor:_tabs.topAnchor],
+                [_tabRow.bottomAnchor constraintEqualToAnchor:_tabs.bottomAnchor],
+            ]];
+        }
     }
     if (_tabs.superview != _view) [_view addSubview:_tabs];
     _tabs.frame = rect;
     [self setChrome:_tabs shown:YES];
+    if (_tabBar) { [self updateTabBar:items]; return; }
     if ([_tabItems isEqual:items]) return;
     NSString *(^selection)(NSArray *) = ^NSString *(NSArray *list) {
         for (id value in list) if ([SurcoDictionary(value)[@"selected"] boolValue]) return SurcoString(SurcoDictionary(value)[@"id"]);
@@ -564,6 +579,39 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
                 options:UIViewAnimationOptionAllowUserInteraction animations:^{ glyph.transform = CGAffineTransformIdentity; } completion:nil];
         }
     }
+}
+- (void)updateTabBar:(NSArray *)items {
+    NSArray<UITabBarItem *> *tabs = _tabBar.items;
+    BOOL same = tabs.count == items.count;
+    for (NSUInteger index = 0; same && index < items.count; index++) {
+        same = [tabs[index].accessibilityIdentifier isEqualToString:SurcoString(SurcoDictionary(items[index])[@"id"])];
+    }
+    if (!same) {
+        NSMutableArray *bar = [NSMutableArray array];
+        for (id value in items) {
+            UITabBarItem *tab = [[UITabBarItem alloc] initWithTitle:nil image:nil tag:0];
+            tab.accessibilityIdentifier = SurcoString(SurcoDictionary(value)[@"id"]);
+            [bar addObject:tab];
+        }
+        [_tabBar setItems:bar animated:NO];
+        tabs = _tabBar.items;
+    }
+    // Updated in place, so the selection pill slides between tabs instead of the bar rebuilding.
+    UITabBarItem *selected = nil;
+    for (NSUInteger index = 0; index < items.count; index++) {
+        NSDictionary *item = SurcoDictionary(items[index]);
+        UITabBarItem *tab = tabs[index];
+        NSString *title = SurcoString(item[@"title"]);
+        if (![tab.title isEqualToString:title]) tab.title = title;
+        UIImage *image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
+        if (![tab.image isEqual:image]) tab.image = image;
+        if ([item[@"selected"] isKindOfClass:NSNumber.class] && [item[@"selected"] boolValue]) selected = tab;
+    }
+    // Rust has the last word: a tap it declined leaves its own tab selected.
+    if (_tabBar.selectedItem != selected) _tabBar.selectedItem = selected;
+}
+- (void)tabBar:(UITabBar *)tabBar didSelectItem:(UITabBarItem *)item {
+    if (item.accessibilityIdentifier.length) [self emit:@{@"kind":@"chrome", @"id":item.accessibilityIdentifier}];
 }
 - (BOOL)searchIsLive {
     return _valid && !_updatingSearch && _searchSession.length && !_searchBar.hidden && _view.window;

@@ -180,6 +180,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let footer = Element::column(bottom);
     // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
     let footer = if player { footer }
+        else if native_chrome && state.mobile_ui.glass { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }
         else if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
         else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
         else { footer.background(footer_edge) }.block_pointer("mobile-footer-bar");

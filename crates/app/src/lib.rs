@@ -442,6 +442,7 @@ impl eframe::App for Host {
                         unsafe { native.update_view(handle.ui_view); }
                         self.state.mobile_ui.native_routes = true;
                         self.state.mobile_ui.native_surfaces = true;
+                        self.state.mobile_ui.glass = ios_ui::liquid_glass();
                     }
                 }
                 self.state.mobile_ui.route = native.current_route().map(|route| (route.name.clone(), route.port_type.clone()));

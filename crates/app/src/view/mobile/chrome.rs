@@ -62,6 +62,12 @@ pub(super) fn spotify_fade(canvas: Color) -> Vec<Color> {
     [0, 150, 220, 248, 255, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
 }
 
+/// Under Liquid Glass the rows stay seen through the floating bar, deepening only by the home
+/// indicator.
+pub(super) fn glass_fade(canvas: Color) -> Vec<Color> {
+    [0, 0, 0, 60, 140].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
+}
+
 fn space(height: f32) -> Element {
     Element::spacer().size(None, Some(height))
 }

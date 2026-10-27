@@ -74,9 +74,13 @@ the title, the header's buttons, the tabs and their selection; UIKit returns onl
 the id of a button from the last payload, which Rust validates before acting.
 Rows scroll beneath both bars. The header follows iOS 26's scroll-edge
 convention: a blur and the page's tint fade out below it, and its buttons are
-Liquid Glass circles on iOS 26 (a translucent circle before). The tab bar uses
-the Spotify iPhone kit: SF Symbols with labels, white when selected, over a
-canvas scrim that is clear above the mini-player and solid by the tab labels.
+Liquid Glass circles on iOS 26 (a translucent circle before). On iOS 26 the tab
+bar is the system's own `UITabBar`, a floating Liquid Glass capsule whose glass
+selection follows the finger; the canvas only deepens by the home indicator, so
+rows stay seen through it, and sheets show the system's glass instead of a
+material of their own. Before iOS 26 the tab bar uses the Spotify iPhone kit:
+SF Symbols with labels, white when selected, over a canvas scrim that is clear
+above the mini-player and solid by the tab labels.
 Both fade instead of popping while the player slides over them.
 
 `NativeUi::paste_text` remains the explicit paste bridge for canvas-editor

@@ -261,6 +261,11 @@ int surco_reduce_motion_enabled(void) {
     return UIAccessibilityIsReduceMotionEnabled() ? 1 : 0;
 }
 
+int surco_liquid_glass(void) {
+    if (@available(iOS 26.0, *)) return 1;
+    return 0;
+}
+
 int surco_ui_copy_text(const uint8_t *bytes, size_t length) {
     NSCAssert(NSThread.isMainThread, @"Surco clipboard must run on the main thread");
     NSString *text = [[NSString alloc] initWithBytes:bytes length:length encoding:NSUTF8StringEncoding];

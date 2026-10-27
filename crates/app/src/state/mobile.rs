@@ -87,6 +87,8 @@ pub(crate) struct MobileUi {
     pub native_routes: bool,
     /// UIKit context menus, sheets and paste controls are attached to the live canvas.
     pub native_surfaces: bool,
+    /// UIKit's bars are Liquid Glass (iOS 26): rows show through the tab bar instead of a scrim.
+    pub glass: bool,
     pub keyboard_visible: bool,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
