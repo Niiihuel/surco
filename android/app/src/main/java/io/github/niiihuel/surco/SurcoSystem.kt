@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Looper
 import android.util.Base64
 import android.util.Log
+import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -112,7 +113,7 @@ object SurcoSystem {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             ContextCompat.checkSelfPermission(activity, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
         ) {
-            askForNotifications(activity)
+            (activity as? ComponentActivity)?.let { askForNotifications(it) }
             return@onMain answer(false, "Notifications are not allowed")
         }
         if (!channelMade && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -134,7 +135,7 @@ object SurcoSystem {
     }
 
     /** Asks once; the notification that needed the answer is dropped, not held for a yes. */
-    private fun askForNotifications(activity: Activity) {
+    private fun askForNotifications(activity: ComponentActivity) {
         if (notificationsAsked) return
         notificationsAsked = true
         val launcher = activity.activityResultRegistry.register(
@@ -149,10 +150,12 @@ object SurcoSystem {
 
     private fun pickPhoto(): String? = onMain { activity ->
         // A picker already open answers for this request too; a second one would clash on its key.
+        // GameActivity is a ComponentActivity, whose registry takes a launcher at any time.
+        val owner = activity as? ComponentActivity ?: return@onMain answer(false, "No activity to pick from")
         if (photoLauncher == null) {
-            val launcher = activity.activityResultRegistry.register(
+            val launcher = owner.activityResultRegistry.register(
                 "surco-photo", ActivityResultContracts.PickVisualMedia(),
-            ) { uri ->
+            ) { uri: Uri? ->
                 photoLauncher?.unregister()
                 photoLauncher = null
                 readPhoto(activity.contentResolver, uri)
