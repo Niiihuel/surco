@@ -5091,7 +5091,7 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "surco"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "android-activity",
  "base64 0.22.1",
@@ -5138,7 +5138,7 @@ dependencies = [
 
 [[package]]
 name = "surco-audio"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "opus",
  "rodio",
@@ -5148,7 +5148,7 @@ dependencies = [
 
 [[package]]
 name = "surco-core"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "fastrand 2.5.0",
  "serde",
@@ -5156,7 +5156,7 @@ dependencies = [
 
 [[package]]
 name = "surco-video"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "openh264",
  "surco-youtube",
@@ -5165,7 +5165,7 @@ dependencies = [
 
 [[package]]
 name = "surco-youtube"
-version = "0.15.0"
+version = "0.15.1"
 dependencies = [
  "futures-util",
  "reqwest",

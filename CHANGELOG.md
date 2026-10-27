@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.15.1
+
+### Changed
+
+- On iOS 26 the tab bar is the system's own, glyphs alone, its glass and selection UIKit's.
+- On iOS 26 an album, an artist, a playlist, a mix, the liked songs and the downloads are
+  searched with the native field at their top; Cancel empties it.
+- On iOS 26 the full player fits one screen: the cover fills the room the controls leave and
+  steps back while paused, the song with its heart under it, and the lyrics, where it plays,
+  the timer and the queue along its foot. The lyrics open in its place over the same controls.
+
+Older iOS versions keep their tab bar, page search and player as they were.
+
 ## 0.15.0
 
 ### Added
