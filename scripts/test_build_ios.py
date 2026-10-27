@@ -158,6 +158,35 @@ class IOSBuildTests(unittest.TestCase):
                                 if command[:3] in (["xcrun", "simctl", "terminate"], ["xcrun", "simctl", "shutdown"],
                                                    ["xcrun", "simctl", "delete"])))
 
+    def test_early_boot_is_awaited_and_still_owned_by_the_smoke_cleanup(self):
+        from concurrent.futures import Future
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            app = root / "Surco.app"
+            app.mkdir()
+            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleIdentifier": "io.github.niiihuel.surco"}))
+            artifacts = root / "artifacts"
+            (artifacts / "logs").mkdir(parents=True)
+            calls = []
+
+            def fake_run(command, env, log, **options):
+                calls.append(command)
+                if "bootstatus" in command:
+                    raise RuntimeError("readiness failed")
+                return ""
+
+            booting = Future()
+            booting.set_result("early-simulator")
+            globals_ = script["smoke_simulator"].__globals__
+            with patch.dict(globals_, {"run": fake_run, "collect_crash_reports": lambda *args: []}), patch.object(time, "sleep"):
+                with self.assertRaisesRegex(RuntimeError, "readiness failed"):
+                    script["smoke_simulator"](app, "26.5", {}, artifacts, booting)
+            verbs = [command[2] for command in calls if command[:2] == ["xcrun", "simctl"]]
+            self.assertNotIn("create", verbs, "the device booted during the build is reused")
+            self.assertNotIn("boot", verbs)
+            self.assertEqual(calls[0], ["xcrun", "simctl", "bootstatus", "early-simulator", "-b"])
+            self.assertIn(["xcrun", "simctl", "delete", "early-simulator"], calls)
+
     def test_screenshot_must_complete_before_second_survival_check_and_smoke_record(self):
         for screenshot_times_out in (False, True):
             with self.subTest(screenshot_times_out=screenshot_times_out), tempfile.TemporaryDirectory() as directory:

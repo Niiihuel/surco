@@ -2,6 +2,7 @@
 """Build an unsigned iOS app; the simulator variant also checks launch and saves a screenshot."""
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -91,19 +92,32 @@ def collect_crash_reports(udid, artifacts, since, home=None):
     return reports
 
 
-def smoke_simulator(app, sdk_version, env, artifacts):
-    logs = artifacts / "logs"
+def create_simulator(sdk_version, env, logs):
     inventory = json.loads(run(["xcrun", "simctl", "list", "devices", "available", "--json"],
                                env, logs / "simulators.json", quiet=True, timeout=60))
     runtime, device_type = simulator_template(inventory, sdk_version)
+    return run(["xcrun", "simctl", "create", "Surco CI", device_type, runtime],
+               env, logs / "simulator-create.log", timeout=60).strip()
+
+
+def boot_early(sdk_version, env, logs):
+    """A fresh simulator spends minutes migrating its data on first boot; started before the
+    build, that happens while Rust and Xcode compile. A failed boot is retried by bootstatus -b."""
+    udid = create_simulator(sdk_version, env, logs)
+    run(["xcrun", "simctl", "boot", udid], env, logs / "simulator-boot.log", check=False, timeout=60)
+    return udid
+
+
+def smoke_simulator(app, sdk_version, env, artifacts, booting=None):
+    logs = artifacts / "logs"
     with (app / "Info.plist").open("rb") as source:
         bundle_id = plistlib.load(source)["CFBundleIdentifier"]
-    udid = run(["xcrun", "simctl", "create", "Surco CI", device_type, runtime],
-               env, logs / "simulator-create.log", timeout=60).strip()
+    udid = booting.result() if booting else create_simulator(sdk_version, env, logs)
     launched_at = time.time()
     smoked = False
     try:
-        run(["xcrun", "simctl", "boot", udid], env, logs / "simulator-boot.log", timeout=60)
+        if not booting:
+            run(["xcrun", "simctl", "boot", udid], env, logs / "simulator-boot.log", timeout=60)
         # A fresh runtime performs OS data migration before any app can be installed.
         # This infrastructure budget is separate from Surco's launch/survival checks.
         run(["xcrun", "simctl", "bootstatus", udid, "-b"], env, logs / "simulator-ready.log", timeout=600)
@@ -203,6 +217,8 @@ def main():
                          logs / "sdk-path.log", timeout=60).strip()
     sdk_version = run(["xcrun", "--sdk", sdk, "--show-sdk-version"], env,
                       logs / "sdk-version.log", timeout=60).strip()
+    booting = ThreadPoolExecutor(max_workers=1).submit(boot_early, sdk_version, env, logs) \
+        if args.platform == "simulator" else None
     with (ROOT / "Cargo.toml").open("rb") as source:
         version = tomllib.load(source)["workspace"]["package"]["version"]
     (artifacts / "build.json").write_text(json.dumps({"target": target, "sdk": sdk_version,
@@ -240,7 +256,7 @@ def main():
     if args.platform == "device-unsigned":
         sideload_ipa(app, artifacts / "Surco-unsigned.ipa")
     if args.platform == "simulator":
-        smoke_simulator(app, sdk_version, env, artifacts)
+        smoke_simulator(app, sdk_version, env, artifacts, booting)
 
 
 if __name__ == "__main__":
