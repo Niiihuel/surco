@@ -102,7 +102,7 @@ impl Motion {
             return commands;
         }
         state.mobile_ui.player_offset = self.offset(now);
-        let search = state.mobile && state.page == Page::Search && state.mobile_search;
+        let search = state.mobile && crate::view::search_in_header(state);
         if search {
             // A collapse the stall would have run unseen picks up again from where it was drawn.
             if let Some((drawn, at)) = self.search_drawn {
@@ -261,7 +261,7 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         _ => None,
     };
     let scroll = if state.mobile { tree.anchor_offset(crate::view::PAGE_TOP).map_or(0.0, |top| (-top).max(0.0)) } else { 0.0 };
-    let searching = state.page == Page::Search && state.mobile_search;
+    let searching = crate::view::search_in_header(state);
     // A large title gives the bar its name once it has scrolled up under it, as UIKit's does.
     let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };

@@ -8,6 +8,8 @@ use crate::state::Searched;
 /// One height for the idle and the editing field. Only the header's collapse moves the
 /// native bar, so opening the keyboard never makes it jump or resize.
 pub(super) const FIELD_HEIGHT: f32 = TAP + 16.0;
+/// The foot's glass circle and field under Liquid Glass.
+const FOOT: f32 = 48.0;
 /// How many songs all the results show, as Spotify's; the chip shows the rest.
 const SONGS: usize = 4;
 
@@ -157,6 +159,17 @@ fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Opti
     ListRow::new(id, title, palette).sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), gap: 12.0, leading_width: 48.0, ..TRACK_ROW })
         .leading(if round { picture.radius(24.0) } else { picture.radius(4.0) })
         .subtitle(subtitle).title_fade(true).render()
+}
+
+/// Search's foot under Liquid Glass, as Apple Music's: the tab bar folded into a glass circle
+/// home beside the field, the field alone while typing. UIKit draws both over these slots.
+pub(super) fn foot(keyboard: bool) -> Element {
+    let slot = |id: &str, name: Cow<'_, str>| Element::spacer().size(None, Some(FOOT))
+        .accessible(limn::Access::new(limn::Role::Group).id(id).name(name));
+    let mut row = Vec::new();
+    if !keyboard { row.push(slot("ios-home", t!("mobile-tab-home")).size(Some(FOOT), Some(FOOT))); }
+    row.push(slot("ios-search", t!("mobile-search-music")).flex(1.0));
+    horizontal_inset(Element::row(row).gap(8.0), 16.0, 16.0).centered_y().size(None, Some(NAV_HEIGHT)).block_pointer("mobile-nav-bar")
 }
 
 fn idle(state: &State, width: f32, palette: ComponentPalette) -> Element {

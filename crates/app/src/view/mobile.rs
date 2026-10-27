@@ -103,7 +103,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
-    let header_height = if searching { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
+    // Under Liquid Glass the field floats at the foot, as Apple Music's, below a plain header.
+    let field_on_top = search_in_header(state);
+    let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
     // UIKit draws the header and tabs over these slots outside the song pages.
     let native_chrome = state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
@@ -118,7 +120,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else { header };
     let mut top = vec![Element::spacer().size(None, Some(insets.top)), header];
     let mut top_height = insets.top + header_height;
-    if searching {
+    if field_on_top {
         top.push(search::field(state, palette));
         top_height += search::FIELD_HEIGHT;
     }
@@ -150,7 +152,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
             bottom_height += MINI_HEIGHT;
         }
     }
-    if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard {
+    if searching && !field_on_top {
+        // Kept while typing: it rides the keyboard, which the bottom inset makes room for.
+        bottom.push(search::foot(keyboard));
+        bottom_height += NAV_HEIGHT;
+    } else if !matches!(state.page, Page::Playing | Page::Lyrics) && !keyboard {
         bottom.push(if native_chrome {
             Element::spacer().size(None, Some(NAV_HEIGHT))
                 .accessible(limn::Access::new(limn::Role::Group).id("ios-tabs").name(t!("mobile-tabs")))
@@ -173,7 +179,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let (header_edge, footer_edge) = if native_chrome { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
     // The large title is the page's first row, scrolling up under the bar; over Search it
     // stays in the header, above the field.
-    let scroll_top = top_height + if large_title(state) && !searching { MOBILE_LARGE_TITLE } else { 0.0 };
+    let scroll_top = top_height + if large_title(state) && !field_on_top { MOBILE_LARGE_TITLE } else { 0.0 };
     let content = chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge });
     let top = Element::column(top);
     let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
@@ -372,6 +378,12 @@ pub(crate) fn surface_tint(state: &State) -> Color { page_surface(state).0 }
 /// UIKit draws iOS 26's bars in Liquid Glass, their content its own.
 pub(super) fn glass(state: &State) -> bool {
     state.mobile_ui.native_surfaces && state.mobile_ui.glass
+}
+
+/// Search with its field under the header, which folds away as the field rises; under Liquid
+/// Glass the field is at the foot instead and the header stays a plain one.
+pub(crate) fn search_in_header(state: &State) -> bool {
+    state.page == Page::Search && state.mobile_search && !glass(state)
 }
 
 /// The mini-player's place under Liquid Glass, where UIKit floats its capsule above the tabs.

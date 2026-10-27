@@ -47,6 +47,9 @@ pub(crate) struct Chrome {
     /// Search's result chips in glass, on iOS 26.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub filters: Option<Strip>,
+    /// On iOS 26's Search the tab bar folded into one glass circle, home, beside the field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fold: Option<Strip>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -119,7 +122,7 @@ pub(crate) struct PasteSlot { pub target: String, pub rect: [f32; 4], pub title:
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct SearchSlot {
     pub session: String, pub rect: [f32; 4], pub text: String,
-    pub editing: bool, pub compact: bool, pub revision: u64, pub placeholder: String,
+    pub editing: bool, pub revision: u64, pub placeholder: String,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -195,7 +198,7 @@ impl Controller {
             let binding = self.search.as_ref().unwrap();
             payload.search = Some(SearchSlot { session: binding.session.clone(), rect,
                 text: state.query.clone(), editing: state.mobile_ui.search_editing,
-                compact: state.mobile_search_compact(), revision: binding.revision,
+                revision: binding.revision,
                 placeholder: t!("native-search-placeholder").into_owned() });
         } else { self.search = None; }
         for (index, region) in frame.regions.iter().enumerate() {
@@ -267,14 +270,16 @@ impl Controller {
         });
         self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
         self.chrome.extend(mini.iter().flat_map(|mini| std::iter::once(&mini.open).chain(&mini.buttons)).map(|item| item.id.clone()));
-        self.chrome.extend(filters.iter().flat_map(|filters| &filters.items).map(|item| item.id.clone()));
+        let fold = node("ios-home").and_then(|node| screen_rect(node.rect, origin))
+            .map(|rect| Strip { rect, items: vec![Action::new("home", crate::i18n::fixed(t!("mobile-tab-home")), "house")] });
+        self.chrome.extend(filters.iter().chain(&fold).flat_map(|strip| &strip.items).map(|item| item.id.clone()));
         let tint = crate::view::surface_tint(state);
         // A detail page's bar is nameless until its own title has scrolled under it.
         let hero = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
         let title = if hero && !state.mobile_ui.compact_header { String::new() } else { crate::view::mobile_title(state).into() };
         Some(Chrome { edge: edge.rect.y + edge.rect.height + origin.y, scrolled: state.mobile_ui.scrolled, tint: [tint.r, tint.g, tint.b], header,
             title, compact: state.mobile_ui.compact_header, large: crate::view::mobile_large_title(state), scroll: state.mobile_ui.page_scroll,
-            search: state.page == Page::Search && state.mobile_search, leading, trailing, tabs, items, mini, filters })
+            search: crate::view::search_in_header(state), leading, trailing, tabs, items, mini, filters, fold })
     }
 
     pub fn apply(&mut self, state: &mut State, event: Event) -> Vec<Command> {
@@ -379,13 +384,14 @@ pub(crate) fn has_sheet(state: &State) -> bool {
         || state.sleep_open
 }
 
-fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect, in_header: bool) -> Option<limn::Rect> {
+/// `in_bars`: the rect is Search's field, which lives in the header or, under Liquid Glass, the foot.
+fn visible_rect(frame: &Frame, floor: usize, rect: limn::Rect, in_bars: bool) -> Option<limn::Rect> {
     let mut top = rect.y;
     let mut bottom = rect.y + rect.height;
     for overlay in frame.regions.iter().skip(floor).filter(|region| region.kind == limn::HitKind::Surface) {
         if overlay.rect.intersection(rect).is_none() { continue; }
         match overlay.id.as_str() {
-            "mobile-header-bar" if in_header => {}
+            "mobile-header-bar" | "mobile-footer-bar" | "mobile-nav-bar" if in_bars => {}
             "mobile-header-bar" => top = top.max(overlay.rect.y + overlay.rect.height),
             "mobile-mini-bar" | "mobile-nav-bar" => bottom = bottom.min(overlay.rect.y),
             // A floating limn surface owns this card until it is dismissed.
@@ -828,7 +834,7 @@ mod tests {
         assert_eq!(search.rect[1], slot.rect.y + 59.0);
         assert_eq!(search.placeholder, "Canciones, artistas o álbumes");
 
-        assert!(!search.compact && !search.editing, "empty Search starts with its idle heading and no keyboard intention");
+        assert!(!search.editing, "empty Search starts with its idle heading and no keyboard intention");
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
         assert!(controller.apply(&mut state, Event::SearchEdit { session: search.session.clone(), revision: 2,
             text: "https://youtu.be/a-song".into() }).is_empty());
@@ -840,12 +846,12 @@ mod tests {
         let refreshed = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
         assert_eq!(refreshed.session, search.session);
         assert_eq!(refreshed.revision, 2);
-        assert!(refreshed.compact && refreshed.editing);
+        assert!(refreshed.editing);
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 3, editing: false });
         controller.apply(&mut state, Event::SearchFocus { session: search.session.clone(), revision: 1, editing: true });
         assert!(!state.mobile_ui.search_editing, "an old focus callback must not reopen the keyboard");
         let unfocused = controller.payload(&state, &frame, Pos2::ZERO).search.unwrap();
-        assert!(unfocused.compact && !unfocused.editing, "a query keeps the compact visual state after keyboard dismissal");
+        assert!(!unfocused.editing, "a query outlives the keyboard's dismissal");
         controller.apply(&mut state, Event::SearchSubmit { session: search.session });
         assert!(matches!(&state.page, state::Page::Loading(crate::backend::Target::Song(id)) if id == "a-song"),
             "the explicit Return gesture opens the pasted link");
@@ -953,6 +959,48 @@ mod tests {
         controller.apply(&mut state, Event::Chrome { id: "search-filter:artists".into() });
         assert_eq!(state.search_filter, crate::state::mobile::SearchFilter::Artists);
         assert!(controller.apply(&mut state, Event::Chrome { id: "search-filter:nothing".into() }).is_empty());
+    }
+
+    #[test]
+    fn liquid_glass_search_floats_its_field_at_the_foot_beside_the_folded_tabs() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.glass = true;
+        state.mobile_search = true;
+        state.page = state::Page::Search;
+        state.player.current = Some(track("a"));
+        state.mobile_ui.content_insets = state::mobile::ContentInsets { top: 62.0, bottom: 34.0, ..Default::default() };
+        let size = Size::new(402.0, 874.0);
+        let mut controller = Controller::default();
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        let payload = controller.payload(&state, &frame, Pos2::ZERO);
+        let chrome = payload.chrome.unwrap();
+        assert!(chrome.tabs.is_none() && !chrome.search && chrome.large, "a plain header with its large title, no tab bar");
+        assert_eq!(chrome.header.unwrap()[3], crate::view::MOBILE_HEADER_HEIGHT, "the header no longer folds");
+        let field = payload.search.unwrap().rect;
+        let fold = chrome.fold.unwrap();
+        let mini = chrome.mini.unwrap().rect;
+        assert_eq!(fold.items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["home"]);
+        assert!(fold.rect[0] + fold.rect[2] <= field[0], "the circle stands before the field");
+        assert!((fold.rect[1] - field[1]).abs() < 0.5 && field[3] >= 44.0);
+        assert!(mini[1] + mini[3] <= field[1] && field[1] + field[3] <= 874.0 - 34.0, "below the mini-player, above the home indicator");
+
+        // Typing: the keyboard takes the bottom inset, the field rides it alone.
+        state.mobile_ui.search_editing = true;
+        state.mobile_ui.content_insets.bottom = 374.0;
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        let payload = controller.payload(&state, &frame, Pos2::ZERO);
+        let chrome = payload.chrome.unwrap();
+        let field = payload.search.unwrap().rect;
+        assert!(chrome.fold.is_none() && chrome.mini.is_none());
+        assert!(field[1] + field[3] <= 874.0 - 374.0 && field[1] + field[3] >= 874.0 - 374.0 - 8.0, "it rests on the keyboard: {field:?}");
+
+        state.mobile_ui.search_editing = false;
+        state.mobile_ui.content_insets.bottom = 34.0;
+        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        controller.payload(&state, &frame, Pos2::ZERO);
+        controller.apply(&mut state, Event::Chrome { id: "home".into() });
+        assert!(state.page == state::Page::Search && !state.mobile_search, "the circle goes home");
     }
 
     #[test]

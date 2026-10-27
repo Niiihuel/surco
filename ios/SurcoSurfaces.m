@@ -118,6 +118,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 @implementation SurcoSearchBar
 - (void)layoutSubviews {
     [super layoutSubviews];
+    // iOS 26 draws the field as a Liquid Glass capsule of its own; clipping it would crop the glass.
+    if (@available(iOS 26.0, *)) return;
     self.searchTextField.layer.cornerRadius = CGRectGetHeight(self.searchTextField.bounds) / 2.0;
     self.searchTextField.clipsToBounds = YES;
 }
@@ -151,7 +153,6 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     BOOL _searchWantsEditing;
     BOOL _updatingSearch;
     BOOL _searchStyled;
-    BOOL _searchCompact;
     NSDictionary *_desiredChrome;
     // What the bars were last laid out from; refresh runs every frame and mostly finds it unchanged.
     NSDictionary *_appliedChrome;
@@ -170,6 +171,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     UIStackView *_tabRow;
     UITabBar *_tabBar;
     SurcoChromeView *_mini;
+    UIButton *_fold;
+    NSDictionary *_foldItem;
     UIVisualEffectView *_miniGlass;
     UIButton *_miniOpen;
     UIImageView *_miniCover;
@@ -231,7 +234,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     _sheet = nil;
     [NSNotificationCenter.defaultCenter removeObserver:self name:SurcoArtworkDidChange object:nil];
     for (UIView *chrome in @[_backdrop ?: NSNull.null, _shade ?: NSNull.null, _header ?: NSNull.null, _largeClip ?: NSNull.null, _tabs ?: NSNull.null,
-                             _mini ?: NSNull.null, _filters ?: NSNull.null]) {
+                             _mini ?: NSNull.null, _filters ?: NSNull.null, _fold ?: NSNull.null]) {
         if ([chrome isKindOfClass:UIView.class]) [chrome removeFromSuperview];
     }
     _view = nil;
@@ -323,6 +326,39 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     NSDictionary *filters = SurcoDictionary(model[@"filters"]);
     [self updateMini:mini rect:live ? [self rect:mini[@"rect"]] : CGRectNull];
     [self updateFilters:SurcoArray(filters[@"items"]) rect:live ? [self rect:filters[@"rect"]] : CGRectNull];
+    NSDictionary *fold = SurcoDictionary(model[@"fold"]);
+    [self updateFold:SurcoDictionary(SurcoArray(fold[@"items"]).firstObject) rect:live ? [self rect:fold[@"rect"]] : CGRectNull];
+}
+// Apple Music's Search: the tab bar folded into one glass circle beside the field at the foot.
+- (void)updateFold:(NSDictionary *)item rect:(CGRect)rect {
+    if (CGRectIsNull(rect) || CGRectIsEmpty(rect) || !item.count) { [self setChrome:_fold shown:NO]; return; }
+    if (@available(iOS 26.0, *)) {
+        if (!_fold) {
+            __weak SurcoSurfaces *weakSelf = self;
+            _fold = [UIButton buttonWithConfiguration:[UIButtonConfiguration glassButtonConfiguration]
+                primaryAction:[UIAction actionWithHandler:^(__kindof UIAction *action) {
+                    SurcoSurfaces *owner = weakSelf;
+                    NSString *identifier = owner ? SurcoString(owner->_foldItem[@"id"]) : @"";
+                    if (identifier.length) [owner emit:@{@"kind":@"chrome", @"id":identifier}];
+                }]];
+            _fold.alpha = 0;
+            _fold.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+            _fold.tintColor = UIColor.whiteColor;
+        }
+    } else return;
+    if (_fold.superview != _view) [_view addSubview:_fold];
+    _fold.frame = rect;
+    [self setChrome:_fold shown:YES];
+    if ([_foldItem isEqual:item]) return;
+    _foldItem = [item copy];
+    UIButtonConfiguration *configuration = _fold.configuration;
+    configuration.image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
+    configuration.preferredSymbolConfigurationForImage = [UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightSemibold];
+    configuration.cornerStyle = UIButtonConfigurationCornerStyleCapsule;
+    configuration.baseForegroundColor = UIColor.whiteColor;
+    _fold.configuration = configuration;
+    _fold.accessibilityIdentifier = SurcoString(item[@"id"]);
+    _fold.accessibilityLabel = SurcoString(item[@"title"]);
 }
 - (void)updateBackdrop:(CGFloat)edge {
     if (@available(iOS 26.0, *)) {
@@ -892,16 +928,15 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     // one revision stream, so neither stale text nor stale focus can bounce it.
     if (revision < _searchRevision) return;
     BOOL editing = [model[@"editing"] boolValue];
-    BOOL compact = [model[@"compact"] boolValue];
     if (!_searchBar.searchTextField.markedTextRange && ![_searchBar.text isEqualToString:text]) {
         _updatingSearch = YES;
         _searchBar.text = text;
         _searchSentText = [text copy];
         _updatingSearch = NO;
     }
-    // Restyle only on a change: resetting the placeholder every frame of the
-    // header's collapse re-laid the field under its Cancel animation.
-    if (!_searchStyled || _searchCompact != compact) [self styleSearch:compact];
+    // Style once: resetting the placeholder every frame of the header's collapse re-laid the
+    // field under its Cancel animation.
+    if (!_searchStyled) [self styleSearch];
     if (_searchBar.showsCancelButton != editing) [_searchBar setShowsCancelButton:editing animated:[self searchAnimates]];
     if (_searchWantsEditing != editing) {
         _searchWantsEditing = editing;
@@ -912,13 +947,10 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 - (BOOL)searchAnimates {
     return [self chromeAnimates] && _searchBar.window;
 }
-// The Figma kit's white idle field becomes the dark editing field. The colors
-// cross-fade over the header's collapse instead of flipping in one frame.
-- (void)styleSearch:(BOOL)compact {
-    // The system's own field, as a navigation bar's search shows it: its fill, ink and
-    // placeholder, the same at rest and while editing.
+// The system's own field, as a navigation bar's search shows it: its fill, ink and
+// placeholder, the same at rest and while editing.
+- (void)styleSearch {
     _searchStyled = YES;
-    _searchCompact = compact;
     UISearchTextField *field = _searchBar.searchTextField;
     field.backgroundColor = nil;
     field.textColor = UIColor.labelColor;
@@ -927,9 +959,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 - (void)searchBarTextDidBeginEditing:(UISearchBar *)searchBar {
     if (![self searchIsLive]) return;
-    // Start the editing look with the keyboard rather than a render later;
-    // Rust's next payload confirms both (editing is always compact).
-    if (!_searchCompact) [self styleSearch:YES];
+    // Cancel arrives with the keyboard rather than a render later; Rust's next payload confirms it.
     if (!searchBar.showsCancelButton) [searchBar setShowsCancelButton:YES animated:[self searchAnimates]];
     _searchWantsEditing = YES;
     _searchRevision++;
