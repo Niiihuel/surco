@@ -271,7 +271,7 @@ impl Controller {
         self.chrome.extend(leading.iter().chain(&trailing).chain(&items).map(|item| item.id.clone()));
         self.chrome.extend(mini.iter().flat_map(|mini| std::iter::once(&mini.open).chain(&mini.buttons)).map(|item| item.id.clone()));
         let fold = node("ios-home").and_then(|node| screen_rect(node.rect, origin))
-            .map(|rect| Strip { rect, items: vec![Action::new("home", crate::i18n::fixed(t!("mobile-tab-home")), "house")] });
+            .map(|rect| Strip { rect, items: vec![Action::new("mobile-fold", crate::i18n::fixed(t!("mobile-tab-home")), "house")] });
         self.chrome.extend(filters.iter().chain(&fold).flat_map(|strip| &strip.items).map(|item| item.id.clone()));
         let tint = crate::view::surface_tint(state);
         // A detail page's bar is nameless until its own title has scrolled under it.
@@ -980,7 +980,7 @@ mod tests {
         let field = payload.search.unwrap().rect;
         let fold = chrome.fold.unwrap();
         let mini = chrome.mini.unwrap().rect;
-        assert_eq!(fold.items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["home"]);
+        assert_eq!(fold.items.iter().map(|item| item.id.as_str()).collect::<Vec<_>>(), ["mobile-fold"]);
         assert!(fold.rect[0] + fold.rect[2] <= field[0], "the circle stands before the field");
         assert!((fold.rect[1] - field[1]).abs() < 0.5 && field[3] >= 44.0);
         assert!(mini[1] + mini[3] <= field[1] && field[1] + field[3] <= 874.0 - 34.0, "below the mini-player, above the home indicator");
@@ -999,8 +999,10 @@ mod tests {
         state.mobile_ui.content_insets.bottom = 34.0;
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
         controller.payload(&state, &frame, Pos2::ZERO);
-        controller.apply(&mut state, Event::Chrome { id: "home".into() });
+        state.query = "consulta".into();
+        controller.apply(&mut state, Event::Chrome { id: "mobile-fold".into() });
         assert!(state.page == state::Page::Search && !state.mobile_search, "the circle goes home");
+        assert_eq!(state.query, "consulta", "and keeps what was searched, as a tab does");
     }
 
     #[test]

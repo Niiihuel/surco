@@ -369,6 +369,17 @@ impl State {
                         self.mobile_ui.blur = true;
                         self.mobile_ui.search_editing = false;
                     }
+                    // iOS 26's Search folds the tabs into a circle home: leaving through it keeps what
+                    // was searched, as leaving through another tab does, where Home's own clears it.
+                    "mobile-fold" => {
+                        self.mobile_search = false;
+                        if self.page != Page::Search { self.go(Page::Search); }
+                        self.mobile_ui.library = None;
+                        self.search_due = None;
+                        self.mobile_ui.search_editing = false;
+                        self.mobile_ui.context = None;
+                        self.mobile_ui.blur = true;
+                    }
                     // Navigation must cancel delayed requests from the search tab.
                     "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
                         self.mobile_ui.library = None;

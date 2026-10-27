@@ -440,7 +440,7 @@
     [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
     XCTAssertEqualObjects(field.value, @"consulta retenida", @"Cancel leaves the user's query intact");
     // iOS 26's Search folds the tab bar into a glass circle home; the library is a tab away from there.
-    [self canvasTap:@"home" page:@"home"];
+    [self canvasTap:@"mobile-fold" page:@"home"];
     [self waitFor:[self element:@"mobile-library"] predicate:@"hittable == YES"];
     [self canvasTap:@"mobile-library" page:@"home"];
     [self waitFor:field predicate:@"hittable == NO"];
