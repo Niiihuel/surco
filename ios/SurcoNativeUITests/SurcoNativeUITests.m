@@ -82,8 +82,14 @@
     if (element.exists && element.hittable) { [element tap]; return; }
     [[self entryCoordinate:identifier page:page] tap];
 }
+// UIKit's tab bar labels its buttons at once but hands them their ids a moment later.
+- (void)tapTab:(NSString *)identifier {
+    XCUIElement *tab = [self element:identifier];
+    [self waitFor:tab predicate:@"exists == YES AND hittable == YES"];
+    [tab tap];
+}
 - (void)openLibrary {
-    [self canvasTap:@"mobile-library" page:@"home"];
+    [self tapTab:@"mobile-library"];
 }
 - (void)openImport {
     [self openLibrary];
@@ -375,7 +381,7 @@
     NSString *original = @"niñez";
     UIPasteboard.generalPasteboard.string = original;
     [self launch];
-    [self canvasTap:@"mobile-search" page:@"home"];
+    [self tapTab:@"mobile-search"];
     XCUIElement *field = [self element:@"search"];
     XCTAssertTrue([field waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     XCTAssertTrue([self element:@"surco.native.search"].exists);
@@ -422,7 +428,7 @@
 
 - (void)testNativeSearchCancelAndTabNavigationKeepTheQuery {
     [self launch];
-    [self canvasTap:@"mobile-search" page:@"home"];
+    [self tapTab:@"mobile-search"];
     XCUIElement *field = [self element:@"search"];
     XCTAssertTrue([field waitForExistenceWithTimeout:12]);
     [field tap];
@@ -442,9 +448,9 @@
     // iOS 26's Search folds the tab bar into a glass circle home; the library is a tab away from there.
     [self canvasTap:@"mobile-fold" page:@"home"];
     [self waitFor:[self element:@"mobile-library"] predicate:@"hittable == YES"];
-    [self canvasTap:@"mobile-library" page:@"home"];
+    [self tapTab:@"mobile-library"];
     [self waitFor:field predicate:@"hittable == NO"];
-    [self canvasTap:@"mobile-search" page:@"home"];
+    [self tapTab:@"mobile-search"];
     [self waitFor:field predicate:@"exists == YES AND hittable == YES"];
     XCTAssertEqualObjects(field.value, @"consulta retenida");
     XCTAssertFalse(self.app.keyboards.firstMatch.exists, @"Returning to Search does not request keyboard focus");
