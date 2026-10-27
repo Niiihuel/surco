@@ -125,7 +125,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
 }
 @end
 
-@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate, UITabBarDelegate> {
+@interface SurcoSurfaces () <UIContextMenuInteractionDelegate, UISheetPresentationControllerDelegate, UISearchBarDelegate> {
     __weak UIView *_view;
     UIContextMenuInteraction *_interaction;
     NSArray<NSDictionary *> *_menus;
@@ -169,7 +169,8 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     NSArray *_headerButtons;
     SurcoChromeView *_tabs;
     UIStackView *_tabRow;
-    UITabBar *_tabBar;
+    UIVisualEffectView *_tabGlass;
+    UIView *_tabPill;
     SurcoChromeView *_mini;
     UIButton *_fold;
     NSDictionary *_foldItem;
@@ -561,44 +562,48 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
     if (!_tabs) {
         _tabs = [SurcoChromeView new];
         _tabs.alpha = 0;
+        _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
+        UIView *container = _tabs;
         if (@available(iOS 26.0, *)) {
-            // The system's own tab bar: a floating Liquid Glass capsule, its selection a glass
-            // pill that follows a dragging finger. Older systems keep the row below.
-            // https://developer.apple.com/documentation/uikit/uitabbar
-            _tabBar = [UITabBar new];
-            _tabBar.delegate = self;
-            _tabBar.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
-            _tabBar.tintColor = UIColor.whiteColor;
-            _tabBar.frame = _tabs.bounds;
-            _tabBar.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-            [_tabs addSubview:_tabBar];
-        } else {
-            _tabs.accessibilityTraits = UIAccessibilityTraitTabBar;
-            _tabRow = [UIStackView new];
-            _tabRow.axis = UILayoutConstraintAxisHorizontal;
-            _tabRow.distribution = UIStackViewDistributionFillEqually;
-            _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
-            [_tabs addSubview:_tabRow];
-            [NSLayoutConstraint activateConstraints:@[
-                [_tabRow.leadingAnchor constraintEqualToAnchor:_tabs.leadingAnchor],
-                [_tabRow.trailingAnchor constraintEqualToAnchor:_tabs.trailingAnchor],
-                [_tabRow.topAnchor constraintEqualToAnchor:_tabs.topAnchor],
-                [_tabRow.bottomAnchor constraintEqualToAnchor:_tabs.bottomAnchor],
-            ]];
+            // A Liquid Glass capsule of our own, with a glass pill under the chosen tab: a lone
+            // UITabBar outside its controller sizes itself past its slot and drops its items' ids.
+            UIGlassEffect *glass = [UIGlassEffect effectWithStyle:UIGlassEffectStyleRegular];
+            glass.interactive = YES;
+            _tabGlass = [[UIVisualEffectView alloc] initWithEffect:glass];
+            _tabGlass.overrideUserInterfaceStyle = UIUserInterfaceStyleDark;
+            _tabGlass.layer.cornerCurve = kCACornerCurveContinuous;
+            _tabGlass.clipsToBounds = YES;
+            [_tabs addSubview:_tabGlass];
+            _tabPill = [UIView new];
+            _tabPill.userInteractionEnabled = NO;
+            _tabPill.backgroundColor = [UIColor colorWithWhite:1 alpha:0.14];
+            _tabPill.layer.cornerCurve = kCACornerCurveContinuous;
+            [_tabGlass.contentView addSubview:_tabPill];
+            container = _tabGlass.contentView;
         }
+        _tabRow = [UIStackView new];
+        _tabRow.axis = UILayoutConstraintAxisHorizontal;
+        _tabRow.distribution = UIStackViewDistributionFillEqually;
+        _tabRow.translatesAutoresizingMaskIntoConstraints = NO;
+        [container addSubview:_tabRow];
+        CGFloat inset = _tabGlass ? 4 : 0;
+        [NSLayoutConstraint activateConstraints:@[
+            [_tabRow.leadingAnchor constraintEqualToAnchor:container.leadingAnchor constant:inset],
+            [_tabRow.trailingAnchor constraintEqualToAnchor:container.trailingAnchor constant:-inset],
+            [_tabRow.topAnchor constraintEqualToAnchor:container.topAnchor constant:inset],
+            [_tabRow.bottomAnchor constraintEqualToAnchor:container.bottomAnchor constant:-inset],
+        ]];
     }
     if (_tabs.superview != _view) [_view addSubview:_tabs];
-    if (_tabBar) {
-        // iOS 26's capsule floats over the home indicator's inset: the bar runs to the screen's
-        // foot, as tall as it asks, so it neither squeezes its labels nor spills off the screen.
-        CGFloat foot = CGRectGetMaxY(_view.bounds);
-        CGFloat height = MAX(foot - CGRectGetMinY(rect), [_tabBar sizeThatFits:rect.size].height);
-        rect = CGRectMake(CGRectGetMinX(rect), foot - height, CGRectGetWidth(rect), height);
-    }
     _tabs.frame = rect;
+    if (_tabGlass) {
+        // Apple Music's proportions: a capsule as tall as the slot, a tab's width per tab, centred.
+        CGFloat width = MIN(CGRectGetWidth(rect) - 32, 96 * items.count);
+        _tabGlass.frame = CGRectMake((CGRectGetWidth(rect) - width) / 2, 0, width, CGRectGetHeight(rect));
+        _tabGlass.layer.cornerRadius = CGRectGetHeight(rect) / 2;
+    }
     [self setChrome:_tabs shown:YES];
-    if (_tabBar) { [self updateTabBar:items]; return; }
-    if ([_tabItems isEqual:items]) return;
+    if ([_tabItems isEqual:items]) { [self placeTabPill:NO]; return; }
     NSString *(^selection)(NSArray *) = ^NSString *(NSArray *list) {
         for (id value in list) if ([SurcoDictionary(value)[@"selected"] boolValue]) return SurcoString(SurcoDictionary(value)[@"id"]);
         return nil;
@@ -625,6 +630,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
             [_tabRow addArrangedSubview:button];
         }
     }
+    BOOL moved = before && ![before isEqualToString:after ?: @""] && [self chromeAnimates];
     for (NSUInteger index = 0; index < items.count; index++) {
         NSDictionary *item = SurcoDictionary(items[index]);
         UIButton *button = (UIButton *)_tabRow.arrangedSubviews[index];
@@ -632,7 +638,7 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
         button.configuration = [self tabConfiguration:item];
         button.accessibilityLabel = SurcoString(item[@"title"]);
         button.accessibilityTraits = UIAccessibilityTraitButton | (selected ? UIAccessibilityTraitSelected : 0);
-        if (selected && before && ![before isEqualToString:after ?: @""] && [self chromeAnimates]) {
+        if (selected && moved) {
             // A small spring on the newly selected glyph, like the system tab bar.
             UIImageView *glyph = button.imageView;
             glyph.transform = CGAffineTransformMakeScale(0.82, 0.82);
@@ -640,39 +646,25 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
                 options:UIViewAnimationOptionAllowUserInteraction animations:^{ glyph.transform = CGAffineTransformIdentity; } completion:nil];
         }
     }
+    [self placeTabPill:moved];
 }
-- (void)updateTabBar:(NSArray *)items {
-    NSArray<UITabBarItem *> *tabs = _tabBar.items;
-    BOOL same = tabs.count == items.count;
-    for (NSUInteger index = 0; same && index < items.count; index++) {
-        same = [tabs[index].accessibilityIdentifier isEqualToString:SurcoString(SurcoDictionary(items[index])[@"id"])];
-    }
-    if (!same) {
-        NSMutableArray *bar = [NSMutableArray array];
-        for (id value in items) {
-            UITabBarItem *tab = [[UITabBarItem alloc] initWithTitle:nil image:nil tag:0];
-            tab.accessibilityIdentifier = SurcoString(SurcoDictionary(value)[@"id"]);
-            [bar addObject:tab];
-        }
-        [_tabBar setItems:bar animated:NO];
-        tabs = _tabBar.items;
-    }
-    // Updated in place, so the selection pill slides between tabs instead of the bar rebuilding.
-    UITabBarItem *selected = nil;
-    for (NSUInteger index = 0; index < items.count; index++) {
-        NSDictionary *item = SurcoDictionary(items[index]);
-        UITabBarItem *tab = tabs[index];
-        NSString *title = SurcoString(item[@"title"]);
-        if (![tab.title isEqualToString:title]) tab.title = title;
-        UIImage *image = [UIImage systemImageNamed:SurcoString(item[@"symbol"])];
-        if (![tab.image isEqual:image]) tab.image = image;
-        if ([item[@"selected"] isKindOfClass:NSNumber.class] && [item[@"selected"] boolValue]) selected = tab;
-    }
-    // Rust has the last word: a tap it declined leaves its own tab selected.
-    if (_tabBar.selectedItem != selected) _tabBar.selectedItem = selected;
-}
-- (void)tabBar:(UITabBar *)tabBar didSelectItem:(UITabBarItem *)item {
-    if (item.accessibilityIdentifier.length) [self emit:@{@"kind":@"chrome", @"id":item.accessibilityIdentifier}];
+// The glass pill rests under the chosen tab, sliding there when the choice moves.
+- (void)placeTabPill:(BOOL)animated {
+    if (!_tabPill) return;
+    [_tabGlass.contentView layoutIfNeeded];
+    UIView *chosen = nil;
+    for (UIView *button in _tabRow.arrangedSubviews) if (button.accessibilityTraits & UIAccessibilityTraitSelected) chosen = button;
+    _tabPill.hidden = !chosen;
+    if (!chosen) return;
+    CGRect frame = [_tabGlass.contentView convertRect:chosen.bounds fromView:chosen];
+    if (CGRectEqualToRect(_tabPill.frame, frame)) return;
+    void (^place)(void) = ^{
+        self->_tabPill.frame = frame;
+        self->_tabPill.layer.cornerRadius = CGRectGetHeight(frame) / 2;
+    };
+    if (!animated || CGRectIsEmpty(_tabPill.frame)) { place(); return; }
+    [UIView animateWithDuration:0.45 delay:0 usingSpringWithDamping:0.78 initialSpringVelocity:0.4
+        options:UIViewAnimationOptionAllowUserInteraction | UIViewAnimationOptionBeginFromCurrentState animations:place completion:nil];
 }
 - (UIButton *)miniButton:(NSDictionary *)item {
     NSString *identifier = SurcoString(item[@"id"]);

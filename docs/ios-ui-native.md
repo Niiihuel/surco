@@ -82,8 +82,10 @@ the id of a button from the last payload, which Rust validates before acting.
 Rows scroll beneath both bars. The header follows iOS 26's scroll-edge
 convention: a blur and the page's tint fade out below it, and its buttons are
 Liquid Glass circles on iOS 26 (a translucent circle before). On iOS 26 the tab
-bar is the system's own `UITabBar`, a floating Liquid Glass capsule whose glass
-selection follows the finger; the canvas only deepens by the home indicator, so
+bar is a floating Liquid Glass capsule (`UIGlassEffect`) with a glass pill that
+slides under the chosen tab. A lone `UITabBar` outside its controller sized itself
+past its slot and dropped its items' accessibility ids there, so the tabs are
+the same buttons as before inside the glass; the canvas only deepens by the home indicator, so
 rows stay seen through it, and sheets show the system's glass instead of a
 material of their own. The mini-player there is UIKit's too, Apple Music's
 Liquid Glass capsule floating above the tabs over the `ios-mini` slot: Rust sends
