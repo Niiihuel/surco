@@ -374,7 +374,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{CurrentRoute, NativeUi, Picked, on_screen, pick_photo, reduce_motion_enabled, scan_code, take_memory_warning, take_opened_link, take_picked_photo};
+pub use native::{CurrentRoute, NativeUi, Picked, liquid_glass, on_screen, pick_photo, reduce_motion_enabled, scan_code, take_memory_warning, take_opened_link, take_picked_photo};
 
 #[cfg(test)]
 mod tests {
