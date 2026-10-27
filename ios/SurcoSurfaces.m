@@ -588,6 +588,13 @@ static UIActivityViewController *SurcoShareController(NSDictionary *model, NSDic
         }
     }
     if (_tabs.superview != _view) [_view addSubview:_tabs];
+    if (_tabBar) {
+        // iOS 26's capsule floats over the home indicator's inset: the bar runs to the screen's
+        // foot, as tall as it asks, so it neither squeezes its labels nor spills off the screen.
+        CGFloat foot = CGRectGetMaxY(_view.bounds);
+        CGFloat height = MAX(foot - CGRectGetMinY(rect), [_tabBar sizeThatFits:rect.size].height);
+        rect = CGRectMake(CGRectGetMinX(rect), foot - height, CGRectGetWidth(rect), height);
+    }
     _tabs.frame = rect;
     [self setChrome:_tabs shown:YES];
     if (_tabBar) { [self updateTabBar:items]; return; }

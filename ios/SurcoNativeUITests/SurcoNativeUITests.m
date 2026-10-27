@@ -68,7 +68,7 @@
 }
 - (CGPoint)entryPoint:(NSString *)identifier page:(NSString *)page {
     NSArray *rect = self.entryGeometry[@"targets"][page][identifier];
-    XCTAssertEqual(rect.count, 4u, @"Missing verified Frame target %@:%@", page, identifier);
+    XCTAssertEqual(rect.count, 4u, @"Missing verified Frame target %@:%@. UI: %@", page, identifier, self.app.debugDescription);
     return CGPointMake([rect[0] doubleValue] + [rect[2] doubleValue] / 2.0,
         [rect[1] doubleValue] + [rect[3] doubleValue] / 2.0);
 }
