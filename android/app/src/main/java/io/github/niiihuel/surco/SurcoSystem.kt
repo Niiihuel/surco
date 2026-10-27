@@ -23,6 +23,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
@@ -31,7 +34,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The phone's everyday services for the Rust app: the clipboard, the share sheet, notifications,
- * the photo picker, and leaving the app on Back. Every call is answered on the main thread,
+ * the photo picker, the code reader, and leaving the app on Back. Every call is answered on the main thread,
  * where the platform wants these; [handle] is called from any thread.
  */
 object SurcoSystem {
@@ -44,6 +47,7 @@ object SurcoSystem {
     private var notificationsLauncher: ActivityResultLauncher<String>? = null
     private var photoLauncher: ActivityResultLauncher<PickVisualMediaRequest>? = null
     private var nextNotificationId = 1
+    private var scanning = false
 
     /** Runs the `system.*` [kind] with its JSON body, and answers with JSON, or null for an unknown kind. */
     fun handle(kind: String, json: String): String? = when (kind) {
@@ -52,6 +56,7 @@ object SurcoSystem {
         "system.share" -> shareText(JSONObject(json).getString("title"), JSONObject(json).getString("text"))
         "system.notify" -> postNotification(JSONObject(json).getString("title"), JSONObject(json).getString("body"))
         "system.pick_photo" -> pickPhoto()
+        "system.scan" -> scanCode()
         "system.leave" -> leave()
         else -> null
     }
@@ -185,6 +190,38 @@ object SurcoSystem {
             Log.e(TAG, "photo read", error)
             null
         }
+    }
+
+    /** Opens Google's code reader for a QR code; the code's text comes later as `system.scanned`. */
+    private fun scanCode(): String? = onMain { activity ->
+        // The scan already running delivers its result; a second reader on top would hide it.
+        if (scanning) return@onMain answer(true)
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .build()
+        val scan = try {
+            GmsBarcodeScanning.getClient(activity, options).startScan()
+        } catch (error: Exception) {
+            // A reader that never opened must not keep the next one from opening.
+            Log.e(TAG, "code scan", error)
+            return@onMain answer(false, error.toString())
+        }
+        scanning = true
+        scan
+            .addOnSuccessListener { barcode ->
+                scanning = false
+                emit("system.scanned", JSONObject().put("text", barcode.rawValue ?: JSONObject.NULL).toString())
+            }
+            .addOnCanceledListener {
+                scanning = false
+                emit("system.scanned", JSONObject().put("text", JSONObject.NULL).toString())
+            }
+            .addOnFailureListener { error ->
+                scanning = false
+                Log.e(TAG, "code scan", error)
+                emit("system.scanned", JSONObject().put("text", JSONObject.NULL).toString())
+            }
+        answer(true)
     }
 
     private fun leave(): String? = onMain { activity ->

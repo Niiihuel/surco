@@ -79,6 +79,17 @@ pub fn leave() {
     crate::android::call("system.leave", "{}");
 }
 
+/// Opens Google's code reader over the app; what it reads arrives as a `system.scanned` event.
+#[cfg(target_os = "android")]
+pub fn scan_code() {
+    crate::android::call("system.scan", "{}");
+}
+
+/// The text a `system.scanned` event says was read, or `None` when the reader was closed.
+pub fn scanned(body: &str) -> Option<String> {
+    serde_json::from_str::<Value>(body).ok()?.get("text")?.as_str().filter(|text| !text.is_empty()).map(str::to_owned)
+}
+
 /// Opens the system photo picker for one image; the result waits for [`take_picked_photo`].
 #[cfg(target_os = "android")]
 pub fn pick_photo() {
@@ -96,6 +107,14 @@ pub fn take_picked_photo() -> Picked {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_code_is_its_text_and_a_closed_reader_is_none() {
+        assert_eq!(scanned(r#"{"text": "surco://abc"}"#).as_deref(), Some("surco://abc"));
+        assert_eq!(scanned(r#"{"text": null}"#), None);
+        assert_eq!(scanned(r#"{"text": ""}"#), None);
+        assert_eq!(scanned("not json"), None);
+    }
 
     #[test]
     fn photo_with_bytes_is_the_decoded_picture() {

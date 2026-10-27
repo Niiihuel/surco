@@ -813,6 +813,8 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
         (Command::Fetch(_), Err(message)) => reply(Event::Fetched(Err(message.clone()))),
         (Command::StopServing, Err(_)) => {}
         (Command::ScanCode, _) => {
+            #[cfg(target_os = "android")]
+            crate::android_system::scan_code();
             #[cfg(target_os = "ios")]
             crate::ios_ui::scan_code(&t!("native-scan-hint"), &t!("common-close"), &t!("native-camera-denied"), &t!("native-camera-denied-detail"), &t!("native-open-settings"), &t!("common-cancel"));
         }

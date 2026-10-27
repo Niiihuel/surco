@@ -461,13 +461,22 @@ impl eframe::App for Host {
         if ios_ui::take_memory_warning() { limn_egui::clear_image_cache(); }
         // Android's Back: the player shuts, a page goes back, and with nowhere left the app goes
         // to the background, as Android's apps do.
+        // A code read by Google's reader opens the account another device serves, as iOS's.
         #[cfg(target_os = "android")]
-        for (kind, _) in android::take_events() {
-            if kind != "window.back" { continue; }
-            let id = if self.state.page == state::Page::Playing { "mobile-player-dismiss" }
-                else if self.state.can_go_back() { "back" }
-                else { android_system::leave(); continue };
-            let commands = self.state.update(&UiAction::Clicked { id: id.into() });
+        for (kind, body) in android::take_events() {
+            let commands = match kind.as_str() {
+                "window.back" => {
+                    let id = if self.state.page == state::Page::Playing { "mobile-player-dismiss" }
+                        else if self.state.can_go_back() { "back" }
+                        else { android_system::leave(); continue };
+                    self.state.update(&UiAction::Clicked { id: id.into() })
+                }
+                "system.scanned" => match android_system::scanned(&body) {
+                    Some(link) => self.state.receive_from(&link),
+                    None => continue,
+                },
+                _ => continue,
+            };
             self.send(commands);
         }
         // A code read by the camera opens the account another device serves.
@@ -704,9 +713,9 @@ impl eframe::App for Host {
             self.stirred = Instant::now();
             #[cfg(target_os = "ios")]
             if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { .. }) { continue; }
-            #[cfg(target_os = "ios")]
+            #[cfg(any(target_os = "ios", target_os = "android"))]
             if matches!(event, limn::UiEvent::Paste(_)) {
-                // egui-winit's iOS clipboard is app-local. The shortcut still
+                // egui-winit's iOS and Android clipboards are app-local. The shortcut still
                 // represents a user gesture; bind the system read to its field.
                 self.state.paste = self.tree.focused_id().map(str::to_owned);
                 continue;
@@ -801,7 +810,7 @@ impl eframe::App for Host {
         let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_title(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
-        #[cfg(target_os = "ios")]
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         let frame = {
             let mut frame = frame;
             if let Some(target) = self.state.paste.take() {
@@ -813,9 +822,12 @@ impl eframe::App for Host {
                     frame = self.tree.layout(window);
                 }
                 if mobile_input::can_paste(&self.tree, &frame, &target) {
+                    #[cfg(target_os = "ios")]
                     let result = self.native_ui.as_mut()
                         .ok_or_else(|| "iOS clipboard is unavailable".to_owned())
                         .and_then(ios_ui::NativeUi::paste_text);
+                    #[cfg(target_os = "android")]
+                    let result: Result<Option<String>, String> = Ok(android_system::paste_text());
                     match result {
                         Ok(Some(text)) if !text.is_empty() => {
                             for action in self.tree.handle_event(limn::UiEvent::PasteTo { id: target, text }) {

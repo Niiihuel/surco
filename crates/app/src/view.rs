@@ -684,7 +684,8 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         let field = TextField::new("import-link", link, t!("desktop-import-link-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render();
         let mut fields = import_guide(state, width - 32.0, palette);
         fields.push(field);
-        if cfg!(any(target_os = "ios", test)) {
+        // A phone's link comes from another app; its own clipboard is a tap away here.
+        if cfg!(any(target_os = "ios", target_os = "android", test)) {
             fields.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
         }
         let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
