@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.15.0
+
+### Added
+
+- On iOS 26 the phone wears Liquid Glass: the tab bar floats as a glass capsule, a glass
+  pill sliding under the chosen tab, and rows are seen through it.
+- On iOS 26 the mini-player is a glass capsule above the tabs, as Apple Music's, its cover
+  shown offline too.
+- On iOS 26 Search's field floats at the foot in glass beside the tabs folded into a circle
+  home, riding the keyboard while typing; its result chips are glass.
+- The line being sung stands over the foot of the player's cover.
+
+### Changed
+
+- On iOS 26 sheets show the system's glass instead of a material of their own.
+- The player's lyrics card is translucent over the song's colour, with round buttons to
+  share the song and to open the whole lyrics.
+
+Older iOS versions keep their bars, mini-player and Search as they were.
+
 ## 0.14.3
 
 ### Added
