@@ -1640,7 +1640,7 @@ impl State {
 
     /// Opens the handoff on what another device serves at `link`, as the code a phone's camera
     /// reads hands it over, and asks for it.
-    #[cfg(any(target_os = "ios", test))]
+    #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
         self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
         // On the first run it is the step that brings an account.

@@ -173,7 +173,7 @@ impl TouchInput {
 }
 
 /// Gate system clipboard reads on the field that requested them, before touching UIKit.
-#[cfg(any(target_os = "ios", test))]
+#[cfg(any(target_os = "ios", target_os = "android", test))]
 pub fn can_paste(tree: &UiTree, frame: &Frame, target: &str) -> bool {
     !tree.context_menu_open()
         && tree.focused_id() == Some(target)
