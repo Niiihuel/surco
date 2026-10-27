@@ -555,7 +555,19 @@ fn wake(ctx: &egui::Context) {
 
 /// The player is a value to read, not a stream of events: a hidden window stops repainting,
 /// and positions would pile up for as long as it stays hidden.
+/// The backend running in this process. Android starts `android_main` again for an activity it
+/// recreated while the old one, which winit never ends, still runs with its backend: that one is
+/// stopped first, or its engine plays on past every control the new screen offers.
+#[cfg(target_os = "android")]
+static RUNNING: Mutex<Option<Arc<tokio::sync::Notify>>> = Mutex::new(None);
+
 pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>, Receiver<Event>, watch::Receiver<PlayerView>) {
+    let stop = Arc::new(tokio::sync::Notify::new());
+    #[cfg(target_os = "android")]
+    if let Some(previous) = RUNNING.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).replace(stop.clone()) {
+        eprintln!("Surco: a recreated activity stops the previous backend");
+        previous.notify_one();
+    }
     let (commands, mut inbox) = unbounded_channel::<Command>();
     let (outbox, events) = channel::<Event>();
     let (views, player_view) = watch::channel(PlayerView::default());
@@ -585,6 +597,11 @@ pub fn spawn(ctx: egui::Context, library: PathBuf) -> (UnboundedSender<Command>,
                     #[cfg(target_os = "ios")]
                     let mut explicit_playback = false;
                     let effects = tokio::select! {
+                        // Its sound goes at once; the rest with the runtime.
+                        () = stop.notified() => {
+                            if let Ok(shared) = &shared { drop(shared.audio.stop()); }
+                            return;
+                        }
                         command = inbox.recv() => match command {
                             Some(command) => {
                                 #[cfg(target_os = "ios")]

@@ -125,6 +125,27 @@ shot 09-tapped-play.png
 playing media-tapped.txt
 record taps
 
+# Scenario 5: Android destroys the activity in the background and opens a new one in the same
+# process, as a phone short of memory does. The new screen must take over the old backend, whose
+# engine would otherwise play on past every control.
+adb shell am force-stop "$pkg"
+seed
+adb shell settings put global always_finish_activities 1
+launch ""
+sleep 15
+adb shell input keyevent KEYCODE_HOME >/dev/null || true
+sleep 5
+launch ""
+sleep 15
+shot 10-recreated.png
+adb shell settings put global always_finish_activities 0
+if grep -q "recreated activity stops the previous backend" "$out/logcat.txt"; then
+    echo "recreated: the old backend stopped" >> "$out/summary.txt"
+else
+    echo "recreated: no second instance seen" >> "$out/summary.txt"
+fi
+record recreated
+
 stop_logcat
 grep -E 'Surco|AndroidRuntime|FATAL|DEBUG|libc|wgpu|panicked' "$out/logcat.txt" > "$out/logcat-surco.txt" || true
 
