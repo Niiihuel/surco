@@ -125,24 +125,6 @@ shot 09-tapped-play.png
 playing media-tapped.txt
 record taps
 
-# Scenario 5: Android destroys the activity in the background and opens a new one in the same
-# process, as a phone short of memory does. The new screen must take over the old backend, whose
-# engine would otherwise play on past every control.
-adb shell am force-stop "$pkg"
-seed
-launch ""
-sleep 15
-# Clearing the task finishes the activity and starts a new one, in the process still running.
-adb shell "am start --activity-clear-task -n $pkg/.MainActivity" || true
-sleep 15
-shot 10-recreated.png
-if grep -q "recreated activity stops the previous backend" "$out/logcat.txt"; then
-    echo "recreated: the old backend stopped" >> "$out/summary.txt"
-else
-    echo "recreated: no second instance seen" >> "$out/summary.txt"
-fi
-record recreated
-
 # Scenario 6: a song kept offline plays and pauses, sound and all. YouTube refuses a CI
 # runner its streams, so a generated tone stands in the downloads, as Surco keeps them.
 tone_id=smoke-tone

@@ -31,7 +31,6 @@ mod native {
     use crate::android;
     use crate::media_keys::MediaEvent;
     use base64::Engine as _;
-    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::{Mutex, Once};
     use std::time::Instant;
 
@@ -39,9 +38,6 @@ mod native {
     static HANDLER: Mutex<Option<Handler>> = Mutex::new(None);
     // The bridge keeps a listener for good, so it is registered once, whatever the Controls count.
     static LISTENING: Once = Once::new();
-    // Which Controls is the newest: an old backend's, stopped after a new one started, must not
-    // take the new one's handler and session with it.
-    static NEWEST: AtomicU64 = AtomicU64::new(0);
 
     fn deliver(event: MediaEvent) {
         if let Some(handler) = &*HANDLER.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) {
@@ -50,7 +46,6 @@ mod native {
     }
 
     pub struct Controls {
-        generation: u64,
         metadata: MetadataDiff,
         artwork: Option<(String, String)>,
         started: Instant,
@@ -58,12 +53,7 @@ mod native {
 
     impl Controls {
         pub fn start(handler: impl Fn(MediaEvent) + Send + 'static) -> Self {
-            // Under the handler's lock, so an older Controls dropping meanwhile sees it is not the newest.
-            let generation = {
-                let mut held = HANDLER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                *held = Some(Box::new(handler));
-                NEWEST.fetch_add(1, Ordering::SeqCst) + 1
-            };
+            *HANDLER.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(Box::new(handler));
             LISTENING.call_once(|| {
                 android::listen("media.key", |body: &str| {
                     if let Some(key) = key(body) {
@@ -71,7 +61,7 @@ mod native {
                     }
                 });
             });
-            Self { generation, metadata: MetadataDiff::default(), artwork: None, started: Instant::now() }
+            Self { metadata: MetadataDiff::default(), artwork: None, started: Instant::now() }
         }
 
         pub fn show(&mut self, view: &PlayerView) {
@@ -94,10 +84,7 @@ mod native {
 
     impl Drop for Controls {
         fn drop(&mut self) {
-            let mut handler = HANDLER.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            if NEWEST.load(Ordering::SeqCst) != self.generation { return; }
-            *handler = None;
-            drop(handler);
+            *HANDLER.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = None;
             android::call("media.stop", "{}");
         }
     }

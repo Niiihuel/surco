@@ -17,11 +17,9 @@ use jni::{jni_sig, jni_str, Env, EnvUnowned, JavaVM};
 /// The Kotlin class every call goes through; its package is fixed, whatever the app's id.
 const BRIDGE_CLASS: &str = "io.github.niiihuel.surco.SurcoBridge";
 
-// Android starts `android_main` again for a recreated activity, in the same process: these
-// are the newest activity's, not the first's.
-static APP: Mutex<Option<AndroidApp>> = Mutex::new(None);
+static APP: OnceLock<AndroidApp> = OnceLock::new();
 /// The window's context, which an event waiting for a frame asks for one.
-static REPAINT: Mutex<Option<eframe::egui::Context>> = Mutex::new(None);
+static REPAINT: OnceLock<eframe::egui::Context> = OnceLock::new();
 /// Found once on the activity's thread: other threads have no class loader that knows it.
 static BRIDGE: OnceLock<Global<JClass<'static>>> = OnceLock::new();
 
@@ -49,14 +47,13 @@ pub fn start(app: AndroidApp) -> Result<(), String> {
         rustls_platform_verifier::android::init_with_env(env, activity)?;
         Ok(())
     }).map_err(|error| format!("Android bridge: {error}"))?;
-    *APP.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(app);
-    static INSETS_HEARD: std::sync::Once = std::sync::Once::new();
-    INSETS_HEARD.call_once(|| listen("window.insets", |body| {
+    let _ = APP.set(app);
+    listen("window.insets", |body| {
         if let Ok(insets) = serde_json::from_str::<Insets>(body) {
             *INSETS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = insets;
-            repaint();
+            if let Some(ctx) = REPAINT.get() { ctx.request_repaint(); }
         }
-    }));
+    });
     Ok(())
 }
 
@@ -66,12 +63,8 @@ pub fn insets() -> Insets {
 }
 
 /// The window's context, once it is made: an event kept for a frame asks it for one.
-fn repaint() {
-    if let Some(ctx) = &*REPAINT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) { ctx.request_repaint(); }
-}
-
 pub fn set_repaint(ctx: &eframe::egui::Context) {
-    *REPAINT.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(ctx.clone());
+    let _ = REPAINT.set(ctx.clone());
 }
 
 /// Sends what the app writes to stdout and stderr, its errors and panics among them, to
@@ -113,13 +106,13 @@ pub fn launch_arguments() -> Vec<String> {
 
 /// The activity, once [`start`] has kept it.
 pub fn app() -> Option<AndroidApp> {
-    APP.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+    APP.get().cloned()
 }
 
 /// Where the app keeps what it has: its own files, which Android backs up and keeps until
 /// the app is uninstalled.
 pub fn data_dir() -> Option<PathBuf> {
-    app()?.internal_data_path()
+    APP.get()?.internal_data_path()
 }
 
 /// Asks the Kotlin shell for `kind` with a JSON `body`; its JSON answer, or `None` if the
@@ -162,7 +155,7 @@ fn deliver(kind: String, body: String) {
     drop(listeners);
     EVENTS.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).push_back((kind, body));
     // A frame to read it in: the window may be still.
-    repaint();
+    if let Some(ctx) = REPAINT.get() { ctx.request_repaint(); }
 }
 
 /// `SurcoBridge.nativeEvent(kind: String, json: String)`, Kotlin's one way in.
