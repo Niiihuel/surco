@@ -1185,6 +1185,39 @@ fn back_target(state: &State) -> Option<&'static str> {
 }
 
 #[cfg(test)]
+mod press_tests {
+    use super::*;
+    use surco_core::{Track, lyrics::Line};
+
+    /// A finger stays down for several frames while the player's lyric card relays out under it.
+    #[test]
+    fn a_tap_on_the_playing_players_buttons_survives_the_frames_between_down_and_up() {
+        let track = Track { id: "a".into(), title: "A".into(), artist: "B".into(), artist_id: None,
+            album: None, album_id: None, artwork_url: None, duration_ms: 200_000 };
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = state::Page::Playing;
+        state.show(crate::player::PlayerView { current: Some(track), playing: true, position: 12.0, duration: 200.0, ..Default::default() });
+        state.lyrics = Some(("a".into(), state::Lyrics::Lines((0..20).map(|i| Line { at_ms: i * 3_000, text: format!("line {i}") }).collect())));
+        let window = Size::new(390.0, 844.0);
+        for id in ["play-pause", "repeat", "shuffle", "next"] {
+            let mut tree = UiTree::new(Element::spacer());
+            let mut seen = None;
+            let frame = layout_with_notice(&mut state, &mut tree, window, &mut seen);
+            let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id} on the player"));
+            let at = limn::Point::new(node.rect.x + node.rect.width / 2.0, node.rect.y + node.rect.height / 2.0);
+            tree.handle_event(limn::UiEvent::PointerDown(at));
+            for _ in 0..5 {
+                follow_lyric_card(&mut state, &mut tree, window, &mut seen);
+                layout_with_notice(&mut state, &mut tree, window, &mut seen);
+            }
+            let actions = tree.handle_event(limn::UiEvent::PointerUp(at));
+            assert!(actions.contains(&UiAction::Clicked { id: id.into() }), "{id}: {actions:?}");
+        }
+    }
+}
+
+#[cfg(test)]
 mod back_tests {
     use super::*;
 
