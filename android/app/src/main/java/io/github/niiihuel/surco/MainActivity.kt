@@ -19,8 +19,10 @@ class MainActivity : GameActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+        // Before super: GameActivity starts Rust's thread there, which asks for both at once.
         SurcoBridge.attach(this)
+        SurcoBridge.launchArgs = intent.getStringArrayExtra("surco.args")
+        super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         ViewCompat.setOnApplyWindowInsetsListener(window.decorView) { _, insets ->

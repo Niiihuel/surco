@@ -59,6 +59,7 @@ object SurcoSystem {
         "system.pick_photo" -> pickPhoto()
         "system.scan" -> scanCode()
         "system.leave" -> leave()
+        "system.args" -> JSONObject().put("args", SurcoBridge.launchArgs?.let { org.json.JSONArray(it.toList()) } ?: JSONObject.NULL).toString()
         else -> null
     }
 

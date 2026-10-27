@@ -44,8 +44,8 @@ ANDROID_NDK_HOME=/path/to/ndk scripts/build-android.sh        # or ... debug
 gradle -p android assembleDebug
 ```
 
-The script builds `libsurco_app.so` for arm64-v8a and copies it with the NDK's `libc++_shared.so`
-into `android/app/src/main/jniLibs/`, which Git ignores. The APK is in
+The script builds `libsurco_app.so` for each ABI in `SURCO_ANDROID_ABIS` (default `arm64-v8a`; `x86_64` also
+works) and copies it with the NDK's `libc++_shared.so` into `android/app/src/main/jniLibs/`, which Git ignores. The APK is in
 `android/app/build/outputs/apk/debug/`. The script assumes a Linux host for the NDK's
 prebuilt toolchain; on macOS, change `linux-x86_64` in it to `darwin-x86_64`.
 
@@ -82,3 +82,12 @@ still finds `SurcoBridge`.
 `versionName` is the workspace version in `Cargo.toml`, and `versionCode` is
 `major * 10000 + minor * 100 + patch`. The `rustls-platform-verifier` Android component must match
 the crate version in `Cargo.lock`, so Gradle reads that version from the lock file.
+
+## Emulator smoke test
+
+CI's `emulator` job builds an x86_64 APK, starts it on an API 34 emulator and runs
+`scripts/android-smoke.sh APK OUT`. The script seeds the synthetic fixture from iOS into the app's
+`files/app.ron`, then starts Surco three ways: plain, opening the Search tab, and searching,
+playing the first result and opening the player before backgrounding. It writes `01-home.png`
+to `05-background.png`, `media_session.txt`, `logcat.txt`, `logcat-surco.txt` and `summary.txt`,
+and fails if any scenario's process is gone. The `android-emulator` artifact keeps them for 14 days.

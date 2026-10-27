@@ -67,6 +67,43 @@ pub fn set_repaint(ctx: &eframe::egui::Context) {
     let _ = REPAINT.set(ctx.clone());
 }
 
+/// Sends what the app writes to stdout and stderr, its errors and panics among them, to
+/// logcat: on Android both go nowhere, so a crash would say nothing. Call it first.
+pub fn log_to_logcat() {
+    #[link(name = "log")]
+    unsafe extern "C" {
+        fn __android_log_write(priority: libc::c_int, tag: *const libc::c_char, text: *const libc::c_char) -> libc::c_int;
+    }
+    const WARN: libc::c_int = 5;
+    let mut ends = [0; 2];
+    if unsafe { libc::pipe(ends.as_mut_ptr()) } != 0 { return; }
+    let [read, write] = ends;
+    unsafe {
+        libc::dup2(write, libc::STDOUT_FILENO);
+        libc::dup2(write, libc::STDERR_FILENO);
+        libc::close(write);
+    }
+    let _ = std::thread::Builder::new().name("logcat".into()).spawn(move || {
+        use std::io::BufRead;
+        use std::os::fd::FromRawFd;
+        let lines = std::io::BufReader::new(unsafe { std::fs::File::from_raw_fd(read) }).lines();
+        for line in lines.map_while(Result::ok) {
+            let Ok(text) = std::ffi::CString::new(line) else { continue };
+            unsafe { __android_log_write(WARN, c"Surco".as_ptr(), text.as_ptr()) };
+        }
+    });
+}
+
+/// What the activity was started with as `surco.args`: the desktop's script commands, which
+/// only a test passes (`am start --esa surco.args ...`). Empty otherwise.
+pub fn launch_arguments() -> Vec<String> {
+    let Some(answer) = call("system.args", "{}") else { return Vec::new() };
+    serde_json::from_str::<serde_json::Value>(&answer).ok()
+        .and_then(|answer| answer.get("args")?.as_array().cloned())
+        .map(|args| args.iter().filter_map(|arg| arg.as_str().map(str::to_owned)).collect())
+        .unwrap_or_default()
+}
+
 /// The activity, once [`start`] has kept it.
 pub fn app() -> Option<AndroidApp> {
     APP.get().cloned()

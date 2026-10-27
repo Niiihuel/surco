@@ -926,8 +926,9 @@ fn icon() -> egui::IconData {
     mark.map_or_else(|_| egui::IconData::default(), |mark| egui::IconData { width: mark.width(), height: mark.height(), rgba: mark.into_raw() })
 }
 
-fn ios_graphics_limits(supported: &eframe::wgpu::Limits) -> eframe::wgpu::Limits {
-    // Metal Simulator exposes 15 shader varyings; WebGPU defaults require 16.
+fn phone_graphics_limits(supported: &eframe::wgpu::Limits) -> eframe::wgpu::Limits {
+    // Metal Simulator exposes 15 shader varyings, and phones' GPUs fall short of WebGPU's
+    // defaults the same way; WebGPU defaults require 16.
     // Our renderer fits within the downlevel limits: https://github.com/gfx-rs/wgpu/issues/9386
     eframe::wgpu::Limits {
         max_texture_dimension_2d: supported.max_texture_dimension_2d.min(8192),
@@ -937,11 +938,11 @@ fn ios_graphics_limits(supported: &eframe::wgpu::Limits) -> eframe::wgpu::Limits
 
 fn graphics_configuration() -> eframe::WgpuConfiguration {
     let mut configuration = eframe::NativeOptions::default().wgpu_options;
-    if cfg!(target_os = "ios") {
+    if cfg!(any(target_os = "ios", target_os = "android")) {
         if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut configuration.wgpu_setup {
             setup.device_descriptor = std::sync::Arc::new(|adapter| eframe::wgpu::DeviceDescriptor {
-                label: Some("Surco iOS graphics"),
-                required_limits: ios_graphics_limits(&adapter.limits()),
+                label: Some("Surco phone graphics"),
+                required_limits: phone_graphics_limits(&adapter.limits()),
                 ..Default::default()
             });
         }
@@ -956,9 +957,12 @@ pub fn run() -> eframe::Result {
     let mut script = Script { after: Duration::from_millis(900), ..Script::default() };
     #[cfg(not(any(target_os = "ios", target_os = "android")))]
     let mut arguments = std::env::args().skip(1);
-    // UIKit and Android may supply launch arguments of their own; they are not desktop script commands.
-    #[cfg(any(target_os = "ios", target_os = "android"))]
+    // UIKit may supply launch arguments of its own; they are not desktop script commands.
+    #[cfg(target_os = "ios")]
     let mut arguments = std::iter::empty::<String>();
+    // Android's come as the activity's `surco.args` extra, which only a test sets.
+    #[cfg(target_os = "android")]
+    let mut arguments = android::launch_arguments().into_iter();
     while let Some(argument) = arguments.next() {
         let mut value = || arguments.next().unwrap_or_else(|| {
             eprintln!("{argument} needs a value");
@@ -1116,6 +1120,8 @@ pub fn run() -> eframe::Result {
 #[cfg(target_os = "android")]
 #[unsafe(no_mangle)]
 fn android_main(app: android_activity::AndroidApp) {
+    android::log_to_logcat();
+    phone_logging();
     if let Err(error) = android::start(app) {
         eprintln!("Surco could not start: {error}");
         return;
@@ -1130,7 +1136,7 @@ fn android_main(app: android_activity::AndroidApp) {
 #[cfg(target_os = "ios")]
 #[no_mangle]
 pub extern "C" fn surco_start() -> i32 {
-    ios_logging();
+    phone_logging();
     match run() {
         Ok(()) => 0,
         Err(error) => {
@@ -1140,12 +1146,12 @@ pub extern "C" fn surco_start() -> i32 {
     }
 }
 
-#[cfg(target_os = "ios")]
-fn ios_logging() {
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn phone_logging() {
     struct StderrLogger;
     impl log::Log for StderrLogger {
         fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
-            // winit warns that iOS lacks window titles, visibility and themes each time
+            // winit warns that a phone lacks window titles, visibility and themes each time
             // eframe asks, several times a frame; only its errors are worth a line.
             let limit = if metadata.target().starts_with("winit") { log::Level::Error } else { log::Level::Warn };
             metadata.level() <= limit
@@ -1517,7 +1523,7 @@ mod mobile_geometry_tests {
 
 #[cfg(test)]
 mod graphics_tests {
-    use super::ios_graphics_limits;
+    use super::phone_graphics_limits;
     use eframe::wgpu::Limits;
 
     #[test]
@@ -1530,10 +1536,10 @@ mod graphics_tests {
         // Metal Simulator exposes Apple2-like capabilities: 15 shader varyings, below WebGPU's 16.
         let supported = Limits { max_inter_stage_shader_variables: 15, ..Limits::default() };
         assert!(!Limits::default().check_limits(&supported));
-        assert!(ios_graphics_limits(&supported).check_limits(&supported));
+        assert!(phone_graphics_limits(&supported).check_limits(&supported));
         for (available, requested) in [(4096, 4096), (8192, 8192), (16384, 8192)] {
             let supported = Limits { max_texture_dimension_2d: available, ..supported.clone() };
-            let limits = ios_graphics_limits(&supported);
+            let limits = phone_graphics_limits(&supported);
             assert_eq!(limits.max_texture_dimension_2d, requested);
             assert!(limits.check_limits(&supported));
         }

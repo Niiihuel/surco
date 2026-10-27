@@ -5103,6 +5103,7 @@ dependencies = [
  "image",
  "jni",
  "k256",
+ "libc",
  "limn",
  "limn-egui",
  "log",

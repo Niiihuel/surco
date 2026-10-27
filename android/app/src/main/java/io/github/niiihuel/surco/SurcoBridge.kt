@@ -14,6 +14,9 @@ import java.lang.ref.WeakReference
 object SurcoBridge {
     @Volatile private var current: WeakReference<Activity>? = null
 
+    /** The script a test started the app with (the `surco.args` extra), which Rust asks for once. */
+    @Volatile var launchArgs: Array<String>? = null
+
     /** The activity on screen, for what needs one: the clipboard, sharing, the photo picker. */
     val activity: Activity? get() = current?.get()
 
