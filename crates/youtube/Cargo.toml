@@ -14,8 +14,8 @@ serde_json = "1"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 # `join!` for the three searches behind one query.
 tokio = { version = "1", features = ["macros", "sync"] }
-# MIT. Catalog only; it has no stream extraction.
-ytmapi-rs = { version = "=0.3.3", default-features = false, features = ["rustls", "simplified-queries"] }
+# MIT. Catalog only; it has no stream extraction. `reqwest` lets it take a client of ours.
+ytmapi-rs = { version = "=0.3.3", default-features = false, features = ["rustls", "simplified-queries", "reqwest"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

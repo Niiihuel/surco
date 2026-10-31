@@ -36,7 +36,10 @@ impl YouTube {
     }
 
     async fn music(&self) -> Result<&Music> {
-        self.music.get_or_try_init(|| async { Ok(ytmapi_rs::YtMusicBuilder::new_rustls_tls().build().await?) }).await
+        // Over HTTP/2 the service answers the old browser ytmapi-rs names itself as with a reset
+        // hyper rejects (seen 2026-10-31), and the catalog never opens; over HTTP/1.1 it answers.
+        let client = || Ok::<_, Error>(ytmapi_rs::client::Client::new_from_reqwest_client(reqwest::Client::builder().http1_only().build()?));
+        self.music.get_or_try_init(|| async { Ok(ytmapi_rs::YtMusicBuilder::new_with_client(client()?).build().await?) }).await
     }
 
     pub fn http(&self) -> &reqwest::Client {
