@@ -35,18 +35,8 @@ fn keep(state: &State, before: &str, after: &str, palette: ComponentPalette) -> 
 fn tracks(state: &State, palette: ComponentPalette) -> Element {
     let rows = state.page_rows();
     if rows.is_empty() {
-        return Empty::new(
-            t!("mobile-no-songs"),
-            if state.page_search.trim().is_empty() {
-                t!("mobile-no-songs-catalog")
-            } else {
-                t!("mobile-no-songs-filter")
-            },
-            palette,
-        )
-        .icon(Icon::MusicNote)
-        .render()
-        .padding(16.0);
+        let why = if state.page_search.trim().is_empty() { t!("mobile-no-songs-catalog") } else { t!("mobile-no-songs-filter") };
+        return blank(Icon::MusicNote, t!("mobile-no-songs"), why, None, palette);
     }
     let count = rows.len();
     let range = crate::view::track_range(count, crate::view::MOBILE_TRACK_PITCH, state.track_window);
@@ -263,16 +253,7 @@ pub(in crate::view) fn playlist(
     let more = crate::view::playlist_menu(state, playlist, palette);
     if playlist.tracks.is_empty() {
         sections.push(Element::row(vec![more]));
-        sections.push(
-            Empty::new(
-                t!("mobile-playlist-empty"),
-                t!("mobile-playlist-empty-detail"),
-                palette,
-            )
-            .icon(Icon::MusicNote)
-            .render()
-            .padding(16.0),
-        );
+        sections.push(blank(Icon::MusicNote, t!("mobile-playlist-empty"), t!("mobile-playlist-empty-detail"), None, palette));
     } else {
         sections.push(page_actions(state, vec![more], palette));
         // What the menu just did, said under it.

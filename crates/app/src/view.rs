@@ -17,7 +17,7 @@ use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
     Alert, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
-    DropdownMenuItem, DropdownOption, Element, Empty, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
+    DropdownMenuItem, DropdownOption, Element, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
     Markdown, ScrollArea, ScrollbarAppearance, SearchField, Select, SelectorSizing, Separator, Size, SkeletonGroup, Slider, Spinner, Switch, Tab, Table, TableColumn, TableRow, TableSizing, Tabs, Text,
     TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
@@ -1204,8 +1204,7 @@ fn patches_page(state: &State, width: f32, palette: ComponentPalette) -> Element
     let patches = match &state.patches {
         None => return Element::column(vec![title, loading("patches", palette)]).gap(16.0).padding(12.0).flex(1.0),
         Some(Err(why)) => {
-            let failed = Empty::new(t!("common-patches-failed"), why, palette).icon(Icon::WarningTriangle)
-                .action("patches-retry", t!("common-retry"), ButtonVariant::Secondary).render();
+            let failed = blank(Icon::WarningTriangle, t!("common-patches-failed"), why, Some(("patches-retry", t!("common-retry"))), palette);
             return Element::column(vec![title, centered(failed)]).gap(16.0).padding(12.0).flex(1.0);
         }
         Some(Ok(patches)) => patches,
@@ -1291,7 +1290,7 @@ fn news_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         sections.extend([heading(&t!("desktop-news-earlier"), palette), Element::column(earlier).gap(2.0)]);
     }
     if news.is_empty() && state.update.is_none() {
-        let empty = Empty::new(t!("desktop-news-empty"), t!("desktop-news-empty-detail"), palette).icon(Icon::Bell).render();
+        let empty = blank(Icon::Bell, t!("desktop-news-empty"), t!("desktop-news-empty-detail"), None, palette);
         return Element::column(vec![sections.remove(0), centered(empty)]).gap(16.0).padding(12.0).flex(1.0);
     }
     page_scroll("news", Element::column(sections).gap(16.0).padding(12.0))
@@ -1369,7 +1368,6 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
             Text::new(&track.title, palette).font_size(20.0).render(),
             Text::new(&track.artist, palette).muted().render(),
             Text::new(share_link(track), palette)
-                .mono()
                 .muted()
                 .truncate()
                 .render(),
@@ -1390,7 +1388,7 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
     }
     let Some(track) = &state.sharing else { return window_tree };
     let palette = Card::palette(GREY_CARD);
-    let body = Element::column(vec![media_card(state, "share-card", track, palette).centered_x(), Text::new(share_link(track), palette).mono().muted().truncate().render()]).gap(12.0);
+    let body = Element::column(vec![media_card(state, "share-card", track, palette).centered_x(), Text::new(share_link(track), palette).muted().truncate().render()]).gap(12.0);
     let copy = if state.copied { t!("common-link-copied") } else { t!("desktop-copy-link") };
     Card { body: Some(body), go: Some(("share-copy", copy, true)),
         ..Card::new("share", t!("common-share-song"), t!("desktop-share-detail"), ("share-close", t!("common-close"))) }
@@ -1916,7 +1914,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let collection = &state.collection;
     if collection.recent.is_empty() && collection.kept.is_empty() && state.saved.is_empty() && collection.heard.is_empty() {
         return centered(
-            Empty::new(t!("desktop-home-empty"), t!("desktop-home-empty-detail"), palette).icon(Icon::Search).render(),
+            blank(Icon::Search, t!("desktop-home-empty"), t!("desktop-home-empty-detail"), None, palette),
         );
     }
     let hour = chrono::Timelike::hour(&chrono::Local::now());
@@ -2247,6 +2245,29 @@ fn spotify_bar() -> ScrollbarAppearance {
 fn centered(element: Element) -> Element {
     Element::column(vec![Element::spacer().flex(1.0), element.centered_x(), Element::spacer().flex(1.0)]).flex(1.0)
 }
+
+/// What a page says where it has nothing yet or could not load, as Spotify's: a large icon,
+/// a bold line, a quiet one under it, and a white pill for what can be done about it.
+fn blank(icon: Icon, title: impl Into<String>, about: impl Into<String>, action: Option<(&str, std::borrow::Cow<'static, str>)>, palette: ComponentPalette) -> Element {
+    let narrow = |element: Element| element.center_content().max_width(BLANK_WIDTH).shrink_to_fit().centered_x();
+    let mut parts = vec![
+        Element::icon(icon).large_icon(BLANK_ICON).foreground(palette.text).size(Some(BLANK_ICON), Some(BLANK_ICON)).centered_x(),
+        Element::spacer().size(None, Some(8.0)),
+        narrow(Text::new(title.into(), palette).font_size(24.0).line_height(30.0).render().font_family(FontFamily::SansBold)),
+    ];
+    let about = about.into();
+    if !about.is_empty() {
+        parts.push(narrow(Text::new(about, palette).font_size(14.0).line_height(20.0).muted().render()));
+    }
+    if let Some((id, words)) = action {
+        parts.extend([Element::spacer().size(None, Some(8.0)), card_button(id, words, true).render().centered_x()]);
+    }
+    Element::panel(Element::column(parts).gap(8.0)).padding(24.0)
+}
+
+/// The widest a blank page's lines run before they wrap, and its icon's side.
+const BLANK_WIDTH: f32 = 440.0;
+const BLANK_ICON: f32 = 48.0;
 
 fn heading(title: &str, palette: ComponentPalette) -> Element {
     Text::new(title, palette).role(TextRole::Heading).render()
@@ -2653,7 +2674,7 @@ fn row_facts(state: &State, row: &str, track: &Track, palette: ComponentPalette)
         facts.push(Element::icon(Icon::Custom(DOWNLOAD)).foreground(palette.muted).size(Some(14.0), Some(14.0)).centered_y());
     }
     if track.duration_ms > 0 {
-        let length = Element::text(clock(track.duration_ms as f64 / 1000.0)).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
+        let length = Element::text(clock(track.duration_ms as f64 / 1000.0)).font_family(FontFamily::Sans).font_size(13.0).foreground(palette.muted);
         facts.push(length.centered_x().size(Some(DURATION_WIDTH), None).centered_y());
     }
     facts
@@ -2759,7 +2780,7 @@ fn track_table(state: &State, rows: &[(usize, &Track)], album: bool, leaving: Op
             // Numbered as they read, whatever their place in the list's own order.
             let sounding = current && state.player.playing;
             let at_rest = if sounding { wave(state, format!("wave:{row}"), palette) } else {
-                Element::text((position + 1).to_string()).font_family(FontFamily::Monospace).font_size(12.0).foreground(if current { palette.text } else { palette.muted })
+                Element::text((position + 1).to_string()).font_family(FontFamily::Sans).font_size(14.0).foreground(if current { palette.text } else { palette.muted })
             };
             // Under the pointer the number says what a click on the row does, as Spotify's.
             let does = Element::icon(if sounding { Icon::PauseFill } else { Icon::PlayFill }).foreground(palette.text).size(Some(14.0), Some(14.0));
@@ -2906,12 +2927,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, width, palette),
         Page::Loading(_) => loading("opening", palette),
-        Page::Failed(_, message) => centered(
-            Empty::new(t!("desktop-open-failed"), message, palette)
-                .icon(Icon::WarningTriangle)
-                .action("retry", t!("common-retry"), ButtonVariant::Secondary)
-                .render(),
-        ),
+        Page::Failed(_, message) => centered(blank(Icon::WarningTriangle, t!("desktop-open-failed"), message, Some(("retry", t!("common-retry"))), palette)),
         Page::Artist(artist) => artist_page(state, artist, width, palette),
         Page::Album(album) => album_page(state, album, width, palette),
         Page::Song(track) => centered(
@@ -2936,7 +2952,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Together => jam::page(state, width, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
             Some(playlist) => playlist_page(state, playlist, width, palette),
-            None => centered(Empty::new(t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), palette).icon(Icon::Playlist).render()),
+            None => centered(blank(Icon::Playlist, t!("desktop-playlist-gone"), t!("desktop-playlist-gone-detail"), None, palette)),
         },
         Page::Settings | Page::SettingsPart(_) => settings_page(state, width, palette),
         Page::Equalizer => mobile::settings::equalizer(state, width),
@@ -2986,7 +3002,7 @@ fn playlist_page(state: &State, playlist: &Playlist, width: f32, palette: Compon
     let header = Element::row(vec![picture, Element::column(about).gap(10.0).flex(1.0).centered_y()]).gap(20.0);
     let list = if playlist.tracks.is_empty() {
         Element::panel(
-            Empty::new(t!("desktop-playlist-empty"), t!("desktop-playlist-empty-detail"), palette).icon(Icon::MusicNote).render().centered_x(),
+            blank(Icon::MusicNote, t!("desktop-playlist-empty"), t!("desktop-playlist-empty-detail"), None, palette).centered_x(),
         )
         .padding(24.0)
     } else {
@@ -3259,11 +3275,10 @@ fn results(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let filters = Element::row(filters).gap(8.0);
     let body = if let (Some(error), false) = (&state.search_error, coming) {
         // Without a network there is still what was kept for it.
-        let empty = Empty::new(t!("desktop-search-failed"), error, palette).icon(Icon::WarningTriangle);
-        let empty = if state.saved.is_empty() { empty } else { empty.action("downloads", t!("desktop-see-downloads"), ButtonVariant::Secondary) };
-        empty.render().centered_x().padding(48.0)
+        let downloads = (!state.saved.is_empty()).then(|| ("downloads", t!("desktop-see-downloads")));
+        blank(Icon::WarningTriangle, t!("desktop-search-failed"), error, downloads, palette).centered_x().padding(48.0)
     } else if !coming && found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty() {
-        Empty::new(t!("common-no-results"), t!("desktop-try-other-words"), palette).icon(Icon::MusicNote).render().centered_x().padding(48.0)
+        blank(Icon::MusicNote, t!("common-no-results"), t!("desktop-try-other-words"), None, palette).centered_x().padding(48.0)
     } else {
         let grid = |tiles: Vec<Element>| Element::row(tiles).wrap().gap(0.0);
         let artists = || found.artists.iter().enumerate().map(|(index, artist)| {
@@ -3523,9 +3538,7 @@ fn artist_page(state: &State, artist: &Artist, width: f32, palette: ComponentPal
 fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let failure = state.save_error.as_ref().map(|error| Alert::new(t!("desktop-download-failed"), error, palette).render());
     if state.saved.is_empty() && state.saving.is_empty() {
-        let empty = Empty::new(t!("desktop-downloads-empty"), t!("desktop-downloads-empty-detail"), palette)
-            .icon(Icon::Custom(DOWNLOAD))
-            .render();
+        let empty = blank(Icon::Custom(DOWNLOAD), t!("desktop-downloads-empty"), t!("desktop-downloads-empty-detail"), None, palette);
         return Element::column(failure.into_iter().chain([centered(empty)]).collect()).padding(12.0).flex(1.0);
     }
     let count = match (state.saved.len(), state.saving.len()) {
@@ -3549,7 +3562,7 @@ fn downloads_page(state: &State, width: f32, palette: ComponentPalette) -> Eleme
 fn liked_page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let liked = &state.collection.liked;
     if liked.is_empty() {
-        return centered(Empty::new(t!("desktop-liked-empty"), t!("desktop-liked-empty-detail"), palette).icon(Icon::Heart).render());
+        return centered(blank(Icon::Heart, t!("desktop-liked-empty"), t!("desktop-liked-empty-detail"), None, palette));
     }
     let header = Element::column(vec![
         Text::new(t!("common-liked-songs"), palette).font_size(HERO_TITLE).render(),
@@ -3768,7 +3781,7 @@ fn panel(state: &State, window: Size, palette: ComponentPalette) -> Element {
             Some(track) => return now_playing(state, track, window, palette),
             None => vec![
                 panel_header(&t!("desktop-now-playing"), &t!("desktop-nothing-yet"), palette),
-                centered(Empty::new(t!("desktop-nothing-playing"), t!("desktop-nothing-playing-detail"), palette).icon(Icon::MusicNote).render()),
+                centered(blank(Icon::MusicNote, t!("desktop-nothing-playing"), t!("desktop-nothing-playing-detail"), None, palette)),
             ],
         }
     };
@@ -3896,18 +3909,14 @@ pub(crate) fn lyric_anchor(body: f32) -> f32 {
 /// Given the height of the `body` they are seen through, as on a phone, the first and the
 /// last line can both reach the anchor the list follows the song at.
 fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> Element {
-    let note = |title: &str, about: &str| centered(Empty::new(title, about, palette).icon(Icon::Custom(LYRICS)).render());
+    let note = |title: &str, about: &str| centered(blank(Icon::Custom(LYRICS), title, about, None, palette));
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note(&t!("desktop-nothing-playing"), &t!("desktop-lyrics-nothing-detail")),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
-        Some((_, Lyrics::Missing)) => return centered(Element::column(vec![
-            Empty::new(t!("desktop-lyrics-missing"), t!("desktop-lyrics-missing-detail"), palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", t!("desktop-search-again"), palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
-        ]).gap(20.0).padding(20.0)),
-        Some((_, Lyrics::Failed { message, .. })) => return centered(Element::column(vec![
-            Empty::new(t!("desktop-lyrics-failed"), message, palette).icon(Icon::Custom(LYRICS)).render(),
-            Button::new("retry-lyrics", t!("common-retry"), palette).variant(ButtonVariant::Outline).size(ControlSize::Spacious).round().render(),
-        ]).gap(20.0).padding(20.0)),
+        Some((_, Lyrics::Missing)) => {
+            return centered(blank(Icon::Custom(LYRICS), t!("desktop-lyrics-missing"), t!("desktop-lyrics-missing-detail"), Some(("retry-lyrics", t!("desktop-search-again"))), palette));
+        }
+        Some((_, Lyrics::Failed { message, .. })) => return centered(blank(Icon::Custom(LYRICS), t!("desktop-lyrics-failed"), message, Some(("retry-lyrics", t!("common-retry"))), palette)),
         Some((_, Lyrics::Plain { source, .. })) => {
             let words = std::iter::once(Text::new(t!("desktop-lyrics-unsynced", source = source.to_string()), palette).muted().render())
                 .chain(state.plain_lyrics().iter().enumerate().map(|(index, line)| {
@@ -4034,7 +4043,7 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
     // Listening with others, at its head.
     rows.insert(0, Element::panel(jam::queue_entry(state, palette)).padding(PANEL_PAD / 2.0));
     if rows.len() == 1 {
-        rows.push(centered(Empty::new(t!("desktop-queue-empty"), t!("desktop-queue-empty-detail"), palette).icon(Icon::Playlist).render()));
+        rows.push(centered(blank(Icon::Playlist, t!("desktop-queue-empty"), t!("desktop-queue-empty-detail"), None, palette)));
     }
     // The rows carry half the margin in themselves.
     let list = Element::column(rows).keep_leaving("upcoming-rows");
@@ -5090,6 +5099,35 @@ mod tests {
         state.update(&limn::UiAction::Clicked { id: "page-artist".into() });
         state.apply(Event::Opened { target: Target::Artist("who".into()), result: Err("sin red".into()) });
         has(&state, &["back", "retry"]);
+    }
+
+    #[test]
+    fn numbers_and_blank_pages_are_set_as_spotify_sets_them() {
+        let size = Size::new(1180.0, 700.0);
+        let texts = |state: &State| -> Vec<(String, FontFamily, f32)> {
+            UiTree::new(view(state, size)).layout(size).commands.iter().filter_map(|command| match command {
+                limn::DrawCommand::Text { text, font_family, font_size, .. } => Some((text.clone(), *font_family, *font_size)),
+                _ => None,
+            }).collect()
+        };
+        let mut state = State::default();
+        let album = Album { id: "lp".into(), title: "Album lp".into(), artist: "Artist".into(), artist_id: None, year: "2017".into(), artwork_url: None, tracks: vec![track("t1"), track("t2")] };
+        state.page = Page::Loading(Target::Album("lp".into()));
+        state.apply(Event::Opened { target: Target::Album("lp".into()), result: Ok(Content::Album(album)) });
+        let shown = texts(&state);
+        for number in ["1", "2", "3:20"] {
+            assert!(shown.iter().any(|(text, face, _)| text == number && *face == FontFamily::Sans), "{number} in the page's own face: {shown:?}");
+        }
+        assert!(!shown.iter().any(|(_, face, _)| *face == FontFamily::Monospace), "nothing in the code face: {shown:?}");
+
+        // Where a page could not load: a large bold line, and a pill to try again.
+        state.page = Page::Loading(Target::Album("gone".into()));
+        state.apply(Event::Opened { target: Target::Album("gone".into()), result: Err("sin red".into()) });
+        let shown = texts(&state);
+        assert!(shown.iter().any(|(text, face, size)| text == "No se pudo abrir" && *face == FontFamily::SansBold && *size >= 24.0), "{shown:?}");
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        let retry = frame.regions.iter().find(|region| region.id == "retry").expect("a way to try again");
+        assert!(retry.rect.height >= 44.0, "a pill, as the cards' buttons are: {:?}", retry.rect);
     }
 
     #[test]

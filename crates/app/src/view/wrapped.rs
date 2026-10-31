@@ -53,7 +53,7 @@ pub(super) fn page(state: &State, width: f32, palette: ComponentPalette) -> Elem
     sections.push(periods(state, palette));
     if state.mobile && summary.plays > 0 { sections.push(watch()); }
     if summary.plays == 0 {
-        sections.push(centered(Empty::new(t!("common-replay-empty"), t!("common-replay-empty-detail"), palette).icon(Icon::Custom(glyph::REPLAY)).render()));
+        sections.push(centered(blank(Icon::Custom(glyph::REPLAY), t!("common-replay-empty"), t!("common-replay-empty-detail"), None, palette)));
         return page_scroll("replay", Element::column(sections).gap(16.0).padding(12.0));
     }
     let half = if paired { (inner - 16.0) / 2.0 } else { inner };

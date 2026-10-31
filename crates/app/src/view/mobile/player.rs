@@ -4,8 +4,7 @@ use super::*;
 
 pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let Some(track) = state.current() else {
-        return centered(Empty::new(t!("mobile-no-music"), t!("mobile-no-music-detail"), palette)
-            .icon(Icon::MusicNote).render());
+        return centered(blank(Icon::MusicNote, t!("mobile-no-music"), t!("mobile-no-music-detail"), None, palette));
     };
     let side = (width - 48.0).clamp(160.0, 380.0);
     let liked = state.is_liked(&track.id);
@@ -43,7 +42,7 @@ pub(super) fn timeline(state: &State, palette: ComponentPalette) -> Element {
     // Ceiling keeps the countdown consistent with the elapsed clock's whole seconds,
     // including the tiny rounding error introduced by the slider's f32 fraction.
     let remaining = if duration > 0.0 { format!("-{}", clock((duration - elapsed).max(0.0).ceil())) } else { "–:––".into() };
-    let time = |value: String| Text::new(value, palette).mono().font_size(12.0).muted().render();
+    let time = |value: String| Text::new(value, palette).font_size(12.0).muted().render();
     Element::column(vec![
         Slider::new("seek", progress, palette).enabled(duration > 0.0)
             .accessibility_label(t!("mobile-playback-position")).render().size(None, Some(TAP)),

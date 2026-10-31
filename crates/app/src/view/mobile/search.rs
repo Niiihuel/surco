@@ -124,7 +124,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
             }));
         } else {
             rows.push(if state.search_error.is_some() { Element::spacer().size(None, Some(TAP)) }
-                else { Empty::new(t!("common-no-results"), t!("mobile-no-results-detail"), palette).icon(Icon::Search).render().padding(20.0) });
+                else { blank(Icon::Search, t!("common-no-results"), t!("mobile-no-results-detail"), None, palette) });
         }
     }
     // This retained scroll and its parent stay mounted throughout debounce,
