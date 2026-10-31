@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.15.2
+
+![A playlist coming in from another app, on a card of its own](https://raw.githubusercontent.com/Niiihuel/surco/v0.15.2/docs/releases/0.15.2/import-card.jpg)
+
+### Changed
+
+- A playlist brought in from another app comes in on a card of its own over the page you
+  are on, its bar filling as its songs are found, instead of taking the middle of the
+  window. Hide it and it goes on to your library; if it cannot come in, it says why and
+  offers to try again.
+- An update's progress is a thin bar with its share beside it, as Spotify's playback bar.
+- Empty and failed pages say so as Spotify's do: a large icon, a bold line and a white
+  button for what can be done.
+- Track numbers, lengths and a song's shared link are set in the app's own type rather
+  than a monospaced one.
+
+### Fixed
+
+- Search, albums, artists and imports work again: YouTube Music had stopped answering the
+  way Surco asked it.
+- An import whose songs cannot be looked for says so in seconds instead of searching for
+  minutes.
+- The import no longer says Spotify playlists stop at a hundred songs: they come in whole.
+
 ## 0.15.1
 
 ### Changed
