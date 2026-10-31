@@ -38,7 +38,7 @@ jobs:
         include:
           - { name: Linux, os: ubuntu-24.04, target: linux-x86_64, binary: surco }
           - { name: Windows, os: windows-2022, target: windows-x86_64, binary: surco.exe }
-          - { name: macOS, os: macos-14, target: macos-arm64, binary: surco }
+          - { name: macOS, os: macos-26, target: macos-arm64, binary: surco }
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
