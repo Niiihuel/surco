@@ -24,6 +24,7 @@ state-import-unreadable-playlist = No pudimos leer esa playlist. Tiene que ser p
 state-import-empty-playlist = Esa playlist no tiene canciones.
 state-import-unreadable-list = No pudimos leer esa lista. Tiene que ser pública.
 state-import-nothing-found = No encontramos ninguna de las canciones de esa lista.
+state-import-catalog-unreachable = No pudimos conectar con el catálogo para buscar las canciones. Revisá la conexión y volvé a intentar.
 state-window-minimize = Minimizar
 state-window-maximize = Maximizar
 state-window-restore = Restaurar

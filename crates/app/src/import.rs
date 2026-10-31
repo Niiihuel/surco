@@ -42,12 +42,17 @@ pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + 
     for (round, some) in wanted.chunks(AT_A_TIME).enumerate() {
         told(round * AT_A_TIME, wanted.len());
         let found = join_all(some.iter().map(|song| find(youtube, song))).await;
+        // A catalog that answers none of the first songs will not answer the rest: said now,
+        // rather than after minutes of asking for each of them.
+        if round == 0 && found.iter().all(Result::is_err) {
+            return Err(t!("state-import-catalog-unreachable").into_owned());
+        }
         for (song, found) in some.iter().zip(found) {
             match found {
                 // Two songs that turn out to be the same one are it once.
-                Some(track) if tracks.iter().all(|taken| taken.id != track.id) => tracks.push(track),
-                Some(_) => {}
-                None => missed.push(format!("{} — {}", song.artist, song.title)),
+                Ok(Some(track)) if tracks.iter().all(|taken| taken.id != track.id) => tracks.push(track),
+                Ok(Some(_)) => {}
+                Ok(None) | Err(()) => missed.push(format!("{} — {}", song.artist, song.title)),
             }
         }
     }
@@ -58,23 +63,26 @@ pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + 
 }
 
 /// The song wanted, as the catalog has it, asked for one way after another until one
-/// finds it. A search that fails is made once more: among hundreds, some do. One that
-/// fails again is an answer the catalog worded in a way that cannot be read, and the
-/// next way of asking may get another.
-async fn find(youtube: &YouTube, song: &Wanted) -> Option<Track> {
+/// finds it; Err when the catalog answered none of them. A search that fails is made once
+/// more: among hundreds, some do. One that fails again is an answer the catalog worded in
+/// a way that cannot be read, and the next way of asking may get another.
+async fn find(youtube: &YouTube, song: &Wanted) -> Result<Option<Track>, ()> {
+    let mut answered = false;
     for query in song.queries() {
         let answers = match youtube.songs(&query).await {
             Ok(answers) => answers,
             Err(_) => {
                 tokio::time::sleep(std::time::Duration::from_millis(800)).await;
-                youtube.songs(&query).await.unwrap_or_default()
+                let Ok(answers) = youtube.songs(&query).await else { continue };
+                answers
             }
         };
+        answered = true;
         if let Some(track) = transfer::pick(song, &answers) {
-            return Some(track.clone());
+            return Ok(Some(track.clone()));
         }
     }
-    None
+    if answered { Ok(None) } else { Err(()) }
 }
 
 /// Where the secret Spotify's web player proves itself with is kept, by its version, by
