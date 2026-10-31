@@ -19,6 +19,7 @@ common-delete = Eliminar
 common-remove = Quitar
 common-clear = Borrar
 common-retry = Reintentar
+common-percent = { $percent } %
 common-play = Reproducir
 common-pause = Pausar
 common-options = Opciones

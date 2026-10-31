@@ -23,7 +23,7 @@ use limn::{
     TextField, TextRole, Ticker, Toast, TooltipPlacement, TooltipSpec, TopBar, Carousel, SideRail, SideRailItem, PeekPanel,
 };
 
-use crate::backend::{Release, Target};
+use crate::backend::Release;
 use crate::clip::Showing;
 use crate::i18n::{t, Language};
 use crate::state::mobile::SearchFilter;
@@ -422,7 +422,7 @@ fn window_view(state: &State, window: Size) -> Element {
     }
     let shared = share_dialog(state, window_tree, window.width, palette);
     let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
-    let imported = missed_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette);
+    let imported = missed_dialog(state, import_run_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette), window.width, palette);
     let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
     let whole = wrapped::story(state, jam::invite(state, whole, window.width), window);
     Toast::layer(whole, skip_notice(state, palette), PLAYER_HEIGHT + 12.0)
@@ -781,6 +781,55 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .render(window_tree, width)
 }
 
+/// A list being brought in, on a card of its own over the window instead of in the page: a
+/// bar that fills as its songs are looked for, and the way to leave it to go on alone; or
+/// why it could not be brought in, and the way to try again.
+pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    let Some((_, failed)) = &state.import_run else { return window_tree };
+    let (title, about) = import_run_words(state);
+    let palette = if state.mobile { palette } else { Card::palette(GREY_CARD) };
+    let body = failed.is_none().then(|| {
+        let done = state.import_progress.filter(|(_, of)| *of > 0).map_or(0.0, |(done, of)| done as f32 / of as f32);
+        let bar = Progress::new(done, ComponentPalette { selected: BAR_REST, ..palette }).id("import-progress").render().accessibility_label(about.clone());
+        let wait = Text::new(t!("desktop-import-wait"), palette).role(TextRole::Caption).muted().render();
+        Element::column(vec![bar, if state.mobile { wait } else { wait.center_content() }]).gap(16.0)
+    });
+    let way_out = if failed.is_some() { t!("common-close") } else { t!("desktop-import-hide") };
+    if state.mobile {
+        let mut buttons = vec![card_button("import-hide", way_out, failed.is_none()).render()];
+        buttons.extend(failed.as_ref().map(|_| card_button("import-retry", t!("common-retry"), true).render()));
+        let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0)
+            .footer(ButtonGroup::new(buttons).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render());
+        return match body { Some(body) => sheet.body(body), None => sheet }.render();
+    }
+    let side = Card::side(width, 420.0);
+    let art = import_picture().map(|picture| Element::raster_image(picture.cover()).size(Some(side), Some(side * 130.0 / 460.0)));
+    Card { art, inset_art: false, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
+        ..Card::new("import-run", title, about, ("import-hide", way_out)) }
+        .render(window_tree, width)
+}
+
+/// What the card of a list being brought in says: that it is coming and how far it has got,
+/// or that it could not come and why.
+pub(crate) fn import_run_words(state: &State) -> (std::borrow::Cow<'static, str>, std::borrow::Cow<'static, str>) {
+    match (&state.import_run, state.import_progress) {
+        (Some((_, Some(why))), _) => (t!("desktop-import-failed"), why.clone().into()),
+        (_, Some((done, of))) if of > 0 => (t!("desktop-import-running"), t!("desktop-import-searching", done = done, of = of)),
+        _ => (t!("desktop-import-running"), t!("desktop-import-reading")),
+    }
+}
+
+/// The rest of a bar, as Spotify's: white at a third, over any of its greys.
+const BAR_REST: Color = Color::rgba(255, 255, 255, 77);
+
+/// Work whose share done is known, as Spotify's playback bar is drawn: a thin white bar, and
+/// the share beside it in the small type its times are in.
+fn progress_row(done: f32, palette: ComponentPalette) -> Element {
+    let bar = Progress::new(done, ComponentPalette { selected: BAR_REST, ..palette }).render().flex(1.0).centered_y();
+    let percent = t!("common-percent", percent = format!("{:.0}", done * 100.0));
+    Element::row(vec![bar, Element::text(percent).font_family(FontFamily::Sans).font_size(12.0).foreground(palette.muted).centered_y()]).gap(8.0)
+}
+
 /// The picture on the library's offer to bring music in, drawn for it (`assets/import.svg`)
 /// and read once.
 fn import_picture() -> Option<limn::RasterImage> {
@@ -1091,14 +1140,11 @@ fn update_card(state: &State, release: &Release, width: f32, palette: ComponentP
     };
     let copy = Element::column(vec![Text::new(title, palette).font_size(15.0).render(), Text::new(about, palette).muted().render()]).gap(2.0).flex(1.0);
     let mut head = vec![copy];
-    let mut parts = Vec::new();
-    if let Updating::Fetching(done) = &state.updating {
-        let percent = Element::text(format!("{:.0} %", done * 100.0)).font_family(FontFamily::Monospace).font_size(12.0).foreground(palette.muted);
-        head.push(percent.centered_y());
-        parts.push(Progress::new(*done, palette).height(6.0).render());
-    }
     head.extend(action);
-    parts.insert(0, Element::row(head).gap(12.0));
+    let mut parts = vec![Element::row(head).gap(12.0)];
+    if let Updating::Fetching(done) = &state.updating {
+        parts.push(progress_row(*done, palette));
+    }
     parts.extend(notes_column(state, &release.notes, width, palette));
     Element::panel(Element::column(parts).gap(12.0)).padding(16.0).background(palette.surface).radius(RadiusRole::Panel.px())
 }
@@ -1193,12 +1239,12 @@ fn update_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let (about, go_id, action) = match &state.updating {
         Updating::Idle if release.program.is_some() => (t!("desktop-update-mandatory-install", version = version), "update-get", t!("desktop-update-now")),
         Updating::Idle => (t!("desktop-update-mandatory-download", version = version), "update-get", t!("desktop-download")),
-        Updating::Fetching(done) => (t!("desktop-update-downloading-percent", version = version, percent = format!("{:.0}", done * 100.0)), "update-wait", t!("desktop-downloading")),
+        Updating::Fetching(_) => (t!("desktop-update-downloading-version", version = version), "update-wait", t!("desktop-downloading")),
         Updating::Ready => (t!("desktop-update-installed", version = version), "update-restart", t!("desktop-restart-now")),
         Updating::Failed(why) => (t!("desktop-update-failed-why", why = why.as_str()), "update-get", t!("common-retry")),
     };
     let body = match &state.updating {
-        Updating::Fetching(done) => Some(Progress::new(*done, Card::palette(GREY_CARD)).height(6.0).render()),
+        Updating::Fetching(done) => Some(progress_row(*done, Card::palette(GREY_CARD))),
         _ => None,
     };
     // Escape and a click beside it do nothing: it has to be taken.
@@ -2859,16 +2905,6 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, width, palette),
-        // Each of its songs is looked for in the catalog, which takes a while.
-        Page::Loading(Target::Import(_)) => {
-            let (said, done) = match state.import_progress {
-                Some((done, of)) if of > 0 => (t!("desktop-import-searching", done = done, of = of), done as f32 / of as f32),
-                _ => (t!("desktop-import-reading"), 0.0),
-            };
-            let about = Text::new(t!("desktop-import-wait"), palette).role(TextRole::Caption).muted().render();
-            let progress = Element::column(vec![Text::new(said, palette).render(), Progress::new(done, palette).height(6.0).render(), about]).gap(8.0);
-            Element::column(vec![Element::panel(progress).padding(12.0), loading("opening", palette)])
-        }
         Page::Loading(_) => loading("opening", palette),
         Page::Failed(_, message) => centered(
             Empty::new(t!("desktop-open-failed"), message, palette)
@@ -4410,9 +4446,49 @@ mod tests {
         let (texts, ids) = shown(&state);
         assert!(texts.iter().any(|text| text == "Descargando Surco 9.0.0") && texts.iter().any(|text| text == "42 %"), "{texts:?}");
         assert!(!ids.iter().any(|id| id == "update-get" || id == "update-restart"), "nothing to press while it comes down");
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        let percent = frame.commands.iter().find_map(|command| match command {
+            limn::DrawCommand::Text { text, font_family, .. } if text == "42 %" => Some(*font_family),
+            _ => None,
+        });
+        assert_eq!(percent, Some(FontFamily::Sans), "its share is said in the type the player's times are in");
         state.apply(Event::UpdateInstalled);
         let (texts, ids) = shown(&state);
         assert!(texts.iter().any(|text| text == "Surco 9.0.0 está lista") && ids.iter().any(|id| id == "update-restart"));
+    }
+
+    #[test]
+    fn a_list_being_brought_in_stands_on_its_own_card_over_the_page_it_was_asked_from() {
+        let link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M";
+        let shown = |state: &State, size: Size| {
+            let frame = UiTree::new(view(state, size)).layout(size);
+            let texts: String = frame.commands.iter().filter_map(|command| match command {
+                limn::DrawCommand::Text { text, .. } => Some(text.as_str()),
+                _ => None,
+            }).collect();
+            let ids: Vec<String> = frame.regions.iter().map(|region| region.id.clone()).chain(frame.access.iter().map(|node| node.id.clone())).collect();
+            (texts, ids)
+        };
+        let mut state = State::default();
+        state.query = link.into();
+        state.search();
+        state.apply(Event::Importing { done: 12, of: 150 });
+        let size = Size::new(1180.0, 700.0);
+        let (texts, ids) = shown(&state, size);
+        assert!(texts.contains("Importando tu playlist") && texts.contains("Buscando 12 de 150 canciones…"), "{texts}");
+        assert!(ids.iter().any(|id| id == "import-run:dialog") && ids.iter().any(|id| id == "import-hide") && ids.iter().any(|id| id == "import-progress"));
+        assert!(!ids.iter().any(|id| id == "import-retry"), "nothing to try again while it comes");
+        assert_eq!(state.page, Page::Search, "the page under it stays, not one that waits for it");
+
+        state.apply(Event::Opened { target: Target::Import(link.into()), result: Err("No pudimos leer esa playlist.".into()) });
+        let (texts, ids) = shown(&state, size);
+        assert!(texts.contains("No se pudo importar la playlist") && texts.contains("No pudimos leer esa playlist."), "{texts}");
+        assert!(ids.iter().any(|id| id == "import-retry") && !ids.iter().any(|id| id == "import-progress"));
+
+        // A phone has it as a sheet of its own.
+        state.mobile = true;
+        let (texts, ids) = shown(&state, Size::new(390.0, 844.0));
+        assert!(texts.contains("No se pudo importar la playlist") && ids.iter().any(|id| id == "import-retry") && ids.iter().any(|id| id == "import-hide"), "{texts}");
     }
 
     #[test]

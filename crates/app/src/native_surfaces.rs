@@ -403,7 +403,7 @@ impl Controller {
 
 pub(crate) fn has_sheet(state: &State) -> bool {
     state.confirm.is_some() || (state.missed_open && state.imported.is_some())
-        || state.importing.is_some() || state.creating.is_some() || state.sharing.is_some()
+        || state.import_run.is_some() || state.importing.is_some() || state.creating.is_some() || state.sharing.is_some()
         || state.mobile_ui.connections || state.mobile_ui.library.is_some() || state.mobile_ui.context.is_some()
         || state.sleep_open
 }
@@ -513,6 +513,17 @@ fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
         sheet.rows = missed.iter().map(|song| text(song, false)).collect();
         sheet.actions = vec![Action::new("import-missed-copy", t!("native-missed-copy"), "doc.on.doc"), Action::new("import-missed-close", t!("common-close"), "xmark")];
         return Some((format!("missed:{id}"), sheet));
+    }
+    if let Some((link, failed)) = &state.import_run {
+        // One sheet from the first song looked for to the last, or to why none could be.
+        let (title, about) = crate::view::import_run_words(state);
+        let about = if failed.is_some() { about.into_owned() } else { format!("{about}\n\n{}", t!("desktop-import-wait")) };
+        let mut sheet = shell(&title, &about, "import-hide");
+        sheet.actions = match failed {
+            Some(_) => vec![Action::new("import-hide", t!("common-close"), "xmark"), Action::new("import-retry", t!("common-retry"), "arrow.clockwise")],
+            None => vec![Action::new("import-hide", t!("desktop-import-hide"), "chevron.down")],
+        };
+        return Some((format!("import-run:{link}"), sheet));
     }
     if let Some(link) = &state.importing {
         // UIKit's sheet keeps its editor alone, where its own editing menu is reached; the way to

@@ -23,7 +23,7 @@ plays it; a playlist is shared as a link that carries it whole.
 - Import public Spotify, YouTube Music and Apple Music playlists or albums by pasting
   their links in the search bar, or from the library and settings. Export a playlist
   as artist-and-title text to paste into a playlist transfer service. Spotify imports
-  read up to 100 tracks; songs that cannot be matched are reported after the import.
+  read the whole playlist; songs that cannot be matched are reported after the import.
 - A bell for what the artists followed release, and for later versions of the app.
 - A local profile with a picture of its own, and the account moved to a phone or another
   computer on the same network, either way: a camera reads its QR, or its twelve-character

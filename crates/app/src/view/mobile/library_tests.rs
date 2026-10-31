@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::Command;
+use crate::backend::{Command, Target};
 use crate::state::Entry;
 use limn::{Point, UiAction, UiEvent, UiTree};
 use surco_core::ArtistRef;

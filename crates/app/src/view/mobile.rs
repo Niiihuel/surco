@@ -214,7 +214,7 @@ fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, 
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, width, palette);
     let tree = playlist_dialog(state, tree, width, palette);
-    let tree = missed_dialog(state, import_dialog(state, tree, width, palette), width, palette);
+    let tree = missed_dialog(state, super::import_run_dialog(state, import_dialog(state, tree, width, palette), width, palette), width, palette);
     confirm_dialog(state, tree, width, palette)
 }
 

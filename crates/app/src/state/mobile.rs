@@ -8,7 +8,7 @@ const SEARCH_DELAY: Duration = Duration::from_millis(200);
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
     matches!(id, "mobile-context-close" | "mobile-connections-close" | "playlist-cancel"
-        | "import-cancel" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close").then_some(id)
+        | "import-cancel" | "import-hide" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close").then_some(id)
 }
 
 pub(crate) fn is_sheet_handle(id: &str) -> bool { sheet_dismiss_id(id).is_some() }
