@@ -12,6 +12,14 @@ pub(super) const FIELD_HEIGHT: f32 = TAP + 16.0;
 const FOOT: f32 = 48.0;
 /// How many songs all the results show, as Spotify's; the chip shows the rest.
 const SONGS: usize = 4;
+/// How many artists all the results list as rows, as BitChord's; their segment lists the rest.
+const ARTISTS: usize = 3;
+/// BitChord's field: rounded by 11 on the raised grey, the magnifier and words at its start.
+const FIELD_RADIUS: f32 = 11.0;
+/// BitChord's segmented control: a dim track, the chosen kind on a lighter pill.
+const SEGMENT_TRACK: Color = Color::rgb(34, 34, 37);
+const SEGMENT_ON: Color = Color::rgb(99, 99, 102);
+const SEGMENT_HEIGHT: f32 = 36.0;
 
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
@@ -26,11 +34,16 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     // The cross that empties it is always inside the field, at its end.
     let field = if editing {
         SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)).round()
+            .size(ControlSize::Spacious).render().size(None, Some(TAP)).radius(FIELD_RADIUS)
     } else {
-        Button::new("mobile-search-edit", if state.query.is_empty() { t!("common-search-placeholder") } else { state.query.as_str().into() }, palette)
-            .icon(Icon::Search).variant(if compact { ButtonVariant::Secondary } else { ButtonVariant::Default })
-            .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render()
+        // BitChord's: the field itself, at rest, until it is touched.
+        let empty = state.query.is_empty();
+        let words = Text::new(if empty { t!("common-search-placeholder") } else { state.query.as_str().into() }, palette).font_size(16.0).truncate().render();
+        let copy = Element::row(vec![Element::icon(Icon::Search).large_icon(18.0).foreground(palette.muted).centered_y(),
+            if empty { words.foreground(palette.muted) } else { words }.centered_y().flex(1.0)]).gap(8.0).padding(12.0);
+        Element::clickable("mobile-search-edit", copy).accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-music")))
+            .background(if compact { SCHEME.hover } else { SCHEME.raised }).pressed_background(SCHEME.hover)
+            .radius(FIELD_RADIUS).size(None, Some(TAP))
     };
     let field = if state.query.is_empty() { field } else { inside_cross(field, "mobile-search-clear", &t!("mobile-clear-search"), palette) }.flex(1.0);
     let mut row = vec![field];
@@ -67,11 +80,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     let filters = if super::glass(state) {
         Element::spacer().size(None, Some(TAP)).accessible(limn::Access::new(limn::Role::Group).id("ios-filters").name(t!("common-search")))
     } else {
-        // Spotify's chips: a 32pt pill, lit while chosen, on a touch target of full height.
-        let chips = filters(state).map(|(id, label, on)| super::chip(id.into(), label, on, limn::Role::Tab, palette));
-        // The chips start on the page's 16pt margin and scroll out past both edges.
-        Element::horizontal_scroll_2d("mobile-search-filters", horizontal_inset(Element::row(chips.into()).gap(8.0), 8.0, 8.0))
-            .drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR)
+        horizontal_inset(segments(state, palette), 8.0, 8.0)
     };
     let found = &state.found;
     let mut rows = Vec::new();
@@ -93,9 +102,10 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
                 }
             }
             // The other kinds are shelves to swipe, as on the home.
+            // Artists are rows by a round face, as BitChord's.
             if !found.artists.is_empty() {
-                let tiles = found.artists.iter().enumerate().map(|(index, artist)| tile(state, format!("artist:{index}"), &artist.name, Some(t!("common-artist").into_owned()), &artist.artwork_url, true, palette));
-                rows.push(shelf(state, "found-artists", &t!("common-artists"), tiles.collect(), palette));
+                rows.push(section(&t!("common-artists"), palette).padding(8.0));
+                rows.extend(found.artists.iter().take(ARTISTS).enumerate().map(|(index, artist)| result(state, format!("artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)));
             }
             if !found.albums.is_empty() {
                 rows.push(shelf(state, "found-albums", &t!("common-albums"), release_tiles(state, "album", &found.albums, palette), palette));
@@ -153,12 +163,31 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     Element::column(vec![filters, status, list]).gap(8.0).padding(8.0).flex(1.0)
 }
 
+/// An artist's or an album's row, as a song's is: its 52 picture rimmed, round for an artist,
+/// its name a weight up over what it is.
 fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
-    let picture = cover(state, artwork, 48.0, palette);
-    // Figma "Item / Music, Small": 48pt artwork, 12pt to the copy, 64pt tall.
-    ListRow::new(id, title, palette).sizing(ListRowSizing { height: Some(64.0), two_line_height: Some(64.0), gap: 12.0, leading_width: 48.0, ..TRACK_ROW })
-        .leading(if round { picture.radius(24.0) } else { picture.radius(4.0) })
-        .subtitle(subtitle).title_fade(true).render()
+    let picture = super::thumb(state, artwork, palette);
+    let picture = if round { picture.radius(super::THUMB / 2.0) } else { picture };
+    let body = Element::row(vec![picture, super::song_copy(title, subtitle, palette)]).gap(14.0);
+    Element::clickable(&id, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{title} · {subtitle}")))
+        .padding(8.0).size(None, Some(68.0))
+}
+
+/// BitChord's segmented control for the kinds of result: the four in one pill track, the one
+/// chosen on a lighter pill that slides over to the next one chosen. Each kind is touched on
+/// the track's whole height.
+fn segments(state: &State, palette: ComponentPalette) -> Element {
+    let cells = filters(state).map(|(id, label, on)| {
+        let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
+        let pill = |cell: Element| Element::column(vec![Element::spacer().flex(1.0), cell.size(None, Some(SEGMENT_HEIGHT - 6.0)), Element::spacer().flex(1.0)]);
+        let cell = if on {
+            pill(Element::stack(vec![Element::panel(Element::spacer()).background(SEGMENT_ON).round().animate_move("search-segment"), copy]))
+        } else { copy };
+        Element::clickable(id, cell).accessible(limn::Access::new(limn::Role::Tab).name(label).selected(on)).size(None, Some(TAP)).flex(1.0)
+    });
+    let track = Element::panel(Element::spacer()).background(SEGMENT_TRACK).round().size(None, Some(SEGMENT_HEIGHT));
+    Element::stack(vec![Element::column(vec![Element::spacer().flex(1.0), track, Element::spacer().flex(1.0)]),
+        horizontal_inset(Element::row(cells.into()), 3.0, 3.0)]).size(None, Some(TAP))
 }
 
 /// Search's foot under Liquid Glass, as Apple Music's: the tab bar folded into a glass circle
@@ -404,19 +433,20 @@ mod tests {
             let target = frame.regions.iter().find(|region| region.id == id).unwrap().rect;
             assert!(target.width >= TAP && target.height >= TAP);
             assert!(frame.commands.iter().any(|command| matches!(command,
-                DrawCommand::FillRect { rect, radius, .. } if *rect == target && *radius >= rect.height / 2.0)),
-                "{id} rounds its actual painted touch height, not the smaller default control height");
+                DrawCommand::FillRect { rect, radius, .. } if *rect == target && (*radius - FIELD_RADIUS).abs() < 0.01)),
+                "{id} paints BitChord's field over its whole touch height, rounded by 11");
         };
         assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "mobile-search-edit");
         state.mobile_ui.search_editing = true;
         assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "search");
         state.submitted = Some("consulta".into());
-        // A chip paints Spotify's 32pt pill inside a touch target of full height.
+        // The chosen kind paints its pill inside a segment touched on the track's whole height.
         let frame = UiTree::new(results(&state)).layout(size);
         let target = frame.regions.iter().find(|region| region.id == "search-filter:all").unwrap().rect;
         assert!(target.width >= TAP && target.height >= TAP);
-        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { rect, radius, .. }
-            if rect.height == 32.0 && *radius >= 16.0 && rect.y >= target.y && rect.y + rect.height <= target.y + target.height)));
+        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { rect, radius, color }
+            if *color == SEGMENT_ON && (rect.height - (SEGMENT_HEIGHT - 6.0)).abs() < 0.01 && *radius >= rect.height / 2.0
+                && rect.y >= target.y && rect.y + rect.height <= target.y + target.height)));
     }
 
     #[test]
