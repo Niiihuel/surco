@@ -17,7 +17,7 @@ concurrency:
 
 env:
   # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
-  LIMN_REF: 57b0a7082006b5ce0a8e1f4b91bfa1ecd13cf72c
+  LIMN_REF: a9f96fd425f866f62f63b0492e81bb81b83c6a36
   # Match TestFlight's Xcode/SDK; macos-26 includes the iOS 26.5 simulator runtime.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'
