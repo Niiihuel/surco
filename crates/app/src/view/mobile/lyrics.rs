@@ -11,8 +11,10 @@ const BLUR: [f32; 5] = [0.0, 1.08, 1.08, 1.48, 1.89];
 const UNSUNG: f32 = 0.45;
 /// The soft edge the fill moves behind, in points.
 const FEATHER: f32 = 30.0;
-/// The faint light the line being sung gives off.
+/// The faint light the line being sung gives off, and the lines either side of it fade from.
 const GLOW: Color = Color::rgba(255, 255, 255, 56);
+/// How far the word being sung rises at most, in points.
+const RISE: f32 = 2.0;
 /// A steady pace of singing, per character: a line before a long rest fills at it, rather
 /// than across the rest.
 const PER_CHAR_MS: f32 = 80.0;
@@ -28,10 +30,19 @@ pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i
     let (fade, blur) = (FADE[far], BLUR[far]);
     let base = if distance < 0 { 1.0 } else { UNSUNG };
     let chars = line.text.chars().count().max(1) as f32;
+    let (playhead, span) = (state.playhead_ms(now), sweep_ms(lines, index, chars));
     let filled = match distance {
-        0 => (state.playhead_ms(now).saturating_sub(line.at_ms) as f32 / sweep_ms(lines, index, chars)).min(1.0) * chars,
+        0 => (playhead.saturating_sub(line.at_ms) as f32 / span).min(1.0) * chars,
         ..0 => chars,
         _ => 0.0,
+    };
+    // The words of the line being sung rise as they are sung, and those of the line before
+    // settle back; under reduced motion they stay.
+    let moves = state.motion && !state.settings.reduce_motion && (-1..=0).contains(&distance);
+    let rise = |from: f32, to: f32| {
+        if !moves { return 0.0; }
+        let at = |share: f32| line.at_ms as f32 + span * share / chars;
+        -RISE * lift(at(from), at(to), playhead as f32)
     };
     // The edge is so many points wide; a character of these lines is about 0.55 of their size.
     let feather = FEATHER / (size * 0.55);
@@ -48,7 +59,12 @@ pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i
             let len = word.chars().count() as f32;
             if len > 0.0 {
                 let text = Element::text(word).font_family(FontFamily::SansBold).font_size(size).line_height(line_height);
-                words.push(if glow { text.foreground(GLOW).soft_focus(format!("lyric-glow:{index}:{number}"), 4.0) } else {
+                let text = match rise(at, at + len) { 0.0 => text, rise => text.translate(limn::Point::new(0.0, rise)) };
+                // The glow comes up with the line and goes with it, rather than at once.
+                words.push(if glow {
+                    text.foreground(if distance == 0 { GLOW } else { Color::TRANSPARENT }).animate_foreground(format!("lyric-glow:{index}:{number}"))
+                        .soft_focus(format!("lyric-glow-focus:{index}:{number}"), 4.0)
+                } else {
                     let stops = (2.0 * len).clamp(2.0, 16.0) as usize;
                     let gradient: Vec<Color> = (0..stops).map(|stop| ink(at + len * stop as f32 / (stops - 1) as f32)).collect();
                     let text = if gradient.iter().all(|stop| *stop == gradient[0]) {
@@ -66,7 +82,7 @@ pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i
         }
         Element::row(words).wrap().gap(size * 0.25).line_gap(0.0)
     };
-    let lit = if distance == 0 { Element::stack(vec![words(true), words(false)]) } else { words(false) };
+    let lit = if distance.abs() <= 1 { Element::stack(vec![words(true), words(false)]) } else { words(false) };
     // Its translation goes under it, smaller, and dims and blurs with it.
     let lit = match state.translated(index, &line.text) {
         Some(translation) => Element::column(vec![lit, Element::text(translation).font_family(FontFamily::Sans)
@@ -77,6 +93,16 @@ pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i
     };
     // Paint only, from the leading edge: the lines do not re-wrap as they step back.
     lit.animate_scale(format!("lyric-scale:{index}"), if distance == 0 { 1.0 } else { 0.98 })
+}
+
+/// How far a word stands lifted, from 0 to 1, as BitChord's: it rises as it is sung, a long
+/// word further, and settles 700 ms after it ends.
+fn lift(start: f32, end: f32, at: f32) -> f32 {
+    let smooth = |x: f32| x * x * (3.0 - 2.0 * x);
+    let length = end - start;
+    let rising = ((at - start) / length.clamp(250.0, 700.0)).clamp(0.0, 1.0);
+    let settling = (1.0 - (at - end) / 700.0).clamp(0.0, 1.0);
+    (0.25 + 0.75 * smooth(((length - 150.0) / 750.0).clamp(0.0, 1.0))) * smooth(rising.min(settling))
 }
 
 /// How long a line takes to fill: until the next starts, though no longer than its words take
@@ -280,6 +306,16 @@ mod tests {
         // Blurred, each line is painted as faint copies: what was sung weighs more than what is to come.
         let weight = |index: usize, word: &str| painted(index, word).iter().map(|alpha| u32::from(*alpha)).sum::<u32>();
         assert!(weight(0, "antes") > 2 * weight(2, "después"), "what was sung stays lit");
+    }
+
+    #[test]
+    fn a_word_rises_as_it_is_sung_and_settles_after() {
+        assert_eq!(lift(1_000.0, 1_400.0, 900.0), 0.0, "not yet sung");
+        let sung = lift(1_000.0, 1_400.0, 1_400.0);
+        assert!(sung > 0.3 && sung <= 1.0, "{sung}");
+        assert!(lift(1_000.0, 1_400.0, 1_700.0) < sung, "settling");
+        assert_eq!(lift(1_000.0, 1_400.0, 2_100.0), 0.0, "settled 700 ms after");
+        assert!(lift(1_000.0, 2_000.0, 2_000.0) > sung, "a longer word rises further");
     }
 
     #[test]
