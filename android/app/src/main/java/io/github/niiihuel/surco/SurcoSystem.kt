@@ -60,7 +60,16 @@ object SurcoSystem {
         "system.scan" -> scanCode()
         "system.leave" -> leave()
         "system.args" -> JSONObject().put("args", SurcoBridge.launchArgs?.let { org.json.JSONArray(it.toList()) } ?: JSONObject.NULL).toString()
+        "system.tv" -> JSONObject().put("tv", television()).toString()
         else -> null
+    }
+
+    /** Whether this is a television, driven by a remote: Android TV's mode, or Leanback's feature. */
+    private fun television(): Boolean {
+        val activity = SurcoBridge.activity ?: return false
+        val modes = activity.getSystemService(android.content.Context.UI_MODE_SERVICE) as android.app.UiModeManager
+        return modes.currentModeType == android.content.res.Configuration.UI_MODE_TYPE_TELEVISION ||
+            activity.packageManager.hasSystemFeature(android.content.pm.PackageManager.FEATURE_LEANBACK)
     }
 
     /**

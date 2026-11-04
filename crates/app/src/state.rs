@@ -877,6 +877,10 @@ pub struct State {
     /// Whether what the app moves by itself travels or jumps. Off for a screenshot, which
     /// wants the final picture.
     pub motion: bool,
+    /// A television's layout, driven by a remote's arrows: never a phone's or a desktop's.
+    pub tv: bool,
+    /// What the remote's focus is on, as the tree moved it, for the television's view to lift.
+    pub tv_focused: Option<String>,
     pub queue_open: bool,
     pub collection: Collection,
     pub profile: Profile,
@@ -1372,6 +1376,8 @@ impl Default for State {
             wash_from: limn::Color::rgba(0, 0, 0, 0),
             wash: ScalarTransition::new(1.0, Instant::now()),
             motion: false,
+            tv: false,
+            tv_focused: None,
             queue_open: false,
             collection: Collection::default(),
             profile: Profile::default(),
@@ -3725,7 +3731,7 @@ impl State {
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
         // A phone's player stands on it blurred.
-        let backdrop = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).filter(|_| self.mobile).map(backdrop_key);
+        let backdrop = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).filter(|_| self.mobile || self.tv).map(backdrop_key);
         // And the panel of what plays shows what comes next.
         let next = self.player.upcoming.first().filter(|_| self.shows_playing()).map(|track| &track.artwork_url);
         let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large, &backdrop]).chain(next));
@@ -4141,7 +4147,9 @@ impl State {
     /// whole light at once and need none.
     pub fn lyrics_fill(&self) -> bool {
         let timed = |index: usize| self.lines().get(index).is_some_and(|line| !line.words.is_empty());
-        self.mobile && self.page == Page::Lyrics && self.player.playing && self.motion && !self.settings.reduce_motion
+        // A television shows them beside its player.
+        let shown = (self.mobile && self.page == Page::Lyrics) || (self.tv && matches!(self.page, Page::Playing | Page::Lyrics));
+        shown && self.player.playing && self.motion && !self.settings.reduce_motion
             && self.active_line().is_some_and(|sung| timed(sung) || sung.checked_sub(1).is_some_and(timed))
     }
 

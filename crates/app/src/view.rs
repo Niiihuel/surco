@@ -1,6 +1,7 @@
 //! The window, described from the state. Rebuilt on every frame.
 
 mod mobile;
+mod tv;
 mod equalizer;
 mod onboarding;
 mod wrapped;
@@ -385,6 +386,9 @@ fn window_view(state: &State, window: Size) -> Element {
             return update_dialog(state, steps, window.width);
         }
         return handoff_dialog(state, steps, window.width);
+    }
+    if state.tv {
+        return tv::view(state, window);
     }
     if state.mobile {
         return mobile::view(state, window);
@@ -3982,14 +3986,16 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
                     }
                 })).collect();
             let words = Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD);
-            let list = if state.mobile { ScrollArea::new("lyrics-list", words) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
+            let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", words) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
             return with_translate(state, list, palette);
         }
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
     // With room, the lines stand larger and further in from the edge.
     let (size, margin) = if width >= LYRIC_WIDE_FROM { (LYRIC_SIZE_WIDE, (width * 0.08).min(96.0)) }
-        else if state.mobile { (LYRIC_SIZE_PHONE, PANEL_PAD + 8.0) } else { (LYRIC_SIZE, PANEL_PAD) };
+        else if state.mobile { (LYRIC_SIZE_PHONE, PANEL_PAD + 8.0) }
+        // A television's, BitChord's at 0.8 of a phone's.
+        else if state.tv { (LYRIC_SIZE_PHONE * 0.8, PANEL_PAD) } else { (LYRIC_SIZE, PANEL_PAD) };
     let (gap, line_height) = (LYRIC_GAP * size / LYRIC_SIZE, size * 1.2);
     // Before the first line everything is still to come.
     let sung = state.active_line().map_or(-1, |index| index as i64);
@@ -4001,7 +4007,8 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
             let lag = state.lyric_lag(index, now);
             if lag == 0.0 { row } else { row.translate(limn::Point::new(0.0, lag)) }
         };
-        if state.mobile { return row(mobile::lyrics::line(state, lines, index, sung, size, line_height, gap, now)); }
+        // A phone's and a television's fill as BitChord's.
+        if state.mobile || state.tv { return row(mobile::lyrics::line(state, lines, index, sung, size, line_height, gap, now)); }
         let (ink, blur) = lyric_focus(index as i64 - sung);
         let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
         let text = Element::text(&line.text)
@@ -4036,11 +4043,12 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
     // A desktop's has the panels' bar, under the pointer; a phone's, its own indicator.
     let rows = Element::column(rows).gap(gap).padding(margin);
-    let list = if state.mobile { ScrollArea::new("lyrics-list", rows) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
+    let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", rows) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
     let page = with_translate(state, list, palette);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
-        Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
-        None => page,
+        // A television's stand on its player's blurred cover instead.
+        Some(tint) if !state.tv => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
+        _ => page,
     }
 }
 

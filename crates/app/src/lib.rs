@@ -101,12 +101,16 @@ struct Host {
 #[derive(Default)]
 struct Script {
     mobile: bool,
+    /// Lay the window out as a television's, as `--mobile` does a phone's.
+    tv: bool,
     /// Open the first run's steps whatever is kept, to see them.
     onboarding: bool,
     search: Option<String>,
     play: Option<usize>,
     seek: Option<f64>,
     actions: Vec<(Duration, UiAction)>,
+    /// Where to put the keyboard's focus, and when, as a television's remote would.
+    focus: Vec<(Duration, String)>,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -256,6 +260,18 @@ fn mobile_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
     let canvas = if preview {
         // A tiling compositor can ignore the preview window's requested size.
         egui::Rect::from_center_size(full.center(), egui::vec2(full.width().min(390.0), full.height().min(844.0)))
+    } else { full };
+    ui.set_clip_rect(canvas);
+    canvas
+}
+
+/// A television's screen: the whole of it, or in a preview the largest 16:9 the window holds,
+/// as a tiling compositor can ignore the size the window asked for.
+fn tv_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
+    let full = ui.ctx().viewport_rect();
+    let canvas = if preview {
+        let width = full.width().min(full.height() * 16.0 / 9.0);
+        egui::Rect::from_center_size(full.center(), egui::vec2(width, width * 9.0 / 16.0))
     } else { full };
     ui.set_clip_rect(canvas);
     canvas
@@ -492,6 +508,8 @@ impl eframe::App for Host {
             self.send(commands);
         }
         self.tree.set_reduced_motion(still);
+        // A remote's arrows move the focus from control to control.
+        self.tree.set_spatial_focus(self.state.tv);
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
@@ -532,7 +550,9 @@ impl eframe::App for Host {
         if self.chrome == window::Chrome::Overlaid && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
             window::center_lights(host, view::TOP_BAR_HEIGHT);
         }
-        let area = if self.state.mobile {
+        let area = if self.state.tv {
+            tv_canvas(ui, self.script.tv)
+        } else if self.state.mobile {
             mobile_canvas(ui, self.script.mobile)
         } else {
             let frame = self.tree.frame();
@@ -811,6 +831,25 @@ impl eframe::App for Host {
         let commands = self.motion.advance(&mut self.state, window, now);
         acted |= !commands.is_empty();
         self.send(commands);
+        if self.state.tv {
+            while self.script.focus.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
+                let (_, id) = self.script.focus.remove(0);
+                self.tree.focus(&id);
+            }
+            // The remote's focus is always somewhere to be seen: with none, on the page's tab,
+            // or on the player's play.
+            if self.tree.focused_id().is_none() {
+                let tab = match self.state.page {
+                    state::Page::Playing | state::Page::Lyrics => "play-pause",
+                    state::Page::Library => "mobile-library",
+                    state::Page::Search if self.state.mobile_search => "search",
+                    _ => "home",
+                };
+                self.tree.focus(tab);
+            }
+            // A television's view lifts what the remote's focus is on, as the tree just moved it.
+            self.state.tv_focused = self.tree.focused_id().map(str::to_owned);
+        }
         // Untouched since it was measured for input, that frame is this one too: building and
         // laying out a long list again costs a frame's worth of time for nothing.
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
@@ -910,7 +949,7 @@ impl eframe::App for Host {
 
 /// The id of the field the search is typed in: the phone's own, or the desktop top bar's.
 fn search_field(state: &state::State) -> &'static str {
-    if state.mobile { "search" } else { "nav:search" }
+    if state.mobile || state.tv { "search" } else { "nav:search" }
 }
 
 /// Whether anyone can see the window: always on a desktop, not on a phone in the background.
@@ -972,6 +1011,7 @@ pub fn run() -> eframe::Result {
         });
         match argument.as_str() {
             "--mobile" => script.mobile = true,
+            "--tv" => script.tv = true,
             "--onboarding" => script.onboarding = true,
             "--search" => script.search = Some(value()),
             "--play" => script.play = value().parse().ok(),
@@ -988,6 +1028,11 @@ pub fn run() -> eframe::Result {
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
             }
+            "--focus" => {
+                let value = value();
+                let (id, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                script.focus.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned()));
+            }
             "--screenshot" => script.screenshot = Some(PathBuf::from(value())),
             "--after" => script.after = Duration::from_millis(value().parse().unwrap_or(900)),
             other => {
@@ -996,12 +1041,18 @@ pub fn run() -> eframe::Result {
             }
         }
     }
-    let mobile = cfg!(any(target_os = "ios", target_os = "android")) || script.mobile;
-    view::PHONE.store(mobile, std::sync::atomic::Ordering::Relaxed);
+    // A television has its own layout, for a remote: Android says whether it is one.
+    #[cfg(target_os = "android")]
+    let tv = script.tv || android::television();
+    #[cfg(not(target_os = "android"))]
+    let tv = script.tv;
+    let mobile = !tv && (cfg!(any(target_os = "ios", target_os = "android")) || script.mobile);
+    // Both a phone and a television stand on BitChord's black.
+    view::PHONE.store(mobile || tv, std::sync::atomic::Ordering::Relaxed);
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     #[cfg(target_os = "windows")]
     backend::register_with_windows(&data);
-    let chrome = window::Chrome::current(mobile);
+    let chrome = window::Chrome::current(mobile || tv);
     let overlaid = chrome == window::Chrome::Overlaid;
     let viewport = egui::ViewportBuilder::default()
         .with_title("Surco")
@@ -1010,14 +1061,15 @@ pub fn run() -> eframe::Result {
         .with_fullsize_content_view(overlaid)
         .with_titlebar_shown(!overlaid)
         .with_title_shown(!overlaid)
-        .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
-        .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
+        // A television's 1080p screen is 960 by 540 to its apps.
+        .with_inner_size(if tv { [960.0, 540.0] } else if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
+        .with_min_inner_size(if tv { [640.0, 360.0] } else if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
     // A phone shows its package's icon; decoding this one would only delay the first frame.
     let viewport = if cfg!(any(target_os = "ios", target_os = "android")) { viewport } else { viewport.with_icon(icon()) };
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: graphics_configuration(),
-        persist_window: !mobile,
+        persist_window: !mobile && !tv,
         persistence_path: paths::persistence_path(&data),
         viewport,
         run_and_return: !cfg!(any(target_os = "ios", target_os = "android")),
@@ -1048,7 +1100,7 @@ pub fn run() -> eframe::Result {
             // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4. A
             // phone keeps limn's, so its menus and popovers are drawn as the desktop's are; what
             // a finger lights is made round where it is drawn.
-            if !mobile {
+            if !mobile && !tv {
                 let tokens = limn::tokens();
                 limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, tooltip: Some(view::TOOLTIP), ..tokens });
             }
@@ -1057,6 +1109,7 @@ pub fn run() -> eframe::Result {
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
             let mut state = State::default();
             state.mobile = mobile;
+            state.tv = tv;
             state.caption = chrome.inset();
             if let Some(storage) = creation.storage {
                 let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());
@@ -1177,11 +1230,12 @@ fn phone_logging() {
 /// What Android's Back clicks once nothing on top closes: the queue back to its song, the
 /// player down, a page back; None when there is nowhere left to go.
 #[cfg(any(target_os = "android", test))]
-fn back_target(state: &State) -> Option<&'static str> {
+pub(crate) fn back_target(state: &State) -> Option<&'static str> {
     // A list's search closes before its page, as BitChord's.
     if state.page_searching { Some("page-search") }
     else if state.page == state::Page::Playing && state.queue_open { Some("queue") }
-    else if state.page == state::Page::Playing { Some("mobile-player-dismiss") }
+    // A phone's player slides away; a television's is a page left as any other.
+    else if state.page == state::Page::Playing && !state.tv { Some("mobile-player-dismiss") }
     else if state.can_go_back() { Some("back") }
     else { None }
 }
