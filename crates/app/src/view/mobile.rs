@@ -495,23 +495,40 @@ fn mini_player(state: &State, track: &Track, width: f32, palette: ComponentPalet
         .size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
 }
 
+/// A song row's cover, as BitChord's: 52 across, its corners 8, rimmed with a hairline.
+const THUMB: f32 = 52.0;
+/// The row of the song that plays: a faint platter, faint as limn blends in linear light.
+const PLAYING_ROW: Color = Color::rgba(255, 255, 255, 8);
+
+fn thumb(state: &State, artwork: &Option<String>, palette: ComponentPalette) -> Element {
+    cover(state, artwork, THUMB, palette).radius(8.0).border(THUMB_RIM, 0.5)
+}
+
+/// A song's name over its artist, as BitChord's rows: the name a weight up, the artist in the
+/// secondary ink.
+fn song_copy(title: &str, subtitle: &str, palette: ComponentPalette) -> Element {
+    Element::column(vec![
+        Text::new(title, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansMedium),
+        Text::new(subtitle, palette).font_size(14.0).muted().truncate().render(),
+    ]).gap(2.0).centered_y().flex(1.0)
+}
+
 /// Overflow stays visible on touch screens, independently of pointer hover.
 pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &str, palette: ComponentPalette) -> Element {
     let more = format!("more:{row}");
     let dots = icon(&more, Icon::More, &t!("mobile-options-for", title = track.title.as_str()), palette);
-    let copy = Element::column(vec![
-        Text::new(&track.title, palette).font_size(16.0).truncate().render(),
-        Text::new(subtitle, palette).font_size(13.0).muted().truncate().render(),
-    ]).gap(5.0).centered_y().flex(1.0);
-    // The song that plays sounds over its cover, as on a desktop.
-    let picture = cover(state, &track.artwork_url, 48.0, palette).radius(4.0);
-    let picture = if state.current().is_some_and(|current| current.id == track.id) {
-        let sound = Element::panel(wave(state, format!("wave:{row}"), palette).centered()).background(COVER_SCRIM).radius(4.0).size(Some(48.0), Some(48.0));
+    let copy = song_copy(&track.title, subtitle, palette);
+    // The song that plays sounds over its cover, as on a desktop, and its row is lit.
+    let playing = state.current().is_some_and(|current| current.id == track.id);
+    let picture = thumb(state, &track.artwork_url, palette);
+    let picture = if playing {
+        let sound = Element::panel(wave(state, format!("wave:{row}"), palette).centered()).background(COVER_SCRIM).radius(8.0).size(Some(THUMB), Some(THUMB));
         Element::stack(vec![picture, sound])
     } else { picture };
-    let body = Element::row(vec![picture, copy]).gap(12.0);
+    let body = Element::row(vec![picture, copy]).gap(14.0);
     let main = Element::clickable(&row, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {subtitle}", track.title))).flex(1.0);
     let row_element = Element::row(vec![main, dots.centered_y()]).gap(4.0).padding(8.0).size(None, Some(68.0));
+    let row_element = if playing { row_element.background(PLAYING_ROW).radius(12.0) } else { row_element };
     ContextMenu::new(format!("mobile-context:{row}:{}", track.id), row_element,
         vec![ContextMenuEntry::Item(ContextMenuItem::new(&more, t!("common-song-options")))], SCHEME.menu())
         .open_action(more).render()
@@ -521,11 +538,7 @@ pub(super) fn track_row(state: &State, row: String, track: &Track, subtitle: &st
 /// the one below trades them for others.
 pub(super) fn suggested(state: &State, shown: &[&Track], palette: ComponentPalette) -> Element {
     let rows = shown.iter().enumerate().map(|(index, track)| {
-        let copy = Element::column(vec![
-            Text::new(&track.title, palette).font_size(16.0).truncate().render(),
-            Text::new(&track.artist, palette).font_size(13.0).muted().truncate().render(),
-        ]).gap(5.0).centered_y().flex(1.0);
-        let body = Element::row(vec![cover(state, &track.artwork_url, 48.0, palette).radius(4.0), copy]).gap(12.0);
+        let body = Element::row(vec![thumb(state, &track.artwork_url, palette), song_copy(&track.title, &track.artist, palette)]).gap(14.0);
         let main = Element::clickable(format!("suggested:{index}"), body)
             .accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {}", track.title, track.artist))).flex(1.0);
         let add = icon(&format!("suggested-add:{index}"), Icon::Add, &t!("common-recommended-add-title", title = track.title.as_str()), palette);
