@@ -167,6 +167,7 @@ pub(crate) fn scroller(state: &State) -> Option<&'static str> {
         Page::Search if state.mobile_search => Some("tv-search"),
         Page::Search => Some("tv-home"),
         Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_) => Some("tv-page-songs"),
+        Page::Settings => Some("tv-settings"),
         _ => None,
     }
 }
@@ -260,11 +261,21 @@ fn list_row(state: &State, id: &str, title: &str, value: Option<&str>, chevron: 
 /// How far a list's row grows under the focus.
 const LIST_LIFT: f32 = 1.03;
 
+/// The search field's floor at rest, as a settings card's.
+const FIELD: Color = Color::rgba(255, 255, 255, 18);
+
 /// The search, as BitChord's TV: a field no wider than 576, then the results' shelves.
 fn search(state: &State, palette: ComponentPalette) -> Element {
-    let field = SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised()).size(ControlSize::Spacious).width(576.0).render()
-        .radius(12.0).focus_ring(false);
-    let field = if lit(state, "search") { field.border(PLATTER, 2.0) } else { field };
+    // The field as the rest of the TV's surfaces: a card's soft floor and corners, the white
+    // platter with dark words under the focus.
+    let on = lit(state, "search");
+    let field = Element::text_input("search", &state.query, t!("common-search-placeholder"))
+        .leading_icon(Icon::Search).leading_icon_tint(if on { PLATTER_INK } else { SECONDARY })
+        .background(if on { PLATTER } else { FIELD }).foreground(if on { PLATTER_INK } else { palette.text })
+        .font_family(FontFamily::SansMedium).font_size(17.0).padding(14.0).radius(14.0).focus_ring(false)
+        .accessible(limn::Access::new(limn::Role::SearchInput).name(t!("common-search")))
+        .size(Some(576.0), Some(48.0));
+    let field = if on { field.shadow(LIFT_SHADOW, limn::Point::new(0.0, 8.0), 20.0, 0.0) } else { field };
     let found = &state.found;
     let songs = found.tracks.iter().take(SHELF).enumerate()
         .map(|(index, track)| lockup(state, format!("track:{index}"), &track.title, &track.artist, &track.artwork_url, false, palette)).collect();
