@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.16.0
+
+![An album on Android TV, its songs reached by the remote](https://raw.githubusercontent.com/Niiihuel/surco/v0.16.0/docs/releases/0.16.0/tv-album.jpg)
+
+### Added
+
+- Android TV: a layout of its own, driven by the remote. The tabs float in a capsule that
+  steps aside as the page scrolls; shelves of covers lift under the focus; the player is the
+  blurred cover with the lyrics beside it and a transport that rises on a press and steps
+  away after a few seconds, with Up Next under it. The library is two panes, Settings
+  Apple's grouped lists, and Back goes up to the tabs, then Home.
+- A television takes your account from your phone: Settings › Move to another device ›
+  Bring from your phone shows a QR; read it on the phone in Receive › Scan code, choose what
+  goes and send it, and the TV asks what of it to bring in.
+- Apple TV through AirPlay from the iPhone: the lyrics follow what the Apple TV plays, a
+  moment after the phone's clock.
+- A photo you pick for your profile or a playlist is cropped before it is kept, on the
+  desktop, the phone and the TV: move the frame over it and choose how much it takes.
+- Lyrics timed word by word, from LyricsPlus, where a song has them: each word fills as it
+  is sung. Lyrics timed by the line still light a line at once.
+
+### Changed
+
+- The phone (Android and iPhone) takes BitChord's look: a floating tab bar and mini player,
+  a one-screen player over the blurred cover, large titles, roomier song rows, hero cards on
+  the home, the search's segmented control, album and artist pages in their cover's colour,
+  and settings in cards. The iPhone draws these bars itself rather than UIKit's.
+- On the phone and the TV the line being sung stands near the top of the lyrics, the lines
+  around it dimmed and blurred.
+- What is on its way pulses in its own shape: the home's picks, the search's first results,
+  a list as it opens, the lyrics.
+- Your profile is washed in its photo's colour.
+- The code to move your account shows as numbered steps beside its QR.
+- An artist's followers stand under its name.
+
+### Fixed
+
+- The iPhone's search field takes the keyboard on the first tap.
+- A home with nothing picked for you yet says how it fills, rather than ending blank.
+
 ## 0.15.2
 
 ![A playlist coming in from another app, on a card of its own](https://raw.githubusercontent.com/Niiihuel/surco/v0.15.2/docs/releases/0.15.2/import-card.jpg)

@@ -203,14 +203,17 @@ pub(in crate::view) fn artist(
     let tone = artist.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
     let name = Text::new(&artist.name, palette).font_size(34.0).line_height(40.0).render().font_family(FontFamily::SansBold)
         .anchor("mobile-detail-title");
-    let fade = Element::column(vec![Element::spacer().flex(1.0), name]).padding(16.0)
+    // The name and how many follow them read as one, at the photo's foot.
+    let mut said = vec![Element::spacer().flex(1.0), name];
+    if let Some(subscribers) = artist.subscribers.as_deref().filter(|value| !value.is_empty()) {
+        said.push(Text::new(t!("mobile-subscribers", subscribers = subscribers), palette).font_size(14.0).render()
+            .font_family(FontFamily::SansMedium).foreground(Color::rgba(255, 255, 255, 190)));
+    }
+    let fade = Element::column(said).gap(2.0).padding(16.0)
         .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.45).round()));
     let photo = Element::stack(vec![sole_cover(state, &artist.artwork_url, tall, palette).size(Some(span), Some(tall)),
         Element::column(vec![Element::spacer().flex(1.0), fade])]).size(Some(span), Some(tall)).radius(12.0).clip_children();
     let mut sections = vec![photo];
-    if let Some(subscribers) = artist.subscribers.as_deref().filter(|value| !value.is_empty()) {
-        sections.push(meta(subscribers.to_owned(), palette));
-    }
     let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
     sections.push(if artist.songs.is_empty() {
         Element::row(vec![disc(followed, ARTIST_DISC)]).centered_x()

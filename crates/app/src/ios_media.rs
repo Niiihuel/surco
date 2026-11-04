@@ -174,6 +174,14 @@ mod native {
 
     type Handler = Box<dyn Fn(MediaEvent) + Send>;
     static HANDLER: Mutex<Option<Handler>> = Mutex::new(None);
+    /// How long the output route holds the sound before it is heard, in seconds as f64 bits:
+    /// next to nothing on the phone, a second or two to AirPlay's Apple TV.
+    static LATENCY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    /// How far behind the player's clock the sound is heard, as iOS says for the route.
+    pub fn output_latency() -> f64 {
+        f64::from_bits(LATENCY.load(std::sync::atomic::Ordering::Relaxed))
+    }
 
     unsafe extern "C" {
         fn surco_media_start(callback: extern "C" fn(i32, f64) -> i32);
@@ -215,6 +223,10 @@ mod native {
             12 => MediaEvent::Session(SessionEvent::RouteLost),
             13 => MediaEvent::Session(SessionEvent::RouteChanged),
             14 => MediaEvent::Session(SessionEvent::MediaReset),
+            15 if value.is_finite() => {
+                LATENCY.store(value.clamp(0.0, 10.0).to_bits(), std::sync::atomic::Ordering::Relaxed);
+                return 1;
+            }
             _ => return 0,
         };
         deliver(event)
@@ -306,7 +318,7 @@ mod native {
 }
 
 #[cfg(target_os = "ios")]
-pub use native::{activate, artwork, configure, deactivate, Controls};
+pub use native::{activate, artwork, configure, deactivate, output_latency, Controls};
 
 #[cfg(test)]
 mod tests {

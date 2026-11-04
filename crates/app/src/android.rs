@@ -96,6 +96,12 @@ pub fn log_to_logcat() {
 
 /// What the activity was started with as `surco.args`: the desktop's script commands, which
 /// only a test passes (`am start --esa surco.args ...`). Empty otherwise.
+/// Whether the app runs on a television, which has its own layout for a remote.
+pub fn television() -> bool {
+    call("system.tv", "{}").and_then(|answer| serde_json::from_str::<serde_json::Value>(&answer).ok())
+        .and_then(|answer| answer["tv"].as_bool()).unwrap_or(false)
+}
+
 pub fn launch_arguments() -> Vec<String> {
     let Some(answer) = call("system.args", "{}") else { return Vec::new() };
     serde_json::from_str::<serde_json::Value>(&answer).ok()

@@ -25,15 +25,25 @@ plays it; a playlist is shared as a link that carries it whole.
   as artist-and-title text to paste into a playlist transfer service. Spotify imports
   read the whole playlist; songs that cannot be matched are reported after the import.
 - A bell for what the artists followed release, and for later versions of the app.
-- A local profile with a picture of its own, and the account moved to a phone or another
-  computer on the same network, either way: a camera reads its QR, or its twelve-character
-  code is typed.
+- A local profile with a picture of its own, cropped as it is picked and washing the page in
+  its colour, and the account moved to a phone, a TV or another computer on the same
+  network, either way: a camera reads its QR, or its twelve-character code is typed.
 
 | | |
 |---|---|
 | ![What plays, its video tall at the top of the right panel](docs/screenshots/playing.jpg) | ![Synced lyrics with their translation](docs/screenshots/lyrics.jpg) |
 | ![A playlist and a song's menu](docs/screenshots/playlist.jpg) | ![Search results as they are typed](docs/screenshots/search.jpg) |
 | ![The local profile](docs/screenshots/profile.jpg) | ![Moving the account to another device](docs/screenshots/handoff.jpg) |
+
+## Phone and TV
+
+The phone (Android and iPhone) and Android TV have layouts of their own, after
+[BitChord](https://github.com/kushagrasinghx/BitChord)'s look: floating bars and a one-screen
+player on the phone; on the TV, shelves that lift under the remote's focus, a player whose
+transport steps away, and Settings as grouped lists. A television is given the account by
+the phone that reads its QR. Apple TV plays from the iPhone through AirPlay. The measures
+are in [the phone and TV look](docs/bitchord-look.md); `--mobile` and `--tv` preview the
+layouts on a desktop.
 
 ## Crates
 

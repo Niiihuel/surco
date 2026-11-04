@@ -16,8 +16,10 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
-  LIMN_REF: a9f96fd425f866f62f63b0492e81bb81b83c6a36
+  # The commit of limn the app is built against: limn moves on its own, and a build of
+  # the app must not change under it. This is limn's main with the remote's spatial focus
+  # and gradients on laid-out text.
+  LIMN_REF: 57986d7885ff19b070ba705f558317d87f3d8107
 
 jobs:
   apk:

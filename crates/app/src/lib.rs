@@ -101,12 +101,18 @@ struct Host {
 #[derive(Default)]
 struct Script {
     mobile: bool,
+    /// Lay the window out as a television's, as `--mobile` does a phone's.
+    tv: bool,
     /// Open the first run's steps whatever is kept, to see them.
     onboarding: bool,
     search: Option<String>,
     play: Option<usize>,
     seek: Option<f64>,
+    /// A picture to crop as if it had been picked for the profile, to see the crop.
+    pick_picture: Option<PathBuf>,
     actions: Vec<(Duration, UiAction)>,
+    /// Where to put the keyboard's focus, and when, as a television's remote would.
+    focus: Vec<(Duration, String)>,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -171,6 +177,20 @@ fn follow_page_actions(state: &mut State, tree: &mut UiTree, window: Size, seen:
     let stuck = tree.anchor_offset(view::PAGE_ACTIONS).is_some_and(|top| top < view::STUCK_FROM);
     (stuck != state.page_stuck).then(|| {
         state.page_stuck = stuck;
+        layout_with_notice(state, tree, window, seen)
+    })
+}
+
+/// A television's tabs step aside once its page has scrolled, and bring it back to its top
+/// when the focus goes up to them, laying out again when either changed.
+fn follow_tv_scroll(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    if !state.tv { return None; }
+    let scroller = view::tv_scroller(state);
+    let home = scroller.filter(|id| state.tv_on_bar() && tree.scroll_offset(id) > 0.0);
+    if let Some(id) = home { tree.scroll_to_start(id); }
+    let scrolled = scroller.is_some_and(|id| tree.scroll_offset(id) > state::tv::SCROLLED);
+    (home.is_some() || scrolled != state.tv_scrolled).then(|| {
+        state.tv_scrolled = scrolled;
         layout_with_notice(state, tree, window, seen)
     })
 }
@@ -261,6 +281,18 @@ fn mobile_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
     canvas
 }
 
+/// A television's screen: the whole of it, or in a preview the largest 16:9 the window holds,
+/// as a tiling compositor can ignore the size the window asked for.
+fn tv_canvas(ui: &mut egui::Ui, preview: bool) -> egui::Rect {
+    let full = ui.ctx().viewport_rect();
+    let canvas = if preview {
+        let width = full.width().min(full.height() * 16.0 / 9.0);
+        egui::Rect::from_center_size(full.center(), egui::vec2(width, width * 9.0 / 16.0))
+    } else { full };
+    ui.set_clip_rect(canvas);
+    canvas
+}
+
 fn mobile_content_insets(canvas: egui::Rect, content: egui::Rect, keyboard: f32) -> state::mobile::ContentInsets {
     // Validate the platform boundary once; consumers can use these as padding.
     let bounded = |value: f32, limit: f32| {
@@ -312,6 +344,12 @@ impl Host {
     }
 
     fn run_script(&mut self) {
+        if let Some(path) = self.script.pick_picture.take() {
+            if let Some(picked) = std::fs::read(&path).ok().and_then(|bytes| backend::picked(crate::backend::PictureFor::Profile, &bytes)) {
+                let commands = self.state.apply(picked);
+                self.send(commands);
+            }
+        }
         if let Some(query) = self.script.search.take() {
             self.state.query = query;
             let commands = self.state.search();
@@ -485,6 +523,9 @@ impl eframe::App for Host {
         if let Some(track) = self.state.sharing.take() {
             android_system::share(&track.title, &state::share_link(&track));
         }
+        // The lyrics follow the sound as the route plays it, an Apple TV's over AirPlay late.
+        #[cfg(target_os = "ios")]
+        { self.state.output_latency = ios_media::output_latency(); }
         // A code read by the camera opens the account another device serves.
         #[cfg(target_os = "ios")]
         if let Some(link) = ios_ui::take_opened_link() {
@@ -492,6 +533,8 @@ impl eframe::App for Host {
             self.send(commands);
         }
         self.tree.set_reduced_motion(still);
+        // A remote's arrows move the focus from control to control.
+        self.tree.set_spatial_focus(self.state.tv);
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
@@ -532,7 +575,9 @@ impl eframe::App for Host {
         if self.chrome == window::Chrome::Overlaid && !ctx.input(|input| input.viewport().fullscreen.unwrap_or(false)) {
             window::center_lights(host, view::TOP_BAR_HEIGHT);
         }
-        let area = if self.state.mobile {
+        let area = if self.state.tv {
+            tv_canvas(ui, self.script.tv)
+        } else if self.state.mobile {
             mobile_canvas(ui, self.script.mobile)
         } else {
             let frame = self.tree.frame();
@@ -727,7 +772,20 @@ impl eframe::App for Host {
                 self.state.paste = self.tree.focused_id().map(str::to_owned);
                 continue;
             }
-            for action in self.tree.handle_event(event) {
+            // The remote in a television's player: skips and seeks before the tree moves the focus.
+            if let limn::UiEvent::Key { key, .. } = event {
+                if let Some(commands) = self.state.tv_press(key, Instant::now()) {
+                    self.send(commands);
+                    continue;
+                }
+            }
+            let escape = self.state.tv && matches!(event, limn::UiEvent::Key { key: limn::Key::Escape, .. });
+            let mut actions = self.tree.handle_event(event);
+            // A keyboard's Escape is a television's Back, once nothing on top took it.
+            if escape && actions.is_empty() {
+                actions.extend(back_target(&self.state).map(|id| UiAction::Clicked { id: id.into() }));
+            }
+            for action in actions {
                 let commands = self.state.update(&action);
                 self.send(commands);
             }
@@ -811,11 +869,42 @@ impl eframe::App for Host {
         let commands = self.motion.advance(&mut self.state, window, now);
         acted |= !commands.is_empty();
         self.send(commands);
+        if self.state.tv {
+            // The player's transport, gone after a few idle seconds, takes the focus with it, as
+            // a page left does.
+            if self.state.tv_tick(now) {
+                self.tree.clear_focus();
+                acted = true;
+            }
+            if let Some(commands) = self.state.tv_rest(now) {
+                self.send(commands);
+                acted = true;
+            }
+            if let Some(due) = self.state.tv_due() {
+                ctx.request_repaint_after(due.saturating_duration_since(now));
+            }
+            while self.script.focus.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
+                let (_, id) = self.script.focus.remove(0);
+                self.tree.focus(&id);
+            }
+            // The remote's focus is always somewhere to be seen.
+            if self.tree.focused_id().is_none() {
+                if let Some(id) = self.state.tv_rest_focus() { self.tree.focus(id); }
+            }
+            // A television's view lifts what the remote's focus is on, as the tree just moved it.
+            let focused = self.tree.focused_id().map(str::to_owned);
+            // A setting's footnote sits under its group's card: it comes into sight with the row.
+            if focused != self.state.tv_focused && self.state.page == state::Page::Settings {
+                self.tree.reveal(view::tv_settings::NOTE_ANCHOR);
+            }
+            self.state.tv_focused = focused;
+        }
         // Untouched since it was measured for input, that frame is this one too: building and
         // laying out a long list again costs a frame's worth of time for nothing.
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
         let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
+        let frame = follow_tv_scroll(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_title(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         #[cfg(any(target_os = "ios", target_os = "android"))]
         let frame = {
@@ -910,7 +999,7 @@ impl eframe::App for Host {
 
 /// The id of the field the search is typed in: the phone's own, or the desktop top bar's.
 fn search_field(state: &state::State) -> &'static str {
-    if state.mobile { "search" } else { "nav:search" }
+    if state.mobile || state.tv { "search" } else { "nav:search" }
 }
 
 /// Whether anyone can see the window: always on a desktop, not on a phone in the background.
@@ -972,10 +1061,12 @@ pub fn run() -> eframe::Result {
         });
         match argument.as_str() {
             "--mobile" => script.mobile = true,
+            "--tv" => script.tv = true,
             "--onboarding" => script.onboarding = true,
             "--search" => script.search = Some(value()),
             "--play" => script.play = value().parse().ok(),
             "--seek" => script.seek = value().parse().ok(),
+            "--pick-picture" => script.pick_picture = Some(PathBuf::from(value())),
             "--click" | "--slide" | "--type" => {
                 let value = value();
                 let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
@@ -988,6 +1079,11 @@ pub fn run() -> eframe::Result {
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
             }
+            "--focus" => {
+                let value = value();
+                let (id, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                script.focus.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned()));
+            }
             "--screenshot" => script.screenshot = Some(PathBuf::from(value())),
             "--after" => script.after = Duration::from_millis(value().parse().unwrap_or(900)),
             other => {
@@ -996,12 +1092,18 @@ pub fn run() -> eframe::Result {
             }
         }
     }
-    let mobile = cfg!(any(target_os = "ios", target_os = "android")) || script.mobile;
-    view::PHONE.store(mobile, std::sync::atomic::Ordering::Relaxed);
+    // A television has its own layout, for a remote: Android says whether it is one.
+    #[cfg(target_os = "android")]
+    let tv = script.tv || android::television();
+    #[cfg(not(target_os = "android"))]
+    let tv = script.tv;
+    let mobile = !tv && (cfg!(any(target_os = "ios", target_os = "android")) || script.mobile);
+    // Both a phone and a television stand on BitChord's black.
+    view::PHONE.store(mobile || tv, std::sync::atomic::Ordering::Relaxed);
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     #[cfg(target_os = "windows")]
     backend::register_with_windows(&data);
-    let chrome = window::Chrome::current(mobile);
+    let chrome = window::Chrome::current(mobile || tv);
     let overlaid = chrome == window::Chrome::Overlaid;
     let viewport = egui::ViewportBuilder::default()
         .with_title("Surco")
@@ -1010,14 +1112,15 @@ pub fn run() -> eframe::Result {
         .with_fullsize_content_view(overlaid)
         .with_titlebar_shown(!overlaid)
         .with_title_shown(!overlaid)
-        .with_inner_size(if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
-        .with_min_inner_size(if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
+        // A television's 1080p screen is 960 by 540 to its apps.
+        .with_inner_size(if tv { [960.0, 540.0] } else if mobile { [390.0, 844.0] } else { [1180.0, 780.0] })
+        .with_min_inner_size(if tv { [640.0, 360.0] } else if mobile { [320.0, 480.0] } else { [720.0, 480.0] });
     // A phone shows its package's icon; decoding this one would only delay the first frame.
     let viewport = if cfg!(any(target_os = "ios", target_os = "android")) { viewport } else { viewport.with_icon(icon()) };
     let options = eframe::NativeOptions {
         renderer: eframe::Renderer::Wgpu,
         wgpu_options: graphics_configuration(),
-        persist_window: !mobile,
+        persist_window: !mobile && !tv,
         persistence_path: paths::persistence_path(&data),
         viewport,
         run_and_return: !cfg!(any(target_os = "ios", target_os = "android")),
@@ -1048,7 +1151,7 @@ pub fn run() -> eframe::Result {
             // A desktop's corners are Spotify's, tighter than limn's: cards at 6, panels at 4. A
             // phone keeps limn's, so its menus and popovers are drawn as the desktop's are; what
             // a finger lights is made round where it is drawn.
-            if !mobile {
+            if !mobile && !tv {
                 let tokens = limn::tokens();
                 limn::set_tokens(limn::Tokens { radius: limn::Radius { card: 6.0, panel: 4.0, ..tokens.radius }, tooltip: Some(view::TOOLTIP), ..tokens });
             }
@@ -1057,6 +1160,7 @@ pub fn run() -> eframe::Result {
             let (commands, events, player) = backend::spawn(creation.egui_ctx.clone(), data);
             let mut state = State::default();
             state.mobile = mobile;
+            state.tv = tv;
             state.caption = chrome.inset();
             if let Some(storage) = creation.storage {
                 let volume = storage.get_string(VOLUME_KEY).and_then(|volume| volume.parse::<f32>().ok());
@@ -1176,12 +1280,23 @@ fn phone_logging() {
 
 /// What Android's Back clicks once nothing on top closes: the queue back to its song, the
 /// player down, a page back; None when there is nowhere left to go.
-#[cfg(any(target_os = "android", test))]
-fn back_target(state: &State) -> Option<&'static str> {
+pub(crate) fn back_target(state: &State) -> Option<&'static str> {
+    // A picture being cropped is put away before what it was picked for.
+    if state.cropping.is_some() { Some("crop-cancel") }
     // A list's search closes before its page, as BitChord's.
-    if state.page_searching { Some("page-search") }
+    else if state.page_searching { Some("page-search") }
+    // A television's code for a phone closes before the page it was asked from.
+    else if state.tv && state.handoff.is_some() { Some("handoff-close") }
+    // A television's Up Next shuts, then its transport steps away, before its player.
+    else if state.tv_in_player && state.tv_up_next { Some("tv-up-next") }
+    else if state.tv_in_player && state.tv_transport.is_some() { Some("tv-transport-away") }
+    // From a tab's page, a television's goes up to the tab, then Home, then out, as tvOS's.
+    else if state.tv && state.tv_tab().is_some() && !state.tv_on_bar() { Some("tv-tabs") }
+    else if state.tv && state.tv_tab().is_some_and(|tab| tab != "home") { Some("home") }
+    else if state.tv && state.tv_tab().is_some() { None }
     else if state.page == state::Page::Playing && state.queue_open { Some("queue") }
-    else if state.page == state::Page::Playing { Some("mobile-player-dismiss") }
+    // A phone's player slides away; a television's is a page left as any other.
+    else if state.page == state::Page::Playing && !state.tv { Some("mobile-player-dismiss") }
     else if state.can_go_back() { Some("back") }
     else { None }
 }
@@ -1190,6 +1305,36 @@ fn back_target(state: &State) -> Option<&'static str> {
 mod press_tests {
     use super::*;
     use surco_core::{Track, lyrics::Line};
+
+    #[test]
+    fn a_televisions_tabs_step_aside_as_its_page_scrolls_and_bring_it_back_up() {
+        let mut state = State::default();
+        state.tv = true;
+        let track = |index: usize| Track { id: format!("song-{index}"), title: format!("Canción {index}"), artist: "Banda".into(),
+            artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 200_000 };
+        state.collection.heard = (0..8).map(track).collect();
+        state.collection.liked = (0..8).map(track).collect();
+        state.recent_picks = (0..8).map(track).collect();
+        let window = Size::new(960.0, 540.0);
+        let mut tree = UiTree::new(view::view(&state, window));
+        tree.set_spatial_focus(true);
+        tree.set_reduced_motion(true);
+        let mut seen = None;
+        layout_with_notice(&mut state, &mut tree, window, &mut seen);
+        assert!(tree.focus("today:0"));
+        for _ in 0..2 {
+            tree.handle_event(limn::UiEvent::Key { key: limn::Key::ArrowDown, shift: false, ctrl: false, alt: false });
+            state.tv_focused = tree.focused_id().map(str::to_owned);
+            layout_with_notice(&mut state, &mut tree, window, &mut seen);
+        }
+        assert_eq!(state.tv_focused.as_deref(), Some("liked-track:0"), "{:?}", tree.scroll_offset("tv-home"));
+        assert!(follow_tv_scroll(&mut state, &mut tree, window, &mut seen).is_some());
+        assert!(state.tv_scrolled, "down at the last shelf, the tabs are aside");
+        state.tv_focused = Some("home".into());
+        assert!(follow_tv_scroll(&mut state, &mut tree, window, &mut seen).is_some());
+        assert_eq!(tree.scroll_offset("tv-home"), 0.0, "up on them, the page is back at its top");
+        assert!(!state.tv_scrolled);
+    }
 
     #[test]
     fn back_shuts_a_lists_search_before_it_leaves_the_list() {

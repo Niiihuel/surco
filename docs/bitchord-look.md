@@ -8,6 +8,14 @@ never copied. The desktop layout does not change.
 Order: phone (Android and iPhone share the view) → Android TV → Apple TV. The iPhone draws
 the same bars as Android in limn; UIKit's own header and tab bar are not used for them.
 
+Apple TV is reached by AirPlay from the iPhone, not by an app of its own: winit 0.30, which
+eframe's iPhone window stands on, has no tvOS backend, and Rust's tvOS targets are tier 3
+(nightly `-Zbuild-std`). The iPhone's player picks the Apple TV in its devices sheet (iOS's
+own route picker); the audio session is long-form, so AirPlay 2 takes it, and Now Playing
+hands the Apple TV the cover, title, artist, album and times. AirPlay plays the sound a
+while after the player's clock: iOS's `outputLatency` for the route is taken off the
+position the lyrics and their fill follow, so they stay with what is heard.
+
 Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 `app/src/main/java/com/music/bitchord`, `S` is `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui`,
 `T` is `tv/src/main/java/com/music/bitchord/ui/tv`.
@@ -55,7 +63,15 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   the secondary colour. Actions: a 50 shuffle circle, a white Play pill, a 50 add circle; the
   circles white at 7% with a rim at 10%.
 - Artist: the photo full width (ratio 0.95, at most 60% of the height) fading into the page's
-  colour; the name 34/800; a 70 Play circle between 52 shuffle and follow circles.
+  colour; the name 34/800 with its followers 14 under it, one group at the photo's foot; a 70
+  Play circle between 52 shuffle and follow circles.
+- A photo picked for the profile or a playlist is cropped before it is kept, on the desktop,
+  the phone and the TV alike: the whole photo with the square over it (round for a face),
+  the rest dimmed, moved by a press, a drag or the arrows, its size by a slider; the square
+  is kept at 640. The profile's page is washed in its photo's colour, as a list's in its
+  cover's; without a photo, in its name's.
+- A home with no picks to show nor on their way ends by saying how it fills, with the way to
+  choose artists (the TV's goes to the search: the first run's picker is not a TV's).
 - Settings: inset groups on surface variant, corners 14, 16 from the sides, uppercase 11/600
   headers; rows at least 52 with a 22 icon and a chevron.
 
@@ -81,15 +97,51 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 ## TV
 
 - No side rail: a centred capsule (white at 8%, 18 from the top) with Home, Library, Now
-  Playing, and round Search and Settings. It hides once the page scrolls 32.
+  Playing, and round Search and Settings, floating over the page. It slides away once the
+  page scrolls 32, and the page goes back to its top when the focus goes up to it. Home and
+  Library open as the focus rests 140 ms on their tab; the rest on select. Pages show no
+  scroll bar.
 - Focus lifts instead of outlining: cards scale 1.08 with a shadow, rows 1.03, buttons 1.1;
   rows and pills turn into a white platter with dark text.
 - Safe margins 38 × 22, cards 16 apart, 131 lockups (corners 10), 120 round artists.
+- Library in two panes under the tabs, which stay: its categories down the left, 240 wide
+  (what was heard, liked songs, playlists, albums, artists, each only with something in, and
+  Downloads with a chevron), 42 rows corners 11, the shown one on white at 12%; on the right
+  what the focused one holds, songs as rows or a grid of 120 lockups. The focus going down
+  the categories previews each.
+- Settings as Apple's grouped lists, not split in halves: one column at most 600 wide under
+  a 30/36 bold title; each group's name upper case 12/600 over a card (white at 7%, corners
+  14) of 48 rows, hairlines from the words' start and none beside the focused row; what
+  the focused row is for as its group's footnote, 13/18, in two lines of room that stay
+  whether it speaks or not. Values are written out and change in place on select.
+- Bringing the account from a phone, as BitChord's TV signs in with one: Settings › Move to
+  another device › Bring from your phone shows a QR (on white, 200, corners 14; pulsing until
+  it is made) beside three numbered steps. The phone reads it in Receive › Scan code, chooses
+  what goes and sends it; the TV then lists what came as a settings card to bring in.
+- What is on its way stands in its own shape and pulses (limn's `Skeleton`, in step with the
+  covers coming): the home's pick shelves, the search's shelves until the first results, a
+  song list opening (cover, title, Play and rows), the lyrics' lines on the phone and the TV,
+  whose player keeps the lyrics' side while they come. A failed search says so with a Retry.
+- Search field in the tabs' capsule shape: 576 × 44 on the capsule's white at 8%, fully
+  round ends, no outline, 16 medium; the white platter with dark words under the focus.
+- Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title
+  31/36 (two lines at most), the artist 16/600 in Apple's red #FA2D48, "N songs, M min" 13,
+  a 43 shuffle circle and a 58 red Play; then the songs, 48 tall with a 34 cover (an album's
+  42 with its number), title 13 over artist 11, the length at the end, a hairline at white
+  10% between them, red while one plays. The page's cover washes the top of the canvas.
 - Canvas #26272C → #101012 with the cover's colour washed over the top.
-- Player: the blurred cover, the artwork centred at 62% of the height, gliding left when there
-  are lyrics, which appear on the right centred on the current line. The transport hides
-  after 5 s.
+- Player: the blurred cover, the artwork centred at 62% of the height (at most 320, 21 above
+  the middle), or 54% (at most 272) 51 from the left when there are lyrics, which appear on
+  the right centred on the current line. The transport rises from the foot over a shade that
+  darkens to it: title 19 over artist — album 14 on the left, 37 glass buttons (like, lyrics)
+  on the right, the scrubber under them, 4 thick, 6 with a knob under the focus, the times
+  11 below. It steps away 5 s after the last press while the music plays, and the song is
+  then named under the cover.
+- Up Next opens under the scrubber on Down, or by its button beside the lyrics': "Up Next"
+  16/600 with 32 shuffle, repeat and autoplay circles, then what follows as 99 lockups. The
+  stage dims behind it and the transport stays up while it is open.
 - D-pad: in the player, left/right skip and the rest shows the transport; on the scrubber
-  left/right seek 10 s. Back closes the innermost thing first, then goes Home.
-- limn moves focus with Tab only. The TV needs arrow keys to move focus to the nearest
-  control in their direction: that is a limn change.
+  left/right seek 10 s. Back closes the innermost thing first (the transport, a pushed page),
+  then goes up to the tab bar, then Home, then out of the app.
+- limn moved focus with Tab only; `UiTree::set_spatial_focus` (Niiihuel/limn#178) lets the
+  arrows move it to the nearest control in their direction, keeping to its row.

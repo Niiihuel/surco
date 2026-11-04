@@ -25,6 +25,17 @@ JNI door between the two sides. Its package is fixed, because Rust finds the cla
 The activity is not recreated on configuration changes, because the Rust loop lives in it. The
 manifest lists those changes under `android:configChanges`.
 
+## Android TV
+
+The same APK runs on Android TV and Google TV: the manifest offers it to Leanback's launcher
+with a 320×180 banner, and requires neither a touch screen nor Leanback. At start Rust asks the
+shell (`system.tv`) whether it runs on a television, from the UI mode or the Leanback feature,
+and if so lays out the television's view (`crates/app/src/view/tv.rs`) instead of the phone's:
+a capsule of tabs, shelves of lockups and a full-screen player, after BitChord's TV
+([docs/bitchord-look.md](bitchord-look.md)). The remote's arrows move the focus from control to
+control (limn's `UiTree::set_spatial_focus`), its centre key presses, and Back leaves the page.
+`cargo run -p surco -- --tv` previews it on a desktop.
+
 ## Building
 
 You need:

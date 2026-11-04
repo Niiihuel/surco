@@ -1,6 +1,10 @@
 //! The window, described from the state. Rebuilt on every frame.
 
 mod mobile;
+mod tv;
+mod crop;
+pub(crate) use tv::scroller as tv_scroller;
+pub(crate) use tv::settings as tv_settings;
 mod equalizer;
 mod onboarding;
 mod wrapped;
@@ -386,6 +390,9 @@ fn window_view(state: &State, window: Size) -> Element {
         }
         return handoff_dialog(state, steps, window.width);
     }
+    if state.tv {
+        return tv::view(state, window);
+    }
     if state.mobile {
         return mobile::view(state, window);
     }
@@ -461,7 +468,7 @@ fn window_view(state: &State, window: Size) -> Element {
         return update_dialog(state, window_tree, window.width);
     }
     let shared = share_dialog(state, window_tree, window.width, palette);
-    let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
+    let created = crop::dialog(state, handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width), window.width);
     let imported = missed_dialog(state, import_run_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette), window.width, palette);
     let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
     let whole = wrapped::story(state, jam::invite(state, whole, window.width), window);
@@ -563,17 +570,39 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
 /// the parts that go; or receiving one from the address another device shows, and choosing
 /// what of it comes and whether it joins what is here or takes its place.
 fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
-    use mobile::settings::switch;
     let Some(handoff) = &state.handoff else { return window_tree };
     // The first run brings an account in a step of its own.
     if state.onboarding.as_ref().is_some_and(|steps| steps.step == crate::state::onboarding::Step::Bring) { return window_tree; }
     let palette = dialog_palette();
     let _dense = (!state.mobile).then(mobile::settings::Dense::on);
+    // Sending to the television whose code was read: what goes, and whether it got there.
+    if handoff.push_to.is_some() {
+        let mut body = vec![Text::new(t!("desktop-handoff-what"), palette).muted().render()];
+        body.extend(going(state, handoff.parts));
+        if handoff.pushing {
+            body.push(Element::row(vec![Spinner::new("handoff-pushing", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-pushing"), palette).muted().render()]).gap(8.0));
+        }
+        match &handoff.pushed {
+            Some(Ok(())) => body.push(Alert::new(t!("desktop-handoff-push-title"), t!("desktop-handoff-pushed"), palette).tone(limn::AlertTone::Success).id("handoff-pushed").compact(true).render()),
+            Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff-push-title"), message, palette).id("handoff-error").compact(true).render()),
+            None => {}
+        }
+        let done = matches!(handoff.pushed, Some(Ok(())));
+        let close = card_button("handoff-close", t!("common-close"), done).render();
+        let footer = if done { ButtonGroup::new(vec![close]).align_end().render() }
+            else { dialog_footer(close, card_button("handoff-push", t!("desktop-handoff-push"), true).enabled(!handoff.pushing).render()) };
+        if state.mobile {
+            return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
+                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer).render();
+        }
+        return Card { body: Some(Element::column(body).gap(10.0)), go: (!done).then(|| ("handoff-push", t!("desktop-handoff-push"), !handoff.pushing)), widest: HANDOFF_WIDEST, returns: Some("account"),
+            ..Card::new("handoff", t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), ("handoff-close", t!("common-close"))) }
+            .render(window_tree, width);
+    }
     let form = if state.mobile { Modal::fitted_body_width(Modal::fit_width(width, 560.0).max(280.0)) } else { Card::inner(width, HANDOFF_WIDEST) };
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     let mut body = vec![tabs];
-    let collection = &state.collection;
     let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
     let mut confirm = None;
     if !handoff.receiving {
@@ -581,42 +610,36 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
             Some(Ok((offer, qr))) => {
-                let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
-                    .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0));
+                // As the television's: the code on white, numbered steps beside it.
+                let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)).centered())
+                    .background(Color::WHITE).radius(HANDOFF_TILE_RADIUS).size(Some(HANDOFF_CODE + 16.0), Some(HANDOFF_CODE + 16.0)));
+                let step = |number: usize, said: std::borrow::Cow<'static, str>, under: Option<Element>| {
+                    let mark = Element::panel(Text::new(number.to_string(), palette).font_size(12.0).render().font_family(FontFamily::SansSemibold).centered())
+                        .background(Color::rgba(255, 255, 255, 30)).round().size(Some(24.0), Some(24.0));
+                    let mut words = vec![Text::new(said, palette).font_size(14.0).line_height(20.0).muted().render()];
+                    words.extend(under);
+                    Element::row(vec![mark, Element::column(words).gap(10.0).flex(1.0)]).gap(12.0)
+                };
                 let copy = card_button("handoff-copy", t!("desktop-handoff-copy"), false).icon(Icon::Copy).sizing(CARD_BUTTON_SMALL).render();
                 // The code as it is typed: large, its characters apart, on a tile of its own.
-                let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(28.0).foreground(palette.text).centered())
-                    .background(palette.selected).radius(RadiusRole::Card.px()).padding(12.0);
-                let way = |title, detail| Element::column(vec![
-                    Text::new(title, palette).font_size(16.0).render().font_family(FontFamily::SansBold),
-                    Text::new(detail, palette).muted().render(),
-                ]).gap(4.0);
-                let mut ways = vec![way(t!("desktop-handoff-computer"), t!("desktop-handoff-computer-detail")), code, Element::row(vec![copy])];
+                let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(26.0).foreground(palette.text).centered())
+                    .background(palette.selected).radius(HANDOFF_TILE_RADIUS).padding(12.0);
+                let typed = Element::column(vec![code, Element::row(vec![copy])]).gap(8.0);
+                let mut steps = vec![step(1, t!("desktop-handoff-step-network"), None)];
                 // Without a QR, the code alone.
-                if qr.is_some() {
-                    ways.extend([Element::spacer().size(None, Some(4.0)), way(t!("desktop-handoff-phone"), t!("desktop-handoff-phone-detail"))]);
-                }
+                if qr.is_some() { steps.push(step(2, t!("desktop-handoff-phone-detail"), None)); }
+                steps.push(step(steps.len() + 1, t!("desktop-handoff-computer-detail"), Some(typed)));
+                let steps = Element::column(steps).gap(18.0);
                 // Beside the QR where there is room for both; under it on a phone.
                 body.push(match qr {
-                    Some(qr) if form >= 2.0 * HANDOFF_CODE + 120.0 => Element::row(vec![qr, Element::column(ways).gap(8.0).flex(1.0)]).gap(20.0),
-                    qr => {
-                        ways.extend(qr.map(Element::centered_x));
-                        Element::column(ways).gap(8.0)
-                    }
+                    Some(qr) if form >= 2.0 * HANDOFF_CODE + 140.0 => Element::row(vec![qr, steps.flex(1.0)]).gap(24.0),
+                    Some(qr) => Element::column(vec![qr.centered_x(), steps]).gap(20.0),
+                    None => steps,
                 });
             }
         }
-        let parts = handoff.parts;
-        body.extend([
-            Text::new(t!("desktop-handoff-what"), palette).muted().render(),
-            switch(&t!("desktop-handoff-profile"), Some(state.profile.shown()), "handoff-part:profile", parts.profile),
-            switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = collection.playlists.len())), "handoff-part:playlists", parts.playlists),
-            switch(&t!("common-liked-songs"), Some(&songs(collection.liked.len())), "handoff-part:liked", parts.liked),
-            switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library),
-            switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings),
-            switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer),
-            switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
-        ]);
+        body.push(Text::new(t!("desktop-handoff-what"), palette).muted().render());
+        body.extend(going(state, handoff.parts));
     } else {
         body.push(Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render());
         if cfg!(target_os = "ios") || state.mobile {
@@ -685,8 +708,24 @@ pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts
     rows
 }
 
-/// The side of the QR code a phone's camera reads.
+/// What of the account here goes to another device, a switch a part.
+fn going(state: &State, parts: crate::handoff::Parts) -> Vec<Element> {
+    use mobile::settings::switch;
+    let collection = &state.collection;
+    vec![
+        switch(&t!("desktop-handoff-profile"), Some(state.profile.shown()), "handoff-part:profile", parts.profile),
+        switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = collection.playlists.len())), "handoff-part:playlists", parts.playlists),
+        switch(&t!("common-liked-songs"), Some(&songs(collection.liked.len())), "handoff-part:liked", parts.liked),
+        switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library),
+        switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings),
+        switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer),
+        switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
+    ]
+}
+
+/// The side of the QR code a phone's camera reads, and the corners of its tile and the code's.
 const HANDOFF_CODE: f32 = 168.0;
+const HANDOFF_TILE_RADIUS: f32 = 14.0;
 /// What a code to type looks like, in its field before it is typed.
 pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX-XXXX";
 
@@ -1598,7 +1637,8 @@ fn choosable(id: &str, picture: Element, side: f32, round: bool, palette: Compon
 const CHOOSE_GLYPH: f32 = 48.0;
 
 fn profile_colour(state: &State) -> Color {
-    name_colour(state.profile.shown())
+    // Its photo's own, as a list's page takes its cover's; its name's without one.
+    state.profile.picture.as_ref().and_then(|name| state.tints.get(name)).copied().unwrap_or_else(|| name_colour(state.profile.shown()))
 }
 
 /// The colour a name is drawn on, the same wherever it shows.
@@ -2011,11 +2051,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
             tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette), sounding).dispatch_as("downloads"));
         }
         for (index, entry) in collection.recent.iter().enumerate() {
-            let picture = cover(state, entry.artwork(), height, palette);
-            let picture = match entry {
-                // Flush with the row's edge: its rounding is the row's.
-                _ => picture.radius(0.0),
-            };
+            // Flush with the row's edge: its rounding is the row's.
+            let picture = cover(state, entry.artwork(), height, palette).radius(0.0);
             let sounding = state.player.playing && state.current().is_some_and(|current| match entry {
                 Entry::Album(album) => current.album_id.as_deref() == Some(album.id.as_str()),
                 Entry::Artist(artist) => current.artist_id.as_deref() == Some(artist.id.as_str()),
@@ -2097,6 +2134,10 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let liked: Vec<Element> = collection.liked.iter().take(SHELF).enumerate().map(|(index, track)| pick(format!("liked-track:{index}"), track)).collect();
     if !liked.is_empty() {
         sections.push(shelf(state, "home-liked", &t!("common-liked-songs"), liked, palette));
+    }
+    // With no picks to show nor on their way, the home says how it fills rather than ending.
+    if !state.has_picks() {
+        sections.push(blank(Icon::Heart, t!("common-home-picks-empty"), t!("common-home-picks-empty-detail"), Some(("onboarding-taste", t!("common-home-picks-choose"))), palette));
     }
     // Where else to go: the genres to browse, two rows of them.
     if !state.mobile {
@@ -3966,6 +4007,8 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let note = |title: &str, about: &str| centered(blank(Icon::Custom(LYRICS), title, about, None, palette));
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note(&t!("desktop-nothing-playing"), &t!("desktop-lyrics-nothing-detail")),
+        // A phone's and a television's: the lines' own shapes, pulsing until the words come.
+        Some((_, Lyrics::Loading)) | None if state.mobile || state.tv => return coming_lyrics(width, palette),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
         Some((_, Lyrics::Missing)) => {
             return centered(blank(Icon::Custom(LYRICS), t!("desktop-lyrics-missing"), t!("desktop-lyrics-missing-detail"), Some(("retry-lyrics", t!("desktop-search-again"))), palette));
@@ -3982,14 +4025,16 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
                     }
                 })).collect();
             let words = Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD);
-            let list = if state.mobile { ScrollArea::new("lyrics-list", words) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
+            let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", words).visibility(lyrics_bar(state)) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
             return with_translate(state, list, palette);
         }
         Some((_, Lyrics::Lines(_))) => state.lines(),
     };
     // With room, the lines stand larger and further in from the edge.
     let (size, margin) = if width >= LYRIC_WIDE_FROM { (LYRIC_SIZE_WIDE, (width * 0.08).min(96.0)) }
-        else if state.mobile { (LYRIC_SIZE_PHONE, PANEL_PAD + 8.0) } else { (LYRIC_SIZE, PANEL_PAD) };
+        else if state.mobile { (LYRIC_SIZE_PHONE, PANEL_PAD + 8.0) }
+        // A television's, BitChord's at 0.8 of a phone's.
+        else if state.tv { (LYRIC_SIZE_PHONE * 0.8, PANEL_PAD) } else { (LYRIC_SIZE, PANEL_PAD) };
     let (gap, line_height) = (LYRIC_GAP * size / LYRIC_SIZE, size * 1.2);
     // Before the first line everything is still to come.
     let sung = state.active_line().map_or(-1, |index| index as i64);
@@ -4001,7 +4046,8 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
             let lag = state.lyric_lag(index, now);
             if lag == 0.0 { row } else { row.translate(limn::Point::new(0.0, lag)) }
         };
-        if state.mobile { return row(mobile::lyrics::line(state, lines, index, sung, size, line_height, gap, now)); }
+        // A phone's and a television's fill as BitChord's.
+        if state.mobile || state.tv { return row(mobile::lyrics::line(state, lines, index, sung, size, line_height, gap, now)); }
         let (ink, blur) = lyric_focus(index as i64 - sung);
         let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
         let text = Element::text(&line.text)
@@ -4036,12 +4082,27 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
     // A desktop's has the panels' bar, under the pointer; a phone's, its own indicator.
     let rows = Element::column(rows).gap(gap).padding(margin);
-    let list = if state.mobile { ScrollArea::new("lyrics-list", rows) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
+    let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", rows).visibility(lyrics_bar(state)) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
     let page = with_translate(state, list, palette);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
-        Some(tint) => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
-        None => page,
+        // A television's stand on its player's blurred cover instead.
+        Some(tint) if !state.tv => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
+        _ => page,
     }
+}
+
+/// The lyrics' scroll bar: a phone's shows as it scrolls, as its other lists'; a television's
+/// lyrics follow the song and show none.
+fn lyrics_bar(state: &State) -> limn::ScrollbarVisibility {
+    if state.tv { limn::ScrollbarVisibility::AutoHide { hold_ms: 0, fade_ms: 0 } } else { mobile::SCROLL_INDICATOR }
+}
+
+/// The lyrics while they come: bold lines of uneven length where the words will stand.
+fn coming_lyrics(width: f32, palette: ComponentPalette) -> Element {
+    let pulse = ComponentPalette { raised: palette.selected, ..palette };
+    let room = (width - 2.0 * (PANEL_PAD + 8.0)).max(120.0);
+    let lines = [0.82, 0.64, 0.9, 0.5, 0.74, 0.58].map(|share| limn::Skeleton::line("lyrics-loading", pulse, room * share).height(22.0).render());
+    Element::column(lines.into()).gap(24.0).padding(PANEL_PAD + 8.0).flex(1.0)
 }
 
 /// How large a line's translation is next to the line.
@@ -4050,7 +4111,8 @@ const TRANSLATION_SCALE: f32 = 0.58;
 /// The lyrics with the button that translates them over their top end, on the desktop; the
 /// phone has it in its header.
 fn with_translate(state: &State, list: Element, palette: ComponentPalette) -> Element {
-    if state.mobile || !state.translatable() {
+    // A television's is among its transport's buttons.
+    if state.mobile || state.tv || !state.translatable() {
         return Element::column(vec![list]).flex(1.0);
     }
     let on = state.settings.translate_lyrics;
