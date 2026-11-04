@@ -89,6 +89,12 @@ pub(crate) struct MobileUi {
     pub native_surfaces: bool,
     /// UIKit's bars are Liquid Glass (iOS 26): rows show through the tab bar instead of a scrim.
     pub glass: bool,
+    /// Whether UIKit draws the header, tabs, mini-player and search field over the slots limn
+    /// leaves for them. Never in the app: every phone has BitChord's bars, drawn by limn
+    /// (docs/bitchord-look.md), while UIKit still draws its sheets, menus, paste and keyboard.
+    // shortcut: the native bars' path is kept and tested, switched off; delete it with
+    // SurcoSurfaces.m's chrome once the iPhone is settled on limn's bars.
+    pub native_bars: bool,
     pub keyboard_visible: bool,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,

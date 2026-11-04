@@ -369,6 +369,7 @@ mod tests {
         let size = Size::new(402.0, 420.0);
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.page = Page::Settings;
         let mut motion = Motion::new(now);
         let mut tree = UiTree::new(crate::view::view(&state, size));

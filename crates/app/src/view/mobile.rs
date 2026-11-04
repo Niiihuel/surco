@@ -125,7 +125,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let field_on_top = search_in_header(state);
     let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
     // UIKit draws the header and tabs over these slots outside the song pages.
-    let native_chrome = state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
+    let native_chrome = state.mobile_ui.native_bars && state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
         Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title.as_ref()))
     } else if state.page == Page::Lyrics { lyrics::header(state, palette) }
@@ -245,13 +245,13 @@ fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, 
 
 /// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.
 pub(crate) fn large_title(state: &State) -> bool {
-    state.mobile_ui.native_surfaces
+    state.mobile_ui.native_bars && state.mobile_ui.native_surfaces
         && matches!(state.page, Page::Search | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
 }
 
 /// Search's whole header: its bar and, natively, the large title over the field.
 pub(crate) fn search_header_height(state: &State) -> f32 {
-    HEADER_HEIGHT + if state.mobile_ui.native_surfaces { MOBILE_LARGE_TITLE } else { 0.0 }
+    HEADER_HEIGHT + if state.mobile_ui.native_bars && state.mobile_ui.native_surfaces { MOBILE_LARGE_TITLE } else { 0.0 }
 }
 
 /// The page title, shared by the limn header and the native iOS header.
@@ -438,7 +438,7 @@ pub(crate) fn surface_tint(state: &State) -> Color { page_surface(state).0 }
 
 /// UIKit draws iOS 26's bars in Liquid Glass, their content its own.
 pub(super) fn glass(state: &State) -> bool {
-    state.mobile_ui.native_surfaces && state.mobile_ui.glass
+    state.mobile_ui.native_bars && state.mobile_ui.native_surfaces && state.mobile_ui.glass
 }
 
 /// Search with its field under the header, which folds away as the field rises; under Liquid

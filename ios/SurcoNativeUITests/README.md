@@ -1,5 +1,7 @@
 # Native iOS interaction tests
 
+> Since the phone took BitChord's bars ([docs/bitchord-look.md](../../docs/bitchord-look.md)), the header, the tabs, the mini-player and the search field are limn's on the iPhone too, and UIKit draws none of them (`MobileUi::native_bars` is off). The scenarios below that use a `UISearchBar`, its `UISearchTextField` or UIKit's tab bar need rewriting against the canvas before they pass again; the sheets, menus, paste controls and keyboard are still UIKit's.
+
 `SurcoNativeUI` is a separate shared XCTest scheme. It tests the Release app through public XCUIAutomation, without app launch scripts, injected selectors, or production test hooks. The regular `Surco` archive scheme remains app-only.
 
 The twelve tests cover:

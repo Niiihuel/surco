@@ -20,7 +20,7 @@ const FIELD_RADIUS: f32 = 11.0;
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
     let compact = state.mobile_search_compact();
-    if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_surfaces {
+    if cfg!(any(target_os = "ios", test)) && state.mobile_ui.native_bars && state.mobile_ui.native_surfaces {
         let slot = Element::panel(Element::spacer().size(None, Some(TAP))
             .accessible(limn::Access::new(limn::Role::Group).id("ios-search").name(t!("mobile-search-music"))))
             // Transparent: the native header's blur continues behind the field.
@@ -344,6 +344,7 @@ mod tests {
         for editing in [false, true] {
             state.mobile_ui.search_editing = editing;
             state.mobile_ui.native_surfaces = true;
+            state.mobile_ui.native_bars = true;
             let native = UiTree::new(field(&state, SCHEME.palette())).layout(size);
             let slots: Vec<_> = native.access.iter().filter(|node| node.id == "ios-search").collect();
             assert_eq!(slots.len(), 1);
@@ -362,6 +363,7 @@ mod tests {
     fn native_search_slot_keeps_its_geometry_while_the_keyboard_opens() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         let slot = |state: &State| UiTree::new(field(state, SCHEME.palette())).layout(Size::new(390.0, FIELD_HEIGHT))
             .access.iter().find(|node| node.id == "ios-search").unwrap().rect;
         let idle = slot(&state);
