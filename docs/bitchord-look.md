@@ -86,10 +86,14 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   rows and pills turn into a white platter with dark text.
 - Safe margins 38 × 22, cards 16 apart, 131 lockups (corners 10), 120 round artists.
 - Canvas #26272C → #101012 with the cover's colour washed over the top.
-- Player: the blurred cover, the artwork centred at 62% of the height, gliding left when there
-  are lyrics, which appear on the right centred on the current line. The transport hides
-  after 5 s.
+- Player: the blurred cover, the artwork centred at 62% of the height (at most 320, 21 above
+  the middle), or 54% (at most 272) 51 from the left when there are lyrics, which appear on
+  the right centred on the current line. The transport rises from the foot over a shade that
+  darkens to it: title 19 over artist — album 14 on the left, 37 glass buttons (like, lyrics)
+  on the right, the scrubber under them, 4 thick, 6 with a knob under the focus, the times
+  11 below. It steps away 5 s after the last press while the music plays, and the song is
+  then named under the cover.
 - D-pad: in the player, left/right skip and the rest shows the transport; on the scrubber
   left/right seek 10 s. Back closes the innermost thing first, then goes Home.
-- limn moves focus with Tab only. The TV needs arrow keys to move focus to the nearest
-  control in their direction: that is a limn change.
+- limn moved focus with Tab only; `UiTree::set_spatial_focus` (Niiihuel/limn#178) lets the
+  arrows move it to the nearest control in their direction, keeping to its row.

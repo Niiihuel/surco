@@ -3,6 +3,7 @@
 
 pub(crate) mod mobile;
 pub(crate) mod onboarding;
+pub(crate) mod tv;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -881,6 +882,12 @@ pub struct State {
     pub tv: bool,
     /// What the remote's focus is on, as the tree moved it, for the television's view to lift.
     pub tv_focused: Option<String>,
+    /// The remote's last press in the television's player, while its transport is up.
+    pub tv_transport: Option<Instant>,
+    /// Whether the television was in its player at the last frame.
+    pub tv_in_player: bool,
+    /// Whether the television's player keeps the lyrics away, by its lyrics button.
+    pub tv_lyrics_hidden: bool,
     pub queue_open: bool,
     pub collection: Collection,
     pub profile: Profile,
@@ -1378,6 +1385,9 @@ impl Default for State {
             motion: false,
             tv: false,
             tv_focused: None,
+            tv_transport: None,
+            tv_in_player: false,
+            tv_lyrics_hidden: false,
             queue_open: false,
             collection: Collection::default(),
             profile: Profile::default(),
@@ -2512,6 +2522,18 @@ impl State {
                 commands.extend(self.ask_clip());
                 commands.extend(self.ask_about());
                 commands
+            }
+            // A television's are beside its player, which their button sends away and back.
+            "lyrics" if self.tv => {
+                self.tv_lyrics_hidden = !self.tv_lyrics_hidden;
+                self.ask_lyrics()
+            }
+            // Select on the television's scrubber plays and pauses, as BitChord's.
+            tv::SCRUBBER => self.click("play-pause"),
+            "tv-transport-away" => {
+                self.tv_transport = None;
+                self.mobile_ui.blur = true;
+                Vec::new()
             }
             // The lyrics are a page: their button opens it, and leaves it for the one before.
             "lyrics" => {

@@ -208,8 +208,8 @@ fn search(state: &State, palette: ComponentPalette) -> Element {
 /// focus goes down.
 fn songs_page(state: &State, title: &str, about: &str, artwork: &Option<String>, window: Size, palette: ComponentPalette) -> Element {
     let picture = cover(state, artwork, 232.0, palette).radius(LOCKUP_RADIUS).shadow(LIFT_SHADOW, limn::Point::new(0.0, 10.0), 28.0, 0.0);
-    let play = button(state, "page-play", Icon::PlayFill, &t!("common-play"), true, palette);
-    let shuffle = button(state, "page-shuffle", shuffle_step(state).0, &shuffle_step(state).1, false, palette);
+    let play = button(state, "page-play", Icon::PlayFill, &t!("common-play"), 56.0, PLATTER, palette);
+    let shuffle = button(state, "page-shuffle", shuffle_step(state).0, &shuffle_step(state).1, 46.0, Color::rgba(255, 255, 255, 30), palette);
     let head = Element::column(vec![
         Text::new(title, palette).font_size(31.0).line_height(36.0).render().max_lines(2).font_family(FontFamily::SansBold),
         Text::new(about, palette).font_size(16.0).muted().truncate().render(),
@@ -237,20 +237,35 @@ fn row(state: &State, id: String, track: &Track, palette: ComponentPalette) -> E
         .animate_scale_about(format!("tv-lift:{id}"), if on { ROW_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5)).size(None, Some(56.0))
 }
 
-/// A round button of the player's or a page's: white with a dark glyph while the focus is on
-/// it, or while it is the page's main one.
-fn button(state: &State, id: &str, glyph: Icon, label: &str, main: bool, palette: ComponentPalette) -> Element {
+/// A round button of a page's or the player's, `side` across on `rest`: white with a dark glyph
+/// while the focus is on it, or while it rests on white.
+fn button(state: &State, id: &str, glyph: Icon, label: &str, side: f32, rest: Color, palette: ComponentPalette) -> Element {
     let on = lit(state, id);
-    let (fill, ink) = if on || main { (PLATTER, PLATTER_INK) } else { (Color::rgba(255, 255, 255, 30), palette.text) };
-    let side = if main { 56.0 } else { 46.0 };
-    let disc = Element::panel(Element::icon(glyph).large_icon(side * 0.45).foreground(ink).centered()).background(fill).round().size(Some(side), Some(side));
+    let fill = if on { PLATTER } else { rest };
+    let ink = if fill == PLATTER { PLATTER_INK } else { palette.text };
+    let disc = Element::panel(Element::icon(glyph).large_icon(side * 0.46).foreground(ink).centered()).background(fill).round().size(Some(side), Some(side));
     let disc = if on { disc.shadow(LIFT_SHADOW, limn::Point::new(0.0, 8.0), 20.0, 0.0) } else { disc };
     Element::clickable(id, disc).accessible(limn::Access::new(limn::Role::Button).name(label)).focus_ring(false).round()
         .animate_scale_about(format!("tv-lift:{id}"), if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5)).centered_y()
 }
 
+/// The player's cover: 62% of the height in the middle, or 54% at the side beside the lyrics,
+/// a little above the centre either way to keep clear of the transport.
+const COVER: (f32, f32) = (0.62, 320.0);
+const COVER_BESIDE: (f32, f32) = (0.54, 272.0);
+const COVER_LIFT: f32 = 21.0;
+/// Each side of the cover beside the lyrics.
+const COVER_SIDE: f32 = 51.0;
+/// The transport's round buttons, and their glass at rest and while on.
+const TRANSPORT_BUTTON: f32 = 37.0;
+const GLASS: Color = Color::rgba(255, 255, 255, 20);
+const GLASS_ON: Color = Color::rgba(255, 255, 255, 56);
+/// The second line of the player's words, white at 60%.
+const SECONDARY: Color = Color::rgba(255, 255, 255, 153);
+
 /// The player over the whole screen, as BitChord's TV: the cover blurred under it, the cover
-/// itself at 62% of the height, gliding left beside the lyrics when there are some.
+/// itself in the middle or beside the lyrics, and the transport rising from the foot on the
+/// remote's presses. With the transport away the song is named under the cover.
 fn player(state: &State, window: Size, palette: ComponentPalette) -> Element {
     let Some(track) = state.current() else { return home(state, palette) };
     let blurred = track.artwork_url.as_deref().and_then(|url| state.artwork.get(&crate::state::backdrop_key(url)));
@@ -260,32 +275,83 @@ fn player(state: &State, window: Size, palette: ComponentPalette) -> Element {
         layers.push(whole(Element::raster_image(blurred.clone().cover())));
         layers.push(whole(Element::panel(Element::spacer()).background(Color::rgba(0, 0, 0, 110))));
     }
-    let lyrics = !state.lines().is_empty();
-    let side = (window.height * if lyrics { 0.54 } else { 0.62 }).min(if lyrics { 272.0 } else { 320.0 });
+    let lyrics = !state.lines().is_empty() && !state.tv_lyrics_hidden;
+    let (share, most) = if lyrics { COVER_BESIDE } else { COVER };
+    let side = (window.height * share).min(most);
     let picture = sole_cover(state, &largest(state, track), side, palette).radius(11.0).shadow(LIFT_SHADOW, limn::Point::new(0.0, 14.0), 29.0, 0.0)
         .animate_enter(format!("tv-player-cover:{}", track.id));
-    let (shuffle, shuffle_hint) = shuffle_step(state);
-    let playing = state.player.playing;
-    let transport = Element::row(vec![
-        button(state, "shuffle", shuffle, &shuffle_hint, false, palette),
-        button(state, "previous", Icon::SkipBack, &t!("mobile-previous-song"), false, palette),
-        button(state, "play-pause", if playing { Icon::PauseFill } else { Icon::PlayFill }, &if playing { t!("common-pause") } else { t!("common-play") }, true, palette),
-        button(state, "next", Icon::SkipForward, &t!("common-next-song"), false, palette),
-        button(state, "lyrics", Icon::Custom(crate::view::LYRICS), &t!("mobile-show-lyrics"), false, palette),
-    ]).gap(18.0);
-    let timeline = Progress::new(state.progress(), ComponentPalette { selected: Color::rgba(255, 255, 255, 66), ..palette }).height(4.0).render().size(Some(side.max(320.0)), None);
-    let copy = Element::column(vec![
-        Text::new(&track.title, palette).font_size(24.0).truncate().render().font_family(FontFamily::SansBold).center_content(),
-        Text::new(&track.artist, palette).font_size(17.0).truncate().render().foreground(Color::rgba(255, 255, 255, 170)).center_content(),
-    ]).gap(4.0).size(Some(side.max(320.0)), None);
-    let stage = Element::column(vec![picture.centered_x(), copy.centered_x(), timeline.centered_x(), transport.centered_x()]).gap(18.0).centered_y();
-    let content = if lyrics {
-        let width = window.width * 0.5;
-        let lines = crate::view::lyrics(state, width, 0.0, palette);
-        Element::row(vec![stage.size(Some(window.width * 0.45), None), lines.size(Some(width), Some(window.height - 2.0 * TOP))]).gap(16.0)
-    } else { stage.centered_x() };
-    layers.push(horizontal_inset(Element::column(vec![Element::spacer().size(None, Some(TOP)), content.flex(1.0), Element::spacer().size(None, Some(TOP))]), SIDE, SIDE));
+    let mut stage = vec![Element::spacer().size(None, Some(((window.height - side) / 2.0 - COVER_LIFT).max(0.0))), picture];
+    if state.tv_transport.is_none() {
+        // Smaller beside the lyrics, as the cover is.
+        let scale = side / (window.height * COVER.0).min(COVER.1);
+        stage.push(Element::column(vec![
+            Element::spacer().size(None, Some(14.0)),
+            Text::new(&track.title, palette).font_size(19.0 * scale).line_height(24.0 * scale).truncate().render().font_family(FontFamily::SansBold).center_content(),
+            Text::new(&track.artist, palette).font_size(14.0 * scale).truncate().render().foreground(SECONDARY).center_content(),
+        ]).size(Some(side), None).animate_enter("tv-player-caption"));
+    }
+    let stage = Element::column(stage).size(Some(side), Some(window.height));
+    layers.push(if lyrics {
+        let width = window.width - 2.0 * COVER_SIDE - side - SIDE;
+        let lines = crate::view::lyrics(state, width, 0.0, palette).size(Some(width), Some(window.height));
+        Element::row(vec![Element::spacer().size(Some(COVER_SIDE), None), stage, Element::spacer().size(Some(COVER_SIDE), None), lines])
+    } else {
+        stage.centered_x()
+    });
+    if state.tv_transport.is_some() {
+        layers.push(Element::column(vec![Element::spacer().flex(1.0), transport(state, track, lyrics, palette)]).size(Some(window.width), Some(window.height)));
+    }
     Element::stack(layers).background(CANVAS[1]).size(Some(window.width), Some(window.height))
+}
+
+/// The transport, as BitChord's TV: what plays on the left, its buttons on the right, the
+/// scrubber under both, over a shade that darkens to the foot.
+fn transport(state: &State, track: &Track, lyrics: bool, palette: ComponentPalette) -> Element {
+    let about = [Some(track.artist.as_str()), track.album.as_deref()].into_iter().flatten().filter(|part| !part.trim().is_empty())
+        .collect::<Vec<_>>().join(" — ");
+    let liked = state.is_liked(&track.id);
+    let words = Element::column(vec![
+        Text::new(&track.title, palette).font_size(19.0).line_height(24.0).truncate().render().font_family(FontFamily::SansBold),
+        Text::new(about, palette).font_size(14.0).truncate().render().foreground(SECONDARY),
+    ]).flex(1.0).centered_y();
+    let mut buttons = vec![button(state, "like", if liked { Icon::HeartFill } else { Icon::Heart },
+        &if liked { t!("mobile-unlike") } else { t!("common-like") }, TRANSPORT_BUTTON, GLASS, palette)];
+    if !state.lines().is_empty() {
+        buttons.push(button(state, "lyrics", Icon::Custom(crate::view::LYRICS), &t!("mobile-show-lyrics"), TRANSPORT_BUTTON, if lyrics { GLASS_ON } else { GLASS }, palette));
+    }
+    let duration = state.player.duration.max(0.0);
+    let elapsed = f64::from(state.progress()) * duration;
+    let time = |value: String| Text::new(value, palette).font_size(11.0).render().foreground(SECONDARY);
+    let body = Element::column(vec![
+        Element::row(vec![words, Element::row(buttons).gap(11.0)]).gap(16.0),
+        Element::spacer().size(None, Some(16.0)),
+        scrubber(state),
+        Element::spacer().size(None, Some(3.0)),
+        Element::row(vec![time(clock(elapsed)), Element::spacer().flex(1.0), time(format!("-{}", clock((duration - elapsed).max(0.0).ceil())))]),
+    ]);
+    // limn blends in linear light: these are BitChord's black at 38% and 66% as the eye sees them.
+    let shade = vec![Color::rgba(0, 0, 0, 0), Color::rgba(0, 0, 0, 166), Color::rgba(0, 0, 0, 232)];
+    Element::panel(Element::column(vec![Element::spacer().size(None, Some(77.0)), horizontal_inset(body, 45.0, 45.0), Element::spacer().size(None, Some(24.0))]))
+        .vertical_gradient(shade).animate_enter("tv-transport")
+}
+
+/// The playhead, as BitChord's TV: a capsule 4 thick, 6 with a knob while the focus is on it,
+/// where select plays and pauses and left and right seek.
+fn scrubber(state: &State) -> Element {
+    let on = lit(state, crate::state::tv::SCRUBBER);
+    let played = state.progress().clamp(0.0, 1.0);
+    let thick = if on { 6.0 } else { 4.0 };
+    let (rest, ink) = if on { (Color::rgba(255, 255, 255, 77), PLATTER) } else { (Color::rgba(255, 255, 255, 56), Color::rgba(255, 255, 255, 224)) };
+    let bar = |color: Color| Element::panel(Element::spacer()).background(color).radius(thick / 2.0).size(None, Some(thick));
+    // Split at the playhead: a share of the row's room on each side of it.
+    let split = |at: Element| Element::row(vec![Element::spacer().flex(played.max(0.0001)), at, Element::spacer().flex((1.0 - played).max(0.0001))]).centered_y();
+    let mut layers = vec![bar(rest).centered_y(), Element::row(vec![bar(ink).flex(played.max(0.0001)), Element::spacer().flex((1.0 - played).max(0.0001))]).centered_y()];
+    if on {
+        let knob = thick * 2.3;
+        layers.push(split(Element::panel(Element::spacer()).background(PLATTER).round().size(Some(knob), Some(knob))));
+    }
+    Element::clickable(crate::state::tv::SCRUBBER, Element::stack(layers).size(None, Some(18.0)))
+        .accessible(limn::Access::new(limn::Role::Slider).name(t!("mobile-playback-position"))).focus_ring(false)
 }
 
 #[cfg(test)]
@@ -359,19 +425,22 @@ mod tests {
     }
 
     #[test]
-    fn the_player_is_driven_from_its_transport_and_left_by_back() {
+    fn the_player_is_driven_from_its_transport_which_back_sends_away_first() {
         let mut state = television();
         state.show(PlayerView { current: Some(track(0)), playing: true, position: 10.0, duration: 200.0, ..PlayerView::default() });
         state.update(&UiAction::Clicked { id: "mobile-playing".into() });
         assert_eq!(state.page, Page::Playing);
+        state.tv_tick(std::time::Instant::now());
         let mut tree = tree(&state);
-        assert!(tree.focus("play-pause"));
-        press(&mut state, &mut tree, Key::ArrowRight);
-        assert_eq!(tree.focused_id(), Some("next"));
-        assert_eq!(press(&mut state, &mut tree, Key::Enter), vec![UiAction::Clicked { id: "next".into() }]);
-        press(&mut state, &mut tree, Key::ArrowLeft);
-        press(&mut state, &mut tree, Key::ArrowLeft);
-        assert_eq!(tree.focused_id(), Some("previous"));
-        assert_eq!(crate::back_target(&state), Some("back"), "a television's player is a page left as any other");
+        assert!(tree.focus(crate::state::tv::SCRUBBER), "the transport is up on the way in");
+        assert_eq!(press(&mut state, &mut tree, Key::Enter), vec![UiAction::Clicked { id: crate::state::tv::SCRUBBER.into() }]);
+        press(&mut state, &mut tree, Key::ArrowUp);
+        assert_eq!(tree.focused_id(), Some("like"), "up from the scrubber to the song's buttons");
+        assert_eq!(crate::back_target(&state), Some("tv-transport-away"));
+        state.update(&UiAction::Clicked { id: "tv-transport-away".into() });
+        tree.set_root(crate::view::view(&state, SCREEN));
+        tree.layout(SCREEN);
+        assert!(!tree.focus("like"), "and with it its buttons");
+        assert_eq!(crate::back_target(&state), Some("back"), "then Back leaves the player");
     }
 }

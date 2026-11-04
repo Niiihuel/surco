@@ -747,7 +747,20 @@ impl eframe::App for Host {
                 self.state.paste = self.tree.focused_id().map(str::to_owned);
                 continue;
             }
-            for action in self.tree.handle_event(event) {
+            // The remote in a television's player: skips and seeks before the tree moves the focus.
+            if let limn::UiEvent::Key { key, .. } = event {
+                if let Some(commands) = self.state.tv_press(key, Instant::now()) {
+                    self.send(commands);
+                    continue;
+                }
+            }
+            let escape = self.state.tv && matches!(event, limn::UiEvent::Key { key: limn::Key::Escape, .. });
+            let mut actions = self.tree.handle_event(event);
+            // A keyboard's Escape is a television's Back, once nothing on top took it.
+            if escape && actions.is_empty() {
+                actions.extend(back_target(&self.state).map(|id| UiAction::Clicked { id: id.into() }));
+            }
+            for action in actions {
                 let commands = self.state.update(&action);
                 self.send(commands);
             }
@@ -832,20 +845,29 @@ impl eframe::App for Host {
         acted |= !commands.is_empty();
         self.send(commands);
         if self.state.tv {
+            // The player's transport, gone after a few idle seconds, takes the focus with it.
+            if self.state.tv_tick(now) {
+                self.tree.clear_focus();
+                acted = true;
+            }
+            if let Some(due) = self.state.tv_transport_due() {
+                ctx.request_repaint_after(due.saturating_duration_since(now));
+            }
             while self.script.focus.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
                 let (_, id) = self.script.focus.remove(0);
                 self.tree.focus(&id);
             }
             // The remote's focus is always somewhere to be seen: with none, on the page's tab,
-            // or on the player's play.
+            // or on the player's scrubber.
             if self.tree.focused_id().is_none() {
                 let tab = match self.state.page {
-                    state::Page::Playing | state::Page::Lyrics => "play-pause",
-                    state::Page::Library => "mobile-library",
-                    state::Page::Search if self.state.mobile_search => "search",
-                    _ => "home",
+                    // With the transport away, the player itself takes the presses.
+                    state::Page::Playing | state::Page::Lyrics => self.state.tv_transport.map(|_| state::tv::SCRUBBER),
+                    state::Page::Library => Some("mobile-library"),
+                    state::Page::Search if self.state.mobile_search => Some("search"),
+                    _ => Some("home"),
                 };
-                self.tree.focus(tab);
+                if let Some(tab) = tab { self.tree.focus(tab); }
             }
             // A television's view lifts what the remote's focus is on, as the tree just moved it.
             self.state.tv_focused = self.tree.focused_id().map(str::to_owned);
@@ -1229,10 +1251,11 @@ fn phone_logging() {
 
 /// What Android's Back clicks once nothing on top closes: the queue back to its song, the
 /// player down, a page back; None when there is nowhere left to go.
-#[cfg(any(target_os = "android", test))]
 pub(crate) fn back_target(state: &State) -> Option<&'static str> {
     // A list's search closes before its page, as BitChord's.
     if state.page_searching { Some("page-search") }
+    // A television's transport steps away before its player.
+    else if state.tv_in_player && state.tv_transport.is_some() { Some("tv-transport-away") }
     else if state.page == state::Page::Playing && state.queue_open { Some("queue") }
     // A phone's player slides away; a television's is a page left as any other.
     else if state.page == state::Page::Playing && !state.tv { Some("mobile-player-dismiss") }
