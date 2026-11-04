@@ -3973,6 +3973,13 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let sung = state.active_line().map_or(-1, |index| index as i64);
     let now = std::time::Instant::now();
     let rows = lines.iter().enumerate().map(|(index, line)| {
+        let row = |text| {
+            let row = Element::clickable(format!("lyric:{index}"), text);
+            // Still catching up with the list's jump to the line being sung.
+            let lag = state.lyric_lag(index, now);
+            if lag == 0.0 { row } else { row.translate(limn::Point::new(0.0, lag)) }
+        };
+        if state.mobile { return row(mobile::lyrics::line(state, lines, index, sung, size, line_height, gap, now)); }
         let (ink, blur) = lyric_focus(index as i64 - sung);
         let ink = Color { a: (255.0 * ink) as u8, ..palette.text };
         let text = Element::text(&line.text)
@@ -3995,10 +4002,7 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
                 .soft_focus(format!("lyric-translation:{index}"), blur)]).gap(gap / 3.0),
             None => text,
         };
-        let row = Element::clickable(format!("lyric:{index}"), text);
-        // Still catching up with the list's jump to the line being sung.
-        let lag = state.lyric_lag(index, now);
-        if lag == 0.0 { row } else { row.translate(limn::Point::new(0.0, lag)) }
+        row(text)
     });
     let mut rows: Vec<Element> = rows.collect();
     if body > 0.0 {

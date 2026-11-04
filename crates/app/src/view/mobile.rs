@@ -6,7 +6,7 @@ use std::borrow::Cow;
 pub(super) mod search;
 mod home;
 mod player;
-mod lyrics;
+pub(super) mod lyrics;
 mod chrome;
 pub(super) mod controls;
 mod sheets;

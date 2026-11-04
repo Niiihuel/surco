@@ -961,6 +961,9 @@ pub struct State {
     artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
     pub tints: HashMap<String, limn::Color>,
+    /// The engine's last reading of where the song is, in seconds, and when it came: it reads
+    /// every quarter second, and the lyrics' fill moves between.
+    heard: (f64, Instant),
     /// Each picture's width and height in pixels, by its address, while it is held.
     pub picture_sizes: HashMap<String, (u32, u32)>,
     /// The track whose share card is open, and whether its link was just copied.
@@ -1409,6 +1412,7 @@ impl Default for State {
             page_stuck: false,
             artwork_order: VecDeque::new(),
             tints: HashMap::new(),
+            heard: (0.0, Instant::now()),
             picture_sizes: HashMap::new(),
             sharing: None,
             copied: false,
@@ -3698,6 +3702,9 @@ impl State {
         if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str()) && self.swapped.is_none()) {
             self.collection.heard(track);
         }
+        if player.position != self.player.position || player.playing != self.player.playing {
+            self.heard = (player.position, Instant::now());
+        }
         let was_playing = std::mem::replace(&mut self.player, player).playing;
         if self.player.playing != was_playing {
             let (to, now) = (if self.player.playing { 1.0 } else { COVER_PAUSED }, Instant::now());
@@ -4113,6 +4120,20 @@ impl State {
             (Some((asked, Lyrics::Plain { lines, .. })), Some(track)) if *asked == track.id => lines,
             _ => &[],
         }
+    }
+
+    /// Where the song is now, in milliseconds: the engine's last reading, carried on while it
+    /// plays by the time since, though never more than a reading late.
+    pub fn playhead_ms(&self, now: Instant) -> u64 {
+        let (position, since) = self.heard;
+        let carried = if self.player.playing { now.saturating_duration_since(since).min(Duration::from_millis(300)).as_secs_f64() } else { 0.0 };
+        ((position + carried).max(0.0) * 1000.0) as u64
+    }
+
+    /// Whether a phone's lyrics are filling as they are sung, which needs frames between the
+    /// engine's readings.
+    pub fn lyrics_fill(&self) -> bool {
+        self.mobile && self.page == Page::Lyrics && self.player.playing && self.motion && !self.settings.reduce_motion && self.active_line().is_some()
     }
 
     /// The line being sung.

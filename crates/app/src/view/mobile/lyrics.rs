@@ -1,6 +1,92 @@
-//! Full-screen lyrics chrome over the shared song and lyric state.
+//! Full-screen lyrics chrome over the shared song and lyric state, and its lines as BitChord's.
 
 use super::*;
+use surco_core::lyrics::Line;
+
+/// A line's ink `distance` lines from the one being sung, and how out of focus it is, as
+/// BitChord's: the line being sung whole and sharp, the rest a step dimmer and softer each.
+const FADE: [f32; 5] = [1.0, 0.8, 0.7, 0.58, 0.46];
+const BLUR: [f32; 5] = [0.0, 1.08, 1.08, 1.48, 1.89];
+/// The ink of what is still to be sung, the line being sung's included.
+const UNSUNG: f32 = 0.45;
+/// The soft edge the fill moves behind, in points.
+const FEATHER: f32 = 30.0;
+/// The faint light the line being sung gives off.
+const GLOW: Color = Color::rgba(255, 255, 255, 56);
+/// A steady pace of singing, per character: a line before a long rest fills at it, rather
+/// than across the rest.
+const PER_CHAR_MS: f32 = 80.0;
+
+/// BitChord's line (docs/bitchord-look.md): its words each their own text in a row that wraps
+/// as the line would, so that the line being sung fills word by word behind a soft edge over
+/// its unsung ink, glowing faintly. Away from it lines dim, blur and step back a little; what
+/// was sung stays lit, what is to come does not.
+pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i64, size: f32, line_height: f32, gap: f32, now: std::time::Instant) -> Element {
+    let line = &lines[index];
+    let distance = index as i64 - sung;
+    let far = distance.unsigned_abs().min(4) as usize;
+    let (fade, blur) = (FADE[far], BLUR[far]);
+    let base = if distance < 0 { 1.0 } else { UNSUNG };
+    let chars = line.text.chars().count().max(1) as f32;
+    let filled = match distance {
+        0 => (state.playhead_ms(now).saturating_sub(line.at_ms) as f32 / sweep_ms(lines, index, chars)).min(1.0) * chars,
+        ..0 => chars,
+        _ => 0.0,
+    };
+    // The edge is so many points wide; a character of these lines is about 0.55 of their size.
+    let feather = FEATHER / (size * 0.55);
+    let ink = |at: f32| {
+        let lit = base + (1.0 - base) * ((filled - at) / feather).clamp(0.0, 1.0);
+        Color::rgba(255, 255, 255, (255.0 * lit).round() as u8)
+    };
+    let shade = Color::rgba(255, 255, 255, (255.0 * fade).round() as u8);
+    // The words, as they are inked or, the same words laid out the same, as their glow.
+    let words = |glow: bool| {
+        let mut words = Vec::new();
+        let mut at = 0.0;
+        for (number, word) in line.text.split(' ').enumerate() {
+            let len = word.chars().count() as f32;
+            if len > 0.0 {
+                let text = Element::text(word).font_family(FontFamily::SansBold).font_size(size).line_height(line_height);
+                words.push(if glow { text.foreground(GLOW).soft_focus(format!("lyric-glow:{index}:{number}"), 4.0) } else {
+                    let stops = (2.0 * len).clamp(2.0, 16.0) as usize;
+                    let gradient: Vec<Color> = (0..stops).map(|stop| ink(at + len * stop as f32 / (stops - 1) as f32)).collect();
+                    let text = if gradient.iter().all(|stop| *stop == gradient[0]) {
+                        // limn paints a gradient as two dozen bands: only the word the edge
+                        // crosses needs one. A lit word takes a spring of its own, so it does
+                        // not dim back to its unsung ink as the edge leaves it.
+                        let kind = if gradient[0].a == 255 { "lit" } else { "ink" };
+                        text.foreground(Color::rgba(255, 255, 255, (fade * f32::from(gradient[0].a)).round() as u8))
+                            .animate_foreground(format!("lyric-{kind}:{index}:{number}"))
+                    } else { text.foreground(shade).foreground_gradient(gradient) };
+                    text.soft_focus(format!("lyric:{index}:{number}"), blur)
+                });
+            }
+            at += len + 1.0;
+        }
+        Element::row(words).wrap().gap(size * 0.25).line_gap(0.0)
+    };
+    let lit = if distance == 0 { Element::stack(vec![words(true), words(false)]) } else { words(false) };
+    // Its translation goes under it, smaller, and dims and blurs with it.
+    let lit = match state.translated(index, &line.text) {
+        Some(translation) => Element::column(vec![lit, Element::text(translation).font_family(FontFamily::Sans)
+            .font_size(size * TRANSLATION_SCALE).line_height(size * TRANSLATION_SCALE * 1.25)
+            .foreground(Color::rgba(255, 255, 255, (255.0 * fade * base).round() as u8)).animate_foreground(format!("lyric-translation-ink:{index}"))
+            .soft_focus(format!("lyric-translation:{index}"), blur)]).gap(gap / 3.0),
+        None => lit,
+    };
+    // Paint only, from the leading edge: the lines do not re-wrap as they step back.
+    lit.animate_scale(format!("lyric-scale:{index}"), if distance == 0 { 1.0 } else { 0.98 })
+}
+
+/// How long a line takes to fill: until the next starts, though no longer than its words take
+/// at a steady pace.
+// shortcut: lyrics come timed by line, not by word, so the fill moves evenly through a line;
+// follow each word once the lyrics carry their timing.
+fn sweep_ms(lines: &[Line], index: usize, chars: f32) -> f32 {
+    let until = lines.get(index + 1).map_or(f32::MAX, |next| next.at_ms.saturating_sub(lines[index].at_ms) as f32);
+    until.min(chars * PER_CHAR_MS + 400.0).max(1.0)
+}
 
 /// The shell adds the device's bottom safe-area inset after this footer.
 pub(super) const FOOTER_HEIGHT: f32 = 212.0;
@@ -67,6 +153,7 @@ mod tests {
     use super::*;
     use crate::{backend::Command, player::PlayerView};
     use limn::{DrawCommand, Frame, Point, Rect, UiAction, UiEvent, UiTree};
+    use surco_core::lyrics::Line;
 
     fn state() -> State {
         let mut state = State::default();
@@ -161,6 +248,38 @@ mod tests {
         assert_eq!(share, vec![UiAction::Clicked { id: "do:share:current".into() }]);
         state.update(&share[0]);
         assert_eq!(state.sharing.as_ref(), state.current());
+    }
+
+    #[test]
+    fn the_line_being_sung_fills_word_by_word_behind_a_soft_edge() {
+        let mut state = state();
+        state.page = Page::Lyrics;
+        state.show(PlayerView { playing: false, position: 10.6, ..state.player.clone() });
+        state.lyrics = Some(("song".into(), Lyrics::Lines(vec![
+            Line { at_ms: 1_000, text: "antes".into() },
+            Line { at_ms: 10_000, text: "uno dos tres".into() },
+            Line { at_ms: 20_000, text: "después".into() },
+        ])));
+        let lines = state.lines().to_vec();
+        let painted = |index: usize, word: &str| {
+            let mut tree = UiTree::new(line(&state, &lines, index, 1, 34.0, 41.0, 25.0, std::time::Instant::now()));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(Size::new(360.0, 200.0));
+            frame.commands.iter().filter_map(|command| match command {
+                DrawCommand::Text { text, color, .. } if text == word => Some(color.a),
+                _ => None,
+            }).collect::<Vec<_>>()
+        };
+        // 0.6 s into a line of twelve characters that takes 1.36 s: past "uno", into "dos".
+        // The glow's faint copies are left out.
+        let sung = |word: &str| painted(1, word).into_iter().filter(|alpha| *alpha >= 40).collect::<Vec<_>>();
+        assert_eq!(sung("uno"), [255], "sung");
+        let edge = sung("dos");
+        assert!(edge.len() > 1 && edge.first() > edge.last() && *edge.last().unwrap() == 115, "the edge crosses it, lit to unsung: {edge:?}");
+        assert_eq!(sung("tres"), [115], "unsung, at 45%");
+        // Blurred, each line is painted as faint copies: what was sung weighs more than what is to come.
+        let weight = |index: usize, word: &str| painted(index, word).iter().map(|alpha| u32::from(*alpha)).sum::<u32>();
+        assert!(weight(0, "antes") > 2 * weight(2, "después"), "what was sung stays lit");
     }
 
     #[test]

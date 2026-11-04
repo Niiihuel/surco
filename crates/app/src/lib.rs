@@ -893,7 +893,9 @@ impl eframe::App for Host {
             // Behind the lock screen nothing animates; the next frame waits for the return.
         } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) {
             ctx.request_repaint();
-        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves()).then_some(AMBIENT_FRAME)) {
+        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves()).then_some(AMBIENT_FRAME)
+            // The lyrics' fill moves at the settled frame rate, which the next lines pace it to.
+            .or(self.state.lyrics_fill().then_some(Duration::from_millis(1)))) {
             (Some(own), Some(ambient)) => Some(own.min(ambient)),
             (own, ambient) => own.or(ambient),
         } {
