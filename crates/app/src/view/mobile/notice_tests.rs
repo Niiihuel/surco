@@ -103,7 +103,7 @@ fn host_reveals_new_or_changed_notices_once_without_undoing_manual_scrolling() {
     for searching in [false, true] {
         let mut state = phone();
         state.mobile_ui.content_insets = insets;
-        state.page = if searching { Page::Search } else { Page::Playing };
+        state.page = if searching { Page::Search } else { Page::Lyrics };
         state.mobile_search = searching;
         state.search_filter = crate::state::mobile::SearchFilter::Tracks;
         state.query = "consulta".into();
@@ -117,7 +117,7 @@ fn host_reveals_new_or_changed_notices_once_without_undoing_manual_scrolling() {
         tree.set_reduced_motion(true);
         let mut seen = None;
         crate::layout_with_notice(&mut state, &mut tree, size, &mut seen);
-        let scroll_id = if searching { "mobile-search-results" } else { "mobile-playing" };
+        let scroll_id = if searching { "mobile-search-results" } else { "lyrics-list" };
         tree.scroll_to_end(scroll_id);
         crate::layout_with_notice(&mut state, &mut tree, size, &mut seen);
         assert!(tree.scroll_offset(scroll_id) > 0.0);

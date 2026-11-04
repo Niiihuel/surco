@@ -497,44 +497,6 @@ mod tests {
     }
 
     #[test]
-    fn player_transport_remains_compact_over_long_lyrics_and_queue_navigation() {
-        let now = Instant::now();
-        let size = Size::new(402.0, 778.0);
-        let mut state = phone();
-        state.settings.reduce_motion = true;
-        state.lyrics = Some(("song".into(), crate::state::Lyrics::Plain {
-            lines: vec!["Una letra larga que ocupa varias líneas de la pantalla ".repeat(24); 4], source: "Fixture".into(),
-        }));
-        let mut motion = Motion::new(now);
-        let mut tree = UiTree::new(crate::view::view(&state, size));
-        tree.set_reduced_motion(true);
-        tree.layout(size);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        tree.scroll_to_end("mobile-playing");
-        tree.layout(size);
-        assert!(tree.anchor_offset("mobile-player-title").unwrap() < 0.0);
-        let end = paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(state.mobile_ui.compact_header);
-        assert!(end.access.iter().any(|node| node.id == "mobile-player-header-play"));
-        state.queue_open = true;
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(!state.mobile_ui.compact_header);
-        state.queue_open = false;
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(state.mobile_ui.compact_header, "queue navigation retains the deep player's geometry");
-        tree.scroll_to_start("mobile-playing");
-        tree.layout(size);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(!state.mobile_ui.compact_header);
-        let track = Track { id: "next-song".into(), title: "Otra canción".into(), ..state.current().unwrap().clone() };
-        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(!state.mobile_ui.compact_header, "another track starts with its own title geometry");
-    }
-
-    #[test]
     fn a_new_album_identity_can_start_at_the_restored_deep_offset() {
         let now = Instant::now();
         let size = Size::new(402.0, 778.0);
@@ -579,32 +541,6 @@ mod tests {
         assert!(state.mobile_ui.compact_header, "the first paint is correct without more input or playback ticks");
         assert!(jumped.commands.iter().any(|command| matches!(command,
             limn::DrawCommand::Text { text, font_size, .. } if text == "Rutas de madrugada" && *font_size == 18.0)));
-    }
-
-    #[test]
-    fn a_new_track_has_a_compact_transport_at_an_already_deep_player_offset() {
-        let now = Instant::now();
-        let size = Size::new(402.0, 778.0);
-        let mut state = phone();
-        state.settings.reduce_motion = true;
-        let lines = vec!["Una letra larga que ocupa varias líneas de la pantalla ".repeat(24); 4];
-        state.lyrics = Some(("song".into(), crate::state::Lyrics::Plain { lines: lines.clone(), source: "Fixture".into() }));
-        let mut motion = Motion::new(now);
-        let mut tree = UiTree::new(crate::view::view(&state, size));
-        tree.set_reduced_motion(true);
-        tree.layout(size);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        tree.scroll_to_end("mobile-playing");
-        tree.layout(size);
-        paint_header(&mut motion, &mut state, &mut tree, size, now);
-        let track = Track { id: "next-song".into(), title: "La siguiente canción".into(), ..state.current().unwrap().clone() };
-        state.show(PlayerView { current: Some(track), playing: true, ..PlayerView::default() });
-        state.lyrics = Some(("next-song".into(), crate::state::Lyrics::Plain { lines, source: "Fixture".into() }));
-        let next = paint_header(&mut motion, &mut state, &mut tree, size, now);
-        assert!(state.mobile_ui.compact_header, "a new track requires no previous visible title");
-        assert!(next.access.iter().any(|node| node.id == "mobile-player-header-play"));
-        assert!(next.commands.iter().any(|command| matches!(command,
-            limn::DrawCommand::Text { text, font_size, .. } if text == "La siguiente canción" && *font_size == 17.0)));
     }
 
     #[test]

@@ -996,6 +996,7 @@ pub fn run() -> eframe::Result {
         }
     }
     let mobile = cfg!(any(target_os = "ios", target_os = "android")) || script.mobile;
+    view::PHONE.store(mobile, std::sync::atomic::Ordering::Relaxed);
     let data = paths::data_dir(APP_ID).map_err(|error| eframe::Error::AppCreation(Box::new(error)))?;
     #[cfg(target_os = "windows")]
     backend::register_with_windows(&data);
@@ -1349,20 +1350,6 @@ mod lyrics_viewport_tests {
                 assert!(above > 0.0, "the line just sung stays visible above");
             }
         }
-    }
-
-    #[test]
-    fn the_player_card_slides_the_line_before_the_sung_one_to_its_top() {
-        let (mut state, mut tree, size) = phone(verses(40), 10.5);
-        state.page = state::Page::Playing;
-        layout_view(&mut state, &mut tree, size);
-        let mut seen = None;
-        assert!(follow_lyric_card(&mut state, &mut tree, size, &mut seen).is_some());
-        let now = std::time::Instant::now();
-        let pitch = tree.anchor_offset("lyric-card:1").unwrap() - tree.anchor_offset("lyric-card:0").unwrap();
-        assert!(pitch > 20.0 && (state.lyric_card_offset(now) - 9.0 * pitch).abs() < 1.0,
-            "verse 9 tops the card: {} by {pitch}", state.lyric_card_offset(now));
-        assert!(follow_lyric_card(&mut state, &mut tree, size, &mut seen).is_none(), "and stays while the line holds");
     }
 
     #[test]

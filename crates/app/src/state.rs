@@ -1258,6 +1258,18 @@ pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
 pub const COVER_SIDE: u32 = 544;
 
 /// A cover's address at the size a large picture needs: a phone's player is 380 points wide.
+/// The address a cover's blurred backdrop is asked for and kept under, among the covers.
+pub fn backdrop_key(url: &str) -> String {
+    format!("{url}{BACKDROP}")
+}
+
+/// The cover a backdrop's address blurs, if it is one.
+pub fn backdrop_of_key(url: &str) -> Option<&str> {
+    url.strip_suffix(BACKDROP)
+}
+
+const BACKDROP: &str = "#backdrop";
+
 pub fn large_cover(url: &str) -> String {
     cover_at(url, 1200)
 }
@@ -3699,9 +3711,11 @@ impl State {
         let scrobbles = if self.replay_story.is_some() { Vec::new() } else { self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp()) };
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
+        // A phone's player stands on it blurred.
+        let backdrop = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).filter(|_| self.mobile).map(backdrop_key);
         // And the panel of what plays shows what comes next.
         let next = self.player.upcoming.first().filter(|_| self.shows_playing()).map(|track| &track.artwork_url);
-        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]).chain(next));
+        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large, &backdrop]).chain(next));
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
         commands.extend(self.ask_clip());

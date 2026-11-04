@@ -1912,7 +1912,22 @@ fn tint_of(bytes: &[u8]) -> Option<[u8; 3]> {
     (weight > 0.0).then(|| sum.map(|channel| (channel / weight).round() as u8))
 }
 
+/// What the phone's player stands on, as BitChord's: the cover shrunk to a few pixels and
+/// blurred, which drawn across the whole screen stays a wash of its colours.
+fn backdrop_of(bytes: &[u8]) -> Option<RasterImage> {
+    let small = image::load_from_memory(bytes).ok()?.thumbnail(64, 64).blur(5.0).to_rgb8();
+    let mut png = Vec::new();
+    small.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    let digest: String = Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-cover"))
+}
+
 async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8; 3]>, Option<(u32, u32)>)> {
+    if let Some(cover) = crate::state::backdrop_of_key(url) {
+        let bytes = cover_bytes(shared, cover).await?;
+        return tokio::task::block_in_place(|| backdrop_of(&bytes)).map(|image| (image, None, None));
+    }
     let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
         [0xFF, 0xD8, ..] => RasterImageFormat::Jpeg,
@@ -1952,6 +1967,18 @@ mod tests {
     }
     impl std::error::Error for Wrapped {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.0) }
+    }
+
+    #[test]
+    fn a_backdrop_is_its_cover_small_and_blurred() {
+        let backdrop = super::backdrop_of(&cover(300, 150)).unwrap();
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, backdrop.data_base64()).unwrap();
+        let picture = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(picture.dimensions(), (64, 64));
+        // Red meets black in the middle as a slope, not an edge.
+        let [left, middle, right] = [8, 32, 56].map(|x| picture.get_pixel(x, 32)[0]);
+        assert!(left > 200 && right < 20 && (60..190).contains(&middle), "{left} {middle} {right}");
+        assert!(super::backdrop_of(b"not a picture").is_none());
     }
 
     #[test]

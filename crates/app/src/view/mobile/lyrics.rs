@@ -3,7 +3,10 @@
 use super::*;
 
 /// The shell adds the device's bottom safe-area inset after this footer.
-pub(super) const FOOTER_HEIGHT: f32 = 156.0;
+pub(super) const FOOTER_HEIGHT: f32 = 212.0;
+/// Below this height, as a phone on its side, the footer leaves its tools to the player so
+/// that a wrapped line still fits between it and the header.
+const SHORT: f32 = 500.0;
 
 /// The cover beside the song's name in the header.
 const ARTWORK: f32 = 40.0;
@@ -22,16 +25,16 @@ pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
                 Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
             ]).gap(1.0).centered_y().flex(1.0),
             translate(state, palette),
-            // dnmusic's lyrics keep the song's heart beside its name.
-            if glass(state) {
+            // BitChord's lyrics keep the song's heart beside its name.
+            {
                 let liked = state.is_liked(&track.id);
                 icon("like", if liked { Icon::HeartFill } else { Icon::Heart }, &if liked { t!("mobile-unlike") } else { t!("common-like") }, palette)
-            } else { Element::spacer().size(Some(0.0), Some(0.0)) },
+            },
             icon("mobile-lyrics-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"),
         ],
         None => vec![close, Element::spacer().flex(1.0)],
     };
-    horizontal_inset(Element::row(row).gap(10.0).padding(6.0), 6.0, 6.0)
+    horizontal_inset(Element::row(row).gap(6.0).padding(6.0), 6.0, 6.0)
         .size(None, Some(HEADER_HEIGHT)).clip_children()
 }
 
@@ -46,33 +49,17 @@ fn translate(state: &State, palette: ComponentPalette) -> Element {
     if on { Element::panel(button).background(Color::rgba(255, 255, 255, 40)).radius(22.0).centered_y() } else { button.centered_y() }
 }
 
-/// Under Liquid Glass the player's own controls, its foot too, stay under the lyrics.
-pub(super) const GLASS_FOOTER_HEIGHT: f32 = 212.0;
-
-pub(super) fn footer_height(state: &State) -> f32 {
-    if glass(state) { GLASS_FOOTER_HEIGHT } else { FOOTER_HEIGHT }
+pub(super) fn footer_height(window: f32) -> f32 {
+    if window < SHORT { FOOTER_HEIGHT - TAP - 8.0 } else { FOOTER_HEIGHT }
 }
 
-pub(super) fn footer(state: &State, palette: ComponentPalette) -> Element {
-    if state.current().is_none() { return Element::spacer().size(None, Some(footer_height(state))); }
-    if glass(state) {
-        let controls = Element::column(vec![player::timeline(state, palette), player::transport(state, palette), player::foot(state, palette)]);
-        return horizontal_inset(controls.gap(8.0).padding(8.0), 16.0, 16.0).size(None, Some(GLASS_FOOTER_HEIGHT));
-    }
-    let skip = |id: &str, glyph, label: &str, action: &str| controls::action(id, glyph, label, 28.0, palette).dispatch_as(action).centered_y();
-    let transport = Element::row(vec![
-        icon("mobile-connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-connect-device"), palette).centered_y(),
-        Element::spacer().flex(1.0),
-        skip("mobile-lyrics-previous", Icon::SkipBack, &t!("mobile-previous-song"), "previous"),
-        Element::spacer().size(Some(8.0), None),
-        controls::playback("mobile-lyrics-play", state.player.playing, 64.0, 28.0, palette).dispatch_as("play-pause"),
-        Element::spacer().size(Some(8.0), None),
-        skip("mobile-lyrics-next", Icon::SkipForward, &t!("common-next-song"), "next"),
-        Element::spacer().flex(1.0),
-        icon("do:share:current", Icon::Custom(include_str!("../../../assets/icons/share-2.svg")), &t!("common-share-song"), palette).centered_y(),
-    ]);
-    horizontal_inset(Element::column(vec![player::timeline(state, palette), transport]).gap(8.0).padding(8.0), 16.0, 16.0)
-        .size(None, Some(FOOTER_HEIGHT))
+/// As BitChord's, the player's own controls, its foot too, stay under the lyrics.
+pub(super) fn footer(state: &State, window: f32, palette: ComponentPalette) -> Element {
+    let height = footer_height(window);
+    if state.current().is_none() { return Element::spacer().size(None, Some(height)); }
+    let mut controls = vec![player::timeline(state, palette), player::transport(state, palette)];
+    if window >= SHORT { controls.push(player::foot(state, palette)); }
+    horizontal_inset(Element::column(controls).gap(8.0).padding(8.0), 16.0, 16.0).size(None, Some(height))
 }
 
 #[cfg(test)]
@@ -122,19 +109,15 @@ mod tests {
         for width in [320.0, 390.0, 430.0] {
             let tree = tree(&state, width);
             let frame = tree.frame();
-            for id in ["mobile-lyrics-close", "mobile-lyrics-more", "seek", "mobile-lyrics-previous", "mobile-lyrics-play",
-                "mobile-lyrics-next", "mobile-connections", "do:share:current"] {
+            for id in ["mobile-lyrics-close", "mobile-lyrics-more", "seek", "previous", "play-pause",
+                "next", "mobile-connections", "do:share:current"] {
                 let rect = target(frame, id);
-                assert!(rect.width >= TAP && rect.height >= TAP, "{id}: {rect:?}");
+                assert!(rect.width >= TAP - 0.01 && rect.height >= TAP - 0.01, "{id}: {rect:?}");
                 assert!(rect.x >= 0.0 && rect.x + rect.width <= width);
                 assert!(rect.y >= 59.0 && rect.y + rect.height <= 810.0, "{id} stays inside device insets");
             }
-            let play = target(frame, "mobile-lyrics-play");
-            assert_eq!((play.width, play.height), (64.0, 64.0));
-            assert_eq!(play.x + play.width / 2.0, width / 2.0);
-            assert!(frame.commands.iter().any(|command| matches!(command,
-                DrawCommand::FillRect { rect, color, radius } if *color == Color::WHITE
-                && rect.width == 64.0 && rect.height == 64.0 && *radius == 32.0)));
+            let play = target(frame, "play-pause");
+            assert!(play.width >= 72.0 && (play.x + play.width / 2.0 - width / 2.0).abs() < 0.5, "the bare play glyph leads, centred: {play:?}");
             for id in ["home", "mobile-search", "mobile-library", "mobile-playing", "settings"] {
                 assert!(!frame.access.iter().any(|node| node.id == id));
             }
@@ -145,7 +128,7 @@ mod tests {
     fn lyrics_controls_dispatch_existing_play_seek_and_back_actions() {
         let mut state = state();
         let mut tree = tree(&state, 390.0);
-        let play = click(&mut tree, "mobile-lyrics-play");
+        let play = click(&mut tree, "play-pause");
         assert_eq!(play, vec![UiAction::Clicked { id: "play-pause".into() }]);
         assert_eq!(state.update(&play[0]), vec![Command::PlayPause]);
 
@@ -157,7 +140,7 @@ mod tests {
             UiAction::SliderChanged { id, committed: true, .. } if id == "seek")).unwrap();
         assert_eq!(state.update(committed), vec![Command::Seek(90.0)]);
 
-        for (id, action) in [("mobile-lyrics-previous", "previous"), ("mobile-lyrics-next", "next"), ("mobile-lyrics-more", "more:current")] {
+        for (id, action) in [("previous", "previous"), ("next", "next"), ("mobile-lyrics-more", "more:current")] {
             assert_eq!(click(&mut tree, id), vec![UiAction::Clicked { id: action.into() }]);
         }
         let close = click(&mut tree, "mobile-lyrics-close");

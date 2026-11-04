@@ -32,10 +32,42 @@ use crate::state::{
 };
 use crate::update::Note;
 
-/// The app's colors, one per role: near-black surfaces told apart by luminance, white ink.
-/// Every palette a component takes is derived from here, so that a control on a card, a
-/// menu and a page cannot disagree about a shared color.
-pub const SCHEME: Scheme = Scheme {
+/// Set once at start, before the first frame, when the window is a phone's.
+pub static PHONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The app's colors, one per role. Every palette a component takes is derived from here, so
+/// that a control on a card, a menu and a page cannot disagree about a shared color.
+pub static SCHEME: std::sync::LazyLock<Scheme> = std::sync::LazyLock::new(|| {
+    if PHONE.load(std::sync::atomic::Ordering::Relaxed) { PHONE_SCHEME } else { DESKTOP_SCHEME }
+});
+
+/// A phone's, as BitChord's: a black page, Apple's greys for what is raised, white ink
+/// (docs/bitchord-look.md).
+const PHONE_SCHEME: Scheme = Scheme {
+    canvas: Color::rgb(0, 0, 0),
+    panel: Color::rgb(0, 0, 0),
+    raised: Color::rgb(28, 28, 30),
+    hover: Color::rgb(44, 44, 46),
+    selected: Color::rgb(44, 44, 46),
+    border: Color::rgb(44, 44, 46),
+    text: Color::rgb(255, 255, 255),
+    muted: Color::rgb(142, 142, 147),
+    muted_on_raised: Color::rgb(152, 152, 157),
+    menu: Color::rgb(28, 28, 30),
+    menu_hover: Color::rgb(44, 44, 46),
+    menu_muted: Color::rgb(152, 152, 157),
+    shadow: Color::rgba(0, 0, 0, 160),
+    control: ControlColors {
+        surface: Color::rgb(28, 28, 30),
+        hover: Color::rgb(44, 44, 46),
+        pressed: Color::rgb(58, 58, 60),
+        border: Color::rgb(58, 58, 60),
+        text: Color::rgb(255, 255, 255),
+    },
+};
+
+/// The desktop's: near-black surfaces told apart by luminance, white ink.
+const DESKTOP_SCHEME: Scheme = Scheme {
     canvas: Color::rgb(18, 18, 18),
     panel: Color::rgb(18, 18, 18),
     raised: Color::rgb(28, 28, 28),
@@ -99,7 +131,7 @@ const LYRIC_SIZE: f32 = 24.0;
 const LYRIC_WIDE_FROM: f32 = 640.0;
 const LYRIC_SIZE_WIDE: f32 = 32.0;
 /// A phone holds the lyrics close: fewer, larger lines.
-const LYRIC_SIZE_PHONE: f32 = 28.0;
+const LYRIC_SIZE_PHONE: f32 = 34.0;
 const LYRIC_GAP: f32 = 18.0;
 const LYRIC_BLUR: f32 = 2.2;
 /// How far up the panel the cover's colour reaches behind the lyrics.
