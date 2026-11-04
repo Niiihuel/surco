@@ -330,8 +330,6 @@ const LIBRARY_TILE: f32 = 48.0;
 const QUICK_MOST: usize = 8;
 const QUICK_RADIUS: f32 = 4.0;
 const QUICK_HOVER: Color = Color::rgb(56, 56, 56);
-/// A quick-access entry of the home page on a phone: a short row around the same tile.
-const QUICK_ROW: ListRowSizing = ListRowSizing { height: Some(64.0), padding: 8.0, gap: 12.0, leading_width: LIBRARY_TILE, title_size: 14.0, ..ListRowSizing::COMPACT };
 /// A track's row: 60 high around a 40 cover, the title at 15 over a muted line at 12.
 const TRACK_ROW: ListRowSizing = ListRowSizing {
     height: Some(60.0),
@@ -1958,67 +1956,65 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let count = (collection.recent.len() + usize::from(!state.saved.is_empty())).min(QUICK_MOST);
     let count = if count < QUICK_MOST && count % 2 == 1 && count > 1 { count - 1 } else { count };
     let columns = match width {
-        _ if state.mobile => 2,
         width if width < 700.0 => 2,
         _ if count % 4 == 0 => 4,
         _ => 3,
     };
     let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
-    let height = if state.mobile { LIBRARY_TILE } else if width >= 1599.0 { 80.0 } else if width >= 1141.0 { 64.0 } else { 48.0 };
-    let raised = ComponentPalette { surface: CHOSEN, ..palette };
-    let quick = |id: String, name: &str, picture: Element, sounding: bool| {
-        if state.mobile {
-            let element = ListRow::new(&id, name, raised).sizing(QUICK_ROW).leading(picture).title_fade(true).radius(RadiusRole::Card).width(side).filled().render();
-            return mobile_card_context(state, &id, element);
+    let height = if width >= 1599.0 { 80.0 } else if width >= 1141.0 { 64.0 } else { 48.0 };
+    if state.mobile {
+        // A phone's are BitChord's recents instead: rows four to a page, the pages side by side.
+        sections.extend(mobile::home::recents(state, width, palette));
+    } else {
+        let quick = |id: String, name: &str, picture: Element, sounding: bool| {
+            // What plays shows its sound at the row's end; the others, their play under the pointer.
+            let end = if sounding {
+                wave(state, format!("wave:{id}"), palette)
+            } else {
+                let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
+                IconButton::new(format!("tile-play:{id}"), Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round()
+                    .tooltip(t!("common-play")).render().reveal_on_hover(format!("quick-play:{id}"))
+            };
+            let said = limn::Access::new(limn::Role::Button).name(name);
+            let label = Text::new(name, palette).font_size(if height >= 64.0 { 16.0 } else { 13.0 }).truncate().render().font_family(FontFamily::SansBold);
+            let row = Element::row(vec![picture.size(Some(height), Some(height)), label.flex(1.0).centered_y(), end.centered_y(), Element::spacer().size(Some(8.0), None)]).gap(12.0);
+            Element::clickable(&id, row)
+                .accessible(said)
+                .background(CHOSEN)
+                .hover_background(QUICK_HOVER)
+                .transition_ms(300)
+                .radius(QUICK_RADIUS)
+                .clip_children()
+                .hover_region()
+                .size(Some(side), Some(height))
+        };
+        let mut tiles = Vec::new();
+        if !state.saved.is_empty() {
+            // The library lists the same entries: here they keep ids of their own and report the library's.
+            let sounding = state.player.playing && state.plays_from(&state.saved);
+            tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette), sounding).dispatch_as("downloads"));
         }
-        // What plays shows its sound at the row's end; the others, their play under the pointer.
-        let end = if sounding {
-            wave(state, format!("wave:{id}"), palette)
-        } else {
-            let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
-            IconButton::new(format!("tile-play:{id}"), Icon::PlayFill, round).variant(ButtonVariant::Subtle).size(ControlSize::Compact).round()
-                .tooltip(t!("common-play")).render().reveal_on_hover(format!("quick-play:{id}"))
-        };
-        let said = limn::Access::new(limn::Role::Button).name(name);
-        let label = Text::new(name, palette).font_size(if height >= 64.0 { 16.0 } else { 13.0 }).truncate().render().font_family(FontFamily::SansBold);
-        let row = Element::row(vec![picture.size(Some(height), Some(height)), label.flex(1.0).centered_y(), end.centered_y(), Element::spacer().size(Some(8.0), None)]).gap(12.0);
-        Element::clickable(&id, row)
-            .accessible(said)
-            .background(CHOSEN)
-            .hover_background(QUICK_HOVER)
-            .transition_ms(300)
-            .radius(QUICK_RADIUS)
-            .clip_children()
-            .hover_region()
-            .size(Some(side), Some(height))
-    };
-    let mut tiles = Vec::new();
-    if !state.saved.is_empty() {
-        // The library lists the same entries: here they keep ids of their own and report the library's.
-        let sounding = state.player.playing && state.plays_from(&state.saved);
-        tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette), sounding).dispatch_as("downloads"));
+        for (index, entry) in collection.recent.iter().enumerate() {
+            let picture = cover(state, entry.artwork(), height, palette);
+            let picture = match entry {
+                // Flush with the row's edge: its rounding is the row's.
+                _ => picture.radius(0.0),
+            };
+            let sounding = state.player.playing && state.current().is_some_and(|current| match entry {
+                Entry::Album(album) => current.album_id.as_deref() == Some(album.id.as_str()),
+                Entry::Artist(artist) => current.artist_id.as_deref() == Some(artist.id.as_str()),
+            });
+            tiles.push(quick(format!("recent:{index}"), entry.title(), picture, sounding));
+        }
+        tiles.truncate(count);
+        let mut tiles = tiles.into_iter().peekable();
+        let mut grid = Vec::new();
+        while tiles.peek().is_some() {
+            grid.push(Element::row(tiles.by_ref().take(columns).collect()).gap(GAP));
+        }
+        sections.push(Element::column(grid).gap(GAP));
+
     }
-    for (index, entry) in collection.recent.iter().enumerate() {
-        let picture = cover(state, entry.artwork(), height, palette);
-        let picture = match entry {
-            Entry::Artist(_) if state.mobile => picture.radius(LIBRARY_TILE / 2.0),
-            _ if state.mobile => picture,
-            // Flush with the row's edge: its rounding is the row's.
-            _ => picture.radius(0.0),
-        };
-        let sounding = state.player.playing && state.current().is_some_and(|current| match entry {
-            Entry::Album(album) => current.album_id.as_deref() == Some(album.id.as_str()),
-            Entry::Artist(artist) => current.artist_id.as_deref() == Some(artist.id.as_str()),
-        });
-        tiles.push(quick(format!("recent:{index}"), entry.title(), picture, sounding));
-    }
-    tiles.truncate(count);
-    let mut tiles = tiles.into_iter().peekable();
-    let mut grid = Vec::new();
-    while tiles.peek().is_some() {
-        grid.push(Element::row(tiles.by_ref().take(columns).collect()).gap(GAP));
-    }
-    sections.push(Element::column(grid).gap(GAP));
 
     // The catalog's picks as lists, Spotify's mixes: the time of day's leads, large, and the
     // rest are the cards of a shelf.
@@ -2026,7 +2022,9 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment) {
         sections.push(moment_card(state, index, mix, width, palette).animate_enter("home-moment"));
     }
-    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment).map(|(index, mix)| mix_tile(state, index, mix, palette)).collect();
+    // On a phone they lead as BitChord's hero cards.
+    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment)
+        .map(|(index, mix)| if state.mobile { mobile::home::hero(state, index, mix, width, palette) } else { mix_tile(state, index, mix, palette) }).collect();
     if !cards.is_empty() {
         // Picks arrive after the page: they settle in rather than appear.
         sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
@@ -2317,6 +2315,8 @@ fn headed_shelf(state: &State, id: &str, leading: Option<Element>, eyebrow: Opti
     // The heading lines up with the covers, inside their cards' padding.
     let pad = || Element::spacer().size(Some(if state.mobile { 0.0 } else { TILE_PAD }), None);
     let heading = match eyebrow {
+        // BitChord's: the shelf's name, then what it is under it.
+        _ if state.mobile => mobile::home::shelf_heading(title, eyebrow, palette),
         Some(eyebrow) => Element::column(vec![Text::new(eyebrow, palette).role(TextRole::Caption).muted().render(), heading(title, palette)]).gap(2.0),
         None => heading(title, palette),
     };
@@ -2513,7 +2513,8 @@ fn moment_card(state: &State, index: usize, mix: &Mix, width: f32, palette: Comp
     let content = Element::row(parts).gap(if state.mobile { 12.0 } else { 20.0 }).padding(if state.mobile { 12.0 } else { 16.0 });
     Element::clickable(&row, content)
         .horizontal_gradient(moment_colours(state))
-        .radius(RadiusRole::Card.px())
+        // A phone's has BitChord's hero corners.
+        .radius(if state.mobile { mobile::home::HERO_RADIUS } else { RadiusRole::Card.px() })
         .size(Some(width - 24.0), None)
 }
 

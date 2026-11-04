@@ -4,7 +4,7 @@ use super::*;
 use std::borrow::Cow;
 
 pub(super) mod search;
-mod home;
+pub(super) mod home;
 mod player;
 pub(super) mod lyrics;
 mod chrome;
