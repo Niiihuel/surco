@@ -163,7 +163,6 @@ pub(crate) fn scroller(state: &State) -> Option<&'static str> {
     match state.page {
         Page::Search if state.mobile_search => Some("tv-search"),
         Page::Search => Some("tv-home"),
-        Page::Library => Some("tv-library"),
         Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_) => Some("tv-page-songs"),
         _ => None,
     }
@@ -194,25 +193,69 @@ fn albums(state: &State, prefix: &str, albums: &[AlbumRef], palette: ComponentPa
     }).collect()
 }
 
+/// The library, as BitChord's TV: its categories down the left, and what the focused one
+/// holds on the right, which the focus going down them previews.
 fn library(state: &State, palette: ComponentPalette) -> Element {
-    let playlists = state.collection.playlists.iter().enumerate()
-        .map(|(index, playlist)| lockup(state, format!("playlist:{index}"), &playlist.name, &songs(playlist.tracks.len()), &playlist.cover().cloned(), false, palette)).collect();
-    let kept_albums = state.collection.albums().map(|(index, album)| {
-        lockup(state, format!("kept:{index}"), &album.title, album.artist.as_deref().unwrap_or(""), &album.artwork_url, false, palette)
+    let shown = state.tv_library_shown();
+    let mut side: Vec<Element> = state.tv_library_categories().into_iter().map(|(key, title)| {
+        let id = format!("{}{key}", crate::state::tv::LIBRARY);
+        list_row(state, &id, &title, None, false, if key == shown { Color::rgba(255, 255, 255, 31) } else { Color::TRANSPARENT }, palette)
     }).collect();
-    let kept_artists = state.collection.artists()
-        .map(|(index, artist)| lockup(state, format!("kept:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)).collect();
-    let mut lists = vec![lockup(state, "downloads".into(), &t!("common-downloads"), &songs(state.saved.len()), &None, false, palette)];
-    if !state.collection.liked.is_empty() {
-        lists.push(lockup(state, "liked".into(), &t!("common-liked-songs"), &songs(state.collection.liked.len()), &None, false, palette));
-    }
-    lists.extend::<Vec<Element>>(playlists);
-    shelves("tv-library", vec![
-        shelf("tv-lists", &t!("desktop-playlists"), lists, palette),
-        shelf("tv-kept-albums", &t!("common-albums"), kept_albums, palette),
-        shelf("tv-kept-artists", &t!("common-artists"), kept_artists, palette),
-    ])
+    side.push(list_row(state, "downloads", &t!("common-downloads"), None, true, Color::TRANSPARENT, palette));
+    let side = ScrollArea::new("tv-library-side", horizontal_inset(Element::column(side).gap(3.0).padding(5.0), SIDE - 15.0, 1.0))
+        .visibility(UNSEEN_BAR).render().size(Some(240.0), None);
+    let list = |prefix: &str, tracks: &[Track]| -> Element {
+        if tracks.is_empty() { return empty(&t!("desktop-playlist-empty"), palette); }
+        Element::column(tracks.iter().enumerate().map(|(index, track)| row(state, format!("{prefix}:{index}"), track, None, palette)).collect()).gap(2.0)
+    };
+    let grid = |cards: Vec<Element>| -> Element {
+        if cards.is_empty() { return empty(&t!("desktop-home-empty"), palette); }
+        Element::row(cards).wrap().gap(CARD_GAP).line_gap(18.0).padding(LIFT_ROOM)
+    };
+    let pane = match shown {
+        "liked" => list("liked-track", &state.collection.liked),
+        "playlists" => grid(state.collection.playlists.iter().enumerate().map(|(index, playlist)| {
+            lockup_of(state, format!("playlist:{index}"), &playlist.name, &songs(playlist.tracks.len()), &playlist.cover().cloned(), false, GRID, palette)
+        }).collect()),
+        "albums" => grid(state.collection.albums().map(|(index, album)| {
+            lockup_of(state, format!("kept:{index}"), &album.title, album.artist.as_deref().unwrap_or(""), &album.artwork_url, false, GRID, palette)
+        }).collect()),
+        "artists" => grid(state.collection.artists().map(|(index, artist)| {
+            lockup_of(state, format!("kept:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, GRID, palette)
+        }).collect()),
+        _ => list("heard", &state.collection.heard),
+    };
+    let pane = ScrollArea::new("tv-library-pane", horizontal_inset(Element::column(vec![pane, Element::spacer().size(None, Some(38.0))]).padding(5.0), 11.0, SIDE - ROW_PAD))
+        .visibility(UNSEEN_BAR).render().flex(1.0);
+    // It stays put under the tabs, as BitChord's: each side scrolls on its own.
+    Element::column(vec![Element::spacer().size(None, Some(BAR)), Element::row(vec![side, pane]).flex(1.0)])
 }
+
+/// The library's lockups, a little smaller than a shelf's.
+const GRID: f32 = 120.0;
+
+/// What a pane says with nothing in it.
+fn empty(said: &str, palette: ComponentPalette) -> Element {
+    Text::new(said, palette).font_size(13.0).render().foreground(SECONDARY).padding(16.0)
+}
+
+/// A row of a list, as BitChord's TV: its name, a value or a chevron at its end, on `resting`
+/// until the focus turns it into the white platter.
+fn list_row(state: &State, id: &str, title: &str, value: Option<&str>, chevron: bool, resting: Color, palette: ComponentPalette) -> Element {
+    let on = lit(state, id);
+    let ink = if on { PLATTER_INK } else { palette.text };
+    let soft = if on { Color::rgb(80, 80, 86) } else { SECONDARY };
+    let mut line = vec![Text::new(title, palette).font_size(14.0).truncate().render().font_family(FontFamily::SansMedium).foreground(ink).centered_y().flex(1.0)];
+    if let Some(value) = value { line.push(Text::new(value, palette).font_size(13.0).render().foreground(soft).centered_y()); }
+    if chevron { line.push(Element::icon(Icon::ChevronRight).large_icon(14.0).foreground(soft).centered_y()); }
+    let body = Element::panel(horizontal_inset(Element::row(line).gap(11.0), 16.0, 16.0)).background(if on { PLATTER } else { resting }).radius(11.0);
+    let body = if on { body.shadow(LIFT_SHADOW, limn::Point::new(0.0, 6.0), 16.0, 0.0) } else { body };
+    Element::clickable(id, body).accessible(limn::Access::new(limn::Role::Button).name(title)).focus_ring(false)
+        .animate_scale_about(format!("tv-lift:{id}"), if on { LIST_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5)).size(None, Some(42.0))
+}
+
+/// How far a list's row grows under the focus.
+const LIST_LIFT: f32 = 1.03;
 
 /// The search, as BitChord's TV: a field no wider than 576, then the results' shelves.
 fn search(state: &State, palette: ComponentPalette) -> Element {

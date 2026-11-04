@@ -14,6 +14,8 @@ const SEEK_STEP: f64 = 10.0;
 pub const SCRUBBER: &str = "tv-scrubber";
 /// The tab bar's controls.
 const BAR: [&str; 6] = ["home", "mobile-library", "mobile-playing", "mobile-search", "settings", "account-profile"];
+/// The id of a library category's row, before its key.
+pub const LIBRARY: &str = "tv-library:";
 /// How long the focus rests on Home's or Library's tab before it opens, as tvOS's tabs.
 const TAB_REST: Duration = Duration::from_millis(140);
 /// How far a page scrolls before the tabs step aside.
@@ -59,7 +61,28 @@ impl State {
 
     /// Open Home or Library once the focus has rested on its tab; the other tabs wait for
     /// select. Some once it opened one.
+    /// The library's categories, as BitChord's TV: what was heard, then those with something in.
+    pub fn tv_library_categories(&self) -> Vec<(&'static str, std::borrow::Cow<'static, str>)> {
+        use crate::i18n::t;
+        let mut categories = vec![("heard", t!("desktop-listen-again"))];
+        if !self.collection.liked.is_empty() { categories.push(("liked", t!("common-liked-songs"))); }
+        if !self.collection.playlists.is_empty() { categories.push(("playlists", t!("desktop-playlists"))); }
+        if self.collection.albums().next().is_some() { categories.push(("albums", t!("common-albums"))); }
+        if self.collection.artists().next().is_some() { categories.push(("artists", t!("common-artists"))); }
+        categories
+    }
+
+    /// The library category shown: the one chosen while it still has something, or the first.
+    pub fn tv_library_shown(&self) -> &'static str {
+        let categories = self.tv_library_categories();
+        categories.iter().find(|(key, _)| Some(*key) == self.tv_library.as_deref()).unwrap_or(&categories[0]).0
+    }
+
     pub fn tv_rest(&mut self, now: Instant) -> Option<Vec<Command>> {
+        // The library shows the category the focus is on, as it goes down them.
+        if let Some(key) = self.tv_focused.as_deref().and_then(|id| id.strip_prefix(LIBRARY)) {
+            self.tv_library = Some(key.to_owned());
+        }
         // The player has no tabs to rest on.
         let tab = self.tv_focused.as_deref().filter(|id| !self.tv_in_player && ["home", "mobile-library"].contains(id));
         if self.tv_resting.as_ref().map(|(id, _)| id.as_str()) != tab {
@@ -226,6 +249,19 @@ mod tests {
         assert_eq!(state.tv_rest_focus(), Some("settings"));
         state.page = Page::Liked;
         assert_eq!(state.tv_rest_focus(), None);
+    }
+
+    #[test]
+    fn the_library_shows_the_category_the_focus_is_on() {
+        let mut state = State { tv: true, ..State::default() };
+        assert_eq!(state.tv_library_shown(), "heard", "what was heard, with nothing else kept");
+        state.collection.liked = vec![Track { id: "song".into(), title: "Canción".into(), artist: "Banda".into(), artist_id: None,
+            album: None, album_id: None, artwork_url: None, duration_ms: 200_000 }];
+        state.tv_focused = Some(format!("{LIBRARY}liked"));
+        state.tv_rest(Instant::now());
+        assert_eq!(state.tv_library_shown(), "liked");
+        state.collection.liked.clear();
+        assert_eq!(state.tv_library_shown(), "heard", "a category emptied falls back to the first");
     }
 
     #[test]

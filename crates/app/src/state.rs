@@ -892,6 +892,8 @@ pub struct State {
     pub tv_up_next: bool,
     /// The page the television showed at its last frame.
     pub tv_shown: Option<Page>,
+    /// The library category the television's focus last went to.
+    pub tv_library: Option<String>,
     /// The tab the remote's focus rests on, and since when, to open it.
     pub tv_resting: Option<(String, Instant)>,
     /// Whether the television's page has scrolled, sending its tabs aside.
@@ -1398,6 +1400,7 @@ impl Default for State {
             tv_lyrics_hidden: false,
             tv_up_next: false,
             tv_shown: None,
+            tv_library: None,
             tv_resting: None,
             tv_scrolled: false,
             queue_open: false,
@@ -2551,6 +2554,10 @@ impl State {
             "tv-up-next" => {
                 self.tv_up_next = !self.tv_up_next;
                 self.focus = Some(if self.tv_up_next && !self.player.upcoming.is_empty() { "upcoming:0" } else { tv::SCRUBBER }.into());
+                Vec::new()
+            }
+            _ if id.starts_with(tv::LIBRARY) => {
+                self.tv_library = Some(id[tv::LIBRARY.len()..].to_owned());
                 Vec::new()
             }
             "tv-transport-away" => {

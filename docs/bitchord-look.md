@@ -88,6 +88,11 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Focus lifts instead of outlining: cards scale 1.08 with a shadow, rows 1.03, buttons 1.1;
   rows and pills turn into a white platter with dark text.
 - Safe margins 38 × 22, cards 16 apart, 131 lockups (corners 10), 120 round artists.
+- Library in two panes under the tabs, which stay: its categories down the left, 240 wide
+  (what was heard, liked songs, playlists, albums, artists, each only with something in, and
+  Downloads with a chevron), 42 rows corners 11, the shown one on white at 12%; on the right
+  what the focused one holds, songs as rows or a grid of 120 lockups. The focus going down
+  the categories previews each.
 - Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title
   31/36 (two lines at most), the artist 16/600 in Apple's red #FA2D48, "N songs, M min" 13,
   a 43 shuffle circle and a 58 red Play; then the songs, 48 tall with a 34 cover (an album's
