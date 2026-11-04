@@ -193,7 +193,27 @@ fn home(state: &State, palette: ComponentPalette) -> Element {
         shelf("tv-artists", &t!("desktop-artists-to-discover"), or_coming(artists, artists_coming, true), palette),
         shelf("tv-albums", &t!("desktop-albums-for-you"), or_coming(albums, albums_coming, false), palette),
         shelf("tv-liked", &t!("common-liked-songs"), track("liked-track", &state.collection.liked), palette),
+        // With no picks to show nor on their way, the home says how it fills.
+        // The first run's picker is not a television's: what plays fills it, from the search.
+        (!state.has_picks()).then(|| note(state, t!("common-home-picks-empty"), t!("common-home-picks-empty-detail"), Some((crate::state::tv::HOME_SEARCH, t!("common-search"))), palette)),
     ])
+}
+
+/// A few words where something else would be, centred, with what to do about it a press away.
+fn note(state: &State, title: std::borrow::Cow<str>, detail: std::borrow::Cow<str>, action: Option<(&str, std::borrow::Cow<str>)>, palette: ComponentPalette) -> Element {
+    let mut said = vec![
+        Text::new(title, palette).font_size(17.0).render().font_family(FontFamily::SansSemibold).center_content(),
+        Text::new(detail, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY).center_content(),
+    ];
+    if let Some((id, label)) = action {
+        let on = lit(state, id);
+        let words = Text::new(&*label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(if on { PLATTER_INK } else { palette.text }).centered();
+        let button = Element::panel(horizontal_inset(words, 22.0, 22.0)).background(if on { PLATTER } else { CAPSULE }).round().size(None, Some(TAB));
+        let button = Element::clickable(id, button).accessible(limn::Access::new(limn::Role::Button).name(&*label)).focus_ring(false).round()
+            .animate_scale_about(format!("tv-lift:{id}"), if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5));
+        said.extend([Element::spacer().size(None, Some(8.0)), button.centered_x()]);
+    }
+    Element::column(said).gap(6.0).size(Some(576.0), None).centered_x().padding(24.0)
 }
 
 /// A shelf's lockups while what fills them is on its way: the shape of each, pulsing in step
@@ -323,29 +343,13 @@ fn search(state: &State, palette: ComponentPalette) -> Element {
     // Until the first results come, their shelves pulse where they will be.
     let nothing = found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty();
     let coming = state.searching && nothing;
-    // A search that failed says so under the field, its retry a press away.
-    let said = |title: std::borrow::Cow<str>, detail: std::borrow::Cow<str>, retry: bool| {
-        let mut said = vec![
-            Text::new(title, palette).font_size(17.0).render().font_family(FontFamily::SansSemibold).center_content(),
-            Text::new(detail, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY).center_content(),
-        ];
-        if retry {
-            let on = lit(state, "search-submit");
-            let label = t!("common-retry");
-            let words = Text::new(&*label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(if on { PLATTER_INK } else { palette.text }).centered();
-            let button = Element::panel(horizontal_inset(words, 22.0, 22.0)).background(if on { PLATTER } else { CAPSULE }).round().size(None, Some(TAB));
-            let button = Element::clickable("search-submit", button).accessible(limn::Access::new(limn::Role::Button).name(&*label)).focus_ring(false).round()
-                .animate_scale_about("tv-lift:search-submit", if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5));
-            said.extend([Element::spacer().size(None, Some(8.0)), button.centered_x()]);
-        }
-        Some(Element::column(said).gap(6.0).size(Some(576.0), None).centered_x().padding(24.0))
-    };
     if !coming && state.search_error.is_some() {
-        parts.push(said(t!("mobile-search-failed"), t!("mobile-search-failed-detail"), true));
+        // A search that failed says so under the field, its retry a press away.
+        parts.push(Some(note(state, t!("mobile-search-failed"), t!("mobile-search-failed-detail"), Some(("search-submit", t!("common-retry"))), palette)));
         return shelves("tv-search", parts);
     }
     if !coming && nothing && state.submitted.is_some() {
-        parts.push(said(t!("common-no-results"), t!("desktop-try-other-words"), false));
+        parts.push(Some(note(state, t!("common-no-results"), t!("desktop-try-other-words"), None, palette)));
         return shelves("tv-search", parts);
     }
     let (songs, artists, albums) = if coming {
@@ -514,6 +518,11 @@ fn transport(state: &State, track: &Track, lyrics: bool, palette: ComponentPalet
     if !state.lines().is_empty() {
         buttons.push(button(state, "lyrics", Icon::Custom(crate::view::LYRICS), &t!("mobile-show-lyrics"), TRANSPORT_BUTTON, if lyrics { GLASS_ON } else { GLASS }, palette));
     }
+    if state.translatable() {
+        let on = state.settings.translate_lyrics;
+        buttons.push(button(state, "lyrics-translate", Icon::Custom(include_str!("../../assets/icons/languages.svg")),
+            &if on { t!("common-original-lyrics") } else { t!("common-translate-lyrics") }, TRANSPORT_BUTTON, if on { GLASS_ON } else { GLASS }, palette));
+    }
     buttons.push(button(state, "tv-up-next", Icon::Playlist, &t!("desktop-up-next"), TRANSPORT_BUTTON, if state.tv_up_next { GLASS_ON } else { GLASS }, palette));
     let duration = state.player.duration.max(0.0);
     let elapsed = f64::from(state.progress()) * duration;
@@ -663,6 +672,19 @@ mod tests {
         assert!(!settled(&state), "the search's shelves pulse until the first results come");
         state.page = Page::Loading(crate::backend::Target::Album("lp".into()));
         assert!(!settled(&state), "an album opening pulses in its page's shape");
+    }
+
+    #[test]
+    fn a_home_with_no_picks_says_how_it_fills_and_goes_to_the_search() {
+        let mut state = television();
+        let shows = |state: &State, id: &str| tree(state).frame().access.iter().filter(|node| node.id == id).count();
+        assert_eq!(shows(&state, crate::state::tv::HOME_SEARCH), 1, "no picks: the note and its way to the search");
+        assert_eq!(shows(&state, "mobile-search"), 1, "the search's tab stays the only one of its id");
+        state.update(&UiAction::Clicked { id: crate::state::tv::HOME_SEARCH.into() });
+        assert!(state.mobile_search && state.page == Page::Search);
+        state.picks_coming = [true; 3];
+        state.mobile_search = false;
+        assert_eq!(shows(&state, crate::state::tv::HOME_SEARCH), 0, "picks on their way pulse instead");
     }
 
     #[test]

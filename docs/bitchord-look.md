@@ -63,7 +63,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   the secondary colour. Actions: a 50 shuffle circle, a white Play pill, a 50 add circle; the
   circles white at 7% with a rim at 10%.
 - Artist: the photo full width (ratio 0.95, at most 60% of the height) fading into the page's
-  colour; the name 34/800; a 70 Play circle between 52 shuffle and follow circles.
+  colour; the name 34/800 with its followers 14 under it, one group at the photo's foot; a 70
+  Play circle between 52 shuffle and follow circles.
+- A home with no picks to show nor on their way ends by saying how it fills, with the way to
+  choose artists (the TV's goes to the search: the first run's picker is not a TV's).
 - Settings: inset groups on surface variant, corners 14, 16 from the sides, uppercase 11/600
   headers; rows at least 52 with a 22 icon and a chevron.
 

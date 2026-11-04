@@ -14,6 +14,8 @@ const SEEK_STEP: f64 = 10.0;
 pub const SCRUBBER: &str = "tv-scrubber";
 /// The settings' row that shows a code for a phone to send its account to.
 pub const RECEIVE: &str = "tv-receive";
+/// The home's way to the search when it has no picks: the search's tab, by another name.
+pub const HOME_SEARCH: &str = "tv-home-search";
 /// The tab bar's controls.
 const BAR: [&str; 6] = ["home", "mobile-library", "mobile-playing", "mobile-search", "settings", "account-profile"];
 /// The id of a library category's row, before its key.

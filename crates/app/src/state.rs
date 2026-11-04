@@ -2908,6 +2908,7 @@ impl State {
                 vec![Command::Push { to, bundle }]
             }
             // A television shows a code for a phone to send it the account.
+            tv::HOME_SEARCH => self.click("mobile-search"),
             tv::RECEIVE => {
                 self.handoff = Some(Handoff { receiving: true, inbox: true, ..Handoff::default() });
                 vec![Command::Inbox]
@@ -4066,6 +4067,12 @@ impl State {
             commands.push(Command::Discover(taste));
         }
         commands
+    }
+
+    /// Whether the home has picks of the taste to show, or some on their way.
+    pub fn has_picks(&self) -> bool {
+        !self.mixes().is_empty() || !self.recent_picks.is_empty() || !self.picked_artists.is_empty() || !self.picked_albums.is_empty()
+            || self.picks_coming.contains(&true)
     }
 
     /// Whether a cover is on its way: asked for, and neither in nor known to be missing.

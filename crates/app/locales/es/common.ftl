@@ -304,3 +304,6 @@ common-tv-handoff-title = Traé tu cuenta desde el celular
 common-tv-handoff-step-network = Conectá el celular a la misma red Wi-Fi que esta tele.
 common-tv-handoff-step-scan = En Surco del celular, andá a Configuración › Pasar a otro dispositivo › Recibir y escaneá este código.
 common-tv-handoff-step-send = Elegí qué mandar y tocá Enviar: la tele te pregunta qué traer.
+common-home-picks-empty = Tu inicio se arma con lo que te gusta
+common-home-picks-empty-detail = Escuchá algo o elegí algunos artistas, y acá aparecen mezclas, discos y artistas para descubrir.
+common-home-picks-choose = Elegir artistas

@@ -2136,6 +2136,10 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     if !liked.is_empty() {
         sections.push(shelf(state, "home-liked", &t!("common-liked-songs"), liked, palette));
     }
+    // With no picks to show nor on their way, the home says how it fills rather than ending.
+    if !state.has_picks() {
+        sections.push(blank(Icon::Heart, t!("common-home-picks-empty"), t!("common-home-picks-empty-detail"), Some(("onboarding-taste", t!("common-home-picks-choose"))), palette));
+    }
     // Where else to go: the genres to browse, two rows of them.
     if !state.mobile {
         let room = width - 24.0;
@@ -4022,7 +4026,7 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
                     }
                 })).collect();
             let words = Element::column(words).gap(LYRIC_GAP).padding(PANEL_PAD);
-            let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", words) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
+            let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", words).visibility(lyrics_bar(state)) } else { panel_scroll("lyrics-list", words) }.render().flex(1.0);
             return with_translate(state, list, palette);
         }
         Some((_, Lyrics::Lines(_))) => state.lines(),
@@ -4079,13 +4083,19 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let glide = limn::ScrollMotion { duration_ms: limn::tokens().motion.move_ms * 3, easing: limn::Easing::InOutCubic };
     // A desktop's has the panels' bar, under the pointer; a phone's, its own indicator.
     let rows = Element::column(rows).gap(gap).padding(margin);
-    let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", rows) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
+    let list = if state.mobile || state.tv { ScrollArea::new("lyrics-list", rows).visibility(lyrics_bar(state)) } else { panel_scroll("lyrics-list", rows) }.motion(glide).render().flex(1.0);
     let page = with_translate(state, list, palette);
     match state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)) {
         // A television's stand on its player's blurred cover instead.
         Some(tint) if !state.tv => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
         _ => page,
     }
+}
+
+/// The lyrics' scroll bar: a phone's shows as it scrolls, as its other lists'; a television's
+/// lyrics follow the song and show none.
+fn lyrics_bar(state: &State) -> limn::ScrollbarVisibility {
+    if state.tv { limn::ScrollbarVisibility::AutoHide { hold_ms: 0, fade_ms: 0 } } else { mobile::SCROLL_INDICATOR }
 }
 
 /// The lyrics while they come: bold lines of uneven length where the words will stand.
@@ -4102,7 +4112,8 @@ const TRANSLATION_SCALE: f32 = 0.58;
 /// The lyrics with the button that translates them over their top end, on the desktop; the
 /// phone has it in its header.
 fn with_translate(state: &State, list: Element, palette: ComponentPalette) -> Element {
-    if state.mobile || !state.translatable() {
+    // A television's is among its transport's buttons.
+    if state.mobile || state.tv || !state.translatable() {
         return Element::column(vec![list]).flex(1.0);
     }
     let on = state.settings.translate_lyrics;

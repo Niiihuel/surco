@@ -306,3 +306,6 @@ common-tv-handoff-title = Bring your account from your phone
 common-tv-handoff-step-network = Connect your phone to the same Wi-Fi as this TV.
 common-tv-handoff-step-scan = In Surco on your phone, go to Settings › Move to another device › Receive and scan this code.
 common-tv-handoff-step-send = Choose what to send and tap Send: the TV asks what to bring in.
+common-home-picks-empty = Your home grows from what you like
+common-home-picks-empty-detail = Play something or choose a few artists, and mixes, albums and artists to discover show up here.
+common-home-picks-choose = Choose artists
