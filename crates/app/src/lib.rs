@@ -110,6 +110,8 @@ struct Script {
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
+    /// The picture egui hands back, from its own thread, once the frame is read.
+    shot: std::sync::Arc<std::sync::Mutex<Option<std::sync::Arc<egui::ColorImage>>>>,
 }
 
 /// Follow against the current page's measured viewport and overlaid bars.
@@ -336,14 +338,10 @@ impl Host {
     fn capture(&mut self, ctx: &egui::Context, path: &PathBuf) {
         if !self.script.requested && self.opened.elapsed() > self.script.after {
             self.script.requested = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(egui::UserData::default()));
+            let shot = self.script.shot.clone();
+            ctx.request_screenshot(move |image| *shot.lock().unwrap() = Some(image));
         }
-        let image = ctx.input(|input| {
-            input.events.iter().find_map(|event| match event {
-                egui::Event::Screenshot { image, .. } => Some(image.clone()),
-                _ => None,
-            })
-        });
+        let image = self.script.shot.lock().unwrap().take();
         if let Some(image) = image {
             let [width, height] = image.size;
             if let Err(error) = image::save_buffer(path, image.as_raw(), width as u32, height as u32, image::ColorType::Rgba8) {
@@ -467,7 +465,7 @@ impl eframe::App for Host {
             let commands = match kind.as_str() {
                 "window.back" => {
                     // What stands on top (a sheet, a dialog, a menu) closes first, as Escape closes it.
-                    let closed = self.tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false });
+                    let closed = self.tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false, alt: false });
                     if !closed.is_empty() {
                         closed.iter().flat_map(|action| self.state.update(action)).collect()
                     } else if let Some(id) = back_target(&self.state) {

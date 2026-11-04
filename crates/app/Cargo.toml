@@ -15,7 +15,7 @@ crate-type = ["rlib", "staticlib"]
 surco-core = { path = "../core" }
 limn = { path = "../../../lienzo/crates/limn", default-features = false }
 limn-egui = { path = "../../../lienzo/crates/limn-egui", default-features = false }
-eframe = { version = "0.36.2", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence", "links"] }
+eframe = { version = "0.37.0", default-features = false, features = ["wgpu", "default_fonts", "x11", "wayland", "persistence", "links"] }
 # Saves the frame for `--screenshot`, and reads a cover's colors for the tint of its card.
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 fastrand = "2"
@@ -95,7 +95,7 @@ raw-window-handle = "0.6.2"
 # Apache-2.0/MIT. The activity the app runs in, GameActivity for its input methods' text, and
 # JNI to the Kotlin shell, the same version the TLS verifier reqwest already uses talks through.
 [target.'cfg(target_os = "android")'.dependencies]
-eframe = { version = "0.36.2", default-features = false, features = ["android-game-activity"] }
+eframe = { version = "0.37.0", default-features = false, features = ["android-game-activity"] }
 android-activity = { version = "0.6.1", features = ["game-activity"] }
 jni = "0.22.4"
 rustls-platform-verifier = "0.7.1"

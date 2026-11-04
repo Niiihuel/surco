@@ -4802,7 +4802,7 @@ mod tests {
         assert!(!found.iter().any(|id| id == "welcome-import" || id == "welcome-close"), "nothing behind it");
         let mut tree = UiTree::new(view(&state, size));
         tree.layout(size);
-        for action in tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false }) { state.update(&action); }
+        for action in tree.handle_event(limn::UiEvent::Key { key: limn::Key::Escape, shift: false, ctrl: false, alt: false }) { state.update(&action); }
         assert!(ids(&state).iter().any(|id| id == "update-get"), "Escape does not put it away");
         state.update(&limn::UiAction::Clicked { id: "update-get".into() });
         assert!(ids(&state).iter().any(|id| id == "update-wait"), "while it comes down, its button waits");

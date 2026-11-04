@@ -124,6 +124,11 @@ fn symbol_name(icon: Icon) -> Option<&'static str> {
         Icon::Neutral => Some("line.diagonal"),
         Icon::Invite => Some("person.badge.plus"),
         Icon::Leave => Some("rectangle.portrait.and.arrow.right"),
+        Icon::ZoomIn => Some("plus.magnifyingglass"),
+        Icon::ZoomOut => Some("minus.magnifyingglass"),
+        Icon::ExternalLink => Some("arrow.up.right.square"),
+        Icon::Circle => Some("circle"),
+        Icon::Forward => Some("arrowshape.turn.up.right"),
         Icon::Custom(svg) => CUSTOM_SYMBOLS.iter().find_map(|(source, symbol)| (*source == svg).then_some(*symbol)),
         Icon::Github | Icon::FileType(_) => None,
     }

@@ -63,7 +63,7 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
     };
     let (left, right) = chrome.inset();
     let caption = Rect::from_min_max(pos2(inner.left() + left, inner.top()), pos2(inner.right() - right, inner.top() + bar));
-    let response = ui.interact(caption, ui.id().with("window-drag"), Sense::CLICK | Sense::DRAG);
+    let response = ui.interact(caption, ui.scope_id().with("window-drag"), Sense::CLICK | Sense::DRAG);
     // A press on one of the bar's own controls is the app's.
     // A double click is told on its release, when the press has no origin left.
     let free = ui.input(|input| input.pointer.press_origin()).or(response.interact_pointer_pos()).is_some_and(|origin| !on_app(origin - inner.min));
@@ -76,7 +76,7 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
         return inner;
     }
     // Over the app's top bar, which is drawn after this.
-    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.id().with("window-controls")));
+    let painter = ui.ctx().layer_painter(egui::LayerId::new(egui::Order::Foreground, ui.scope_id().with("window-controls")));
     for (index, label, command) in [
         (0, t!("state-window-minimize"), ViewportCommand::Minimized(true)),
         (1, if maximized { t!("state-window-restore") } else { t!("state-window-maximize") }, ViewportCommand::Maximized(!maximized)),
@@ -85,8 +85,8 @@ pub fn show(ui: &mut egui::Ui, cinema: bool, chrome: Chrome, bar: f32, on_app: i
         // As tall as the bar, so the marks sit on the line of the app's own buttons.
         let rect = Rect::from_min_size(pos2(caption.right() + index as f32 * CONTROL_WIDTH, inner.top()), vec2(CONTROL_WIDTH, bar));
         // Like the native caption, leave Tab to the app and keyboard window commands to Alt+Space.
-        let button = ui.interact(rect, ui.id().with(("window-control", index)), Sense::CLICK);
-        button.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+        let button = ui.interact(rect, ui.scope_id().with(("window-control", index)), Sense::CLICK);
+        button.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &label));
         if button.hovered() || button.has_focus() || button.is_pointer_button_down_on() {
             let fill = if index == 2 { Color32::from_rgb(196, 43, 28) } else { Color32::from_gray(34) };
             painter.rect_filled(rect, 0.0, fill);
