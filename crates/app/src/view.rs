@@ -3432,10 +3432,20 @@ fn shuffle_step(state: &State) -> (Icon, std::borrow::Cow<'static, str>) {
 /// control, the step of the shuffle, the page's `own`, and the search of its tracks at the
 /// far end.
 fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> Element {
+    if state.mobile {
+        // A phone's are BitChord's, which lay out their own play and shuffle: only the page's
+        // others go to it, the whole list's download first.
+        let download = state.page_downloaded().map(|kept| {
+            let (glyph, hint) = if kept { (glyph::DOWNLOADED, t!("desktop-remove-download")) } else { (glyph::DOWNLOAD_CIRCLE, t!("desktop-download-offline")) };
+            mobile::icon("page-download", Icon::Custom(glyph), &hint, palette)
+        });
+        let row = mobile::details::actions(state, download.into_iter().chain(own).collect(), palette);
+        // UIKit's field at the page's top searches it instead, as dnmusic's lists.
+        if mobile::page_search_slot(state).is_some() { return row; }
+        return Element::column(vec![row, Element::row(page_search(state, palette)).gap(8.0)]).gap(12.0);
+    }
     let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
-    let play = if state.mobile {
-        mobile::controls::playback("page-play", false, 56.0, 28.0, palette)
-    } else {
+    let play = {
         // A glyph of 20, a step up from a button's own, as the disc is.
         let glyph = Element::icon(Icon::PlayFill).large_icon(20.0).foreground(round.text).size(Some(20.0), Some(20.0)).centered();
         let button = Element::clickable("page-play", glyph)
@@ -3445,25 +3455,14 @@ fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> 
         limn::Tooltip::new(button, "page-play", t!("common-play"), palette).render()
     };
     let (icon, hint) = shuffle_step(state);
-    let shuffle = if state.mobile {
-        let action = mobile::controls::action("page-shuffle", icon, &hint, 22.0, palette);
-        if state.player.shuffle { action.background(palette.selected) } else { action }
-    } else {
-        page_glyph("page-shuffle", icon, &hint, state.player.shuffle, palette)
-    };
+    let shuffle = page_glyph("page-shuffle", icon, &hint, state.player.shuffle, palette);
     let mut actions = vec![play, shuffle.centered_y()];
     // The whole list kept for listening without a network, as Spotify's arrow in a circle.
     if let Some(kept) = state.page_downloaded() {
         let (glyph, hint) = if kept { (glyph::DOWNLOADED, t!("desktop-remove-download")) } else { (glyph::DOWNLOAD_CIRCLE, t!("desktop-download-offline")) };
-        actions.push(if state.mobile { mobile::icon("page-download", Icon::Custom(glyph), &hint, palette).centered_y() } else { page_glyph("page-download", Icon::Custom(glyph), &hint, kept, palette) });
+        actions.push(page_glyph("page-download", Icon::Custom(glyph), &hint, kept, palette));
     }
     actions.extend(own.into_iter().map(Element::centered_y));
-    if state.mobile {
-        actions.push(Element::spacer().flex(1.0));
-        // UIKit's field at the page's top searches it instead, as dnmusic's lists.
-        if mobile::page_search_slot(state).is_some() { return Element::row(actions).gap(12.0); }
-        return Element::column(vec![Element::row(actions).gap(12.0), Element::row(page_search(state, palette)).gap(8.0)]).gap(8.0);
-    }
     actions.extend(page_search(state, palette));
     Element::row(actions).gap(8.0).anchor(PAGE_ACTIONS)
 }

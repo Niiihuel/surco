@@ -355,8 +355,15 @@ fn page_surface(state: &State) -> (Color, Color) {
         _ => None,
     };
     let Some(tint) = artwork.and_then(|url| state.tints.get(url)).copied() else { return (SCHEME.canvas, SCHEME.canvas); };
-    let bottom = if matches!(state.page, Page::Playing | Page::Lyrics) { cover_tone(tint, 0.28) } else { SCHEME.canvas };
-    (cover_tone(tint, 0.60), bottom)
+    // A song list's page is BitChord's: one dark colour of its cover, all the way down.
+    if !matches!(state.page, Page::Playing | Page::Lyrics) { let tone = page_tone(tint); return (tone, tone); }
+    (cover_tone(tint, 0.60), cover_tone(tint, 0.28))
+}
+
+/// The colour a song list's page is painted in, as BitChord's: its cover's, dark enough for
+/// the secondary ink.
+pub(in crate::view) fn page_tone(tint: Color) -> Color {
+    cover_tone(tint, 0.32)
 }
 
 pub(crate) fn route_key(state: &State) -> String {
