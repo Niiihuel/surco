@@ -3930,11 +3930,15 @@ pub(crate) fn lyric_focus(distance: i64) -> (f32, f32) {
     }
 }
 
-/// Where the line being sung rests on a phone, below the top of the lyrics' visible `body`:
-/// a third of the way down, with what was sung above it and what is coming below.
+/// Where the line being sung rests on a phone, below the top of the lyrics' visible `body`: at
+/// its top, as BitChord's, read from there with what is coming below and the foot of what was
+/// sung showing above.
 pub(crate) fn lyric_anchor(body: f32) -> f32 {
-    (body / 3.0).max(20.0)
+    LYRIC_TOP.min(body / 3.0)
 }
+
+/// BitChord's lines start 30 under the lyrics' top, plus the 10 each line stands in.
+const LYRIC_TOP: f32 = 36.0;
 
 /// The lines of what plays down the middle of the window, the one being sung in full ink,
 /// over a wash of the cover's own colour. A line that is clicked is sung from its start.

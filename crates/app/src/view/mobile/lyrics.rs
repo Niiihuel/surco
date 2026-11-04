@@ -5,8 +5,10 @@ use surco_core::lyrics::Line;
 
 /// A line's ink `distance` lines from the one being sung, and how out of focus it is, as
 /// BitChord's: the line being sung whole and sharp, the rest a step dimmer and softer each.
+/// Its blurs are CSS's, 1.08 to 1.89; limn's soft focus reads lighter at the same radius, so
+/// these are half again as wide.
 const FADE: [f32; 5] = [1.0, 0.8, 0.7, 0.58, 0.46];
-const BLUR: [f32; 5] = [0.0, 1.08, 1.08, 1.48, 1.89];
+const BLUR: [f32; 5] = [0.0, 1.6, 1.6, 2.2, 2.8];
 /// The ink of what is still to be sung, the line being sung's included.
 const UNSUNG: f32 = 0.45;
 /// The soft edge the fill moves behind, in points.

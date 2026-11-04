@@ -1345,10 +1345,10 @@ mod lyrics_viewport_tests {
             let frame = layout_view(&mut state, &mut tree, size);
             let (at, anchor) = anchor_of(&frame, &format!("lyric:{line}"));
             assert!((at - anchor).abs() < 1.0, "line {line} rests at the anchor: {at} vs {anchor}");
-            assert!(anchor > 150.0, "a third down a portrait body, not at its top");
+            assert!(anchor < 60.0, "read from the top of the body, as BitChord's");
             if line > 0 {
                 let (above, _) = anchor_of(&frame, &format!("lyric:{}", line - 1));
-                assert!(above > 0.0, "the line just sung stays visible above");
+                assert!(above < 0.0 && above > -41.0, "the foot of the line just sung shows under the header: {above}");
             }
         }
     }
