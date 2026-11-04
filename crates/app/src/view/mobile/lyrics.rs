@@ -17,34 +17,30 @@ const FEATHER: f32 = 30.0;
 const GLOW: Color = Color::rgba(255, 255, 255, 56);
 /// How far the word being sung rises at most, in points.
 const RISE: f32 = 2.0;
-/// A steady pace of singing, per character: a line before a long rest fills at it, rather
-/// than across the rest.
-const PER_CHAR_MS: f32 = 80.0;
 
 /// BitChord's line (docs/bitchord-look.md): its words each their own text in a row that wraps
-/// as the line would, so that the line being sung fills word by word behind a soft edge over
-/// its unsung ink, glowing faintly. Away from it lines dim, blur and step back a little; what
-/// was sung stays lit, what is to come does not.
+/// as the line would, so that the line being sung fills behind a soft edge over its unsung
+/// ink as each word is sung, glowing faintly, the word being sung rising. A line timed only as
+/// a whole lights at once, as BitChord's does. Away from it lines dim, blur and step back a
+/// little; what was sung stays lit, what is to come does not.
 pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i64, size: f32, line_height: f32, gap: f32, now: std::time::Instant) -> Element {
     let line = &lines[index];
     let distance = index as i64 - sung;
     let far = distance.unsigned_abs().min(4) as usize;
     let (fade, blur) = (FADE[far], BLUR[far]);
     let base = if distance < 0 { 1.0 } else { UNSUNG };
-    let chars = line.text.chars().count().max(1) as f32;
-    let (playhead, span) = (state.playhead_ms(now), sweep_ms(lines, index, chars));
+    let playhead = state.playhead_ms(now);
     let filled = match distance {
-        0 => (playhead.saturating_sub(line.at_ms) as f32 / span).min(1.0) * chars,
-        ..0 => chars,
+        0 => surco_core::lyrics::revealed(line, playhead),
+        ..0 => line.text.chars().count() as f32,
         _ => 0.0,
     };
     // The words of the line being sung rise as they are sung, and those of the line before
     // settle back; under reduced motion they stay.
     let moves = state.motion && !state.settings.reduce_motion && (-1..=0).contains(&distance);
-    let rise = |from: f32, to: f32| {
-        if !moves { return 0.0; }
-        let at = |share: f32| line.at_ms as f32 + span * share / chars;
-        -RISE * lift(at(from), at(to), playhead as f32)
+    let rise = |number: usize| match line.words.get(number).filter(|_| moves) {
+        Some(word) => -RISE * lift(word.start_ms as f32, word.end_ms as f32, playhead as f32),
+        None => 0.0,
     };
     // The edge is so many points wide; a character of these lines is about 0.55 of their size.
     let feather = FEATHER / (size * 0.55);
@@ -61,7 +57,7 @@ pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i
             let len = word.chars().count() as f32;
             if len > 0.0 {
                 let text = Element::text(word).font_family(FontFamily::SansBold).font_size(size).line_height(line_height);
-                let text = match rise(at, at + len) { 0.0 => text, rise => text.translate(limn::Point::new(0.0, rise)) };
+                let text = match rise(number) { 0.0 => text, rise => text.translate(limn::Point::new(0.0, rise)) };
                 // The glow comes up with the line and goes with it, rather than at once.
                 words.push(if glow {
                     text.foreground(if distance == 0 { GLOW } else { Color::TRANSPARENT }).animate_foreground(format!("lyric-glow:{index}:{number}"))
@@ -107,14 +103,6 @@ fn lift(start: f32, end: f32, at: f32) -> f32 {
     (0.25 + 0.75 * smooth(((length - 150.0) / 750.0).clamp(0.0, 1.0))) * smooth(rising.min(settling))
 }
 
-/// How long a line takes to fill: until the next starts, though no longer than its words take
-/// at a steady pace.
-// shortcut: lyrics come timed by line, not by word, so the fill moves evenly through a line;
-// follow each word once the lyrics carry their timing.
-fn sweep_ms(lines: &[Line], index: usize, chars: f32) -> f32 {
-    let until = lines.get(index + 1).map_or(f32::MAX, |next| next.at_ms.saturating_sub(lines[index].at_ms) as f32);
-    until.min(chars * PER_CHAR_MS + 400.0).max(1.0)
-}
 
 /// The shell adds the device's bottom safe-area inset after this footer.
 pub(super) const FOOTER_HEIGHT: f32 = 212.0;
@@ -282,11 +270,12 @@ mod tests {
     fn the_line_being_sung_fills_word_by_word_behind_a_soft_edge() {
         let mut state = state();
         state.page = Page::Lyrics;
-        state.show(PlayerView { playing: false, position: 10.6, ..state.player.clone() });
+        state.show(PlayerView { playing: false, position: 10.7, ..state.player.clone() });
+        let words = surco_core::lyrics::words_from_runs(&[(10_000, 10_400, "uno "), (10_500, 11_000, "dos "), (11_100, 11_600, "tres")]);
         state.lyrics = Some(("song".into(), Lyrics::Lines(vec![
-            Line { at_ms: 1_000, text: "antes".into() },
-            Line { at_ms: 10_000, text: "uno dos tres".into() },
-            Line { at_ms: 20_000, text: "después".into() },
+            Line { words: Vec::new(), at_ms: 1_000, text: "antes".into() },
+            Line { words, at_ms: 10_000, text: "uno dos tres".into() },
+            Line { words: Vec::new(), at_ms: 20_000, text: "después".into() },
         ])));
         let lines = state.lines().to_vec();
         let painted = |index: usize, word: &str| {
@@ -298,8 +287,7 @@ mod tests {
                 _ => None,
             }).collect::<Vec<_>>()
         };
-        // 0.6 s into a line of twelve characters that takes 1.36 s: past "uno", into "dos".
-        // The glow's faint copies are left out.
+        // 0.2 s into "dos", sung from 10.5 s to 11 s. The glow's faint copies are left out.
         let sung = |word: &str| painted(1, word).into_iter().filter(|alpha| *alpha >= 40).collect::<Vec<_>>();
         assert_eq!(sung("uno"), [255], "sung");
         let edge = sung("dos");
@@ -308,6 +296,11 @@ mod tests {
         // Blurred, each line is painted as faint copies: what was sung weighs more than what is to come.
         let weight = |index: usize, word: &str| painted(index, word).iter().map(|alpha| u32::from(*alpha)).sum::<u32>();
         assert!(weight(0, "antes") > 2 * weight(2, "después"), "what was sung stays lit");
+        // Timed only as a whole, the line being sung is lit at once, as BitChord's.
+        let mut tree = UiTree::new(line(&state, &lines, 0, 0, 34.0, 41.0, 25.0, std::time::Instant::now()));
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(Size::new(360.0, 200.0));
+        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::Text { text, color, .. } if text == "antes" && color.a == 255)));
     }
 
     #[test]

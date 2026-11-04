@@ -4427,7 +4427,7 @@ mod tests {
             assert!(ids(&state, size).iter().any(|id| id == "downloads"), "{view} still lists what the library holds");
         }
         state.show(PlayerView { current: Some(track("a")), upcoming: vec![track("b")], duration: 200.0, playing: true, ..PlayerView::default() });
-        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { words: Vec::new(), at_ms: 0, text: "one".into() }]) });
         let found = ids(&state, size);
         // The card of the lines leads to all of them, and the one of what is next plays it or opens the queue.
         for id in ["lyrics", "upcoming:0", "next-queue"] {
@@ -4562,7 +4562,7 @@ mod tests {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), duration: 200.0, playing: true, ..PlayerView::default() });
         state.update(&limn::UiAction::Clicked { id: "lyrics".into() });
-        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { at_ms: 0, text: "one".into() }]) });
+        state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(vec![surco_core::lyrics::Line { words: Vec::new(), at_ms: 0, text: "one".into() }]) });
         let size = Size::new(1400.0, 800.0);
         let mut tree = UiTree::new(view(&state, size));
         let frame = tree.layout(size);

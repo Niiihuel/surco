@@ -4130,10 +4130,13 @@ impl State {
         ((position + carried).max(0.0) * 1000.0) as u64
     }
 
-    /// Whether a phone's lyrics are filling as they are sung, which needs frames between the
-    /// engine's readings.
+    /// Whether a phone's lyrics are filling as their words are sung, or the words just sung
+    /// are settling, which needs frames between the engine's readings. Lines timed only as a
+    /// whole light at once and need none.
     pub fn lyrics_fill(&self) -> bool {
-        self.mobile && self.page == Page::Lyrics && self.player.playing && self.motion && !self.settings.reduce_motion && self.active_line().is_some()
+        let timed = |index: usize| self.lines().get(index).is_some_and(|line| !line.words.is_empty());
+        self.mobile && self.page == Page::Lyrics && self.player.playing && self.motion && !self.settings.reduce_motion
+            && self.active_line().is_some_and(|sung| timed(sung) || sung.checked_sub(1).is_some_and(timed))
     }
 
     /// The line being sung.
@@ -5458,7 +5461,7 @@ mod tests {
     fn lyrics_are_translated_a_line_each_once_for_what_plays_while_it_is_on() {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
-        state.lyrics = Some(("a".into(), Lyrics::Lines(vec![Line { at_ms: 0, text: "I still see you".into() }, Line { at_ms: 900, text: String::new() }, Line { at_ms: 1800, text: "OK".into() }])));
+        state.lyrics = Some(("a".into(), Lyrics::Lines(vec![Line { words: Vec::new(), at_ms: 0, text: "I still see you".into() }, Line { words: Vec::new(), at_ms: 900, text: String::new() }, Line { words: Vec::new(), at_ms: 1800, text: "OK".into() }])));
         assert!(state.ask_translation().is_empty(), "off until it is asked for");
         assert!(state.translatable());
         let asked = click(&mut state, "lyrics-translate");
@@ -5488,7 +5491,7 @@ mod tests {
         assert!(state.lyrics_open(), "they take the page");
         assert!(state.show(playing("a", 1.0)).is_empty(), "already asked");
 
-        let lines = vec![Line { at_ms: 5_000, text: "one".into() }, Line { at_ms: 9_000, text: "two".into() }];
+        let lines = vec![Line { words: Vec::new(), at_ms: 5_000, text: "one".into() }, Line { words: Vec::new(), at_ms: 9_000, text: "two".into() }];
         state.apply(Event::Lyrics { track_id: "other".into(), lines: None });
         assert_eq!(state.lyrics, Some(("a".into(), Lyrics::Loading)), "an answer for another track changes nothing");
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines) });
@@ -5552,7 +5555,7 @@ mod tests {
         let mut state = State { mobile: true, panel_open: false, ..without_clips() };
         state.show(PlayerView { current: Some(track("a")), ..PlayerView::default() });
         click(&mut state, "lyrics");
-        let lines = vec![Line { at_ms: 1000, text: "Available words".into() }];
+        let lines = vec![Line { words: Vec::new(), at_ms: 1000, text: "Available words".into() }];
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines.clone()) });
         // A→B→A can leave an older request for A in flight. Its failure is not newer knowledge.
         state.apply(Event::LyricsFailed { track_id: "a".into(), message: "late timeout".into(), retry_after: Duration::ZERO });
@@ -5726,7 +5729,7 @@ mod tests {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), position: 10.5, ..PlayerView::default() });
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..20)
-            .map(|index| Line { at_ms: index * 1_000, text: format!("Verse {index}") }).collect()) });
+            .map(|index| Line { words: Vec::new(), at_ms: index * 1_000, text: format!("Verse {index}") }).collect()) });
         assert_eq!(state.active_line(), Some(10));
         state.motion = true;
         let now = Instant::now();

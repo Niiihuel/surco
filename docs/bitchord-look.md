@@ -70,8 +70,13 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Transport: play 74 in a 92 target, skips 53. Lyrics and queue glyphs at the foot, around the
   output button.
 - Lyrics and queue open in place: the artwork shrinks into a 54 thumbnail in a 60 header.
-- Lyrics: 34/41 bold, left aligned, the current line near the top. Lines away from it fade to
-  1, 0.74, 0.6, 0.48, 0.4, 0.34. (BitChord also blurs them; limn cannot.)
+- Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's
+  website demo: `bitchord.kushagrasingh.in`). Lines away from it fade to 0.8, 0.7, 0.58,
+  0.46, blur and step back to 0.98; what was sung stays lit, what is to come is at 45%.
+- The line being sung fills behind a 30-point soft edge as each word is sung, the word
+  rising 2 and settling 700 ms after it ends. That needs word timing, which LyricsPlus
+  (Apple Music, Musixmatch, QQ) gives and LRCLIB does not: both are asked at once and the
+  word-timed answer wins. A line timed only as a whole lights at once, as BitChord's does.
 
 ## TV
 

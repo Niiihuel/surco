@@ -161,8 +161,8 @@ mod tests {
         let mut state = state();
         assert_eq!(painted(&frame(&state), "Segunda línea real"), 0);
         state.lyrics = Some(("song".into(), Lyrics::Lines(vec![
-            Line { at_ms: 5_000, text: "Primera línea real".into() },
-            Line { at_ms: 25_000, text: "Segunda línea real".into() },
+            Line { words: Vec::new(), at_ms: 5_000, text: "Primera línea real".into() },
+            Line { words: Vec::new(), at_ms: 25_000, text: "Segunda línea real".into() },
         ])));
         let sung = frame(&state);
         assert_eq!(painted(&sung, "Segunda línea real"), 1);

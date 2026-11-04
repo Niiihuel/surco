@@ -261,6 +261,7 @@ fn player_and_every_lyrics_result_paint_the_cover_color_through_both_safe_edges(
         Lyrics::Lines(vec![surco_core::lyrics::Line {
             at_ms: 0,
             text: "Una línea sincronizada".into(),
+            words: Vec::new(),
         }]),
     ];
     for (size, insets) in screens() {

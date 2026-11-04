@@ -239,7 +239,7 @@ pub fn part_of_day(hours: &[u64; 24]) -> Option<&'static str> {
 mod tests {
     #[test]
     fn the_chorus_is_where_the_line_sung_most_is_first_sung() {
-        let line = |at_ms: u64, text: &str| surco_core::lyrics::Line { at_ms, text: text.into() };
+        let line = |at_ms: u64, text: &str| surco_core::lyrics::Line { words: Vec::new(), at_ms, text: text.into() };
         let lines = [line(10_000, "First verse here"), line(40_000, "Oh oh, the chorus"), line(50_000, "Second verse"),
             line(80_000, "Oh oh, the chorus"), line(90_000, "oh"), line(95_000, "oh"), line(120_000, "OH OH, the chorus ")];
         assert_eq!(super::chorus(&lines), Some(40.0), "short shouts do not count, case and spaces do not part lines");

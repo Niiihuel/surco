@@ -1198,7 +1198,7 @@ mod press_tests {
         state.mobile = true;
         state.page = state::Page::Playing;
         state.show(crate::player::PlayerView { current: Some(track), playing: true, position: 12.0, duration: 200.0, ..Default::default() });
-        state.lyrics = Some(("a".into(), state::Lyrics::Lines((0..20).map(|i| Line { at_ms: i * 3_000, text: format!("line {i}") }).collect())));
+        state.lyrics = Some(("a".into(), state::Lyrics::Lines((0..20).map(|i| Line { words: Vec::new(), at_ms: i * 3_000, text: format!("line {i}") }).collect())));
         let window = Size::new(390.0, 844.0);
         for id in ["play-pause", "repeat", "shuffle", "next"] {
             let mut tree = UiTree::new(Element::spacer());
@@ -1284,13 +1284,13 @@ mod lyrics_viewport_tests {
 
     fn lyrics(state: &mut State, id: &str) {
         state.apply(Event::Lyrics { track_id: id.into(), lines: Some((0..40)
-            .map(|index| Line { at_ms: 5_000 + index * 1_000, text: format!("Verse {index}") })
+            .map(|index| Line { words: Vec::new(), at_ms: 5_000 + index * 1_000, text: format!("Verse {index}") })
             .collect()) });
     }
 
     fn long_lyrics(state: &mut State) {
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..21)
-            .map(|index| Line { at_ms: index * 1_000,
+            .map(|index| Line { words: Vec::new(), at_ms: index * 1_000,
                 text: "La canción continúa en dos renglones mientras atravesamos la ciudad.".into() })
             .collect()) });
     }
@@ -1333,7 +1333,7 @@ mod lyrics_viewport_tests {
     }
 
     fn verses(count: u64) -> impl Iterator<Item = Line> {
-        (0..count).map(|index| Line { at_ms: index * 1_000, text: format!("Verse {index}") })
+        (0..count).map(|index| Line { words: Vec::new(), at_ms: index * 1_000, text: format!("Verse {index}") })
     }
 
     #[test]
