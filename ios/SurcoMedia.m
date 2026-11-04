@@ -93,6 +93,8 @@ int surco_media_deactivate(char *message, size_t capacity) {
     self.observers = [NSMutableArray array];
     self.commands = [NSMutableArray array];
     self.routeSignature = self.currentRouteSignature;
+    // How long the route holds the sound, so the lyrics follow what is heard: AirPlay's is long.
+    [self send:15 value:AVAudioSession.sharedInstance.outputLatency];
     MPRemoteCommandCenter *center = MPRemoteCommandCenter.sharedCommandCenter;
     [self addCommand:center.playCommand kind:1];
     [self addCommand:center.pauseCommand kind:2];
@@ -124,6 +126,7 @@ int surco_media_deactivate(char *message, size_t capacity) {
         NSString *signature = owner.currentRouteSignature;
         BOOL changed = ![owner.routeSignature isEqualToString:signature];
         owner.routeSignature = signature;
+        [owner send:15 value:AVAudioSession.sharedInstance.outputLatency];
         if (reason == AVAudioSessionRouteChangeReasonOldDeviceUnavailable) {
             [owner send:12 value:0];
         } else if (changed && (reason == AVAudioSessionRouteChangeReasonNewDeviceAvailable

@@ -515,6 +515,9 @@ impl eframe::App for Host {
         if let Some(track) = self.state.sharing.take() {
             android_system::share(&track.title, &state::share_link(&track));
         }
+        // The lyrics follow the sound as the route plays it, an Apple TV's over AirPlay late.
+        #[cfg(target_os = "ios")]
+        { self.state.output_latency = ios_media::output_latency(); }
         // A code read by the camera opens the account another device serves.
         #[cfg(target_os = "ios")]
         if let Some(link) = ios_ui::take_opened_link() {

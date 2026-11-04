@@ -8,6 +8,14 @@ never copied. The desktop layout does not change.
 Order: phone (Android and iPhone share the view) → Android TV → Apple TV. The iPhone draws
 the same bars as Android in limn; UIKit's own header and tab bar are not used for them.
 
+Apple TV is reached by AirPlay from the iPhone, not by an app of its own: winit 0.30, which
+eframe's iPhone window stands on, has no tvOS backend, and Rust's tvOS targets are tier 3
+(nightly `-Zbuild-std`). The iPhone's player picks the Apple TV in its devices sheet (iOS's
+own route picker); the audio session is long-form, so AirPlay 2 takes it, and Now Playing
+hands the Apple TV the cover, title, artist, album and times. AirPlay plays the sound a
+while after the player's clock: iOS's `outputLatency` for the route is taken off the
+position the lyrics and their fill follow, so they stay with what is heard.
+
 Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 `app/src/main/java/com/music/bitchord`, `S` is `sharedUi/src/jvmSharedMain/kotlin/com/music/bitchord/ui`,
 `T` is `tv/src/main/java/com/music/bitchord/ui/tv`.

@@ -894,6 +894,9 @@ pub struct State {
     pub tv_transport: Option<Instant>,
     /// Whether the television was in its player at the last frame.
     pub tv_in_player: bool,
+    /// How long the output route holds the sound before it is heard, in seconds: the lyrics
+    /// follow what is heard, not what the player has sent.
+    pub output_latency: f64,
     /// Whether the television's player keeps the lyrics away, by its lyrics button.
     pub tv_lyrics_hidden: bool,
     /// Whether Up Next is open under the television's scrubber.
@@ -1405,6 +1408,7 @@ impl Default for State {
             tv_focused: None,
             tv_transport: None,
             tv_in_player: false,
+            output_latency: 0.0,
             tv_lyrics_hidden: false,
             tv_up_next: false,
             tv_shown: None,
@@ -4246,7 +4250,7 @@ impl State {
     pub fn playhead_ms(&self, now: Instant) -> u64 {
         let (position, since) = self.heard;
         let carried = if self.player.playing { now.saturating_duration_since(since).min(Duration::from_millis(300)).as_secs_f64() } else { 0.0 };
-        ((position + carried).max(0.0) * 1000.0) as u64
+        ((position + carried - self.output_latency).max(0.0) * 1000.0) as u64
     }
 
     /// Whether a phone's lyrics are filling as their words are sung, or the words just sung
@@ -4262,7 +4266,8 @@ impl State {
 
     /// The line being sung.
     pub fn active_line(&self) -> Option<usize> {
-        active(self.lines(), (self.player.position.max(0.0) * 1000.0) as u64)
+        // What is heard, which an AirPlay speaker or TV plays a while after the player's clock.
+        active(self.lines(), ((self.player.position - self.output_latency).max(0.0) * 1000.0) as u64)
     }
 
     pub fn lyrics_open(&self) -> bool {
@@ -4853,6 +4858,18 @@ mod tests {
         click(&mut state, "handoff-take");
         assert!(state.handoff.is_none() && state.collection.liked.len() == 1);
         assert_eq!(click(&mut state, "handoff-close"), vec![Command::StopServing]);
+    }
+
+    #[test]
+    fn the_lyrics_follow_what_is_heard_through_a_slow_route() {
+        let mut state = State::default();
+        let lines = vec![Line { at_ms: 0, text: "uno".into(), words: Vec::new() }, Line { at_ms: 9_000, text: "dos".into(), words: Vec::new() }];
+        state.lyrics = Some(("song".into(), Lyrics::Lines(lines)));
+        state.player.current = Some(Track { id: "song".into(), title: "Canción".into(), artist: "Banda".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 200_000 });
+        state.player.position = 10.0;
+        assert_eq!(state.active_line(), Some(1));
+        state.output_latency = 2.0;
+        assert_eq!(state.active_line(), Some(0), "an Apple TV over AirPlay plays it two seconds later");
     }
 
     #[test]
