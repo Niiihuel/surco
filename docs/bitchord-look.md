@@ -98,6 +98,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   14) of 48 rows, hairlines from the words' start and none beside the focused row; what
   the focused row is for as its group's footnote, 13/18, in two lines of room that stay
   whether it speaks or not. Values are written out and change in place on select.
+- What is on its way stands in its own shape and pulses (limn's `Skeleton`, in step with the
+  covers coming): the home's pick shelves, the search's shelves until the first results, a
+  song list opening (cover, title, Play and rows), the lyrics' lines on the phone and the TV,
+  whose player keeps the lyrics' side while they come. A failed search says so with a Retry.
 - Search field in the tabs' capsule shape: 576 × 44 on the capsule's white at 8%, fully
   round ends, no outline, 16 medium; the white platter with dark words under the focus.
 - Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title

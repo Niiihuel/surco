@@ -56,6 +56,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Search if state.mobile_search => search(state, palette),
         Page::Search => home(state, palette),
         Page::Settings => settings::page(state, window, palette),
+        Page::Loading(_) => coming_page(palette),
         // The profile and the rest are the app's own pages, their controls
         // reached by the remote as any others.
         _ => Element::column(vec![Element::spacer().size(None, Some(BAR)), horizontal_inset(page(state, window.width - 2.0 * SIDE, palette), SIDE, SIDE).flex(1.0)]),
@@ -180,14 +181,49 @@ fn home(state: &State, palette: ComponentPalette) -> Element {
     let artists = state.picked_artists.iter().enumerate()
         .map(|(index, artist)| lockup(state, format!("pick-artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)).collect();
     let albums = albums(state, "pick-album", &state.picked_albums, palette);
+    // What the picks bring is shaped and pulsing until it comes.
+    let [tracks_coming, artists_coming, albums_coming] = state.picks_coming;
+    let or_coming = |cards: Vec<Element>, coming: bool, round: bool| if cards.is_empty() && coming { coming_lockups(round, palette) } else { cards };
     shelves("tv-home", vec![
-        shelf("tv-mixes", &t!("desktop-your-mixes"), mixes, palette),
-        shelf("tv-today", &t!("desktop-recommended-today"), track("today", &state.recent_picks), palette),
+        shelf("tv-mixes", &t!("desktop-your-mixes"), or_coming(mixes, tracks_coming, false), palette),
+        shelf("tv-today", &t!("desktop-recommended-today"), or_coming(track("today", &state.recent_picks), tracks_coming, false), palette),
         shelf("tv-heard", &t!("desktop-listen-again"), track("heard", &state.collection.heard), palette),
-        shelf("tv-artists", &t!("desktop-artists-to-discover"), artists, palette),
-        shelf("tv-albums", &t!("desktop-albums-for-you"), albums, palette),
+        shelf("tv-artists", &t!("desktop-artists-to-discover"), or_coming(artists, artists_coming, true), palette),
+        shelf("tv-albums", &t!("desktop-albums-for-you"), or_coming(albums, albums_coming, false), palette),
         shelf("tv-liked", &t!("common-liked-songs"), track("liked-track", &state.collection.liked), palette),
     ])
+}
+
+/// A shelf's lockups while what fills them is on its way: the shape of each, pulsing in step
+/// with every cover that is coming.
+fn coming_lockups(round: bool, palette: ComponentPalette) -> Vec<Element> {
+    let pulse = ComponentPalette { raised: palette.selected, ..palette };
+    let side = if round { ARTIST } else { LOCKUP };
+    (0..6).map(|_| {
+        let picture = limn::Skeleton::block("cover-coming", pulse, side, side).radius(if round { side / 2.0 } else { LOCKUP_RADIUS }).render();
+        let lines = [0.7, 0.45].map(|share| limn::Skeleton::line("cover-coming", pulse, side * share).height(10.0).render());
+        let lines: Vec<Element> = if round { lines.map(Element::centered_x).into() } else { lines.into() };
+        Element::column(vec![picture, Element::column(lines).gap(6.0)]).gap(10.0).size(Some(side), None)
+    }).collect()
+}
+
+/// A song list's page while it opens: its header and rows in their places, pulsing.
+fn coming_page(palette: ComponentPalette) -> Element {
+    let pulse = ComponentPalette { raised: palette.selected, ..palette };
+    let line = |width: f32, height: f32| limn::Skeleton::line("cover-coming", pulse, width).height(height).render();
+    let round = |side: f32| limn::Skeleton::block("cover-coming", pulse, side, side).radius(side / 2.0).render();
+    let words = Element::column(vec![
+        Element::spacer().flex(1.0), line(260.0, 28.0), Element::spacer().size(None, Some(10.0)), line(140.0, 14.0),
+        Element::spacer().size(None, Some(8.0)), line(110.0, 11.0), Element::spacer().size(None, Some(19.0)),
+        Element::row(vec![round(43.0).centered_y(), round(58.0)]).gap(18.0),
+    ]).flex(1.0);
+    let cover = limn::Skeleton::block("cover-coming", pulse, 232.0, 232.0).radius(LOCKUP_RADIUS).render();
+    let mut items = vec![Element::spacer().size(None, Some(BAR)), horizontal_inset(Element::row(vec![cover, words]).gap(32.0).size(None, Some(232.0)), SIDE, SIDE), Element::spacer().size(None, Some(24.0))];
+    items.extend((0..6).map(|_| horizontal_inset(Element::row(vec![
+        limn::Skeleton::block("cover-coming", pulse, 34.0, 34.0).radius(5.0).render().centered_y(),
+        Element::column(vec![line(220.0, 12.0), line(120.0, 10.0)]).gap(6.0).centered_y(),
+    ]).gap(11.0).size(None, Some(48.0)), SIDE, SIDE)));
+    Element::column(items)
 }
 
 fn albums(state: &State, prefix: &str, albums: &[AlbumRef], palette: ComponentPalette) -> Vec<Element> {
@@ -282,10 +318,43 @@ fn search(state: &State, palette: ComponentPalette) -> Element {
     let artists = found.artists.iter().enumerate()
         .map(|(index, artist)| lockup(state, format!("artist:{index}"), &artist.name, &t!("common-artist"), &artist.artwork_url, true, palette)).collect();
     let mut parts = vec![Some(field.centered_x())];
+    // Until the first results come, their shelves pulse where they will be.
+    let nothing = found.tracks.is_empty() && found.artists.is_empty() && found.albums.is_empty();
+    let coming = state.searching && nothing;
+    // A search that failed says so under the field, its retry a press away.
+    let said = |title: std::borrow::Cow<str>, detail: std::borrow::Cow<str>, retry: bool| {
+        let mut said = vec![
+            Text::new(title, palette).font_size(17.0).render().font_family(FontFamily::SansSemibold).center_content(),
+            Text::new(detail, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY).center_content(),
+        ];
+        if retry {
+            let on = lit(state, "search-submit");
+            let label = t!("common-retry");
+            let words = Text::new(&*label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(if on { PLATTER_INK } else { palette.text }).centered();
+            let button = Element::panel(horizontal_inset(words, 22.0, 22.0)).background(if on { PLATTER } else { CAPSULE }).round().size(None, Some(TAB));
+            let button = Element::clickable("search-submit", button).accessible(limn::Access::new(limn::Role::Button).name(&*label)).focus_ring(false).round()
+                .animate_scale_about("tv-lift:search-submit", if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5));
+            said.extend([Element::spacer().size(None, Some(8.0)), button.centered_x()]);
+        }
+        Some(Element::column(said).gap(6.0).size(Some(576.0), None).centered_x().padding(24.0))
+    };
+    if !coming && state.search_error.is_some() {
+        parts.push(said(t!("mobile-search-failed"), t!("mobile-search-failed-detail"), true));
+        return shelves("tv-search", parts);
+    }
+    if !coming && nothing && state.submitted.is_some() {
+        parts.push(said(t!("common-no-results"), t!("desktop-try-other-words"), false));
+        return shelves("tv-search", parts);
+    }
+    let (songs, artists, albums) = if coming {
+        (coming_lockups(false, palette), coming_lockups(true, palette), coming_lockups(false, palette))
+    } else {
+        (songs, artists, albums(state, "album", &found.albums, palette))
+    };
     parts.extend([
         shelf("tv-found-songs", &t!("common-songs-heading"), songs, palette),
         shelf("tv-found-artists", &t!("common-artists"), artists, palette),
-        shelf("tv-found-albums", &t!("common-albums"), albums(state, "album", &found.albums, palette), palette),
+        shelf("tv-found-albums", &t!("common-albums"), albums, palette),
     ]);
     shelves("tv-search", parts)
 }
@@ -392,7 +461,10 @@ fn player(state: &State, window: Size, palette: ComponentPalette) -> Element {
         layers.push(whole(Element::raster_image(blurred.clone().cover())));
         layers.push(whole(Element::panel(Element::spacer()).background(Color::rgba(0, 0, 0, 110))));
     }
-    let lyrics = !state.lines().is_empty() && !state.tv_lyrics_hidden;
+    // While they come the lyrics' side already stands, pulsing, as BitChord's: the cover does
+    // not glide over once they arrive.
+    let coming = matches!(&state.lyrics, Some((id, crate::state::Lyrics::Loading)) if *id == track.id);
+    let lyrics = (coming || !state.lines().is_empty()) && !state.tv_lyrics_hidden;
     let (share, most) = if lyrics { COVER_BESIDE } else { COVER };
     let side = (window.height * share).min(most);
     let picture = sole_cover(state, &largest(state, track), side, palette).radius(11.0).shadow(LIFT_SHADOW, limn::Point::new(0.0, 14.0), 29.0, 0.0)
@@ -572,6 +644,23 @@ mod tests {
         assert!(tree.horizontal_scroll_offset("tv-heard") > 0.0, "the shelf slid along");
         let card = tree.frame().access.iter().find(|node| node.id == "heard:9").unwrap().rect;
         assert!(card.x + card.width <= SCREEN.width + 0.5, "and the focused card is in sight: {card:?}");
+    }
+
+    #[test]
+    fn what_is_on_its_way_pulses_in_its_place() {
+        // With motion: a skeleton holds still under reduced motion.
+        let settled = |state: &State| { let mut tree = UiTree::new(crate::view::view(state, SCREEN)); tree.layout(SCREEN); tree.animation_repaint_after().is_none() };
+        let mut state = television();
+        state.collection.heard.clear();
+        assert!(settled(&state), "nothing coming, nothing moves");
+        state.picks_coming = [true; 3];
+        assert!(!settled(&state), "the home's picks pulse while they come");
+        state.picks_coming = [false; 3];
+        state.mobile_search = true;
+        state.searching = true;
+        assert!(!settled(&state), "the search's shelves pulse until the first results come");
+        state.page = Page::Loading(crate::backend::Target::Album("lp".into()));
+        assert!(!settled(&state), "an album opening pulses in its page's shape");
     }
 
     #[test]

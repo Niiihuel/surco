@@ -3972,6 +3972,8 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
     let note = |title: &str, about: &str| centered(blank(Icon::Custom(LYRICS), title, about, None, palette));
     let lines = match &state.lyrics {
         _ if state.current().is_none() => return note(&t!("desktop-nothing-playing"), &t!("desktop-lyrics-nothing-detail")),
+        // A phone's and a television's: the lines' own shapes, pulsing until the words come.
+        Some((_, Lyrics::Loading)) | None if state.mobile || state.tv => return coming_lyrics(width, palette),
         Some((_, Lyrics::Loading)) | None => return loading("lyrics-loading", palette),
         Some((_, Lyrics::Missing)) => {
             return centered(blank(Icon::Custom(LYRICS), t!("desktop-lyrics-missing"), t!("desktop-lyrics-missing-detail"), Some(("retry-lyrics", t!("desktop-search-again"))), palette));
@@ -4052,6 +4054,14 @@ fn lyrics(state: &State, width: f32, body: f32, palette: ComponentPalette) -> El
         Some(tint) if !state.tv => page.bottom_background_fade(Color { a: 120, ..*tint }, LYRIC_WASH),
         _ => page,
     }
+}
+
+/// The lyrics while they come: bold lines of uneven length where the words will stand.
+fn coming_lyrics(width: f32, palette: ComponentPalette) -> Element {
+    let pulse = ComponentPalette { raised: palette.selected, ..palette };
+    let room = (width - 2.0 * (PANEL_PAD + 8.0)).max(120.0);
+    let lines = [0.82, 0.64, 0.9, 0.5, 0.74, 0.58].map(|share| limn::Skeleton::line("lyrics-loading", pulse, room * share).height(22.0).render());
+    Element::column(lines.into()).gap(24.0).padding(PANEL_PAD + 8.0).flex(1.0)
 }
 
 /// How large a line's translation is next to the line.
