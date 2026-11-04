@@ -16,10 +16,6 @@ const SONGS: usize = 4;
 const ARTISTS: usize = 3;
 /// BitChord's field: rounded by 11 on the raised grey, the magnifier and words at its start.
 const FIELD_RADIUS: f32 = 11.0;
-/// BitChord's segmented control: a dim track, the chosen kind on a lighter pill.
-const SEGMENT_TRACK: Color = Color::rgb(34, 34, 37);
-const SEGMENT_ON: Color = Color::rgb(99, 99, 102);
-const SEGMENT_HEIGHT: f32 = 36.0;
 
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
@@ -80,7 +76,7 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
     let filters = if super::glass(state) {
         Element::spacer().size(None, Some(TAP)).accessible(limn::Access::new(limn::Role::Group).id("ios-filters").name(t!("common-search")))
     } else {
-        horizontal_inset(segments(state, palette), 8.0, 8.0)
+        horizontal_inset(super::segments(filters(state).into_iter(), limn::Role::Tab, "search-segment", palette), 8.0, 8.0)
     };
     let found = &state.found;
     let mut rows = Vec::new();
@@ -171,23 +167,6 @@ fn result(state: &State, id: String, title: &str, subtitle: &str, artwork: &Opti
     let body = Element::row(vec![picture, super::song_copy(title, subtitle, palette)]).gap(14.0);
     Element::clickable(&id, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{title} · {subtitle}")))
         .padding(8.0).size(None, Some(68.0))
-}
-
-/// BitChord's segmented control for the kinds of result: the four in one pill track, the one
-/// chosen on a lighter pill that slides over to the next one chosen. Each kind is touched on
-/// the track's whole height.
-fn segments(state: &State, palette: ComponentPalette) -> Element {
-    let cells = filters(state).map(|(id, label, on)| {
-        let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
-        let pill = |cell: Element| Element::column(vec![Element::spacer().flex(1.0), cell.size(None, Some(SEGMENT_HEIGHT - 6.0)), Element::spacer().flex(1.0)]);
-        let cell = if on {
-            pill(Element::stack(vec![Element::panel(Element::spacer()).background(SEGMENT_ON).round().animate_move("search-segment"), copy]))
-        } else { copy };
-        Element::clickable(id, cell).accessible(limn::Access::new(limn::Role::Tab).name(label).selected(on)).size(None, Some(TAP)).flex(1.0)
-    });
-    let track = Element::panel(Element::spacer()).background(SEGMENT_TRACK).round().size(None, Some(SEGMENT_HEIGHT));
-    Element::stack(vec![Element::column(vec![Element::spacer().flex(1.0), track, Element::spacer().flex(1.0)]),
-        horizontal_inset(Element::row(cells.into()), 3.0, 3.0)]).size(None, Some(TAP))
 }
 
 /// Search's foot under Liquid Glass, as Apple Music's: the tab bar folded into a glass circle
@@ -445,7 +424,7 @@ mod tests {
         let target = frame.regions.iter().find(|region| region.id == "search-filter:all").unwrap().rect;
         assert!(target.width >= TAP && target.height >= TAP);
         assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { rect, radius, color }
-            if *color == SEGMENT_ON && (rect.height - (SEGMENT_HEIGHT - 6.0)).abs() < 0.01 && *radius >= rect.height / 2.0
+            if *color == super::SEGMENT_ON && (rect.height - (super::SEGMENT_HEIGHT - 6.0)).abs() < 0.01 && *radius >= rect.height / 2.0
                 && rect.y >= target.y && rect.y + rect.height <= target.y + target.height)));
     }
 

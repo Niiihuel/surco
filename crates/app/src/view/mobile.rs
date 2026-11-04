@@ -37,7 +37,7 @@ const BAR_MAX: f32 = 440.0;
 const FROST: Color = Color::rgb(24, 24, 26);
 const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
 /// The hairline every thumbnail keeps, so a dark cover does not sink into the page.
-const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
+pub(in crate::view) const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
 /// The chosen tab's platter.
 const TAB_LIT: Color = Color::rgba(255, 255, 255, 36);
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
@@ -496,7 +496,28 @@ fn mini_player(state: &State, track: &Track, width: f32, palette: ComponentPalet
 }
 
 /// A song row's cover, as BitChord's: 52 across, its corners 8, rimmed with a hairline.
-const THUMB: f32 = 52.0;
+pub(in crate::view) const THUMB: f32 = 52.0;
+/// BitChord's segmented control: a dim track, the chosen kind on a lighter pill.
+const SEGMENT_TRACK: Color = Color::rgb(34, 34, 37);
+const SEGMENT_ON: Color = Color::rgb(99, 99, 102);
+const SEGMENT_HEIGHT: f32 = 36.0;
+
+/// BitChord's segmented control: its `cells`, (id, label, chosen), in one pill track, the one
+/// chosen on a lighter pill that slides, under `platter`, to the next one chosen. Each is
+/// touched on the track's whole height, and said to be a `role`.
+pub(in crate::view) fn segments<'a>(cells: impl Iterator<Item = (&'a str, &'a str, bool)>, role: limn::Role, platter: &str, palette: ComponentPalette) -> Element {
+    let cells = cells.map(|(id, label, on)| {
+        let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
+        let pill = |cell: Element| Element::column(vec![Element::spacer().flex(1.0), cell.size(None, Some(SEGMENT_HEIGHT - 6.0)), Element::spacer().flex(1.0)]);
+        let cell = if on {
+            pill(Element::stack(vec![Element::panel(Element::spacer()).background(SEGMENT_ON).round().animate_move(platter), copy]))
+        } else { copy };
+        Element::clickable(id, cell).accessible(limn::Access::new(role).name(label).selected(on)).size(None, Some(TAP)).flex(1.0)
+    }).collect();
+    let track = Element::panel(Element::spacer()).background(SEGMENT_TRACK).round().size(None, Some(SEGMENT_HEIGHT));
+    Element::stack(vec![Element::column(vec![Element::spacer().flex(1.0), track, Element::spacer().flex(1.0)]),
+        horizontal_inset(Element::row(cells), 3.0, 3.0)]).size(None, Some(TAP))
+}
 /// The row of the song that plays: a faint platter, faint as limn blends in linear light.
 const PLAYING_ROW: Color = Color::rgba(255, 255, 255, 8);
 

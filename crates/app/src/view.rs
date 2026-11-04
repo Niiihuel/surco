@@ -326,6 +326,16 @@ const LIBRARY_ROW: ListRowSizing = ListRowSizing {
     ..ListRowSizing::COMPACT
 };
 const LIBRARY_TILE: f32 = 48.0;
+/// A phone's library entry, as BitChord's rows: 68 high around a 52 picture, the name at 16.
+const PHONE_LIBRARY_ROW: ListRowSizing = ListRowSizing {
+    height: Some(68.0),
+    two_line_height: Some(68.0),
+    gap: 14.0,
+    leading_width: mobile::THUMB,
+    title_size: 16.0,
+    subtitle_size: 14.0,
+    ..LIBRARY_ROW
+};
 /// The most entries quick access offers, the corner of each, and its fill under the pointer.
 const QUICK_MOST: usize = 8;
 const QUICK_RADIUS: f32 = 4.0;
@@ -1728,6 +1738,12 @@ struct LibraryEntry<'a> {
 fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> Element {
     let shows = |filter: Filter| state.filter == Filter::All || state.filter == filter;
     let (downloads, liked) = (t!("common-downloads"), t!("common-liked-songs"));
+    // A phone's pictures are BitChord's: 52 across, their corners 8, rimmed.
+    let side = if state.mobile { mobile::THUMB } else { LIBRARY_TILE };
+    let library_tile = |icon: Icon, palette: ComponentPalette| library_tile(icon, palette).size(Some(side), Some(side));
+    let framed = |picture: Element, round: bool| if state.mobile {
+        picture.radius(if round { side / 2.0 } else { 8.0 }).border(mobile::THUMB_RIM, 0.5)
+    } else { picture };
     let mut entries: Vec<LibraryEntry> = Vec::new();
     if shows(Filter::Lists) {
         let count = format!("{} · {}", t!("common-playlist"), songs(state.saved.len()));
@@ -1738,14 +1754,14 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         }
         for (index, playlist) in state.collection.playlists.iter().enumerate() {
             let artwork = playlist.cover();
-            let picture = playlist_cover(state, playlist, LIBRARY_TILE, palette).unwrap_or_else(|| library_tile(Icon::Playlist, palette));
+            let picture = framed(playlist_cover(state, playlist, side, palette).unwrap_or_else(|| library_tile(Icon::Playlist, palette)), false);
             let about = format!("{} · {}", if playlist.collaborative { t!("desktop-collaborative-playlist") } else { t!("common-playlist") }, songs(playlist.tracks.len()));
             entries.push(LibraryEntry { id: format!("playlist:{index}"), key: format!("playlist:{}", playlist.id), picture, artwork, round: false, name: &playlist.name, about, creator: "", here: state.page == Page::Playlist(playlist.id) });
         }
     }
     if shows(Filter::Artists) {
         for (index, artist) in state.collection.artists() {
-            let picture = cover(state, &artist.artwork_url, LIBRARY_TILE, palette).radius(LIBRARY_TILE / 2.0);
+            let picture = framed(cover(state, &artist.artwork_url, side, palette).radius(side / 2.0), true);
             let here = matches!(&state.page, Page::Artist(page) if page.id == artist.id);
             entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("artist:{}", artist.id), picture, artwork: artist.artwork_url.as_ref(), round: true, name: &artist.name, about: t!("common-artist").into_owned(), creator: &artist.name, here });
         }
@@ -1754,7 +1770,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
         for (index, album) in state.collection.albums() {
             let about = album.artist.as_ref().map_or_else(|| t!("common-album").into_owned(), |artist| format!("{} · {artist}", t!("common-album")));
             let here = matches!(&state.page, Page::Album(page) if page.id == album.id);
-            let picture = cover(state, &album.artwork_url, LIBRARY_TILE, palette);
+            let picture = framed(cover(state, &album.artwork_url, side, palette), false);
             entries.push(LibraryEntry { id: format!("kept:{index}"), key: format!("album:{}", album.id), picture, artwork: album.artwork_url.as_ref(), round: false, name: &album.title, about, creator: album.artist.as_deref().unwrap_or(""), here });
         }
     }
@@ -1790,21 +1806,21 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
     let header = Element::row(header)
     .gap(8.0)
     .size(None, Some(if state.mobile { 44.0 } else { 40.0 }));
-    let chip = |id: &str, label: &str, selected| if state.mobile {
-        // A phone's as its search's: Spotify's 32pt pills.
-        mobile::chip(id.to_owned(), label, selected, limn::Role::Button, palette)
+    let kinds = [
+        ("filter:all", t!("common-all"), state.filter == Filter::All),
+        ("filter:lists", t!("desktop-playlists"), state.filter == Filter::Lists),
+        ("filter:artists", t!("common-artists"), state.filter == Filter::Artists),
+        ("filter:albums", t!("common-albums"), state.filter == Filter::Albums),
+    ];
+    let filters = if state.mobile {
+        // A phone's as its search's: BitChord's segmented control.
+        mobile::segments(kinds.iter().map(|(id, label, on)| (*id, label.as_ref(), *on)), limn::Role::Button, "library-segment", palette)
     } else {
-        Button::new(id, label, palette).variant(if selected { ButtonVariant::Default } else { ButtonVariant::Secondary })
-            .sizing(ControlSize::Regular.button_sizing()).round().render()
+        // Pills, as Spotify's: the one chosen is filled light. A panel too narrow for them scrolls them sideways.
+        let chips = kinds.iter().map(|(id, label, selected)| Button::new(*id, label.as_ref(), palette)
+            .variant(if *selected { ButtonVariant::Default } else { ButtonVariant::Secondary }).sizing(ControlSize::Regular.button_sizing()).round().render());
+        Element::horizontal_scroll_2d("mobile-library-filters", Element::row(chips.collect()).gap(8.0)).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR)
     };
-    // Pills, as Spotify's: the one chosen is filled light. A panel too narrow for them scrolls them sideways.
-    let filters = Element::row(vec![
-        chip("filter:all", &t!("common-all"), state.filter == Filter::All),
-        chip("filter:lists", &t!("desktop-playlists"), state.filter == Filter::Lists),
-        chip("filter:artists", &t!("common-artists"), state.filter == Filter::Artists),
-        chip("filter:albums", &t!("common-albums"), state.filter == Filter::Albums),
-    ]).gap(8.0);
-    let filters = Element::horizontal_scroll_2d("mobile-library-filters", filters).drag_to_pan().scrollbar_visibility(mobile::SCROLL_INDICATOR);
     // A magnifier that opens into the search, and at the far end the order and the view.
     let looking = match state.filter {
         Filter::All => t!("desktop-search-library"),
@@ -1884,7 +1900,7 @@ fn library(state: &State, rail: bool, width: f32, palette: ComponentPalette) -> 
                     if here { row.filled() } else { row }.render()
                 }
                 LibraryView::List => {
-                    let row = ListRow::new(id, name, palette).sizing(LIBRARY_ROW).leading(picture).subtitle(about).title_fade(true).radius(RadiusRole::Card);
+                    let row = ListRow::new(id, name, palette).sizing(if state.mobile { PHONE_LIBRARY_ROW } else { LIBRARY_ROW }).leading(picture).subtitle(about).title_fade(true).radius(RadiusRole::Card);
                     let row = phone_dots(row, state, &key, name, palette);
                     if here { row.filled() } else { row }.render()
                 }
