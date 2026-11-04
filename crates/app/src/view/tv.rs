@@ -18,7 +18,7 @@ const CARD_GAP: f32 = 16.0;
 const UNSEEN_BAR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 0, fade_ms: 0 };
 /// How far what has the focus grows: a lockup, a row, a button.
 const LIFT: f32 = 1.08;
-const ROW_LIFT: f32 = 1.03;
+const ROW_LIFT: f32 = 1.025;
 const BUTTON_LIFT: f32 = 1.1;
 const LIFT_SHADOW: Color = Color::rgba(0, 0, 0, 170);
 /// BitChord's canvas: a lifted grey at the top to near black, the cover's colour over its top.
@@ -43,13 +43,13 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
     let page = match &state.page {
         Page::Playing | Page::Lyrics => return player(state, window, palette),
-        Page::Album(album) => songs_page(state, &album.title, &album.artist, &album.artwork_url, window, palette),
-        Page::Artist(artist) => songs_page(state, &artist.name, &t!("common-artist"), &artist.artwork_url, window, palette),
+        Page::Album(album) => songs_page(state, &album.title, &album.artist, &album.artwork_url, true, palette),
+        Page::Artist(artist) => songs_page(state, &artist.name, &t!("common-artist"), &artist.artwork_url, false, palette),
         Page::Playlist(id) => match state.collection.playlist(*id) {
-            Some(playlist) => songs_page(state, &playlist.name, &t!("common-playlist"), &playlist.cover().cloned(), window, palette),
+            Some(playlist) => songs_page(state, &playlist.name, &t!("common-playlist"), &playlist.cover().cloned(), false, palette),
             None => home(state, palette),
         },
-        Page::Mix(mix) => songs_page(state, &mix_name(mix), &mix_detail(mix), &mix.covers().first().map(|url| (*url).clone()), window, palette),
+        Page::Mix(mix) => songs_page(state, &mix_name(mix), &mix_detail(mix), &mix.covers().first().map(|url| (*url).clone()), false, palette),
         Page::Library => library(state, palette),
         Page::Search if state.mobile_search => search(state, palette),
         Page::Search => home(state, palette),
@@ -60,8 +60,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // The tabs float over the page, which scrolls under them, and step aside once it has.
     let tabs = bar(state, palette).animate_slide("tv-bar", if state.tv_scrolled { -BAR } else { 0.0 });
     let body = Element::stack(vec![page.size(Some(window.width), Some(window.height)), Element::column(vec![tabs, Element::spacer().flex(1.0)])]);
-    // The cover of what plays washes the canvas's top in its colour.
-    let wash = state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)).map(|tint| {
+    // A song list's cover washes the canvas's top in its colour, as what plays does elsewhere.
+    let art = match &state.page {
+        Page::Album(album) => album.artwork_url.clone(),
+        Page::Artist(artist) => artist.artwork_url.clone(),
+        Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.cover().cloned()),
+        Page::Mix(mix) => mix.covers().first().map(|url| (*url).clone()),
+        _ => state.current().and_then(|track| track.artwork_url.clone()),
+    };
+    let wash = art.and_then(|url| state.tints.get(&url)).map(|tint| {
         Element::panel(Element::spacer()).vertical_gradient(vec![Color { a: 110, ..*tint }, Color { a: 0, ..*tint }]).size(None, Some(window.height * 0.6))
     });
     let mut layers = vec![Element::panel(Element::spacer()).vertical_gradient(CANVAS.to_vec())];
@@ -221,38 +228,68 @@ fn search(state: &State, palette: ComponentPalette) -> Element {
     shelves("tv-search", parts)
 }
 
-/// A song list's page, as BitChord's TV: its cover beside its name, and its songs as rows the
-/// focus goes down.
-fn songs_page(state: &State, title: &str, about: &str, artwork: &Option<String>, window: Size, palette: ComponentPalette) -> Element {
-    let picture = cover(state, artwork, 232.0, palette).radius(LOCKUP_RADIUS).shadow(LIFT_SHADOW, limn::Point::new(0.0, 10.0), 28.0, 0.0);
-    let play = button(state, "page-play", Icon::PlayFill, &t!("common-play"), 56.0, PLATTER, palette);
-    let shuffle = button(state, "page-shuffle", shuffle_step(state).0, &shuffle_step(state).1, 46.0, Color::rgba(255, 255, 255, 30), palette);
-    let head = Element::column(vec![
+/// A song list's page, as BitChord's TV: its cover beside its name, its artist in red, how
+/// long it runs and its Play, then its songs, all of it scrolling under the tabs.
+fn songs_page(state: &State, title: &str, about: &str, artwork: &Option<String>, numbered: bool, palette: ComponentPalette) -> Element {
+    let tracks = state.page_rows();
+    let picture = cover(state, artwork, 232.0, palette).radius(LOCKUP_RADIUS).shadow(LIFT_SHADOW, limn::Point::new(0.0, 10.0), 24.0, 0.0);
+    let minutes = tracks.iter().map(|(_, track)| track.duration_ms).sum::<u64>() / 60_000;
+    let (shuffle, shuffle_hint) = shuffle_step(state);
+    let actions = Element::row(vec![
+        button(state, "page-shuffle", shuffle, &shuffle_hint, 43.0, Color::rgba(255, 255, 255, 41), palette),
+        button(state, "page-play", Icon::PlayFill, &t!("common-play"), 58.0, RED, palette),
+    ]).gap(18.0);
+    let words = Element::column(vec![
+        Element::spacer().flex(1.0),
         Text::new(title, palette).font_size(31.0).line_height(36.0).render().max_lines(2).font_family(FontFamily::SansBold),
-        Text::new(about, palette).font_size(16.0).muted().truncate().render(),
-        Element::spacer().size(None, Some(12.0)),
-        Element::row(vec![play, shuffle]).gap(16.0),
-    ]).gap(6.0).centered_y().flex(1.0);
-    let rows: Vec<Element> = state.page_rows().into_iter().map(|(place, track)| row(state, format!("page-track:{place}"), track, palette)).collect();
-    let room = || Element::spacer().size(None, Some(BAR));
-    let list = ScrollArea::new("tv-page-songs", Element::column(std::iter::once(room()).chain(rows).collect()).gap(4.0).padding(8.0)).visibility(UNSEEN_BAR).render().flex(1.0);
-    let side = Element::column(vec![room(), Element::row(vec![picture, head]).gap(28.0), Element::spacer().flex(1.0)]).size(Some((window.width * 0.42).min(460.0)), None);
-    horizontal_inset(Element::row(vec![side, list]).gap(32.0), SIDE, SIDE).padding(4.0)
+        Element::spacer().size(None, Some(5.0)),
+        Text::new(about, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansSemibold).foreground(RED),
+        Element::spacer().size(None, Some(3.0)),
+        Text::new(format!("{}, {}", songs(tracks.len()), length(minutes)), palette).font_size(13.0).render().foreground(SECONDARY),
+        Element::spacer().size(None, Some(19.0)),
+        actions,
+    ]).flex(1.0);
+    let head = Element::row(vec![picture, words]).gap(32.0).size(None, Some(232.0));
+    let mut items = vec![Element::spacer().size(None, Some(BAR)), horizontal_inset(head, SIDE, SIDE), Element::spacer().size(None, Some(24.0))];
+    // Each row's hairline starts under its words.
+    let inset = SIDE - ROW_PAD + if numbered { 43.0 } else { 56.0 };
+    for (index, (place, track)) in tracks.iter().enumerate() {
+        if index > 0 {
+            items.push(horizontal_inset(Element::panel(Element::spacer()).background(HAIRLINE).size(None, Some(1.0)), inset, SIDE));
+        }
+        items.push(horizontal_inset(row(state, format!("page-track:{place}"), track, numbered.then_some(index + 1), palette), SIDE - ROW_PAD, SIDE - ROW_PAD));
+    }
+    items.push(Element::spacer().size(None, Some(45.0)));
+    ScrollArea::new("tv-page-songs", Element::column(items)).visibility(UNSEEN_BAR).render().flex(1.0)
 }
 
-/// A song's row: its number's place taken by its cover, a white platter under it while the
-/// focus is on it.
-fn row(state: &State, id: String, track: &Track, palette: ComponentPalette) -> Element {
+/// Apple's red, which BitChord's TV gives a list's artist, its Play and the song playing.
+const RED: Color = Color::rgb(250, 45, 72);
+const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
+/// Inside a song's row, at each end.
+const ROW_PAD: f32 = 11.0;
+
+/// A song's row, as BitChord's TV: its number on an album, its cover elsewhere, its length at
+/// the end, red while it plays, and on a white platter while the focus is on it.
+fn row(state: &State, id: String, track: &Track, number: Option<usize>, palette: ComponentPalette) -> Element {
     let on = lit(state, &id);
-    let ink = if on { PLATTER_INK } else { palette.text };
-    let picture = cover(state, &track.artwork_url, 40.0, palette).radius(6.0);
+    let playing = state.current().is_some_and(|current| current.id == track.id);
+    let ink = if on { PLATTER_INK } else if playing { RED } else { palette.text };
+    let soft = if on { Color::rgb(80, 80, 86) } else { SECONDARY };
+    let lead = match number {
+        Some(number) => Text::new(number.to_string(), palette).font_size(13.0).render().foreground(if playing && !on { RED } else { soft }).size(Some(21.0), None),
+        None => cover(state, &track.artwork_url, 34.0, palette).radius(5.0),
+    };
     let copy = Element::column(vec![
-        Text::new(&track.title, palette).font_size(15.0).truncate().render().font_family(FontFamily::SansMedium).foreground(ink),
-        Text::new(&track.artist, palette).font_size(13.0).truncate().render().foreground(if on { Color::rgb(80, 80, 86) } else { palette.muted }),
-    ]).gap(2.0).centered_y().flex(1.0);
-    let body = Element::panel(Element::row(vec![picture.centered_y(), copy]).gap(12.0).padding(8.0)).background(if on { PLATTER } else { Color::TRANSPARENT }).radius(10.0);
+        Text::new(&track.title, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansMedium).foreground(ink),
+        Text::new(&track.artist, palette).font_size(11.0).truncate().render().foreground(soft),
+    ]).centered_y().flex(1.0);
+    let length = Text::new(clock(track.duration_ms as f64 / 1000.0), palette).font_size(11.0).render().foreground(soft).centered_y();
+    let body = Element::panel(horizontal_inset(Element::row(vec![lead.centered_y(), copy, length]).gap(11.0), ROW_PAD, ROW_PAD))
+        .background(if on { PLATTER } else { Color::TRANSPARENT }).radius(10.0);
     Element::clickable(&id, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {}", track.title, track.artist))).focus_ring(false)
-        .animate_scale_about(format!("tv-lift:{id}"), if on { ROW_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5)).size(None, Some(56.0))
+        .animate_scale_about(format!("tv-lift:{id}"), if on { ROW_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5))
+        .size(None, Some(if number.is_some() { 42.0 } else { 48.0 }))
 }
 
 /// A round button of a page's or the player's, `side` across on `rest`: white with a dark glyph

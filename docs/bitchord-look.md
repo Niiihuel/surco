@@ -88,6 +88,11 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Focus lifts instead of outlining: cards scale 1.08 with a shadow, rows 1.03, buttons 1.1;
   rows and pills turn into a white platter with dark text.
 - Safe margins 38 × 22, cards 16 apart, 131 lockups (corners 10), 120 round artists.
+- Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title
+  31/36 (two lines at most), the artist 16/600 in Apple's red #FA2D48, "N songs, M min" 13,
+  a 43 shuffle circle and a 58 red Play; then the songs, 48 tall with a 34 cover (an album's
+  42 with its number), title 13 over artist 11, the length at the end, a hairline at white
+  10% between them, red while one plays. The page's cover washes the top of the canvas.
 - Canvas #26272C → #101012 with the cover's colour washed over the top.
 - Player: the blurred cover, the artwork centred at 62% of the height (at most 320, 21 above
   the middle), or 54% (at most 272) 51 from the left when there are lyrics, which appear on

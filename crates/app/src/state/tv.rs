@@ -77,6 +77,19 @@ impl State {
         }
     }
 
+    /// Where the remote's focus goes when it is on nothing: the page's tab, a song list's Play,
+    /// the player's scrubber; never another tab, which resting there would open.
+    pub fn tv_rest_focus(&self) -> Option<&'static str> {
+        match self.page {
+            // With the transport away, the player itself takes the presses.
+            Page::Playing | Page::Lyrics => self.tv_transport.map(|_| SCRUBBER),
+            Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_) => Some("page-play"),
+            Page::Search if self.mobile_search => Some("search"),
+            // Elsewhere the first press of an arrow focuses the page's first control.
+            _ => self.tv_tab(),
+        }
+    }
+
     /// Whether the remote's focus is up on the tab bar.
     pub fn tv_on_bar(&self) -> bool {
         self.tv_focused.as_deref().is_some_and(|id| BAR.contains(&id))
@@ -179,6 +192,16 @@ mod tests {
         assert_eq!(state.tv_rest(start + TAB_REST * 3), None, "once");
         state.tv_focused = Some("settings".into());
         assert_eq!(state.tv_rest(start + TAB_REST * 9), None, "the rest wait for select");
+    }
+
+    #[test]
+    fn the_focus_lost_on_a_pushed_page_never_rests_on_a_tab_that_would_close_it() {
+        let mut state = State { tv: true, ..State::default() };
+        assert_eq!(state.tv_rest_focus(), Some("home"));
+        state.update(&UiAction::Clicked { id: "settings".into() });
+        assert_eq!(state.tv_rest_focus(), Some("settings"));
+        state.page = Page::Liked;
+        assert_eq!(state.tv_rest_focus(), None);
     }
 
     #[test]

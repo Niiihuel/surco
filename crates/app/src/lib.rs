@@ -875,17 +875,9 @@ impl eframe::App for Host {
                 let (_, id) = self.script.focus.remove(0);
                 self.tree.focus(&id);
             }
-            // The remote's focus is always somewhere to be seen: with none, on the page's tab,
-            // or on the player's scrubber.
+            // The remote's focus is always somewhere to be seen.
             if self.tree.focused_id().is_none() {
-                let tab = match self.state.page {
-                    // With the transport away, the player itself takes the presses.
-                    state::Page::Playing | state::Page::Lyrics => self.state.tv_transport.map(|_| state::tv::SCRUBBER),
-                    state::Page::Library => Some("mobile-library"),
-                    state::Page::Search if self.state.mobile_search => Some("search"),
-                    _ => Some("home"),
-                };
-                if let Some(tab) = tab { self.tree.focus(tab); }
+                if let Some(id) = self.state.tv_rest_focus() { self.tree.focus(id); }
             }
             // A television's view lifts what the remote's focus is on, as the tree just moved it.
             self.state.tv_focused = self.tree.focused_id().map(str::to_owned);
