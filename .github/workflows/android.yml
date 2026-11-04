@@ -17,7 +17,7 @@ concurrency:
 
 env:
   # Reviewed limn mobile sheets, touch gestures and stable IME; shared by every build.
-  LIMN_REF: f422ac41ff4acdd097cd5df87d6fbdc868b1f56d
+  LIMN_REF: 1c99fa9b1677449805ef8b7786ed70ff875d02ac
 
 jobs:
   apk:
