@@ -50,7 +50,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Mix(mix) => songs_page(state, &mix_name(mix), &mix_detail(mix), &mix.covers().first().map(|url| (*url).clone()), window, palette),
         Page::Library => library(state, palette),
         Page::Search if state.mobile_search => search(state, palette),
-        _ => home(state, palette),
+        Page::Search => home(state, palette),
+        // The settings, the profile and the rest are the app's own pages, their controls
+        // reached by the remote as any others.
+        _ => horizontal_inset(page(state, window.width - 2.0 * SIDE, palette), SIDE, SIDE),
     };
     let body = Element::column(vec![bar(state, palette), page.flex(1.0)]);
     // The cover of what plays washes the canvas's top in its colour.
