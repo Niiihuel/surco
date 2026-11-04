@@ -108,6 +108,8 @@ struct Script {
     search: Option<String>,
     play: Option<usize>,
     seek: Option<f64>,
+    /// A picture to crop as if it had been picked for the profile, to see the crop.
+    pick_picture: Option<PathBuf>,
     actions: Vec<(Duration, UiAction)>,
     /// Where to put the keyboard's focus, and when, as a television's remote would.
     focus: Vec<(Duration, String)>,
@@ -342,6 +344,12 @@ impl Host {
     }
 
     fn run_script(&mut self) {
+        if let Some(path) = self.script.pick_picture.take() {
+            if let Some(picked) = std::fs::read(&path).ok().and_then(|bytes| backend::picked(crate::backend::PictureFor::Profile, &bytes)) {
+                let commands = self.state.apply(picked);
+                self.send(commands);
+            }
+        }
         if let Some(query) = self.script.search.take() {
             self.state.query = query;
             let commands = self.state.search();
@@ -1058,6 +1066,7 @@ pub fn run() -> eframe::Result {
             "--search" => script.search = Some(value()),
             "--play" => script.play = value().parse().ok(),
             "--seek" => script.seek = value().parse().ok(),
+            "--pick-picture" => script.pick_picture = Some(PathBuf::from(value())),
             "--click" | "--slide" | "--type" => {
                 let value = value();
                 let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
@@ -1272,8 +1281,10 @@ fn phone_logging() {
 /// What Android's Back clicks once nothing on top closes: the queue back to its song, the
 /// player down, a page back; None when there is nowhere left to go.
 pub(crate) fn back_target(state: &State) -> Option<&'static str> {
+    // A picture being cropped is put away before what it was picked for.
+    if state.cropping.is_some() { Some("crop-cancel") }
     // A list's search closes before its page, as BitChord's.
-    if state.page_searching { Some("page-search") }
+    else if state.page_searching { Some("page-search") }
     // A television's code for a phone closes before the page it was asked from.
     else if state.tv && state.handoff.is_some() { Some("handoff-close") }
     // A television's Up Next shuts, then its transport steps away, before its player.

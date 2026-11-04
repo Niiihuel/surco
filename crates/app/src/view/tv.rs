@@ -44,6 +44,9 @@ fn lit(state: &State, id: &str) -> bool {
 pub(super) fn view(state: &State, window: Size) -> Element {
     let palette = SCHEME.palette();
     let page = match &state.page {
+        // A picture being cropped, and bringing the account from a phone, stand over any page.
+        _ if state.cropping.is_some() => crop_page(state, state.cropping.as_ref().unwrap(), window, palette),
+        _ if state.handoff.as_ref().is_some_and(|handoff| handoff.inbox) => settings::handoff(state, state.handoff.as_ref().unwrap(), window, palette),
         Page::Playing | Page::Lyrics => return player(state, window, palette),
         Page::Album(album) => songs_page(state, &album.title, &album.artist, &album.artwork_url, true, palette),
         Page::Artist(artist) => songs_page(state, &artist.name, &t!("common-artist"), &artist.artwork_url, false, palette),
@@ -55,8 +58,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Library => library(state, palette),
         Page::Search if state.mobile_search => search(state, palette),
         Page::Search => home(state, palette),
-        // Bringing the account from a phone stands over the page it was asked from.
-        _ if state.handoff.as_ref().is_some_and(|handoff| handoff.inbox) => settings::handoff(state, state.handoff.as_ref().unwrap(), window, palette),
         Page::Settings => settings::page(state, window, palette),
         Page::Loading(_) => coming_page(palette),
         // The profile and the rest are the app's own pages, their controls
@@ -199,6 +200,25 @@ fn home(state: &State, palette: ComponentPalette) -> Element {
     ])
 }
 
+/// A capsule button, as the tabs' pills: on the capsule's glass, the white platter under the focus.
+fn capsule_button(state: &State, id: &str, label: &str, palette: ComponentPalette) -> Element {
+    let on = lit(state, id);
+    let words = Text::new(label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(if on { PLATTER_INK } else { palette.text }).centered();
+    let button = Element::panel(horizontal_inset(words, 22.0, 22.0)).background(if on { PLATTER } else { CAPSULE }).round().size(None, Some(TAB));
+    Element::clickable(id, button).accessible(limn::Access::new(limn::Role::Button).name(label)).focus_ring(false).round()
+        .animate_scale_about(format!("tv-lift:{id}"), if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5))
+}
+
+/// Cropping a picture on a television: the picture and its square, moved by the arrows, its
+/// size by the slider under it, and Done.
+fn crop_page(state: &State, crop: &crate::state::Crop, window: Size, palette: ComponentPalette) -> Element {
+    let room = (window.height - BAR - 170.0).clamp(200.0, 360.0);
+    let title = Text::new(t!("common-crop-title"), palette).font_size(30.0).line_height(36.0).render().font_family(FontFamily::SansBold);
+    let buttons = Element::row(vec![capsule_button(state, "crop-done", &t!("common-crop-done"), palette), capsule_button(state, "crop-cancel", &t!("common-cancel"), palette)]).gap(14.0);
+    let body = Element::column(vec![title, super::crop::surface(crop, room, palette), buttons.centered_x()]).gap(20.0).centered_x();
+    Element::column(vec![Element::spacer().size(None, Some(BAR)), body]).centered_x()
+}
+
 /// A few words where something else would be, centred, with what to do about it a press away.
 fn note(state: &State, title: std::borrow::Cow<str>, detail: std::borrow::Cow<str>, action: Option<(&str, std::borrow::Cow<str>)>, palette: ComponentPalette) -> Element {
     let mut said = vec![
@@ -206,12 +226,7 @@ fn note(state: &State, title: std::borrow::Cow<str>, detail: std::borrow::Cow<st
         Text::new(detail, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY).center_content(),
     ];
     if let Some((id, label)) = action {
-        let on = lit(state, id);
-        let words = Text::new(&*label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(if on { PLATTER_INK } else { palette.text }).centered();
-        let button = Element::panel(horizontal_inset(words, 22.0, 22.0)).background(if on { PLATTER } else { CAPSULE }).round().size(None, Some(TAB));
-        let button = Element::clickable(id, button).accessible(limn::Access::new(limn::Role::Button).name(&*label)).focus_ring(false).round()
-            .animate_scale_about(format!("tv-lift:{id}"), if on { BUTTON_LIFT } else { 1.0 }, limn::Point::new(0.5, 0.5));
-        said.extend([Element::spacer().size(None, Some(8.0)), button.centered_x()]);
+        said.extend([Element::spacer().size(None, Some(8.0)), capsule_button(state, id, &label, palette).centered_x()]);
     }
     Element::column(said).gap(6.0).size(Some(576.0), None).centered_x().padding(24.0)
 }

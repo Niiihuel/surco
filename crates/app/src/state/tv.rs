@@ -116,6 +116,7 @@ impl State {
     /// Where the remote's focus goes when it is on nothing: the page's tab, a song list's Play,
     /// the player's scrubber; never another tab, which resting there would open.
     pub fn tv_rest_focus(&self) -> Option<&'static str> {
+        if self.cropping.is_some() { return Some("crop-area"); }
         // Bringing the account: what came is brought in by its button, the code is left by its.
         if let Some(handoff) = self.handoff.as_ref().filter(|handoff| handoff.inbox) {
             return Some(if matches!(handoff.fetched, Some(Ok(_))) { "handoff-take" } else { "handoff-close" });

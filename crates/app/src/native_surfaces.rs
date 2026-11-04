@@ -172,7 +172,7 @@ impl Controller {
         self.paste = None;
         // The greeting, moving an account and the profile are limn's: they stand over
         // everything, the header and the tab bar too, with no native surface beside them.
-        if !state.mobile || state.welcome || state.handoff.is_some() || state.profile_draft.is_some() { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
+        if !state.mobile || state.welcome || state.handoff.is_some() || state.profile_draft.is_some() || state.cropping.is_some() { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
         payload.chrome = self.chrome(state, frame, origin);
         if let Some((key, mut sheet)) = sheet_spec(state) {
             self.search = None;

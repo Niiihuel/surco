@@ -2,6 +2,7 @@
 
 mod mobile;
 mod tv;
+mod crop;
 pub(crate) use tv::scroller as tv_scroller;
 pub(crate) use tv::settings as tv_settings;
 mod equalizer;
@@ -467,7 +468,7 @@ fn window_view(state: &State, window: Size) -> Element {
         return update_dialog(state, window_tree, window.width);
     }
     let shared = share_dialog(state, window_tree, window.width, palette);
-    let created = handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width);
+    let created = crop::dialog(state, handoff_dialog(state, profile_dialog(state, playlist_dialog(state, shared, window.width, palette), window.width), window.width), window.width);
     let imported = missed_dialog(state, import_run_dialog(state, import_dialog(state, created, window.width, palette), window.width, palette), window.width, palette);
     let whole = confirm_dialog(state, update_offer(state, welcome_dialog(state, imported, window.width), window.width), window.width, palette);
     let whole = wrapped::story(state, jam::invite(state, whole, window.width), window);
@@ -1636,7 +1637,8 @@ fn choosable(id: &str, picture: Element, side: f32, round: bool, palette: Compon
 const CHOOSE_GLYPH: f32 = 48.0;
 
 fn profile_colour(state: &State) -> Color {
-    name_colour(state.profile.shown())
+    // Its photo's own, as a list's page takes its cover's; its name's without one.
+    state.profile.picture.as_ref().and_then(|name| state.tints.get(name)).copied().unwrap_or_else(|| name_colour(state.profile.shown()))
 }
 
 /// The colour a name is drawn on, the same wherever it shows.

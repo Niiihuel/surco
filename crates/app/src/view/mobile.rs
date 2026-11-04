@@ -237,6 +237,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
 fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, uikit: bool) -> Element {
     let tree = welcome_dialog(state, tree, width);
     let tree = super::jam::invite(state, super::profile_dialog(state, super::handoff_dialog(state, tree, width), width), width);
+    // limn's on the iPhone too: it stands over everything, as moving an account does.
+    let tree = super::crop::dialog(state, tree, width);
     if uikit { return tree; }
     let tree = sheets::render(state, tree, palette);
     let tree = share_dialog(state, tree, width, palette);

@@ -39,3 +39,4 @@ backend-handoff-no-port = No hay un puerto libre para pasar la cuenta. Cerrá ot
 backend-recognize-unsupported = Reconocer canciones todavía no está en el iPhone.
 backend-handoff-stopped = Alguien probó demasiados códigos en la red, así que se dejó de compartir. Cambiá una opción o cerrá y abrí de nuevo para tener otro código.
 backend-handoff-push-failed = No pudimos llegar a la tele. Fijate que los dos estén en la misma red Wi-Fi.
+backend-picture = Foto elegida

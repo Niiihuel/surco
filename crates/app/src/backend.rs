@@ -76,6 +76,9 @@ pub enum Command {
     FetchArtwork(String),
     /// Ask the user for a picture of their own, from their files, for a list or the account.
     PickPicture(PictureFor),
+    /// Keep the square `side` across at `x`, `y` of a picture picked to crop, as the picture of
+    /// `of`.
+    KeepPicture { of: PictureFor, bytes: Arc<Vec<u8>>, x: u32, y: u32, side: u32 },
     /// Serve the account, or this part of it, to another device on the local network; one
     /// served already is replaced at the same address.
     Serve(Bundle),
@@ -257,6 +260,9 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// A picture picked from the user's files, to crop before it is kept: at most
+    /// [`CROP_SOURCE`] a side, as JPEG, and as the screen shows it.
+    Picked { of: PictureFor, bytes: Arc<Vec<u8>>, width: u32, height: u32, image: RasterImage },
     /// How the room listened in together stands; none once it is left.
     Room(Option<crate::room::RoomView>),
     /// How loud what the microphone hears is, 0 to 1, and for how long it has listened.
@@ -734,9 +740,16 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 let Some(bytes) = pick_picture().await else { return };
+                // Decoding is slow: off the runtime's two workers. The user crops it next.
+                if let Some(event) = tokio::task::block_in_place(|| picked(of, &bytes)) { (shared.reply)(event); }
+            });
+        }
+        (Command::KeepPicture { of, bytes, x, y, side }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
                 // Decoding and writing hold the library: off the runtime's two workers.
                 let kept = tokio::task::block_in_place(|| {
-                    let jpeg = square_jpeg(&bytes)?;
+                    let jpeg = crop_jpeg(&bytes, x, y, side)?;
                     let name = format!("{PICTURE_NAME}{:016x}", fastrand::u64(..));
                     shared.library.lock().unwrap().keep_cover(&name, &jpeg).ok()?;
                     Some(name)
@@ -887,7 +900,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let dim = { let mut held = shared.volume.lock().unwrap(); held.0 = volume; held.1 };
             drop(shared.audio.set_volume(volume.powf(2.5) * dim, false));
         }
-        (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::Volume(_), Err(_)) => {}
+        (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::KeepPicture { .. } | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
@@ -1937,6 +1950,43 @@ async fn pick_picture() -> Option<Vec<u8>> {
 }
 
 /// The middle square of a picture, at most `PICTURE_SIDE` a side, as JPEG.
+/// The most a picture picked to crop keeps a side: plenty for the 640 it is kept at, light
+/// to show.
+pub const CROP_SOURCE: u32 = 1600;
+
+/// A picked picture as it is cropped from: no larger than [`CROP_SOURCE`] a side, upright, as
+/// JPEG, and its size.
+fn crop_source(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let picture = if picture.width().max(picture.height()) > CROP_SOURCE { picture.resize(CROP_SOURCE, CROP_SOURCE, image::imageops::FilterType::Triangle) } else { picture };
+    let rgb = picture.to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90).encode_image(&rgb).ok()?;
+    Some((jpeg, rgb.width(), rgb.height()))
+}
+
+/// A picture picked for `of`, as it goes to be cropped.
+pub fn picked(of: PictureFor, bytes: &[u8]) -> Option<Event> {
+    let (jpeg, width, height) = crop_source(bytes)?;
+    let digest: String = Sha256::digest(&jpeg).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+    let image = RasterImage::new(digest, RasterImageFormat::Jpeg, jpeg.len() as u32, encoded.into(), t!("backend-picture"))?;
+    Some(Event::Picked { of, bytes: Arc::new(jpeg), width, height, image })
+}
+
+/// The square `side` across at `x`, `y` of a picture, at the side pictures of the user's own
+/// are kept at, as JPEG. A square past the picture's edges is drawn back inside them.
+fn crop_jpeg(bytes: &[u8], x: u32, y: u32, side: u32) -> Option<Vec<u8>> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let side = side.clamp(1, picture.width().min(picture.height()));
+    let (x, y) = (x.min(picture.width() - side), y.min(picture.height() - side));
+    let square = picture.crop_imm(x, y, side, side)
+        .resize_exact(side.min(PICTURE_SIDE), side.min(PICTURE_SIDE), image::imageops::FilterType::Triangle).to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 88).encode_image(&square).ok()?;
+    Some(jpeg)
+}
+
 fn square_jpeg(bytes: &[u8]) -> Option<Vec<u8>> {
     let picture = image::load_from_memory(bytes).ok()?;
     let edge = picture.width().min(picture.height());
@@ -2019,7 +2069,21 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 
 #[cfg(test)]
 mod tests {
-    use super::tint_of;
+
+    #[test]
+    fn a_picked_picture_is_kept_as_the_square_chosen() {
+        let picture = image::RgbImage::from_fn(200, 100, |x, _| if x < 100 { image::Rgb([220, 20, 20]) } else { image::Rgb([20, 20, 220]) });
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(picture).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let (source, width, height) = crop_source(&png).unwrap();
+        assert_eq!((width, height), (200, 100), "small enough to stay as it is");
+        let kept = image::load_from_memory(&crop_jpeg(&source, 100, 0, 100).unwrap()).unwrap().to_rgb8();
+        assert_eq!(kept.dimensions(), (100, 100));
+        assert!(kept.get_pixel(50, 50)[2] > 150, "the right half, as chosen");
+        let past = image::load_from_memory(&crop_jpeg(&source, 180, 0, 100).unwrap()).unwrap().to_rgb8();
+        assert!(past.get_pixel(50, 50)[2] > 150, "a square past the edge is drawn back inside");
+    }
+    use super::{crop_jpeg, crop_source, tint_of};
 
     #[test]
     fn a_logged_error_names_every_cause_under_it() {

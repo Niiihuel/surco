@@ -65,6 +65,11 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Artist: the photo full width (ratio 0.95, at most 60% of the height) fading into the page's
   colour; the name 34/800 with its followers 14 under it, one group at the photo's foot; a 70
   Play circle between 52 shuffle and follow circles.
+- A photo picked for the profile or a playlist is cropped before it is kept, on the desktop,
+  the phone and the TV alike: the whole photo with the square over it (round for a face),
+  the rest dimmed, moved by a press, a drag or the arrows, its size by a slider; the square
+  is kept at 640. The profile's page is washed in its photo's colour, as a list's in its
+  cover's; without a photo, in its name's.
 - A home with no picks to show nor on their way ends by saying how it fills, with the way to
   choose artists (the TV's goes to the search: the first run's picker is not a TV's).
 - Settings: inset groups on surface variant, corners 14, 16 from the sides, uppercase 11/600

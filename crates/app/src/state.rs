@@ -487,6 +487,41 @@ pub struct Handoff {
     pub pushed: Option<Result<(), String>>,
 }
 
+/// A picture picked to be cropped square before it is kept: its centre's share across and down
+/// the picture, and how far in it is drawn, from all of its short edge to a quarter of it.
+pub struct Crop {
+    pub of: PictureFor,
+    pub bytes: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub image: RasterImage,
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
+}
+
+impl Crop {
+    /// The square's side, in the picture's pixels.
+    pub fn side(&self) -> f32 {
+        self.width.min(self.height) as f32 * (1.0 - 0.75 * self.zoom)
+    }
+
+    /// The square at `x`, `y` and `zoom`, its centre kept where the square stays inside.
+    fn settle(&mut self, x: f32, y: f32, zoom: f32) {
+        self.zoom = zoom.clamp(0.0, 1.0);
+        let half = self.side() / 2.0;
+        let keep = |share: f32, length: u32| { let room = half / length as f32; share.clamp(room, 1.0 - room) };
+        (self.x, self.y) = (keep(x, self.width), keep(y, self.height));
+    }
+
+    /// The square's corner and side in the picture's pixels, as it is kept.
+    pub fn square(&self) -> (u32, u32, u32) {
+        let side = self.side();
+        let corner = |share: f32, length: u32| (share * length as f32 - side / 2.0).max(0.0).round() as u32;
+        (corner(self.x, self.width), corner(self.y, self.height), side.round() as u32)
+    }
+}
+
 /// A code as it is typed, shown as it is read: in capitals, in fours with dashes between, as
 /// far as it goes. An address or a link pasted as an earlier version showed them stays as it is.
 pub fn shaped_code(typed: &str, most: usize) -> String {
@@ -923,6 +958,8 @@ pub struct State {
     pub title_reach: Option<(String, f32, Instant)>,
     /// The dialog that takes the account to another device, while it is open.
     pub handoff: Option<Handoff>,
+    /// A picture picked from the user's files, being cropped square before it is kept.
+    pub cropping: Option<Crop>,
     /// The first run's steps, while they are open.
     pub onboarding: Option<onboarding::Onboarding>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
@@ -1423,6 +1460,7 @@ impl Default for State {
             clip_ready: None,
             title_reach: None,
             handoff: None,
+            cropping: None,
             onboarding: None,
             wide: false,
             panel_more_open: false,
@@ -2270,6 +2308,15 @@ impl State {
             }
             UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
+            // The square follows the press across the picture, and its size the slider.
+            UiAction::AreaSliderChanged { id, x, y, .. } if id == "crop-area" => {
+                if let Some(crop) = self.cropping.as_mut() { let zoom = crop.zoom; crop.settle(*x, *y, zoom); }
+                Vec::new()
+            }
+            UiAction::SliderChanged { id, fraction, .. } if id == "crop-zoom" => {
+                if let Some(crop) = self.cropping.as_mut() { let (x, y) = (crop.x, crop.y); crop.settle(x, y, *fraction); }
+                Vec::new()
+            }
             UiAction::SliderChanged { id, fraction, committed } if id == "seek" => {
                 if !*committed {
                     self.seek_preview = Some(*fraction);
@@ -2909,6 +2956,17 @@ impl State {
             }
             // A television shows a code for a phone to send it the account.
             tv::HOME_SEARCH => self.click("mobile-search"),
+            "crop-done" => match self.cropping.take() {
+                Some(crop) => {
+                    let (x, y, side) = crop.square();
+                    vec![Command::KeepPicture { of: crop.of, bytes: crop.bytes, x, y, side }]
+                }
+                None => Vec::new(),
+            },
+            "crop-cancel" => {
+                self.cropping = None;
+                Vec::new()
+            }
             tv::RECEIVE => {
                 self.handoff = Some(Handoff { receiving: true, inbox: true, ..Handoff::default() });
                 vec![Command::Inbox]
@@ -3661,6 +3719,14 @@ impl State {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving || handoff.inbox) { handoff.offer = Some(offer); }
                 Vec::new()
             }
+            Event::Picked { of, bytes, width, height, image } => {
+                let mut crop = Crop { of, bytes, width, height, image, x: 0.5, y: 0.5, zoom: 0.0 };
+                crop.settle(0.5, 0.5, 0.0);
+                self.cropping = Some(crop);
+                // A remote starts on the square, which its arrows move.
+                if self.tv { self.focus = Some("crop-area".into()); }
+                Vec::new()
+            }
             Event::Pushed(pushed) => {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.push_to.is_some()) {
                     handoff.pushing = false;
@@ -4084,7 +4150,7 @@ impl State {
     /// what offers itself over the window waits for it to close.
     pub fn dialog_open(&self) -> bool {
         self.replay_story.is_some() || self.room_invite || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
-            || self.import_run.is_some() || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
+            || self.import_run.is_some() || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some() || self.cropping.is_some()
     }
 
     /// What plays and what follows it, to be gone on with the next time the app opens.
@@ -4865,6 +4931,23 @@ mod tests {
         click(&mut state, "handoff-take");
         assert!(state.handoff.is_none() && state.collection.liked.len() == 1);
         assert_eq!(click(&mut state, "handoff-close"), vec![Command::StopServing]);
+    }
+
+    #[test]
+    fn a_picked_picture_is_cropped_to_the_square_chosen_inside_it() {
+        let mut state = State::default();
+        let image = RasterImage::new(format!("{:064x}", 1), limn::RasterImageFormat::Png, 1, "AA==".into(), "Foto").unwrap();
+        state.apply(Event::Picked { of: PictureFor::Profile, bytes: Arc::new(vec![1, 2, 3]), width: 400, height: 200, image });
+        let crop = state.cropping.as_ref().unwrap();
+        assert_eq!(crop.square(), (100, 0, 200), "the middle square of the short edge to start");
+        state.update(&UiAction::AreaSliderChanged { id: "crop-area".into(), x: 1.0, y: 0.0, committed: false });
+        assert_eq!(state.cropping.as_ref().unwrap().square(), (200, 0, 200), "pressed past the edge, it stays inside");
+        state.update(&UiAction::SliderChanged { id: "crop-zoom".into(), fraction: 1.0, committed: true });
+        assert_eq!(state.cropping.as_ref().unwrap().square(), (275, 75, 50), "a quarter of the short edge, about where its centre was");
+        assert!(state.dialog_open());
+        let kept = state.update(&UiAction::Clicked { id: "crop-done".into() });
+        assert!(matches!(kept.as_slice(), [Command::KeepPicture { of: PictureFor::Profile, x: 275, y: 75, side: 50, .. }]), "{kept:?}");
+        assert!(state.cropping.is_none());
     }
 
     #[test]
