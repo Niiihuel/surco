@@ -81,15 +81,28 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // Where a tab starts there is no way back, as Spotify's on a phone: the account's face is
     // there instead, and opens the profile.
     let tab = matches!(state.page, Page::Search | Page::Library) && !state.mobile_search;
+    // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
+    // bare on the song.
+    let disc = |button: Element| if state.page == Page::Playing { button } else { button.background(FROST).border(HAIRLINE, 0.5) };
     if tab {
         let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
         header.push(face.centered_y());
     }
     if (state.can_go_back() && !tab) || state.page == Page::Playing {
-        header.push(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette));
+        header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
     }
-    let copy = Text::new(title.as_ref(), palette).font_size(if state.page == Page::Playing { 14.0 } else if state.mobile_ui.compact_header { 18.0 } else { 24.0 }).truncate().render();
+    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
+    let copy = if detail && !state.mobile_ui.compact_header {
+        // The page's own heading names it under its cover; the bar does once that has scrolled away.
+        Element::spacer()
+    } else if state.page == Page::Playing {
+        Text::new(title.as_ref(), palette).font_size(14.0).truncate().render()
+    } else {
+        // A tab's name stands large, as BitChord's headings; a page pushed on it a step smaller.
+        let size = if state.mobile_ui.compact_header { 18.0 } else if tab { 30.0 } else { 24.0 };
+        Text::new(title.as_ref(), palette).font_size(size).truncate().render().font_family(FontFamily::SansBold)
+    };
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
     if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
         header.push(controls::playback("mobile-detail-header-play", false, 44.0, 22.0, palette).dispatch_as("page-play"));
@@ -101,10 +114,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         header.push(Element::spacer().size(Some(TAP), Some(TAP)));
     }
     if state.page == Page::Library {
-        header.push(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette));
+        header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
     }
     if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
-        header.push(icon("settings", Icon::Settings, &t!("common-settings"), palette));
+        header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette)));
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
