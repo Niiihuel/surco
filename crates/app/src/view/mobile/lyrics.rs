@@ -23,6 +23,8 @@ const RISE: f32 = 2.0;
 /// ink as each word is sung, glowing faintly, the word being sung rising. A line timed only as
 /// a whole lights at once, as BitChord's does. Away from it lines dim, blur and step back a
 /// little; what was sung stays lit, what is to come does not.
+// The lyrics' own measures and the frame's instant, passed as the desktop's lines take them.
+#[allow(clippy::too_many_arguments)]
 pub(in crate::view) fn line(state: &State, lines: &[Line], index: usize, sung: i64, size: f32, line_height: f32, gap: f32, now: std::time::Instant) -> Element {
     let line = &lines[index];
     let distance = index as i64 - sung;

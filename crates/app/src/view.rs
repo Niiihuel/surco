@@ -2051,11 +2051,8 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
             tiles.push(quick("home-downloads".into(), &t!("common-downloads"), library_tile(Icon::Custom(DOWNLOAD), palette), sounding).dispatch_as("downloads"));
         }
         for (index, entry) in collection.recent.iter().enumerate() {
-            let picture = cover(state, entry.artwork(), height, palette);
-            let picture = match entry {
-                // Flush with the row's edge: its rounding is the row's.
-                _ => picture.radius(0.0),
-            };
+            // Flush with the row's edge: its rounding is the row's.
+            let picture = cover(state, entry.artwork(), height, palette).radius(0.0);
             let sounding = state.player.playing && state.current().is_some_and(|current| match entry {
                 Entry::Album(album) => current.album_id.as_deref() == Some(album.id.as_str()),
                 Entry::Artist(artist) => current.artist_id.as_deref() == Some(artist.id.as_str()),

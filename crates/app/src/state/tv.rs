@@ -310,8 +310,7 @@ mod tests {
 
     #[test]
     fn a_phone_that_reads_a_televisions_code_sends_it_what_is_chosen() {
-        let mut state = State::default();
-        state.mobile = true;
+        let mut state = State { mobile: true, ..State::default() };
         let to = "http://192.168.1.20:47310/3f9cab";
         state.receive_from("surco://send?to=http%3A%2F%2F192%2E168%2E1%2E20%3A47310%2F3f9cab");
         let handoff = state.handoff.as_ref().unwrap();
