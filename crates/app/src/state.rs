@@ -888,6 +888,10 @@ pub struct State {
     pub tv_in_player: bool,
     /// Whether the television's player keeps the lyrics away, by its lyrics button.
     pub tv_lyrics_hidden: bool,
+    /// The tab the remote's focus rests on, and since when, to open it.
+    pub tv_resting: Option<(String, Instant)>,
+    /// Whether the television's page has scrolled, sending its tabs aside.
+    pub tv_scrolled: bool,
     pub queue_open: bool,
     pub collection: Collection,
     pub profile: Profile,
@@ -1388,6 +1392,8 @@ impl Default for State {
             tv_transport: None,
             tv_in_player: false,
             tv_lyrics_hidden: false,
+            tv_resting: None,
+            tv_scrolled: false,
             queue_open: false,
             collection: Collection::default(),
             profile: Profile::default(),
@@ -2530,6 +2536,11 @@ impl State {
             }
             // Select on the television's scrubber plays and pauses, as BitChord's.
             tv::SCRUBBER => self.click("play-pause"),
+            // A television's Back from a tab's page goes up to its tab first.
+            "tv-tabs" => {
+                self.focus = self.tv_tab().map(str::to_owned);
+                Vec::new()
+            }
             "tv-transport-away" => {
                 self.tv_transport = None;
                 self.mobile_ui.blur = true;

@@ -2,6 +2,7 @@
 
 mod mobile;
 mod tv;
+pub(crate) use tv::scroller as tv_scroller;
 mod equalizer;
 mod onboarding;
 mod wrapped;

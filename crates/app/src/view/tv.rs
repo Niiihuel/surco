@@ -14,6 +14,8 @@ const LOCKUP: f32 = 131.0;
 const LOCKUP_RADIUS: f32 = 10.0;
 const ARTIST: f32 = 120.0;
 const CARD_GAP: f32 = 16.0;
+/// A television's pages scroll by the focus, with no bar to show for it, as BitChord's.
+const UNSEEN_BAR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 0, fade_ms: 0 };
 /// How far what has the focus grows: a lockup, a row, a button.
 const LIFT: f32 = 1.08;
 const ROW_LIFT: f32 = 1.03;
@@ -53,9 +55,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Search => home(state, palette),
         // The settings, the profile and the rest are the app's own pages, their controls
         // reached by the remote as any others.
-        _ => horizontal_inset(page(state, window.width - 2.0 * SIDE, palette), SIDE, SIDE),
+        _ => Element::column(vec![Element::spacer().size(None, Some(BAR)), horizontal_inset(page(state, window.width - 2.0 * SIDE, palette), SIDE, SIDE).flex(1.0)]),
     };
-    let body = Element::column(vec![bar(state, palette), page.flex(1.0)]);
+    // The tabs float over the page, which scrolls under them, and step aside once it has.
+    let tabs = bar(state, palette).animate_slide("tv-bar", if state.tv_scrolled { -BAR } else { 0.0 });
+    let body = Element::stack(vec![page.size(Some(window.width), Some(window.height)), Element::column(vec![tabs, Element::spacer().flex(1.0)])]);
     // The cover of what plays washes the canvas's top in its colour.
     let wash = state.current().and_then(|track| state.tints.get(track.artwork_url.as_deref()?)).map(|tint| {
         Element::panel(Element::spacer()).vertical_gradient(vec![Color { a: 110, ..*tint }, Color { a: 0, ..*tint }]).size(None, Some(window.height * 0.6))
@@ -137,7 +141,20 @@ fn shelf(id: &str, title: &str, cards: Vec<Element>, palette: ComponentPalette) 
 
 /// The page's shelves, one under the other, scrolling up as the focus goes down them.
 fn shelves(id: &str, shelves: Vec<Option<Element>>) -> Element {
-    ScrollArea::new(id, Element::column(shelves.into_iter().flatten().collect()).gap(18.0).padding(4.0)).render().flex(1.0)
+    let room = Element::spacer().size(None, Some(BAR - 18.0));
+    ScrollArea::new(id, Element::column(std::iter::once(room).chain(shelves.into_iter().flatten()).collect()).gap(18.0).padding(4.0)).visibility(UNSEEN_BAR).render().flex(1.0)
+}
+
+/// The scroll area of the page shown, whose scrolling sends the tabs aside; None for a page
+/// that stays put under them.
+pub(crate) fn scroller(state: &State) -> Option<&'static str> {
+    match state.page {
+        Page::Search if state.mobile_search => Some("tv-search"),
+        Page::Search => Some("tv-home"),
+        Page::Library => Some("tv-library"),
+        Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_) => Some("tv-page-songs"),
+        _ => None,
+    }
 }
 
 fn home(state: &State, palette: ComponentPalette) -> Element {
@@ -217,8 +234,9 @@ fn songs_page(state: &State, title: &str, about: &str, artwork: &Option<String>,
         Element::row(vec![play, shuffle]).gap(16.0),
     ]).gap(6.0).centered_y().flex(1.0);
     let rows: Vec<Element> = state.page_rows().into_iter().map(|(place, track)| row(state, format!("page-track:{place}"), track, palette)).collect();
-    let list = ScrollArea::new("tv-page-songs", Element::column(rows).gap(4.0).padding(8.0)).render().flex(1.0);
-    let side = Element::column(vec![Element::row(vec![picture, head]).gap(28.0), Element::spacer().flex(1.0)]).size(Some((window.width * 0.42).min(460.0)), None);
+    let room = || Element::spacer().size(None, Some(BAR));
+    let list = ScrollArea::new("tv-page-songs", Element::column(std::iter::once(room()).chain(rows).collect()).gap(4.0).padding(8.0)).visibility(UNSEEN_BAR).render().flex(1.0);
+    let side = Element::column(vec![room(), Element::row(vec![picture, head]).gap(28.0), Element::spacer().flex(1.0)]).size(Some((window.width * 0.42).min(460.0)), None);
     horizontal_inset(Element::row(vec![side, list]).gap(32.0), SIDE, SIDE).padding(4.0)
 }
 

@@ -179,6 +179,20 @@ fn follow_page_actions(state: &mut State, tree: &mut UiTree, window: Size, seen:
     })
 }
 
+/// A television's tabs step aside once its page has scrolled, and bring it back to its top
+/// when the focus goes up to them, laying out again when either changed.
+fn follow_tv_scroll(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
+    if !state.tv { return None; }
+    let scroller = view::tv_scroller(state);
+    let home = scroller.filter(|id| state.tv_on_bar() && tree.scroll_offset(id) > 0.0);
+    if let Some(id) = home { tree.scroll_to_start(id); }
+    let scrolled = scroller.is_some_and(|id| tree.scroll_offset(id) > state::tv::SCROLLED);
+    (home.is_some() || scrolled != state.tv_scrolled).then(|| {
+        state.tv_scrolled = scrolled;
+        layout_with_notice(state, tree, window, seen)
+    })
+}
+
 /// Slide the player's lyric card so the line before the one being sung is at its top,
 /// laying out again when it moved.
 fn follow_lyric_card(state: &mut State, tree: &mut UiTree, window: Size, seen: &mut Option<String>) -> Option<limn::Frame> {
@@ -850,7 +864,11 @@ impl eframe::App for Host {
                 self.tree.clear_focus();
                 acted = true;
             }
-            if let Some(due) = self.state.tv_transport_due() {
+            if let Some(commands) = self.state.tv_rest(now) {
+                self.send(commands);
+                acted = true;
+            }
+            if let Some(due) = self.state.tv_due() {
                 ctx.request_repaint_after(due.saturating_duration_since(now));
             }
             while self.script.focus.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
@@ -877,6 +895,7 @@ impl eframe::App for Host {
         let frame = if acted || moving { layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice) } else { input_frame };
         let frame = follow_track_window(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
+        let frame = follow_tv_scroll(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_title(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         #[cfg(any(target_os = "ios", target_os = "android"))]
         let frame = {
@@ -1256,6 +1275,10 @@ pub(crate) fn back_target(state: &State) -> Option<&'static str> {
     if state.page_searching { Some("page-search") }
     // A television's transport steps away before its player.
     else if state.tv_in_player && state.tv_transport.is_some() { Some("tv-transport-away") }
+    // From a tab's page, a television's goes up to the tab, then Home, then out, as tvOS's.
+    else if state.tv && state.tv_tab().is_some() && !state.tv_on_bar() { Some("tv-tabs") }
+    else if state.tv && state.tv_tab().is_some_and(|tab| tab != "home") { Some("home") }
+    else if state.tv && state.tv_tab().is_some() { None }
     else if state.page == state::Page::Playing && state.queue_open { Some("queue") }
     // A phone's player slides away; a television's is a page left as any other.
     else if state.page == state::Page::Playing && !state.tv { Some("mobile-player-dismiss") }
@@ -1267,6 +1290,36 @@ pub(crate) fn back_target(state: &State) -> Option<&'static str> {
 mod press_tests {
     use super::*;
     use surco_core::{Track, lyrics::Line};
+
+    #[test]
+    fn a_televisions_tabs_step_aside_as_its_page_scrolls_and_bring_it_back_up() {
+        let mut state = State::default();
+        state.tv = true;
+        let track = |index: usize| Track { id: format!("song-{index}"), title: format!("Canción {index}"), artist: "Banda".into(),
+            artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 200_000 };
+        state.collection.heard = (0..8).map(track).collect();
+        state.collection.liked = (0..8).map(track).collect();
+        state.recent_picks = (0..8).map(track).collect();
+        let window = Size::new(960.0, 540.0);
+        let mut tree = UiTree::new(view::view(&state, window));
+        tree.set_spatial_focus(true);
+        tree.set_reduced_motion(true);
+        let mut seen = None;
+        layout_with_notice(&mut state, &mut tree, window, &mut seen);
+        assert!(tree.focus("today:0"));
+        for _ in 0..2 {
+            tree.handle_event(limn::UiEvent::Key { key: limn::Key::ArrowDown, shift: false, ctrl: false, alt: false });
+            state.tv_focused = tree.focused_id().map(str::to_owned);
+            layout_with_notice(&mut state, &mut tree, window, &mut seen);
+        }
+        assert_eq!(state.tv_focused.as_deref(), Some("liked-track:0"), "{:?}", tree.scroll_offset("tv-home"));
+        assert!(follow_tv_scroll(&mut state, &mut tree, window, &mut seen).is_some());
+        assert!(state.tv_scrolled, "down at the last shelf, the tabs are aside");
+        state.tv_focused = Some("home".into());
+        assert!(follow_tv_scroll(&mut state, &mut tree, window, &mut seen).is_some());
+        assert_eq!(tree.scroll_offset("tv-home"), 0.0, "up on them, the page is back at its top");
+        assert!(!state.tv_scrolled);
+    }
 
     #[test]
     fn back_shuts_a_lists_search_before_it_leaves_the_list() {

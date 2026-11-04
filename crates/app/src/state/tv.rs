@@ -12,6 +12,12 @@ pub const TRANSPORT_STAYS: Duration = Duration::from_secs(5);
 const SEEK_STEP: f64 = 10.0;
 /// The transport's scrubber, which the focus goes to when the transport comes up.
 pub const SCRUBBER: &str = "tv-scrubber";
+/// The tab bar's controls.
+const BAR: [&str; 6] = ["home", "mobile-library", "mobile-playing", "mobile-search", "settings", "account-profile"];
+/// How long the focus rests on Home's or Library's tab before it opens, as tvOS's tabs.
+const TAB_REST: Duration = Duration::from_millis(140);
+/// How far a page scrolls before the tabs step aside.
+pub const SCROLLED: f32 = 32.0;
 
 impl State {
     /// Raise the transport on the way into the player, and send it away 5 s after the last
@@ -37,9 +43,43 @@ impl State {
         gone
     }
 
-    /// When the transport is to step away, for a frame to be asked for then.
-    pub fn tv_transport_due(&self) -> Option<Instant> {
-        self.tv_transport.filter(|_| self.player.playing).map(|at| at + TRANSPORT_STAYS)
+    /// When the transport is to step away or a tab to open, for a frame to be asked for then.
+    pub fn tv_due(&self) -> Option<Instant> {
+        let transport = self.tv_transport.filter(|_| self.player.playing).map(|at| at + TRANSPORT_STAYS);
+        let tab = self.tv_resting.as_ref().filter(|(tab, _)| !self.tv_shows(tab)).map(|(_, since)| *since + TAB_REST);
+        transport.into_iter().chain(tab).min()
+    }
+
+    /// Open Home or Library once the focus has rested on its tab; the other tabs wait for
+    /// select. Some once it opened one.
+    pub fn tv_rest(&mut self, now: Instant) -> Option<Vec<Command>> {
+        let tab = self.tv_focused.as_deref().filter(|id| ["home", "mobile-library"].contains(id));
+        if self.tv_resting.as_ref().map(|(id, _)| id.as_str()) != tab {
+            self.tv_resting = tab.map(|id| (id.to_owned(), now));
+        }
+        let due = self.tv_resting.as_ref().filter(|(tab, since)| now >= *since + TAB_REST && !self.tv_shows(tab)).map(|(tab, _)| tab.clone())?;
+        Some(self.click(&due))
+    }
+
+    /// Whether the page shown is the one of the tab `id`.
+    fn tv_shows(&self, id: &str) -> bool {
+        self.tv_tab() == Some(id)
+    }
+
+    /// The tab of the page shown, when it is a tab's own and not one pushed over it.
+    pub fn tv_tab(&self) -> Option<&'static str> {
+        match self.page {
+            Page::Search if self.mobile_search => Some("mobile-search"),
+            Page::Search => Some("home"),
+            Page::Library => Some("mobile-library"),
+            Page::Settings => Some("settings"),
+            _ => None,
+        }
+    }
+
+    /// Whether the remote's focus is up on the tab bar.
+    pub fn tv_on_bar(&self) -> bool {
+        self.tv_focused.as_deref().is_some_and(|id| BAR.contains(&id))
     }
 
     /// A press of the remote in the player. Each keeps the transport up; while it is away, left
@@ -99,7 +139,7 @@ mod tests {
         let start = Instant::now();
         assert!(!state.tv_tick(start));
         assert_eq!(state.tv_transport, Some(start), "up on the way in");
-        assert_eq!(state.tv_transport_due(), Some(start + TRANSPORT_STAYS));
+        assert_eq!(state.tv_due(), Some(start + TRANSPORT_STAYS));
         assert_eq!(state.tv_press(Key::ArrowUp, start + Duration::from_secs(3)), None, "a press up the transport is the tree's");
         assert!(!state.tv_tick(start + Duration::from_secs(6)), "a press keeps it up");
         assert!(state.tv_tick(start + Duration::from_secs(8)));
@@ -121,6 +161,39 @@ mod tests {
         assert_eq!(state.tv_press(Key::ArrowDown, start + TRANSPORT_STAYS), Some(Vec::new()));
         assert!(state.tv_transport.is_some());
         assert_eq!(state.focus.as_deref(), Some(SCRUBBER), "the focus comes up on the scrubber");
+    }
+
+    #[test]
+    fn home_and_library_open_as_the_focus_rests_on_their_tabs() {
+        let mut state = State { tv: true, ..State::default() };
+        let start = Instant::now();
+        state.tv_focused = Some("mobile-library".into());
+        assert_eq!(state.tv_rest(start), None);
+        assert_eq!(state.tv_due(), Some(start + TAB_REST));
+        state.tv_focused = Some("mobile-playing".into());
+        assert_eq!(state.tv_rest(start + TAB_REST), None, "passing over it opens nothing");
+        state.tv_focused = Some("mobile-library".into());
+        state.tv_rest(start + TAB_REST);
+        assert!(state.tv_rest(start + TAB_REST * 2).is_some());
+        assert_eq!(state.page, Page::Library);
+        assert_eq!(state.tv_rest(start + TAB_REST * 3), None, "once");
+        state.tv_focused = Some("settings".into());
+        assert_eq!(state.tv_rest(start + TAB_REST * 9), None, "the rest wait for select");
+    }
+
+    #[test]
+    fn back_goes_up_to_the_tabs_then_home_then_out() {
+        let mut state = State { tv: true, ..State::default() };
+        state.update(&UiAction::Clicked { id: "mobile-library".into() });
+        state.tv_focused = Some("playlist:0".into());
+        assert_eq!(crate::back_target(&state), Some("tv-tabs"));
+        state.update(&UiAction::Clicked { id: "tv-tabs".into() });
+        assert_eq!(state.focus.as_deref(), Some("mobile-library"), "up to the page's tab");
+        state.tv_focused = state.focus.take();
+        assert_eq!(crate::back_target(&state), Some("home"));
+        state.update(&UiAction::Clicked { id: "home".into() });
+        state.tv_focused = Some("home".into());
+        assert_eq!(crate::back_target(&state), None, "from Home's tab, out of the app");
     }
 
     #[test]

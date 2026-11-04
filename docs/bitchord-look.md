@@ -81,7 +81,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 ## TV
 
 - No side rail: a centred capsule (white at 8%, 18 from the top) with Home, Library, Now
-  Playing, and round Search and Settings. It hides once the page scrolls 32.
+  Playing, and round Search and Settings, floating over the page. It slides away once the
+  page scrolls 32, and the page goes back to its top when the focus goes up to it. Home and
+  Library open as the focus rests 140 ms on their tab; the rest on select. Pages show no
+  scroll bar.
 - Focus lifts instead of outlining: cards scale 1.08 with a shadow, rows 1.03, buttons 1.1;
   rows and pills turn into a white platter with dark text.
 - Safe margins 38 × 22, cards 16 apart, 131 lockups (corners 10), 120 round artists.
@@ -94,6 +97,7 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   11 below. It steps away 5 s after the last press while the music plays, and the song is
   then named under the cover.
 - D-pad: in the player, left/right skip and the rest shows the transport; on the scrubber
-  left/right seek 10 s. Back closes the innermost thing first, then goes Home.
+  left/right seek 10 s. Back closes the innermost thing first (the transport, a pushed page),
+  then goes up to the tab bar, then Home, then out of the app.
 - limn moved focus with Tab only; `UiTree::set_spatial_focus` (Niiihuel/limn#178) lets the
   arrows move it to the nearest control in their direction, keeping to its row.
