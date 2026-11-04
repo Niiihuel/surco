@@ -17,7 +17,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  LIMN_REF: 70fb59ee6cbd3e4b6618dcc0ae6b0396576cd12e # fields outlined at rest and brighter under the pointer
+  # The commit of limn the app is built against: limn moves on its own, and a build of
+  # the app must not change under it. This is limn's main with the remote's spatial focus
+  # and gradients on laid-out text.
+  LIMN_REF: cff79e98285b4b73b9bbee1fe3a50495e2f2ec7f
   # App Store Connect requires SDK 26+. SDK 27 also requires a UIScene migration.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'

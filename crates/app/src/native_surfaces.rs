@@ -172,7 +172,7 @@ impl Controller {
         self.paste = None;
         // The greeting, moving an account and the profile are limn's: they stand over
         // everything, the header and the tab bar too, with no native surface beside them.
-        if !state.mobile || state.welcome || state.handoff.is_some() || state.profile_draft.is_some() { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
+        if !state.mobile || state.welcome || state.handoff.is_some() || state.profile_draft.is_some() || state.cropping.is_some() { self.sheet = None; self.search = None; self.active_menu = None; self.chrome.clear(); return payload; }
         payload.chrome = self.chrome(state, frame, origin);
         if let Some((key, mut sheet)) = sheet_spec(state) {
             self.search = None;
@@ -832,6 +832,7 @@ mod tests {
     fn the_sleep_timer_is_a_sheet_of_its_choices() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.update(&limn::UiAction::Clicked { id: "sleep".into() });
         assert!(has_sheet(&state));
         let (key, sheet) = sheet_spec(&state).unwrap();
@@ -844,6 +845,7 @@ mod tests {
     fn moving_an_account_and_the_profile_stand_over_the_native_bars() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         let size = Size::new(390.0, 844.0);
         let mut controller = Controller::default();
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
@@ -851,6 +853,7 @@ mod tests {
         for open in ["account-handoff", "profile-edit"] {
             let mut state = phone();
             state.mobile_ui.native_surfaces = true;
+            state.mobile_ui.native_bars = true;
             state.update(&limn::UiAction::Clicked { id: open.into() });
             let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
             let payload = controller.payload(&state, &frame, Pos2::ZERO);
@@ -862,6 +865,7 @@ mod tests {
     fn native_search_owns_one_editor_and_never_a_second_paste_button() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_search = true;
         let size = Size::new(390.0, 844.0);
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
@@ -902,6 +906,7 @@ mod tests {
     fn a_pages_songs_are_searched_by_the_native_field_at_its_top_until_cancel() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_ui.glass = true;
         state.collection.playlists.push(state::Playlist { id: 3, name: "Lista".into(), collaborative: false, picture: None,
             tracks: vec![track("a"), track("b")] });
@@ -939,6 +944,7 @@ mod tests {
     fn search_callbacks_do_not_cross_navigation_or_an_explicit_recent_selection() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_search = true;
         let frame = UiTree::new(crate::view::view(&state, Size::new(390.0, 844.0))).layout(Size::new(390.0, 844.0));
         let mut controller = Controller::default();
@@ -973,6 +979,7 @@ mod tests {
     fn native_chrome_replaces_the_limn_bars_and_accepts_only_offered_buttons() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         let size = Size::new(390.0, 844.0);
         let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
         for id in ["home", "mobile-search", "mobile-library", "settings"] {
@@ -1004,6 +1011,7 @@ mod tests {
     fn liquid_glass_hands_the_mini_player_and_search_chips_to_uikit() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_ui.glass = true;
         state.player.current = Some(track("a"));
         let size = Size::new(390.0, 844.0);
@@ -1025,6 +1033,7 @@ mod tests {
 
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_ui.glass = true;
         state.mobile_search = true;
         state.submitted = Some("consulta".into());
@@ -1043,6 +1052,7 @@ mod tests {
     fn liquid_glass_search_floats_its_field_at_the_foot_beside_the_folded_tabs() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_ui.glass = true;
         state.mobile_search = true;
         state.page = state::Page::Search;
@@ -1087,6 +1097,7 @@ mod tests {
     fn collapsing_search_header_is_cropped_by_uikit_and_keeps_the_backdrop_behind_the_field() {
         let mut state = phone();
         state.mobile_ui.native_surfaces = true;
+        state.mobile_ui.native_bars = true;
         state.mobile_search = true;
         state.mobile_ui.search_editing = true;
         let size = Size::new(390.0, 844.0);

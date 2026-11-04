@@ -48,18 +48,20 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
         (
             Page::Search,
             "home",
-            // The tabs and Settings are UIKit buttons that XCUI finds by identifier.
-            vec!["heard:0"],
+            // The tabs and Settings are limn's, as the rest of the canvas: XCUI taps them here.
+            vec!["heard:0", "home", "mobile-search", "mobile-library", "settings"],
         ),
+        (Page::Search, "search", vec!["mobile-search-edit"]),
         (
             Page::Library,
             "library",
-            vec!["import-open", "ios-paste:import-card"],
+            vec!["import-open", "ios-paste:import-card", "playlist-new"],
         ),
         (Page::Settings, "settings", vec!["settings-part:devices"]),
         (Page::SettingsPart(crate::state::SettingsPart::Devices), "settings-devices", vec!["setting:connections"]),
     ] {
         state.page = page;
+        state.mobile_search = key == "search";
         let mut tree = UiTree::new(super::view(&state, size));
         limn_egui::attach_fonts(&mut tree, &context);
         tree.set_reduced_motion(true);

@@ -3,6 +3,7 @@
 
 pub(crate) mod mobile;
 pub(crate) mod onboarding;
+pub(crate) mod tv;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -476,6 +477,49 @@ pub struct Handoff {
     pub fetching: bool,
     /// What came from the other device, or why nothing did.
     pub fetched: Option<Result<Bundle, String>>,
+    /// A television's: it shows a code for a phone to send its account to, rather than one to
+    /// read it from.
+    pub inbox: bool,
+    /// A phone's, sending to the television whose code it read: where, whether it is on its
+    /// way, and whether it got there.
+    pub push_to: Option<String>,
+    pub pushing: bool,
+    pub pushed: Option<Result<(), String>>,
+}
+
+/// A picture picked to be cropped square before it is kept: its centre's share across and down
+/// the picture, and how far in it is drawn, from all of its short edge to a quarter of it.
+pub struct Crop {
+    pub of: PictureFor,
+    pub bytes: Arc<Vec<u8>>,
+    pub width: u32,
+    pub height: u32,
+    pub image: RasterImage,
+    pub x: f32,
+    pub y: f32,
+    pub zoom: f32,
+}
+
+impl Crop {
+    /// The square's side, in the picture's pixels.
+    pub fn side(&self) -> f32 {
+        self.width.min(self.height) as f32 * (1.0 - 0.75 * self.zoom)
+    }
+
+    /// The square at `x`, `y` and `zoom`, its centre kept where the square stays inside.
+    fn settle(&mut self, x: f32, y: f32, zoom: f32) {
+        self.zoom = zoom.clamp(0.0, 1.0);
+        let half = self.side() / 2.0;
+        let keep = |share: f32, length: u32| { let room = half / length as f32; share.clamp(room, 1.0 - room) };
+        (self.x, self.y) = (keep(x, self.width), keep(y, self.height));
+    }
+
+    /// The square's corner and side in the picture's pixels, as it is kept.
+    pub fn square(&self) -> (u32, u32, u32) {
+        let side = self.side();
+        let corner = |share: f32, length: u32| (share * length as f32 - side / 2.0).max(0.0).round() as u32;
+        (corner(self.x, self.width), corner(self.y, self.height), side.round() as u32)
+    }
 }
 
 /// A code as it is typed, shown as it is read: in capitals, in fours with dashes between, as
@@ -877,6 +921,29 @@ pub struct State {
     /// Whether what the app moves by itself travels or jumps. Off for a screenshot, which
     /// wants the final picture.
     pub motion: bool,
+    /// A television's layout, driven by a remote's arrows: never a phone's or a desktop's.
+    pub tv: bool,
+    /// What the remote's focus is on, as the tree moved it, for the television's view to lift.
+    pub tv_focused: Option<String>,
+    /// The remote's last press in the television's player, while its transport is up.
+    pub tv_transport: Option<Instant>,
+    /// Whether the television was in its player at the last frame.
+    pub tv_in_player: bool,
+    /// How long the output route holds the sound before it is heard, in seconds: the lyrics
+    /// follow what is heard, not what the player has sent.
+    pub output_latency: f64,
+    /// Whether the television's player keeps the lyrics away, by its lyrics button.
+    pub tv_lyrics_hidden: bool,
+    /// Whether Up Next is open under the television's scrubber.
+    pub tv_up_next: bool,
+    /// The page the television showed at its last frame.
+    pub tv_shown: Option<(Page, bool)>,
+    /// The library category the television's focus last went to.
+    pub tv_library: Option<String>,
+    /// The tab the remote's focus rests on, and since when, to open it.
+    pub tv_resting: Option<(String, Instant)>,
+    /// Whether the television's page has scrolled, sending its tabs aside.
+    pub tv_scrolled: bool,
     pub queue_open: bool,
     pub collection: Collection,
     pub profile: Profile,
@@ -891,6 +958,8 @@ pub struct State {
     pub title_reach: Option<(String, f32, Instant)>,
     /// The dialog that takes the account to another device, while it is open.
     pub handoff: Option<Handoff>,
+    /// A picture picked from the user's files, being cropped square before it is kept.
+    pub cropping: Option<Crop>,
     /// The first run's steps, while they are open.
     pub onboarding: Option<onboarding::Onboarding>,
     /// Whether the window has room for the right panel, open or as the strip it leaves shut.
@@ -961,6 +1030,9 @@ pub struct State {
     artwork_order: VecDeque<String>,
     /// The color each cover lends to a card, by the cover's address.
     pub tints: HashMap<String, limn::Color>,
+    /// The engine's last reading of where the song is, in seconds, and when it came: it reads
+    /// every quarter second, and the lyrics' fill moves between.
+    heard: (f64, Instant),
     /// Each picture's width and height in pixels, by its address, while it is held.
     pub picture_sizes: HashMap<String, (u32, u32)>,
     /// The track whose share card is open, and whether its link was just copied.
@@ -1258,6 +1330,18 @@ pub fn shared_list(text: &str) -> Option<(String, Vec<String>)> {
 pub const COVER_SIDE: u32 = 544;
 
 /// A cover's address at the size a large picture needs: a phone's player is 380 points wide.
+/// The address a cover's blurred backdrop is asked for and kept under, among the covers.
+pub fn backdrop_key(url: &str) -> String {
+    format!("{url}{BACKDROP}")
+}
+
+/// The cover a backdrop's address blurs, if it is one.
+pub fn backdrop_of_key(url: &str) -> Option<&str> {
+    url.strip_suffix(BACKDROP)
+}
+
+const BACKDROP: &str = "#backdrop";
+
 pub fn large_cover(url: &str) -> String {
     cover_at(url, 1200)
 }
@@ -1357,6 +1441,17 @@ impl Default for State {
             wash_from: limn::Color::rgba(0, 0, 0, 0),
             wash: ScalarTransition::new(1.0, Instant::now()),
             motion: false,
+            tv: false,
+            tv_focused: None,
+            tv_transport: None,
+            tv_in_player: false,
+            output_latency: 0.0,
+            tv_lyrics_hidden: false,
+            tv_up_next: false,
+            tv_shown: None,
+            tv_library: None,
+            tv_resting: None,
+            tv_scrolled: false,
             queue_open: false,
             collection: Collection::default(),
             profile: Profile::default(),
@@ -1365,6 +1460,7 @@ impl Default for State {
             clip_ready: None,
             title_reach: None,
             handoff: None,
+            cropping: None,
             onboarding: None,
             wide: false,
             panel_more_open: false,
@@ -1397,6 +1493,7 @@ impl Default for State {
             page_stuck: false,
             artwork_order: VecDeque::new(),
             tints: HashMap::new(),
+            heard: (0.0, Instant::now()),
             picture_sizes: HashMap::new(),
             sharing: None,
             copied: false,
@@ -1652,6 +1749,11 @@ impl State {
     /// reads hands it over, and asks for it.
     #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
+        // A television's code asks to be sent the account: what goes is chosen here.
+        if let Some(to) = handoff::inbox_of(link) {
+            self.handoff = Some(Handoff { push_to: Some(to), ..Handoff::default() });
+            return vec![Command::StopServing];
+        }
         self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
         // On the first run it is the step that brings an account.
         if let Some(onboarding) = self.onboarding.as_mut() { onboarding.step = onboarding::Step::Bring; }
@@ -2036,7 +2138,7 @@ impl State {
     }
 
     /// The tracks the current page plays.
-    fn page_tracks(&self) -> &[Track] {
+    pub(crate) fn page_tracks(&self) -> &[Track] {
         match &self.page {
             Page::Artist(artist) => &artist.songs,
             Page::Album(album) => &album.tracks,
@@ -2206,6 +2308,15 @@ impl State {
             }
             UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
+            // The square follows the press across the picture, and its size the slider.
+            UiAction::AreaSliderChanged { id, x, y, .. } if id == "crop-area" => {
+                if let Some(crop) = self.cropping.as_mut() { let zoom = crop.zoom; crop.settle(*x, *y, zoom); }
+                Vec::new()
+            }
+            UiAction::SliderChanged { id, fraction, .. } if id == "crop-zoom" => {
+                if let Some(crop) = self.cropping.as_mut() { let (x, y) = (crop.x, crop.y); crop.settle(x, y, *fraction); }
+                Vec::new()
+            }
             UiAction::SliderChanged { id, fraction, committed } if id == "seek" => {
                 if !*committed {
                     self.seek_preview = Some(*fraction);
@@ -2476,6 +2587,12 @@ impl State {
                 self.search_page(!self.page_searching);
                 Vec::new()
             }
+            // A phone's cross inside the field empties it and leaves it open, its keyboard up.
+            "page-search-clear" => {
+                self.page_search.clear();
+                self.focus = Some("page-query".to_owned());
+                Vec::new()
+            }
             // Its button in the bar, and the link under what comes next in the panel.
             "queue" | "next-queue" => {
                 self.queue_open = !self.queue_open;
@@ -2484,6 +2601,49 @@ impl State {
                 commands.extend(self.ask_clip());
                 commands.extend(self.ask_about());
                 commands
+            }
+            // A television's are beside its player, which their button sends away and back.
+            "lyrics" if self.tv => {
+                self.tv_lyrics_hidden = !self.tv_lyrics_hidden;
+                self.ask_lyrics()
+            }
+            // Select on the television's scrubber plays and pauses, as BitChord's.
+            tv::SCRUBBER => self.click("play-pause"),
+            // A television's Back from a tab's page goes up to its tab first.
+            "tv-tabs" => {
+                self.focus = self.tv_tab().map(str::to_owned);
+                Vec::new()
+            }
+            // Up Next opens under the television's scrubber, the focus on what comes first.
+            "tv-up-next" => {
+                self.tv_up_next = !self.tv_up_next;
+                self.focus = Some(if self.tv_up_next && !self.player.upcoming.is_empty() { "upcoming:0" } else { tv::SCRUBBER }.into());
+                Vec::new()
+            }
+            _ if id.starts_with(tv::LIBRARY) => {
+                self.tv_library = Some(id[tv::LIBRARY.len()..].to_owned());
+                Vec::new()
+            }
+            // A television's settings step their value along on select.
+            crate::view::tv_settings::CROSSFADE => {
+                let step = crate::view::tv_settings::CROSSFADE_STEP;
+                self.settings.crossfade = if self.settings.crossfade + step > CROSSFADE_MAX { 0.0 } else { ((self.settings.crossfade / step).round() + 1.0) * step };
+                vec![Command::Crossfade(f64::from(self.settings.crossfade))]
+            }
+            crate::view::tv_settings::QUALITY => {
+                let at = Quality::ALL.iter().position(|(quality, ..)| *quality == self.settings.quality).unwrap_or(0);
+                let (_, name, _) = Quality::ALL[(at + 1) % Quality::ALL.len()];
+                self.click(&format!("setting:quality:{name}"))
+            }
+            crate::view::tv_settings::LANGUAGE => {
+                let at = Language::ALL.iter().position(|language| *language == crate::i18n::current()).unwrap_or(0);
+                self.click(&format!("setting:language:{}", Language::ALL[(at + 1) % Language::ALL.len()].tag()))
+            }
+            "tv-transport-away" => {
+                self.tv_transport = None;
+                self.tv_up_next = false;
+                self.mobile_ui.blur = true;
+                Vec::new()
             }
             // The lyrics are a page: their button opens it, and leaves it for the one before.
             "lyrics" => {
@@ -2779,11 +2939,38 @@ impl State {
             _ if id.starts_with("handoff-part:") => {
                 let Some(handoff) = self.handoff.as_mut() else { return Vec::new() };
                 if let Some(part) = handoff.parts.by_name(&id["handoff-part:".len()..]) { *part = !*part; }
-                if handoff.receiving { return Vec::new(); }
+                if handoff.receiving || handoff.push_to.is_some() { return Vec::new(); }
                 let parts = handoff.parts;
                 vec![Command::Serve(self.bundle(parts))]
             }
             "handoff-scan" => vec![Command::ScanCode],
+            // A phone sends what was chosen to the television whose code it read.
+            "handoff-push" => {
+                let Some(handoff) = self.handoff.as_ref().filter(|handoff| !handoff.pushing) else { return Vec::new() };
+                let Some(to) = handoff.push_to.clone() else { return Vec::new() };
+                let bundle = self.bundle(handoff.parts);
+                let handoff = self.handoff.as_mut().unwrap();
+                handoff.pushing = true;
+                handoff.pushed = None;
+                vec![Command::Push { to, bundle }]
+            }
+            // A television shows a code for a phone to send it the account.
+            tv::HOME_SEARCH => self.click("mobile-search"),
+            "crop-done" => match self.cropping.take() {
+                Some(crop) => {
+                    let (x, y, side) = crop.square();
+                    vec![Command::KeepPicture { of: crop.of, bytes: crop.bytes, x, y, side }]
+                }
+                None => Vec::new(),
+            },
+            "crop-cancel" => {
+                self.cropping = None;
+                Vec::new()
+            }
+            tv::RECEIVE => {
+                self.handoff = Some(Handoff { receiving: true, inbox: true, ..Handoff::default() });
+                vec![Command::Inbox]
+            }
             "handoff-copy" => {
                 self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.code.clone());
                 Vec::new()
@@ -2806,7 +2993,9 @@ impl State {
                 let Some(handoff) = self.handoff.take() else { return Vec::new() };
                 match handoff.fetched {
                     Some(Ok(bundle)) => {
-                        let commands = self.take_in(bundle, handoff.parts);
+                        let mut commands = self.take_in(bundle, handoff.parts);
+                        // A television's inbox closes once what came is in.
+                        if handoff.inbox { commands.push(Command::StopServing); }
                         // An account brought in on the first run is the end of its steps.
                         if self.onboarding.is_some() { self.end_first_run(); }
                         commands
@@ -3527,13 +3716,30 @@ impl State {
                 Vec::new()
             }
             Event::Offered(offer) => {
-                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving) { handoff.offer = Some(offer); }
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving || handoff.inbox) { handoff.offer = Some(offer); }
+                Vec::new()
+            }
+            Event::Picked { of, bytes, width, height, image } => {
+                let mut crop = Crop { of, bytes, width, height, image, x: 0.5, y: 0.5, zoom: 0.0 };
+                crop.settle(0.5, 0.5, 0.0);
+                self.cropping = Some(crop);
+                // A remote starts on the square, which its arrows move.
+                if self.tv { self.focus = Some("crop-area".into()); }
+                Vec::new()
+            }
+            Event::Pushed(pushed) => {
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.push_to.is_some()) {
+                    handoff.pushing = false;
+                    handoff.pushed = Some(pushed);
+                }
                 Vec::new()
             }
             Event::Fetched(fetched) => {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.receiving) {
                     handoff.fetching = false;
                     if let Ok(bundle) = &fetched { handoff.parts = Self::parts_of(bundle); }
+                    // A television's focus goes to bringing in what came.
+                    if handoff.inbox && fetched.is_ok() { self.focus = Some("handoff-take".into()); }
                     handoff.fetched = Some(fetched);
                 }
                 Vec::new()
@@ -3686,6 +3892,9 @@ impl State {
         if let Some(track) = player.current.as_ref().filter(|track| before != Some(track.id.as_str()) && self.swapped.is_none()) {
             self.collection.heard(track);
         }
+        if player.position != self.player.position || player.playing != self.player.playing {
+            self.heard = (player.position, Instant::now());
+        }
         let was_playing = std::mem::replace(&mut self.player, player).playing;
         if self.player.playing != was_playing {
             let (to, now) = (if self.player.playing { 1.0 } else { COVER_PAUSED }, Instant::now());
@@ -3699,9 +3908,11 @@ impl State {
         let scrobbles = if self.replay_story.is_some() { Vec::new() } else { self.listen(song, playing, position, duration, Instant::now(), chrono::Utc::now().timestamp()) };
         // The playing track's cover is also shown large, in the right panel.
         let large = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).map(large_cover);
+        // A phone's player stands on it blurred.
+        let backdrop = self.player.current.as_ref().and_then(|track| track.artwork_url.as_deref()).filter(|_| self.mobile || self.tv).map(backdrop_key);
         // And the panel of what plays shows what comes next.
         let next = self.player.upcoming.first().filter(|_| self.shows_playing()).map(|track| &track.artwork_url);
-        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large]).chain(next));
+        let mut commands = cover_requests(&mut self.covers, self.player.current.iter().map(|track| &track.artwork_url).chain([&large, &backdrop]).chain(next));
         commands.extend(self.upcoming_covers());
         commands.extend(self.ask_lyrics());
         commands.extend(self.ask_clip());
@@ -3924,6 +4135,12 @@ impl State {
         commands
     }
 
+    /// Whether the home has picks of the taste to show, or some on their way.
+    pub fn has_picks(&self) -> bool {
+        !self.mixes().is_empty() || !self.recent_picks.is_empty() || !self.picked_artists.is_empty() || !self.picked_albums.is_empty()
+            || self.picks_coming.contains(&true)
+    }
+
     /// Whether a cover is on its way: asked for, and neither in nor known to be missing.
     pub fn cover_coming(&self, url: &str) -> bool {
         self.covers.contains(url) && !self.artwork.contains_key(url) && !self.missing_covers.contains(url)
@@ -3933,7 +4150,7 @@ impl State {
     /// what offers itself over the window waits for it to close.
     pub fn dialog_open(&self) -> bool {
         self.replay_story.is_some() || self.room_invite || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
-            || self.import_run.is_some() || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some()
+            || self.import_run.is_some() || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some() || self.cropping.is_some()
     }
 
     /// What plays and what follows it, to be gone on with the next time the app opens.
@@ -4101,9 +4318,29 @@ impl State {
         }
     }
 
+    /// Where the song is now, in milliseconds: the engine's last reading, carried on while it
+    /// plays by the time since, though never more than a reading late.
+    pub fn playhead_ms(&self, now: Instant) -> u64 {
+        let (position, since) = self.heard;
+        let carried = if self.player.playing { now.saturating_duration_since(since).min(Duration::from_millis(300)).as_secs_f64() } else { 0.0 };
+        ((position + carried - self.output_latency).max(0.0) * 1000.0) as u64
+    }
+
+    /// Whether a phone's lyrics are filling as their words are sung, or the words just sung
+    /// are settling, which needs frames between the engine's readings. Lines timed only as a
+    /// whole light at once and need none.
+    pub fn lyrics_fill(&self) -> bool {
+        let timed = |index: usize| self.lines().get(index).is_some_and(|line| !line.words.is_empty());
+        // A television shows them beside its player.
+        let shown = (self.mobile && self.page == Page::Lyrics) || (self.tv && matches!(self.page, Page::Playing | Page::Lyrics));
+        shown && self.player.playing && self.motion && !self.settings.reduce_motion
+            && self.active_line().is_some_and(|sung| timed(sung) || sung.checked_sub(1).is_some_and(timed))
+    }
+
     /// The line being sung.
     pub fn active_line(&self) -> Option<usize> {
-        active(self.lines(), (self.player.position.max(0.0) * 1000.0) as u64)
+        // What is heard, which an AirPlay speaker or TV plays a while after the player's clock.
+        active(self.lines(), ((self.player.position - self.output_latency).max(0.0) * 1000.0) as u64)
     }
 
     pub fn lyrics_open(&self) -> bool {
@@ -4694,6 +4931,35 @@ mod tests {
         click(&mut state, "handoff-take");
         assert!(state.handoff.is_none() && state.collection.liked.len() == 1);
         assert_eq!(click(&mut state, "handoff-close"), vec![Command::StopServing]);
+    }
+
+    #[test]
+    fn a_picked_picture_is_cropped_to_the_square_chosen_inside_it() {
+        let mut state = State::default();
+        let image = RasterImage::new(format!("{:064x}", 1), limn::RasterImageFormat::Png, 1, "AA==".into(), "Foto").unwrap();
+        state.apply(Event::Picked { of: PictureFor::Profile, bytes: Arc::new(vec![1, 2, 3]), width: 400, height: 200, image });
+        let crop = state.cropping.as_ref().unwrap();
+        assert_eq!(crop.square(), (100, 0, 200), "the middle square of the short edge to start");
+        state.update(&UiAction::AreaSliderChanged { id: "crop-area".into(), x: 1.0, y: 0.0, committed: false });
+        assert_eq!(state.cropping.as_ref().unwrap().square(), (200, 0, 200), "pressed past the edge, it stays inside");
+        state.update(&UiAction::SliderChanged { id: "crop-zoom".into(), fraction: 1.0, committed: true });
+        assert_eq!(state.cropping.as_ref().unwrap().square(), (275, 75, 50), "a quarter of the short edge, about where its centre was");
+        assert!(state.dialog_open());
+        let kept = state.update(&UiAction::Clicked { id: "crop-done".into() });
+        assert!(matches!(kept.as_slice(), [Command::KeepPicture { of: PictureFor::Profile, x: 275, y: 75, side: 50, .. }]), "{kept:?}");
+        assert!(state.cropping.is_none());
+    }
+
+    #[test]
+    fn the_lyrics_follow_what_is_heard_through_a_slow_route() {
+        let mut state = State::default();
+        let lines = vec![Line { at_ms: 0, text: "uno".into(), words: Vec::new() }, Line { at_ms: 9_000, text: "dos".into(), words: Vec::new() }];
+        state.lyrics = Some(("song".into(), Lyrics::Lines(lines)));
+        state.player.current = Some(Track { id: "song".into(), title: "Canción".into(), artist: "Banda".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 200_000 });
+        state.player.position = 10.0;
+        assert_eq!(state.active_line(), Some(1));
+        state.output_latency = 2.0;
+        assert_eq!(state.active_line(), Some(0), "an Apple TV over AirPlay plays it two seconds later");
     }
 
     #[test]
@@ -5423,7 +5689,7 @@ mod tests {
     fn lyrics_are_translated_a_line_each_once_for_what_plays_while_it_is_on() {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), playing: true, ..PlayerView::default() });
-        state.lyrics = Some(("a".into(), Lyrics::Lines(vec![Line { at_ms: 0, text: "I still see you".into() }, Line { at_ms: 900, text: String::new() }, Line { at_ms: 1800, text: "OK".into() }])));
+        state.lyrics = Some(("a".into(), Lyrics::Lines(vec![Line { words: Vec::new(), at_ms: 0, text: "I still see you".into() }, Line { words: Vec::new(), at_ms: 900, text: String::new() }, Line { words: Vec::new(), at_ms: 1800, text: "OK".into() }])));
         assert!(state.ask_translation().is_empty(), "off until it is asked for");
         assert!(state.translatable());
         let asked = click(&mut state, "lyrics-translate");
@@ -5453,7 +5719,7 @@ mod tests {
         assert!(state.lyrics_open(), "they take the page");
         assert!(state.show(playing("a", 1.0)).is_empty(), "already asked");
 
-        let lines = vec![Line { at_ms: 5_000, text: "one".into() }, Line { at_ms: 9_000, text: "two".into() }];
+        let lines = vec![Line { words: Vec::new(), at_ms: 5_000, text: "one".into() }, Line { words: Vec::new(), at_ms: 9_000, text: "two".into() }];
         state.apply(Event::Lyrics { track_id: "other".into(), lines: None });
         assert_eq!(state.lyrics, Some(("a".into(), Lyrics::Loading)), "an answer for another track changes nothing");
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines) });
@@ -5517,7 +5783,7 @@ mod tests {
         let mut state = State { mobile: true, panel_open: false, ..without_clips() };
         state.show(PlayerView { current: Some(track("a")), ..PlayerView::default() });
         click(&mut state, "lyrics");
-        let lines = vec![Line { at_ms: 1000, text: "Available words".into() }];
+        let lines = vec![Line { words: Vec::new(), at_ms: 1000, text: "Available words".into() }];
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some(lines.clone()) });
         // A→B→A can leave an older request for A in flight. Its failure is not newer knowledge.
         state.apply(Event::LyricsFailed { track_id: "a".into(), message: "late timeout".into(), retry_after: Duration::ZERO });
@@ -5691,7 +5957,7 @@ mod tests {
         let mut state = State::default();
         state.show(PlayerView { current: Some(track("a")), position: 10.5, ..PlayerView::default() });
         state.apply(Event::Lyrics { track_id: "a".into(), lines: Some((0..20)
-            .map(|index| Line { at_ms: index * 1_000, text: format!("Verse {index}") }).collect()) });
+            .map(|index| Line { words: Vec::new(), at_ms: index * 1_000, text: format!("Verse {index}") }).collect()) });
         assert_eq!(state.active_line(), Some(10));
         state.motion = true;
         let now = Instant::now();

@@ -1,5 +1,10 @@
 # Native iOS interaction tests
 
+> Since the phone took BitChord's bars ([docs/bitchord-look.md](../../docs/bitchord-look.md)), the header, the tabs, the mini-player and the search field are limn's on the iPhone too, and UIKit draws none of them (`MobileUi::native_bars` is off). The scenarios tap the tabs, Settings and the search field at their places in the real frame (`EntryGeometry.json`, checked by `native_ui_entry_geometry_matches_the_real_phone_frames`); the sheets, menus, paste controls and keyboard are still UIKit's and are found by identifier.
+>
+> Open since the limn bars (0.16.0): the five scenarios that paste through UIKit's editing menu (`pasteThroughEditingMenu`, a long press on a native sheet's field) find no Paste on the iOS 26.5 simulator, though the field is there and its own Paste button works. They passed with UIKit's bars; what of the canvas now keeps the menu from showing is yet to be found on a Mac.
+> The two search scenarios type into limn's field (the keyboard comes up) but the keyboard stays after Return, and the home card's long press came and went between runs.
+
 `SurcoNativeUI` is a separate shared XCTest scheme. It tests the Release app through public XCUIAutomation, without app launch scripts, injected selectors, or production test hooks. The regular `Surco` archive scheme remains app-only.
 
 The twelve tests cover:

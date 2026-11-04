@@ -3,18 +3,75 @@
 use super::*;
 
 const GUTTER: f32 = 16.0;
+/// BitChord's discs under a page's name: 50 across, white at 7% within a rim at 10%.
+const DISC: f32 = 50.0;
+const DISC_FILL: Color = Color::rgba(255, 255, 255, 18);
+const DISC_RIM: Color = Color::rgba(255, 255, 255, 26);
+const PLAY_PILL: f32 = 50.0;
+/// The widest the Play pill grows; narrower, it gives way to the discs beside it.
+const PLAY_PILL_MOST: f32 = 180.0;
+/// The artist's play, larger than the discs beside it.
+const ARTIST_PLAY: f32 = 70.0;
+const ARTIST_DISC: f32 = 52.0;
+/// The credit under a title, BitChord's secondary ink over the page's colour.
+const CREDIT: Color = Color::rgba(255, 255, 255, 185);
 
+/// BitChord's sleeve: 76% of the width, up to 300.
 fn cover_side(width: f32) -> f32 {
-    (width - 64.0).clamp(176.0, 300.0)
+    (width * 0.76).clamp(176.0, 300.0)
+}
+
+/// A sleeve as BitChord's: corners of 12 over a shadow of 18.
+fn sleeve(picture: Element) -> Element {
+    picture.radius(12.0).shadow(Color::rgba(0, 0, 0, 150), limn::Point::new(0.0, 8.0), 18.0, 0.0).centered_x()
 }
 
 fn title(value: &str, palette: ComponentPalette) -> Element {
     Text::new(value, palette)
-        .role(TextRole::Heading)
-        .font_size(28.0)
-        .line_height(34.0)
+        .font_size(22.0)
+        .line_height(28.0)
         .render()
+        .font_family(FontFamily::SansBold)
+        // Each line centred across the page, so a long name wraps rather than overflowing.
+        .center_content()
         .anchor("mobile-detail-title")
+}
+
+/// A page's facts under its name: small and muted, centred.
+fn meta(value: String, palette: ComponentPalette) -> Element {
+    Text::new(value, palette).font_size(12.0).muted().render().font_family(FontFamily::SansMedium).center_content()
+}
+
+/// A page's own action, as a disc of BitChord's.
+fn disc(action: Element, side: f32) -> Element {
+    Element::panel(action.centered()).background(DISC_FILL).border(DISC_RIM, 1.0).round().size(Some(side), Some(side)).centered_y()
+}
+
+/// The actions under a page's name, as BitChord's, centred: shuffle and the page's `own`
+/// (keep, download, its menu) as discs either side of a white Play pill; an artist's play a
+/// larger white disc between its two.
+pub(in crate::view) fn actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> Element {
+    let artist = matches!(state.page, Page::Artist(_));
+    let side = if artist { ARTIST_DISC } else { DISC };
+    let (glyph, hint) = shuffle_step(state);
+    let shuffle = controls::action("page-shuffle", glyph, &hint, 22.0, palette);
+    let shuffle = disc(if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle }, side);
+    let play = if artist {
+        controls::playback("page-play", false, ARTIST_PLAY, 30.0, palette)
+    } else {
+        let ink = SCHEME.canvas;
+        let copy = Element::row(vec![Element::icon(Icon::PlayFill).large_icon(20.0).foreground(ink).centered_y(),
+            Text::new(t!("common-play"), palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold).foreground(ink).centered_y()]).gap(8.0).padding(12.0);
+        let pill = Element::panel(copy.centered()).background(palette.text).pressed_background(ROUND_HELD)
+            .hover_surface("page-play:pill", ["page-play"]).round().size(None, Some(PLAY_PILL));
+        Element::clickable("page-play", pill).accessible(limn::Access::new(limn::Role::Button).name(t!("common-play"))).round()
+            .max_width(PLAY_PILL_MOST).flex(3.0).centered_y()
+    };
+    // The pill takes the room first; once it is at its widest the rest centres the row.
+    let mut row = vec![Element::spacer().flex(0.05), shuffle, play];
+    row.extend(own.into_iter().map(|action| disc(action, side)));
+    row.push(Element::spacer().flex(0.05));
+    Element::row(row).gap(if artist { 24.0 } else { 12.0 })
 }
 
 fn duration(tracks: &[Track]) -> String {
@@ -47,6 +104,29 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
     crate::view::windowed(built, range, count, crate::view::MOBILE_TRACK_PITCH, 4.0)
 }
 
+/// A list's search and order in the bar, as BitChord's: one floating pill, its magnifier a
+/// cross while the search is open.
+pub(in crate::view) fn bar_tools(state: &State, palette: ComponentPalette) -> Element {
+    let open = state.page_searching;
+    let search = icon("page-search", if open { Icon::Close } else { Icon::Search }, &if open { t!("desktop-close-search") } else { t!("mobile-search-list") }, palette);
+    let order = crate::view::page_order(state, icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette));
+    Element::panel(Element::row(vec![search, order])).background(FROST).border(HAIRLINE, 0.5).round().centered_y()
+}
+
+/// The field a list is searched in, as BitChord's: under the bar, on the page's colour, the
+/// list's songs that hold what is typed under it.
+fn search_field(state: &State, palette: ComponentPalette) -> Element {
+    let field = SearchField::new("page-query", &state.page_search, t!("mobile-search-list"), ComponentPalette { surface: Color::rgba(0, 0, 0, 90), ..SCHEME.on_raised() })
+        .size(ControlSize::Spacious).render().size(None, Some(46.0)).radius(12.0).border(HAIRLINE, 0.5);
+    if state.page_search.is_empty() { field } else { inside_cross(field, "page-search-clear", &t!("mobile-clear-search"), palette) }
+}
+
+/// A list's page while it is searched: the field and the songs it finds, the sleeve and its
+/// name scrolled away as BitChord carries its page up to the field.
+fn searched(state: &State, id: &str, palette: ComponentPalette) -> Element {
+    scroll(state, id, vec![search_field(state, palette), tracks(state, palette)])
+}
+
 fn scroll(state: &State, id: &str, sections: Vec<Element>) -> Element {
     let sections = page_search_slot(state).into_iter().chain(sections).collect();
     ScrollArea::new(
@@ -63,6 +143,7 @@ pub(in crate::view) fn album(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
+    if state.page_searching { return searched(state, "mobile-album", palette); }
     let side = cover_side(width);
     let metadata = [
         album.year.clone(),
@@ -76,22 +157,16 @@ pub(in crate::view) fn album(
     let artist = Element::clickable(
         "page-artist",
         Text::new(&album.artist, palette)
-            .font_size(15.0)
+            .font_size(19.0)
+            .ink(CREDIT)
             .truncate()
             .render()
+            .center_content()
             .centered_y(),
     )
     .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-view-album-artist", artist = album.artist.as_str())))
     .size(None, Some(TAP));
-    let about = Element::column(vec![
-        title(&album.title, palette),
-        artist,
-        Text::new(metadata, palette)
-            .font_size(13.0)
-            .muted()
-            .render(),
-    ])
-    .gap(4.0);
+    let about = Element::column(vec![title(&album.title, palette), artist, meta(metadata, palette)]).gap(2.0);
     let kept = keep(
         state,
         &t!("mobile-save-album"),
@@ -99,7 +174,7 @@ pub(in crate::view) fn album(
         palette,
     );
     let actions = if album.tracks.is_empty() {
-        Element::row(vec![kept])
+        Element::row(vec![disc(kept, DISC)]).centered_x()
     } else {
         page_actions(state, vec![kept], palette)
     };
@@ -107,9 +182,7 @@ pub(in crate::view) fn album(
         state,
         "mobile-album",
         vec![
-            sole_cover(state, &album.artwork_url, side, palette)
-                .radius(8.0)
-                .centered_x(),
+            sleeve(sole_cover(state, &album.artwork_url, side, palette)),
             about,
             actions,
             tracks(state, palette),
@@ -123,33 +196,30 @@ pub(in crate::view) fn artist(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
-    let side = cover_side(width);
-    let mut about = vec![title(&artist.name, palette)];
-    if let Some(subscribers) = artist
-        .subscribers
-        .as_deref()
-        .filter(|value| !value.is_empty())
-    {
-        about.push(
-            Text::new(subscribers, palette)
-                .font_size(14.0)
-                .muted()
-                .render(),
-        );
+    // BitChord's: the photo the page's width, a little taller than wide, dissolving into the
+    // page's colour with the name over it.
+    let span = width - 2.0 * GUTTER;
+    let tall = (span / 0.95).round();
+    let tone = artist.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
+    let name = Text::new(&artist.name, palette).font_size(34.0).line_height(40.0).render().font_family(FontFamily::SansBold)
+        .anchor("mobile-detail-title");
+    // The name and how many follow them read as one, at the photo's foot.
+    let mut said = vec![Element::spacer().flex(1.0), name];
+    if let Some(subscribers) = artist.subscribers.as_deref().filter(|value| !value.is_empty()) {
+        said.push(Text::new(t!("mobile-subscribers", subscribers = subscribers), palette).font_size(14.0).render()
+            .font_family(FontFamily::SansMedium).foreground(Color::rgba(255, 255, 255, 190)));
     }
+    let fade = Element::column(said).gap(2.0).padding(16.0)
+        .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.45).round()));
+    let photo = Element::stack(vec![sole_cover(state, &artist.artwork_url, tall, palette).size(Some(span), Some(tall)),
+        Element::column(vec![Element::spacer().flex(1.0), fade])]).size(Some(span), Some(tall)).radius(12.0).clip_children();
+    let mut sections = vec![photo];
     let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
-    let actions = if artist.songs.is_empty() {
-        Element::row(vec![followed])
+    sections.push(if artist.songs.is_empty() {
+        Element::row(vec![disc(followed, ARTIST_DISC)]).centered_x()
     } else {
         page_actions(state, vec![followed], palette)
-    };
-    let mut sections = vec![
-        sole_cover(state, &artist.artwork_url, side, palette)
-            .radius(side / 2.0)
-            .centered_x(),
-        Element::column(about).gap(8.0),
-        actions,
-    ];
+    });
     if !artist.songs.is_empty() {
         sections.push(
             Element::column(vec![heading(&t!("common-songs-heading"), palette), tracks(state, palette)]).gap(12.0),
@@ -179,14 +249,15 @@ pub(in crate::view) fn artist(
 /// A mix the home made, as a playlist reads: its picture, what it is and who it plays, and
 /// its songs.
 pub(in crate::view) fn mix(state: &State, mix: &Mix, width: f32, palette: ComponentPalette) -> Element {
+    if state.page_searching { return searched(state, "mobile-mix", palette); }
     let about = Element::column(vec![
-        Text::eyebrow(t!("desktop-mix"), palette).render(),
+        Text::eyebrow(t!("desktop-mix"), palette).render().center_content(),
         title(&crate::view::mix_name(mix), palette),
-        Text::new(crate::view::mix_detail(mix), palette).font_size(13.0).muted().render(),
-        Text::new(format!("{} · {}", songs(mix.tracks.len()), duration(&mix.tracks)), palette).font_size(13.0).muted().render(),
+        Text::new(crate::view::mix_detail(mix), palette).font_size(15.0).ink(CREDIT).truncate().render().center_content(),
+        meta(format!("{} · {}", songs(mix.tracks.len()), duration(&mix.tracks)), palette),
     ])
-    .gap(4.0);
-    let cover = crate::view::mix_cover(state, mix, cover_side(width), true, palette).centered_x();
+    .gap(2.0);
+    let cover = sleeve(crate::view::mix_cover(state, mix, cover_side(width), true, palette));
     scroll(state, "mobile-mix", vec![cover, about, page_actions(state, Vec::new(), palette), tracks(state, palette)])
 }
 
@@ -196,6 +267,7 @@ pub(in crate::view) fn playlist(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
+    if state.page_searching && !playlist.tracks.is_empty() { return searched(state, "mobile-playlist", palette); }
     let side = cover_side(width);
     let artwork = playlist.cover().cloned();
     let picture = if artwork.is_none() {
@@ -207,9 +279,8 @@ pub(in crate::view) fn playlist(
         )
         .background(SCHEME.raised)
         .size(Some(side), Some(side))
-        .radius(8.0)
     } else {
-        sole_cover(state, &artwork, side, palette).radius(8.0)
+        sole_cover(state, &artwork, side, palette)
     };
     let mut about = vec![
         Text::eyebrow(
@@ -220,19 +291,10 @@ pub(in crate::view) fn playlist(
             },
             palette,
         )
-        .render(),
+        .render()
+        .center_content(),
         title(&playlist.name, palette),
-        Text::new(
-            format!(
-                "{} · {}",
-                songs(playlist.tracks.len()),
-                duration(&playlist.tracks)
-            ),
-            palette,
-        )
-        .font_size(13.0)
-        .muted()
-        .render(),
+        meta(format!("{} · {}", songs(playlist.tracks.len()), duration(&playlist.tracks)), palette),
     ];
     if let Some((_, missed)) = state
         .imported
@@ -248,11 +310,11 @@ pub(in crate::view) fn playlist(
                 .render(),
         );
     }
-    let mut sections = vec![picture.centered_x(), Element::column(about).gap(8.0)];
+    let mut sections = vec![sleeve(picture), Element::column(about).gap(4.0)];
     // As the desktop's: what else a list can do waits behind its dots.
     let more = crate::view::playlist_menu(state, playlist, palette);
     if playlist.tracks.is_empty() {
-        sections.push(Element::row(vec![more]));
+        sections.push(Element::row(vec![disc(more, DISC)]).centered_x());
         sections.push(blank(Icon::MusicNote, t!("mobile-playlist-empty"), t!("mobile-playlist-empty-detail"), None, palette));
     } else {
         sections.push(page_actions(state, vec![more], palette));
@@ -270,7 +332,7 @@ pub(in crate::view) fn playlist(
 mod tests {
     use super::*;
     use crate::backend::Command;
-    use limn::{DrawCommand, Frame, UiAction, UiTree};
+    use limn::{DrawCommand, Frame, HitKind, UiAction, UiTree};
 
     fn track(id: &str) -> Track {
         Track {
@@ -363,7 +425,7 @@ mod tests {
                     position,
                     font_size,
                     ..
-                } if *font_size >= 24.0 => Some((text, position, font_size)),
+                } if *font_size >= 22.0 => Some((text, position, font_size)),
                 _ => None,
             })
             .collect();
@@ -399,8 +461,6 @@ mod tests {
                 let mut ids = vec![
                     "page-play",
                     "page-shuffle",
-                    "page-search",
-                    "page-sort",
                     "more:page-track:0",
                     "more:page-track:1",
                 ];
@@ -410,6 +470,19 @@ mod tests {
                     ids.push("keep");
                 }
                 touch_controls(&frame(&state, width), width, &ids);
+                // A list's search and order are in the bar, as BitChord's; an artist has none.
+                let mut tree = UiTree::new(super::super::view(&state, Size::new(width, 844.0)));
+                tree.set_reduced_motion(true);
+                let shown = tree.layout(Size::new(width, 844.0));
+                let tools = !matches!(state.page, Page::Artist(_));
+                for id in ["page-search", "page-sort"] {
+                    let count = shown.regions.iter().filter(|region| region.id == id && region.kind == HitKind::Button).count();
+                    assert_eq!(count, usize::from(tools), "{id} in the bar on {:?} at {width}", state.page);
+                }
+                if tools {
+                    let search = shown.access.iter().find(|node| node.id == "page-search").unwrap().rect;
+                    assert!(search.x > width / 2.0 && search.x + search.width <= width + 0.1 && search.y < 60.0, "at the bar's end: {search:?}");
+                }
             }
         }
     }

@@ -89,6 +89,12 @@ pub(crate) struct MobileUi {
     pub native_surfaces: bool,
     /// UIKit's bars are Liquid Glass (iOS 26): rows show through the tab bar instead of a scrim.
     pub glass: bool,
+    /// Whether UIKit draws the header, tabs, mini-player and search field over the slots limn
+    /// leaves for them. Never in the app: every phone has BitChord's bars, drawn by limn
+    /// (docs/bitchord-look.md), while UIKit still draws its sheets, menus, paste and keyboard.
+    // shortcut: the native bars' path is kept and tested, switched off; delete it with
+    // SurcoSurfaces.m's chrome once the iPhone is settled on limn's bars.
+    pub native_bars: bool,
     pub keyboard_visible: bool,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
@@ -202,6 +208,11 @@ impl State {
             return Vec::new();
         }
         self.find(query)
+    }
+
+    /// Whether UIKit's search field takes the typing, over limn's: only with UIKit's bars.
+    fn native_search(&self) -> bool {
+        self.mobile_ui.native_surfaces && self.mobile_ui.native_bars
     }
 
     fn mobile_submit(&mut self) -> Vec<Command> {
@@ -335,12 +346,12 @@ impl State {
                         let editing = id == "mobile-discover";
                         self.mobile_ui.search_editing = editing;
                         self.mobile_ui.blur = !editing;
-                        self.focus = (editing && !self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (editing && !self.native_search()).then(|| "search".into());
                     }
                     "mobile-search-edit" => {
                         self.mobile_ui.search_editing = true;
                         self.mobile_ui.blur = false;
-                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (!self.native_search()).then(|| "search".into());
                     }
                     "mobile-search-cancel" => {
                         self.mobile_ui.search_editing = false;
@@ -351,7 +362,7 @@ impl State {
                     "mobile-search-clear" | "search:clear" => {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.mobile_query("", Instant::now());
-                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (!self.native_search()).then(|| "search".into());
                         self.mobile_ui.blur = false;
                     }
                     "search-submit" => return Some(self.mobile_submit()),

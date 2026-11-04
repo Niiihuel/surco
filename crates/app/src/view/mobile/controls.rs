@@ -46,8 +46,8 @@ mod tests {
             let point = Point::new(1.0, 1.0);
             tree.handle_event(UiEvent::PointerDown(point));
             assert_eq!(tree.handle_event(UiEvent::PointerUp(point)), vec![UiAction::Clicked { id: "next".into() }]);
-            tree.handle_event(UiEvent::Key { key: Key::Tab, shift: false, ctrl: false });
-            assert_eq!(tree.handle_event(UiEvent::Key { key: Key::Enter, shift: false, ctrl: false }),
+            tree.handle_event(UiEvent::Key { key: Key::Tab, shift: false, ctrl: false, alt: false });
+            assert_eq!(tree.handle_event(UiEvent::Key { key: Key::Enter, shift: false, ctrl: false, alt: false }),
                 vec![UiAction::Clicked { id: "next".into() }]);
         }
     }

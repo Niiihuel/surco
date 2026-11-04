@@ -76,6 +76,9 @@ pub enum Command {
     FetchArtwork(String),
     /// Ask the user for a picture of their own, from their files, for a list or the account.
     PickPicture(PictureFor),
+    /// Keep the square `side` across at `x`, `y` of a picture picked to crop, as the picture of
+    /// `of`.
+    KeepPicture { of: PictureFor, bytes: Arc<Vec<u8>>, x: u32, y: u32, side: u32 },
     /// Serve the account, or this part of it, to another device on the local network; one
     /// served already is replaced at the same address.
     Serve(Bundle),
@@ -84,6 +87,11 @@ pub enum Command {
     ScanCode,
     /// Read an account served by another device, at this address.
     Fetch(String),
+    /// Take an account another device sends, as a television does: its code is offered as a
+    /// served one's is, and what comes is read as a fetched one.
+    Inbox,
+    /// Send the account, or this part of it, to a television's inbox at `to`.
+    Push { to: String, bundle: Bundle },
     /// Look for artists for the first run's picker: what these searches find, a turn each.
     /// `key` comes back with them.
     FindArtists { key: String, queries: Vec<String> },
@@ -252,6 +260,9 @@ pub enum Picks {
 pub enum Event {
     /// A picture chosen, kept on disk with the covers under `name`, which fetches it as one.
     Picture { of: PictureFor, name: String },
+    /// A picture picked from the user's files, to crop before it is kept: at most
+    /// [`CROP_SOURCE`] a side, as JPEG, and as the screen shows it.
+    Picked { of: PictureFor, bytes: Arc<Vec<u8>>, width: u32, height: u32, image: RasterImage },
     /// How the room listened in together stands; none once it is left.
     Room(Option<crate::room::RoomView>),
     /// How loud what the microphone hears is, 0 to 1, and for how long it has listened.
@@ -267,6 +278,8 @@ pub enum Event {
     Offered(Result<(Offer, Option<RasterImage>), String>),
     /// An account read from another device, its pictures kept with the covers already.
     Fetched(Result<Bundle, String>),
+    /// Whether the account sent to a television got there.
+    Pushed(Result<(), String>),
     /// The artists found for the picker, under the key they were asked for with.
     ArtistsFound { key: String, artists: Vec<ArtistRef> },
     SearchResults { query: String, found: Found },
@@ -727,9 +740,16 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let shared = shared.clone();
             tokio::spawn(async move {
                 let Some(bytes) = pick_picture().await else { return };
+                // Decoding is slow: off the runtime's two workers. The user crops it next.
+                if let Some(event) = tokio::task::block_in_place(|| picked(of, &bytes)) { (shared.reply)(event); }
+            });
+        }
+        (Command::KeepPicture { of, bytes, x, y, side }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
                 // Decoding and writing hold the library: off the runtime's two workers.
                 let kept = tokio::task::block_in_place(|| {
-                    let jpeg = square_jpeg(&bytes)?;
+                    let jpeg = crop_jpeg(&bytes, x, y, side)?;
                     let name = format!("{PICTURE_NAME}{:016x}", fastrand::u64(..));
                     shared.library.lock().unwrap().keep_cover(&name, &jpeg).ok()?;
                     Some(name)
@@ -737,18 +757,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 if let Some(name) = kept { (shared.reply)(Event::Picture { of, name }); }
             });
         }
-        (Command::Serve(mut bundle), Ok(shared)) => {
+        (Command::Serve(bundle), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                // The pictures of its own go along, from where they are kept.
-                bundle.pictures = tokio::task::block_in_place(|| {
-                    let library = shared.library.lock().unwrap();
-                    bundle.picture_names().into_iter().filter_map(|name| {
-                        let bytes = library.cover(&name)?;
-                        Some((name, base64::engine::general_purpose::STANDARD.encode(bytes)))
-                    }).collect()
-                });
-                let Ok(body) = serde_json::to_vec(&bundle) else { return };
+                let Some(body) = bundle_body(&shared, bundle) else { return };
                 let mut serving = shared.serving.lock().await;
                 if let Some(current) = serving.as_ref() {
                     current.replace(body);
@@ -809,7 +821,59 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 (shared.reply)(Event::Fetched(fetched));
             });
         }
-        (Command::Serve(_), Err(message)) => reply(Event::Offered(Err(message.clone()))),
+        (Command::Inbox, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let mut serving = shared.serving.lock().await;
+                serving.take();
+                // What comes is read as what is fetched: the television asks what of it to take.
+                let taker = shared.clone();
+                let received = move |body: Vec<u8>| {
+                    let taker = taker.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let read = read_bundle(&taker, &body);
+                        (taker.reply)(Event::Fetched(read));
+                    });
+                };
+                let watcher = shared.clone();
+                let stopped = move |offer: handoff::Offer| {
+                    tokio::spawn(async move {
+                        let mut serving = watcher.serving.lock().await;
+                        if serving.as_ref().is_some_and(|current| current.offer == offer) {
+                            *serving = None;
+                            (watcher.reply)(Event::Offered(Err(t!("backend-handoff-stopped").into_owned())));
+                        }
+                    });
+                };
+                let offered = match handoff::inbox(received, stopped).await {
+                    Ok(started) => {
+                        let offer = started.offer.clone();
+                        *serving = Some(started);
+                        let qr = code_image(&offer.link);
+                        Ok((offer, qr))
+                    }
+                    Err(message) => Err(message),
+                };
+                drop(serving);
+                (shared.reply)(Event::Offered(offered));
+            });
+        }
+        (Command::Push { to, bundle }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let failed = || t!("backend-handoff-push-failed").into_owned();
+                let pushed = match bundle_body(&shared, bundle) {
+                    Some(body) => match shared.youtube.http().post(&to).timeout(HANDOFF_WAIT).body(body).send().await {
+                        Ok(answer) if answer.status().is_success() => Ok(()),
+                        _ => Err(failed()),
+                    },
+                    None => Err(failed()),
+                };
+                (shared.reply)(Event::Pushed(pushed));
+            });
+        }
+        (Command::Serve(_) | Command::Inbox, Err(message)) => reply(Event::Offered(Err(message.clone()))),
+        (Command::Push { .. }, Err(message)) => reply(Event::Pushed(Err(message.clone()))),
         (Command::Fetch(_), Err(message)) => reply(Event::Fetched(Err(message.clone()))),
         (Command::StopServing, Err(_)) => {}
         (Command::ScanCode, _) => {
@@ -836,7 +900,7 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             let dim = { let mut held = shared.volume.lock().unwrap(); held.0 = volume; held.1 };
             drop(shared.audio.set_volume(volume.powf(2.5) * dim, false));
         }
-        (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::Volume(_), Err(_)) => {}
+        (Command::FetchArtwork(_) | Command::PickPicture(_) | Command::KeepPicture { .. } | Command::Volume(_), Err(_)) => {}
         (Command::Equalizer(values), _) => equalizer::set_values(values),
         (Command::Mono(on), _) => equalizer::set_mono(on),
         (Command::Normalize(on), _) => equalizer::set_normalize(on),
@@ -1803,24 +1867,41 @@ fn code_image(link: &str) -> Option<RasterImage> {
     RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-handoff-code"))
 }
 
-/// An account served by another device: read, and its pictures kept with the covers. A
-/// picture is taken only under a picture's own name, and only as the picture it decodes to.
+/// An account served by another device: read, and its pictures kept with the covers.
 async fn fetch_bundle(shared: &Shared, url: &str) -> Result<Bundle, String> {
     let unreachable = || t!("backend-handoff-unreachable").into_owned();
     let response = shared.youtube.http().get(url).timeout(HANDOFF_WAIT).send().await.map_err(|_| unreachable())?.error_for_status().map_err(|_| unreachable())?;
     if response.content_length().is_none_or(|length| length > HANDOFF_MOST) {
         return Err(t!("backend-handoff-unreadable").into_owned());
     }
-    let mut bundle = handoff::read(&response.bytes().await.map_err(|_| unreachable())?)?;
+    let bytes = response.bytes().await.map_err(|_| unreachable())?;
+    tokio::task::block_in_place(|| read_bundle(shared, &bytes))
+}
+
+/// An account as it came, read, and its pictures kept with the covers. A picture is taken only
+/// under a picture's own name, and only as the picture it decodes to.
+fn read_bundle(shared: &Shared, bytes: &[u8]) -> Result<Bundle, String> {
+    let mut bundle = handoff::read(bytes)?;
     let pictures = std::mem::take(&mut bundle.pictures);
-    tokio::task::block_in_place(|| {
-        let mut library = shared.library.lock().unwrap();
-        for (name, encoded) in pictures.into_iter().filter(|(name, _)| name.starts_with(PICTURE_NAME)) {
-            let picture = base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|bytes| square_jpeg(&bytes));
-            if let Some(jpeg) = picture { let _ = library.keep_cover(&name, &jpeg); }
-        }
-    });
+    let mut library = shared.library.lock().unwrap();
+    for (name, encoded) in pictures.into_iter().filter(|(name, _)| name.starts_with(PICTURE_NAME)) {
+        let picture = base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|bytes| square_jpeg(&bytes));
+        if let Some(jpeg) = picture { let _ = library.keep_cover(&name, &jpeg); }
+    }
     Ok(bundle)
+}
+
+/// An account as it goes to another device, with the pictures of its own from where they are
+/// kept.
+fn bundle_body(shared: &Shared, mut bundle: Bundle) -> Option<Vec<u8>> {
+    bundle.pictures = tokio::task::block_in_place(|| {
+        let library = shared.library.lock().unwrap();
+        bundle.picture_names().into_iter().filter_map(|name| {
+            let bytes = library.cover(&name)?;
+            Some((name, base64::engine::general_purpose::STANDARD.encode(bytes)))
+        }).collect()
+    });
+    serde_json::to_vec(&bundle).ok()
 }
 
 /// The side a picture of the user's own is kept at.
@@ -1869,6 +1950,43 @@ async fn pick_picture() -> Option<Vec<u8>> {
 }
 
 /// The middle square of a picture, at most `PICTURE_SIDE` a side, as JPEG.
+/// The most a picture picked to crop keeps a side: plenty for the 640 it is kept at, light
+/// to show.
+pub const CROP_SOURCE: u32 = 1600;
+
+/// A picked picture as it is cropped from: no larger than [`CROP_SOURCE`] a side, upright, as
+/// JPEG, and its size.
+fn crop_source(bytes: &[u8]) -> Option<(Vec<u8>, u32, u32)> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let picture = if picture.width().max(picture.height()) > CROP_SOURCE { picture.resize(CROP_SOURCE, CROP_SOURCE, image::imageops::FilterType::Triangle) } else { picture };
+    let rgb = picture.to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 90).encode_image(&rgb).ok()?;
+    Some((jpeg, rgb.width(), rgb.height()))
+}
+
+/// A picture picked for `of`, as it goes to be cropped.
+pub fn picked(of: PictureFor, bytes: &[u8]) -> Option<Event> {
+    let (jpeg, width, height) = crop_source(bytes)?;
+    let digest: String = Sha256::digest(&jpeg).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&jpeg);
+    let image = RasterImage::new(digest, RasterImageFormat::Jpeg, jpeg.len() as u32, encoded.into(), t!("backend-picture"))?;
+    Some(Event::Picked { of, bytes: Arc::new(jpeg), width, height, image })
+}
+
+/// The square `side` across at `x`, `y` of a picture, at the side pictures of the user's own
+/// are kept at, as JPEG. A square past the picture's edges is drawn back inside them.
+fn crop_jpeg(bytes: &[u8], x: u32, y: u32, side: u32) -> Option<Vec<u8>> {
+    let picture = image::load_from_memory(bytes).ok()?;
+    let side = side.clamp(1, picture.width().min(picture.height()));
+    let (x, y) = (x.min(picture.width() - side), y.min(picture.height() - side));
+    let square = picture.crop_imm(x, y, side, side)
+        .resize_exact(side.min(PICTURE_SIDE), side.min(PICTURE_SIDE), image::imageops::FilterType::Triangle).to_rgb8();
+    let mut jpeg = Vec::new();
+    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut jpeg, 88).encode_image(&square).ok()?;
+    Some(jpeg)
+}
+
 fn square_jpeg(bytes: &[u8]) -> Option<Vec<u8>> {
     let picture = image::load_from_memory(bytes).ok()?;
     let edge = picture.width().min(picture.height());
@@ -1912,7 +2030,22 @@ fn tint_of(bytes: &[u8]) -> Option<[u8; 3]> {
     (weight > 0.0).then(|| sum.map(|channel| (channel / weight).round() as u8))
 }
 
+/// What the phone's player stands on, as BitChord's: the cover shrunk to a few pixels and
+/// blurred, which drawn across the whole screen stays a wash of its colours.
+fn backdrop_of(bytes: &[u8]) -> Option<RasterImage> {
+    let small = image::load_from_memory(bytes).ok()?.thumbnail(64, 64).blur(5.0).to_rgb8();
+    let mut png = Vec::new();
+    small.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    let digest: String = Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-cover"))
+}
+
 async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8; 3]>, Option<(u32, u32)>)> {
+    if let Some(cover) = crate::state::backdrop_of_key(url) {
+        let bytes = cover_bytes(shared, cover).await?;
+        return tokio::task::block_in_place(|| backdrop_of(&bytes)).map(|image| (image, None, None));
+    }
     let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
         [0xFF, 0xD8, ..] => RasterImageFormat::Jpeg,
@@ -1936,7 +2069,21 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 
 #[cfg(test)]
 mod tests {
-    use super::tint_of;
+
+    #[test]
+    fn a_picked_picture_is_kept_as_the_square_chosen() {
+        let picture = image::RgbImage::from_fn(200, 100, |x, _| if x < 100 { image::Rgb([220, 20, 20]) } else { image::Rgb([20, 20, 220]) });
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(picture).write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let (source, width, height) = crop_source(&png).unwrap();
+        assert_eq!((width, height), (200, 100), "small enough to stay as it is");
+        let kept = image::load_from_memory(&crop_jpeg(&source, 100, 0, 100).unwrap()).unwrap().to_rgb8();
+        assert_eq!(kept.dimensions(), (100, 100));
+        assert!(kept.get_pixel(50, 50)[2] > 150, "the right half, as chosen");
+        let past = image::load_from_memory(&crop_jpeg(&source, 180, 0, 100).unwrap()).unwrap().to_rgb8();
+        assert!(past.get_pixel(50, 50)[2] > 150, "a square past the edge is drawn back inside");
+    }
+    use super::{crop_jpeg, crop_source, tint_of};
 
     #[test]
     fn a_logged_error_names_every_cause_under_it() {
@@ -1952,6 +2099,18 @@ mod tests {
     }
     impl std::error::Error for Wrapped {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.0) }
+    }
+
+    #[test]
+    fn a_backdrop_is_its_cover_small_and_blurred() {
+        let backdrop = super::backdrop_of(&cover(300, 150)).unwrap();
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, backdrop.data_base64()).unwrap();
+        let picture = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(picture.dimensions(), (64, 64));
+        // Red meets black in the middle as a slope, not an edge.
+        let [left, middle, right] = [8, 32, 56].map(|x| picture.get_pixel(x, 32)[0]);
+        assert!(left > 200 && right < 20 && (60..190).contains(&middle), "{left} {middle} {right}");
+        assert!(super::backdrop_of(b"not a picture").is_none());
     }
 
     #[test]

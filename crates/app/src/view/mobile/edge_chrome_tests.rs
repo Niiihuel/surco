@@ -151,24 +151,22 @@ fn safe_edges_keep_header_tabs_and_mini_controls_touchable_in_both_orientations(
                 size.height - insets.top - insets.bottom,
             );
             let ids = match page {
-                Page::Playing => vec!["mobile-player-dismiss", "mobile-player-header-more"],
+                Page::Playing => vec!["mobile-player-dismiss", "more:current"],
                 Page::Settings => vec![
                     "back",
                     "home",
                     "mobile-search",
                     "mobile-library",
-                    "mobile-mini-like",
                     "play-pause",
-                    "mobile-connections",
+                    "mobile-mini-next",
                 ],
                 _ => vec![
                     "settings",
                     "home",
                     "mobile-search",
                     "mobile-library",
-                    "mobile-mini-like",
                     "play-pause",
-                    "mobile-connections",
+                    "mobile-mini-next",
                 ],
             };
             for id in ids {
@@ -193,9 +191,11 @@ fn safe_edges_keep_header_tabs_and_mini_controls_touchable_in_both_orientations(
                     .map(|id| target(&frame, id))
                     .collect();
                 for tab in &tabs {
+                    // The pill floats 6 off the inset (at least 15), its tabs 4 inside it.
+                    let foot = size.height - insets.bottom.max(15.0) - 6.0 - 4.0;
                     assert!(
-                        (tab.y + tab.height - (size.height - insets.bottom)).abs() < 0.1,
-                        "navigation finishes immediately above the home-indicator inset: {tab:?}"
+                        (tab.y + tab.height - foot).abs() < 0.1,
+                        "the tab bar floats just off the home indicator: {tab:?}"
                     );
                     assert!(
                         tab.height <= 60.0,
@@ -219,35 +219,19 @@ fn safe_edges_keep_header_tabs_and_mini_controls_touchable_in_both_orientations(
 }
 
 #[test]
-fn tapping_the_mini_heart_likes_the_current_song_without_opening_the_player() {
+fn tapping_the_mini_next_skips_the_song_without_opening_the_player() {
     let mut state = phone();
-    state.collection.heard = vec![Track {
-        id: "other-visible-song".into(),
-        ..state.current().unwrap().clone()
-    }];
     state.mobile_ui.content_insets = screens()[0].1;
     let size = screens()[0].0;
     let original_page = state.page.clone();
-    for liked in [true, false] {
-        let (mut tree, frame) = layout(&state, size);
-        let point = center(target(&frame, "mobile-mini-like"));
-        tree.handle_event(UiEvent::PointerDown(point));
-        let actions = tree.handle_event(UiEvent::PointerUp(point));
-        assert_eq!(actions, vec![UiAction::Clicked { id: "like".into() }]);
-        for action in actions {
-            assert!(state.update(&action).is_empty());
-        }
-        assert_eq!(state.is_liked("current"), liked);
-        assert!(
-            !state.is_liked("other-visible-song"),
-            "the shelf's first card is not the playing track"
-        );
-        assert_eq!(
-            state.page, original_page,
-            "Like never dispatches mobile-playing"
-        );
-        assert!(state.player.playing);
-    }
+    let (mut tree, frame) = layout(&state, size);
+    let point = center(target(&frame, "mobile-mini-next"));
+    tree.handle_event(UiEvent::PointerDown(point));
+    let actions = tree.handle_event(UiEvent::PointerUp(point));
+    assert_eq!(actions, vec![UiAction::Clicked { id: "next".into() }]);
+    let commands: Vec<_> = actions.iter().flat_map(|action| state.update(action)).collect();
+    assert!(commands.iter().any(|command| matches!(command, crate::backend::Command::Next)), "{commands:?}");
+    assert_eq!(state.page, original_page, "Next never dispatches mobile-playing");
 }
 
 fn full_window_gradient(frame: &Frame, size: Size) -> (Color, Color) {
@@ -277,6 +261,7 @@ fn player_and_every_lyrics_result_paint_the_cover_color_through_both_safe_edges(
         Lyrics::Lines(vec![surco_core::lyrics::Line {
             at_ms: 0,
             text: "Una línea sincronizada".into(),
+            words: Vec::new(),
         }]),
     ];
     for (size, insets) in screens() {
@@ -313,7 +298,8 @@ fn player_and_every_lyrics_result_paint_the_cover_color_through_both_safe_edges(
 #[test]
 fn scrolled_song_pages_join_the_header_tone_with_short_fades_outside_the_bars() {
     let size = Size::new(402.0, 700.0);
-    for page in [Page::Playing, Page::Lyrics] {
+    // The player is one screen, with nothing to scroll.
+    for page in [Page::Lyrics] {
         let mut state = phone();
         state.page = page.clone();
         state.mobile_ui.content_insets = screens()[0].1;

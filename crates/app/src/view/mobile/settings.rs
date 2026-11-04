@@ -47,6 +47,29 @@ const PRESSED: f32 = 8.0;
 const SEGMENT: f32 = 40.0;
 /// The only hue: what cannot be undone.
 const DESTRUCTIVE: Color = Color::rgb(255, 69, 58);
+/// A phone's switch on, Apple's green as BitChord's, and off, a gray track under the thumb.
+const SWITCH_ON: Color = Color::rgb(48, 209, 88);
+const SWITCH_OFF: Color = Color::rgb(57, 57, 61);
+/// A phone's group, as BitChord's: its rows on a raised card rounded by 14.
+const CARD_RADIUS: f32 = 14.0;
+
+/// Whether these are a phone's settings, in BitChord's cards, rather than a desktop's.
+fn carded() -> bool {
+    !DENSE_PAGE.get()
+}
+
+/// Rows on a phone's card, as BitChord's groups: one raised panel, a hairline between each
+/// two from `indent` in.
+fn card(rows: Vec<Element>, indent: f32) -> Element {
+    let hairline = || horizontal_inset(Element::panel(Element::spacer()).background(SCHEME.border).size(None, Some(0.5)), indent, 0.0);
+    let mut parts = Vec::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 { parts.push(hairline()); }
+        parts.push(row);
+    }
+    // The page's own margin is the card's; the headings line up with the words inside it.
+    Element::panel(Element::column(parts)).background(SCHEME.raised).radius(CARD_RADIUS).clip_children()
+}
 
 /// The name over an optional line about it, and what sits at the end.
 pub(in crate::view) fn line(title: &str, detail: Option<&str>, trailing: Option<Element>, ink: Color) -> Element {
@@ -125,9 +148,16 @@ pub(in crate::view) fn scrobbling(state: &State, width: f32) -> Element {
 }
 
 pub(in crate::view) fn switch(title: &str, detail: Option<&str>, id: &str, on: bool) -> Element {
-    // Monochrome: a white track with a dark thumb when on, a white thumb on gray when off.
-    let track = ComponentPalette { surface: if on { SCHEME.canvas } else { Color::WHITE }, selected: SCHEME.control.border, ..SCHEME.on_raised() };
-    let control = Switch::new(id, on, track).ink(Color::WHITE).size(ControlSize::Spacious).accessibility_label(title).render();
+    let control = if carded() {
+        // BitChord's, as iOS draws it: a white thumb on green when on, on gray when off.
+        let track = ComponentPalette { surface: Color::WHITE, ..SCHEME.on_raised() };
+        Switch::new(id, on, track).ink(SWITCH_ON).off_ink(SWITCH_OFF)
+    } else {
+        // Monochrome: a white track with a dark thumb when on, a white thumb on gray when off.
+        let track = ComponentPalette { surface: if on { SCHEME.canvas } else { Color::WHITE }, selected: SCHEME.control.border, ..SCHEME.on_raised() };
+        Switch::new(id, on, track).ink(Color::WHITE)
+    };
+    let control = control.size(ControlSize::Spacious).accessibility_label(title).render();
     cell(line(title, detail, Some(control), Color::WHITE))
 }
 
@@ -161,9 +191,16 @@ pub(in crate::view) fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Ele
 /// A bold heading over its rows, flat on the page, and a note only when one helps.
 pub(in crate::view) fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
     let palette = SCHEME.palette();
-    let rows = Element::column(rows).gap(4.0)
-        .accessible(limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title));
+    let said = limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title);
     let caption = |text: Element| horizontal_inset(text, GUTTER, GUTTER);
+    if carded() {
+        // BitChord's: the group's name small and upper case over its card, its note under it.
+        let heading = Text::new(title.to_uppercase(), palette).font_size(12.0).muted().render().font_family(FontFamily::SansBold);
+        let mut parts = vec![caption(heading).padding(4.0), card(rows, GUTTER).accessible(said)];
+        if !footer.is_empty() { parts.push(caption(Text::new(footer, palette).font_size(13.0).muted().render())); }
+        return Element::column(parts).gap(8.0);
+    }
+    let rows = Element::column(rows).gap(4.0).accessible(said);
     let heading = Text::new(title, palette).role(TextRole::Heading).font_size(scale().heading).render().font_family(FontFamily::SansBold);
     let mut parts = vec![caption(heading), rows];
     if !footer.is_empty() { parts.push(caption(Text::new(footer, palette).font_size(13.0).muted().render())); }
@@ -235,19 +272,23 @@ pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Eleme
     let scale = scale();
     let title = |text: &str| horizontal_inset(Text::new(text, palette).role(TextRole::Heading).font_size(scale.page).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let Page::SettingsPart(shown) = state.page else {
-        let rows = SettingsPart::ALL.into_iter().map(|part| {
+        // A phone's are BitChord's: a 22 glyph, 14 from the words.
+        let (glyph_side, gap) = if carded() { (22.0, 14.0) } else { (scale.glyph, ROW_GAP) };
+        let rows: Vec<Element> = SettingsPart::ALL.into_iter().map(|part| {
             let (name, about) = (part_title(part), part_about(part));
-            let glyph = Element::icon(part_glyph(part)).large_icon(scale.glyph).foreground(Color::WHITE).size(Some(scale.glyph), Some(scale.glyph));
-            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(ROW_GAP);
+            let glyph = Element::icon(part_glyph(part)).large_icon(glyph_side).foreground(Color::WHITE).size(Some(glyph_side), Some(glyph_side));
+            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(gap);
             pressable(&format!("settings-part:{}", part.slug()), &name, Some(&about), cell(row.min_size(0.0, scale.part)), true)
-        });
+        }).collect();
         let mut page: Vec<Element> = titled.then(|| title(&t!("common-settings"))).into_iter().collect();
-        page.push(Element::column(rows.collect()).gap(4.0));
+        // On a phone, one card; its hairlines start under the words, past the glyphs.
+        page.push(if carded() { card(rows, GUTTER + glyph_side + gap) } else { Element::column(rows).gap(4.0) });
         return page;
     };
     let mut page: Vec<Element> = titled.then(|| title(&part_title(shown))).into_iter().collect();
     for (index, (_, group)) in sections.into_iter().filter(|(part, _)| *part == shown).enumerate() {
-        if index > 0 { page.push(Separator::horizontal(palette).render()); }
+        // A phone's cards stand apart by room alone.
+        if index > 0 && !carded() { page.push(Separator::horizontal(palette).render()); }
         page.push(group);
     }
     page
@@ -432,7 +473,7 @@ mod tests {
     }
 
     #[test]
-    fn the_list_of_parts_leads_to_flat_monochrome_pages_and_what_cannot_be_undone_comes_last() {
+    fn the_list_of_parts_leads_to_carded_pages_and_what_cannot_be_undone_comes_last() {
         let mut state = State::default();
         state.mobile = true;
         let frames = every_page(&mut state, 390.0);
@@ -442,11 +483,16 @@ mod tests {
         assert!(ROWS.iter().all(|id| !frames[0].access.iter().any(|node| node.id == *id)), "the list holds the parts, not their settings");
         let groups = frames[1..].iter().flat_map(|frame| frame.access.iter().filter(|node| node.id.starts_with("settings-group:"))).count();
         assert_eq!(groups, 12);
-        // No hue but the destructive red, and no cards: the rows are on the page.
+        // BitChord's: the rows on raised cards, and no hue but a switch's green and the
+        // destructive red's words.
         for frame in &frames {
+            assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { color, radius, .. }
+                if *color == SCHEME.raised && (*radius - CARD_RADIUS).abs() < 0.01)), "the rows stand on a card");
             for command in &frame.commands {
                 if let DrawCommand::FillRect { color, .. } = command {
-                    assert!(color.r == color.g && color.g == color.b, "a gray fill, not a tint: {color:?}");
+                    let gray = color.r.abs_diff(color.g) <= 2 && color.g.abs_diff(color.b) <= 2;
+                    let switch = [SWITCH_ON, SWITCH_OFF].contains(&Color { a: 255, ..*color });
+                    assert!(gray || switch, "a gray fill, not a tint: {color:?}");
                 }
             }
         }
