@@ -23,9 +23,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # The commit of limn the app is built against: limn moves on its own, and a build of
-  # the app must not change under it. This commit adds the hover cards and seek bar to the
-  # reviewed mobile primitives.
-  LIMN_REF: 1c99fa9b1677449805ef8b7786ed70ff875d02ac
+  # the app must not change under it. This is limn's main with the remote's spatial focus
+  # and gradients on laid-out text.
+  LIMN_REF: 57986d7885ff19b070ba705f558317d87f3d8107
 
 jobs:
   build:
