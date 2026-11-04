@@ -101,6 +101,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   on the right, the scrubber under them, 4 thick, 6 with a knob under the focus, the times
   11 below. It steps away 5 s after the last press while the music plays, and the song is
   then named under the cover.
+- Up Next opens under the scrubber on Down, or by its button beside the lyrics': "Up Next"
+  16/600 with 32 shuffle, repeat and autoplay circles, then what follows as 99 lockups. The
+  stage dims behind it and the transport stays up while it is open.
 - D-pad: in the player, left/right skip and the rest shows the transport; on the scrubber
   left/right seek 10 s. Back closes the innermost thing first (the transport, a pushed page),
   then goes up to the tab bar, then Home, then out of the app.

@@ -122,8 +122,13 @@ fn round(state: &State, id: &str, glyph: Icon, label: &str, shown: bool, palette
 
 /// A lockup: a cover over its name and what it is, lifted and shadowed while the focus is on it.
 fn lockup(state: &State, id: String, title: &str, about: &str, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
+    lockup_of(state, id, title, about, artwork, round, if round { ARTIST } else { LOCKUP }, palette)
+}
+
+/// A lockup `side` across.
+#[allow(clippy::too_many_arguments)]
+fn lockup_of(state: &State, id: String, title: &str, about: &str, artwork: &Option<String>, round: bool, side: f32, palette: ComponentPalette) -> Element {
     let on = lit(state, &id);
-    let side = if round { ARTIST } else { LOCKUP };
     let picture = cover(state, artwork, side, palette).radius(if round { side / 2.0 } else { LOCKUP_RADIUS }).border(mobile::THUMB_RIM, 0.5);
     let picture = if on { picture.shadow(LIFT_SHADOW, limn::Point::new(0.0, 10.0), 28.0, 0.0) } else { picture };
     let line = |text: &str, size: f32, muted: bool| {
@@ -353,6 +358,10 @@ fn player(state: &State, window: Size, palette: ComponentPalette) -> Element {
     } else {
         stage.centered_x()
     });
+    if state.tv_up_next {
+        // The stage steps back behind Up Next, as BitChord's dims it.
+        layers.push(whole(Element::panel(Element::spacer()).background(Color::rgba(0, 0, 0, 200))));
+    }
     if state.tv_transport.is_some() {
         layers.push(Element::column(vec![Element::spacer().flex(1.0), transport(state, track, lyrics, palette)]).size(Some(window.width), Some(window.height)));
     }
@@ -374,6 +383,7 @@ fn transport(state: &State, track: &Track, lyrics: bool, palette: ComponentPalet
     if !state.lines().is_empty() {
         buttons.push(button(state, "lyrics", Icon::Custom(crate::view::LYRICS), &t!("mobile-show-lyrics"), TRANSPORT_BUTTON, if lyrics { GLASS_ON } else { GLASS }, palette));
     }
+    buttons.push(button(state, "tv-up-next", Icon::Playlist, &t!("desktop-up-next"), TRANSPORT_BUTTON, if state.tv_up_next { GLASS_ON } else { GLASS }, palette));
     let duration = state.player.duration.max(0.0);
     let elapsed = f64::from(state.progress()) * duration;
     let time = |value: String| Text::new(value, palette).font_size(11.0).render().foreground(SECONDARY);
@@ -384,11 +394,41 @@ fn transport(state: &State, track: &Track, lyrics: bool, palette: ComponentPalet
         Element::spacer().size(None, Some(3.0)),
         Element::row(vec![time(clock(elapsed)), Element::spacer().flex(1.0), time(format!("-{}", clock((duration - elapsed).max(0.0).ceil())))]),
     ]);
+    let body = if state.tv_up_next { Element::column(vec![body, Element::spacer().size(None, Some(18.0)), up_next(state, palette)]) } else { body };
     // limn blends in linear light: these are BitChord's black at 38% and 66% as the eye sees them.
     let shade = vec![Color::rgba(0, 0, 0, 0), Color::rgba(0, 0, 0, 166), Color::rgba(0, 0, 0, 232)];
     Element::panel(Element::column(vec![Element::spacer().size(None, Some(77.0)), horizontal_inset(body, 45.0, 45.0), Element::spacer().size(None, Some(24.0))]))
         .vertical_gradient(shade).animate_enter("tv-transport")
 }
+
+/// Up Next, as BitChord's TV: what follows as small lockups under the scrubber, with the
+/// shuffle, the repeat and the autoplay beside its name.
+fn up_next(state: &State, palette: ComponentPalette) -> Element {
+    let small = |id: &str, glyph: Icon, label: &str, on: bool| button(state, id, glyph, label, 32.0, if on { GLASS_ON } else { GLASS }, palette);
+    let repeat = state.player.repeat;
+    let head = Element::row(vec![
+        Text::new(t!("desktop-up-next"), palette).font_size(16.0).line_height(20.0).render().font_family(FontFamily::SansSemibold).centered_y().flex(1.0),
+        Element::row(vec![
+            small("shuffle", shuffle_step(state).0, &shuffle_step(state).1, state.player.shuffle),
+            small("repeat", if repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, &t!("mobile-repeat"), repeat != Repeat::Off),
+            small("setting:autoplay", Icon::Custom(INFINITY), &t!("mobile-autoplay"), state.settings.autoplay),
+        ]).gap(10.0),
+    ]);
+    let cards: Vec<Element> = state.player.upcoming.iter().take(SHELF).enumerate()
+        .map(|(index, track)| lockup_of(state, format!("upcoming:{index}"), &track.title, &track.artist, &track.artwork_url, false, UP_NEXT, palette)).collect();
+    let rest = if cards.is_empty() {
+        Text::new(t!("desktop-queue-empty"), palette).font_size(13.0).render().foreground(SECONDARY).size(None, Some(UP_NEXT))
+    } else {
+        // Room around them for the one lifted, the strip reaching the screen's edges.
+        horizontal_inset(Element::horizontal_scroll("tv-up-next-cards", Element::row(cards).gap(CARD_GAP).padding(LIFT_ROOM)), -LIFT_ROOM, -LIFT_ROOM)
+    };
+    Element::column(vec![head, Element::spacer().size(None, Some(1.0)), rest])
+}
+
+/// Up Next's lockups, smaller than a shelf's.
+const UP_NEXT: f32 = 99.0;
+/// The autoplay's glyph: what plays on and on.
+const INFINITY: &str = include_str!("../../assets/icons/infinity.svg");
 
 /// The playhead, as BitChord's TV: a capsule 4 thick, 6 with a knob while the focus is on it,
 /// where select plays and pauses and left and right seek.

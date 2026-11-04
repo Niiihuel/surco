@@ -859,7 +859,8 @@ impl eframe::App for Host {
         acted |= !commands.is_empty();
         self.send(commands);
         if self.state.tv {
-            // The player's transport, gone after a few idle seconds, takes the focus with it.
+            // The player's transport, gone after a few idle seconds, takes the focus with it, as
+            // a page left does.
             if self.state.tv_tick(now) {
                 self.tree.clear_focus();
                 acted = true;
@@ -1265,7 +1266,8 @@ fn phone_logging() {
 pub(crate) fn back_target(state: &State) -> Option<&'static str> {
     // A list's search closes before its page, as BitChord's.
     if state.page_searching { Some("page-search") }
-    // A television's transport steps away before its player.
+    // A television's Up Next shuts, then its transport steps away, before its player.
+    else if state.tv_in_player && state.tv_up_next { Some("tv-up-next") }
     else if state.tv_in_player && state.tv_transport.is_some() { Some("tv-transport-away") }
     // From a tab's page, a television's goes up to the tab, then Home, then out, as tvOS's.
     else if state.tv && state.tv_tab().is_some() && !state.tv_on_bar() { Some("tv-tabs") }

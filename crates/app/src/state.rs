@@ -888,6 +888,10 @@ pub struct State {
     pub tv_in_player: bool,
     /// Whether the television's player keeps the lyrics away, by its lyrics button.
     pub tv_lyrics_hidden: bool,
+    /// Whether Up Next is open under the television's scrubber.
+    pub tv_up_next: bool,
+    /// The page the television showed at its last frame.
+    pub tv_shown: Option<Page>,
     /// The tab the remote's focus rests on, and since when, to open it.
     pub tv_resting: Option<(String, Instant)>,
     /// Whether the television's page has scrolled, sending its tabs aside.
@@ -1392,6 +1396,8 @@ impl Default for State {
             tv_transport: None,
             tv_in_player: false,
             tv_lyrics_hidden: false,
+            tv_up_next: false,
+            tv_shown: None,
             tv_resting: None,
             tv_scrolled: false,
             queue_open: false,
@@ -2541,8 +2547,15 @@ impl State {
                 self.focus = self.tv_tab().map(str::to_owned);
                 Vec::new()
             }
+            // Up Next opens under the television's scrubber, the focus on what comes first.
+            "tv-up-next" => {
+                self.tv_up_next = !self.tv_up_next;
+                self.focus = Some(if self.tv_up_next && !self.player.upcoming.is_empty() { "upcoming:0" } else { tv::SCRUBBER }.into());
+                Vec::new()
+            }
             "tv-transport-away" => {
                 self.tv_transport = None;
+                self.tv_up_next = false;
                 self.mobile_ui.blur = true;
                 Vec::new()
             }
