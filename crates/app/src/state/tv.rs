@@ -12,6 +12,8 @@ pub const TRANSPORT_STAYS: Duration = Duration::from_secs(5);
 const SEEK_STEP: f64 = 10.0;
 /// The transport's scrubber, which the focus goes to when the transport comes up.
 pub const SCRUBBER: &str = "tv-scrubber";
+/// The settings' row that shows a code for a phone to send its account to.
+pub const RECEIVE: &str = "tv-receive";
 /// The tab bar's controls.
 const BAR: [&str; 6] = ["home", "mobile-library", "mobile-playing", "mobile-search", "settings", "account-profile"];
 /// The id of a library category's row, before its key.
@@ -27,9 +29,10 @@ impl State {
     /// for the page's own to take it: the transport went, or another page is shown.
     pub fn tv_tick(&mut self, now: Instant) -> bool {
         // The tree keeps the focus of a control that is gone, as a tab's under the player.
-        let moved = self.tv_shown.as_ref() != Some(&self.page);
+        let inbox = self.handoff.as_ref().is_some_and(|handoff| handoff.inbox);
+        let moved = self.tv_shown.as_ref() != Some(&(self.page.clone(), inbox));
         if moved {
-            self.tv_shown = Some(self.page.clone());
+            self.tv_shown = Some((self.page.clone(), inbox));
         }
         let in_player = self.tv && matches!(self.page, Page::Playing | Page::Lyrics);
         if in_player && !self.tv_in_player {
@@ -111,6 +114,10 @@ impl State {
     /// Where the remote's focus goes when it is on nothing: the page's tab, a song list's Play,
     /// the player's scrubber; never another tab, which resting there would open.
     pub fn tv_rest_focus(&self) -> Option<&'static str> {
+        // Bringing the account: what came is brought in by its button, the code is left by its.
+        if let Some(handoff) = self.handoff.as_ref().filter(|handoff| handoff.inbox) {
+            return Some(if matches!(handoff.fetched, Some(Ok(_))) { "handoff-take" } else { "handoff-close" });
+        }
         match self.page {
             // With the transport away, the player itself takes the presses.
             Page::Playing | Page::Lyrics => self.tv_transport.map(|_| SCRUBBER),
@@ -296,6 +303,41 @@ mod tests {
         assert!(!state.tv_up_next);
         assert_eq!(state.focus.as_deref(), Some(SCRUBBER));
         assert_eq!(crate::back_target(&state), Some("tv-transport-away"));
+    }
+
+    #[test]
+    fn a_phone_that_reads_a_televisions_code_sends_it_what_is_chosen() {
+        let mut state = State::default();
+        state.mobile = true;
+        let to = "http://192.168.1.20:47310/3f9cab";
+        state.receive_from("surco://send?to=http%3A%2F%2F192%2E168%2E1%2E20%3A47310%2F3f9cab");
+        let handoff = state.handoff.as_ref().unwrap();
+        assert_eq!(handoff.push_to.as_deref(), Some(to), "the phone sends rather than fetches");
+        assert!(state.update(&UiAction::Clicked { id: "handoff-part:history".into() }).is_empty(), "choosing serves nothing");
+        let sent = state.update(&UiAction::Clicked { id: "handoff-push".into() });
+        assert!(matches!(sent.as_slice(), [Command::Push { to: sent_to, .. }] if sent_to == to));
+        assert!(state.update(&UiAction::Clicked { id: "handoff-push".into() }).is_empty(), "once while it is on its way");
+        state.apply(crate::backend::Event::Pushed(Ok(())));
+        assert_eq!(state.handoff.as_ref().unwrap().pushed, Some(Ok(())));
+    }
+
+    #[test]
+    fn a_television_shows_a_code_takes_what_comes_and_brings_in_what_is_chosen() {
+        let mut state = State { tv: true, ..State::default() };
+        assert_eq!(state.update(&UiAction::Clicked { id: RECEIVE.into() }), vec![Command::Inbox]);
+        let offer = crate::handoff::Offer { code: "0000-0000-0001".into(), link: "surco://send?to=x".into() };
+        state.apply(crate::backend::Event::Offered(Ok((offer.clone(), None))));
+        assert!(matches!(&state.handoff.as_ref().unwrap().offer, Some(Ok((shown, _))) if *shown == offer), "the code to read");
+        assert_eq!(state.tv_rest_focus(), Some("handoff-close"));
+        assert_eq!(crate::back_target(&state), Some("handoff-close"), "Back leaves the code");
+        let liked = Track { id: "song".into(), title: "Canción".into(), artist: "Banda".into(), artist_id: None,
+            album: None, album_id: None, artwork_url: None, duration_ms: 200_000 };
+        state.apply(crate::backend::Event::Fetched(Ok(crate::handoff::Bundle { version: 1, liked: vec![liked.clone()], ..Default::default() })));
+        assert_eq!(state.focus.as_deref(), Some("handoff-take"), "what came is a press from being brought in");
+        let commands = state.update(&UiAction::Clicked { id: "handoff-take".into() });
+        assert!(commands.contains(&Command::StopServing), "the inbox closes");
+        assert!(state.handoff.is_none());
+        assert_eq!(state.collection.liked, vec![liked]);
     }
 
     #[test]

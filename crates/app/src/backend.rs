@@ -84,6 +84,11 @@ pub enum Command {
     ScanCode,
     /// Read an account served by another device, at this address.
     Fetch(String),
+    /// Take an account another device sends, as a television does: its code is offered as a
+    /// served one's is, and what comes is read as a fetched one.
+    Inbox,
+    /// Send the account, or this part of it, to a television's inbox at `to`.
+    Push { to: String, bundle: Bundle },
     /// Look for artists for the first run's picker: what these searches find, a turn each.
     /// `key` comes back with them.
     FindArtists { key: String, queries: Vec<String> },
@@ -267,6 +272,8 @@ pub enum Event {
     Offered(Result<(Offer, Option<RasterImage>), String>),
     /// An account read from another device, its pictures kept with the covers already.
     Fetched(Result<Bundle, String>),
+    /// Whether the account sent to a television got there.
+    Pushed(Result<(), String>),
     /// The artists found for the picker, under the key they were asked for with.
     ArtistsFound { key: String, artists: Vec<ArtistRef> },
     SearchResults { query: String, found: Found },
@@ -737,18 +744,10 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 if let Some(name) = kept { (shared.reply)(Event::Picture { of, name }); }
             });
         }
-        (Command::Serve(mut bundle), Ok(shared)) => {
+        (Command::Serve(bundle), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
-                // The pictures of its own go along, from where they are kept.
-                bundle.pictures = tokio::task::block_in_place(|| {
-                    let library = shared.library.lock().unwrap();
-                    bundle.picture_names().into_iter().filter_map(|name| {
-                        let bytes = library.cover(&name)?;
-                        Some((name, base64::engine::general_purpose::STANDARD.encode(bytes)))
-                    }).collect()
-                });
-                let Ok(body) = serde_json::to_vec(&bundle) else { return };
+                let Some(body) = bundle_body(&shared, bundle) else { return };
                 let mut serving = shared.serving.lock().await;
                 if let Some(current) = serving.as_ref() {
                     current.replace(body);
@@ -809,7 +808,59 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
                 (shared.reply)(Event::Fetched(fetched));
             });
         }
-        (Command::Serve(_), Err(message)) => reply(Event::Offered(Err(message.clone()))),
+        (Command::Inbox, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let mut serving = shared.serving.lock().await;
+                serving.take();
+                // What comes is read as what is fetched: the television asks what of it to take.
+                let taker = shared.clone();
+                let received = move |body: Vec<u8>| {
+                    let taker = taker.clone();
+                    tokio::task::spawn_blocking(move || {
+                        let read = read_bundle(&taker, &body);
+                        (taker.reply)(Event::Fetched(read));
+                    });
+                };
+                let watcher = shared.clone();
+                let stopped = move |offer: handoff::Offer| {
+                    tokio::spawn(async move {
+                        let mut serving = watcher.serving.lock().await;
+                        if serving.as_ref().is_some_and(|current| current.offer == offer) {
+                            *serving = None;
+                            (watcher.reply)(Event::Offered(Err(t!("backend-handoff-stopped").into_owned())));
+                        }
+                    });
+                };
+                let offered = match handoff::inbox(received, stopped).await {
+                    Ok(started) => {
+                        let offer = started.offer.clone();
+                        *serving = Some(started);
+                        let qr = code_image(&offer.link);
+                        Ok((offer, qr))
+                    }
+                    Err(message) => Err(message),
+                };
+                drop(serving);
+                (shared.reply)(Event::Offered(offered));
+            });
+        }
+        (Command::Push { to, bundle }, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let failed = || t!("backend-handoff-push-failed").into_owned();
+                let pushed = match bundle_body(&shared, bundle) {
+                    Some(body) => match shared.youtube.http().post(&to).timeout(HANDOFF_WAIT).body(body).send().await {
+                        Ok(answer) if answer.status().is_success() => Ok(()),
+                        _ => Err(failed()),
+                    },
+                    None => Err(failed()),
+                };
+                (shared.reply)(Event::Pushed(pushed));
+            });
+        }
+        (Command::Serve(_) | Command::Inbox, Err(message)) => reply(Event::Offered(Err(message.clone()))),
+        (Command::Push { .. }, Err(message)) => reply(Event::Pushed(Err(message.clone()))),
         (Command::Fetch(_), Err(message)) => reply(Event::Fetched(Err(message.clone()))),
         (Command::StopServing, Err(_)) => {}
         (Command::ScanCode, _) => {
@@ -1803,24 +1854,41 @@ fn code_image(link: &str) -> Option<RasterImage> {
     RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-handoff-code"))
 }
 
-/// An account served by another device: read, and its pictures kept with the covers. A
-/// picture is taken only under a picture's own name, and only as the picture it decodes to.
+/// An account served by another device: read, and its pictures kept with the covers.
 async fn fetch_bundle(shared: &Shared, url: &str) -> Result<Bundle, String> {
     let unreachable = || t!("backend-handoff-unreachable").into_owned();
     let response = shared.youtube.http().get(url).timeout(HANDOFF_WAIT).send().await.map_err(|_| unreachable())?.error_for_status().map_err(|_| unreachable())?;
     if response.content_length().is_none_or(|length| length > HANDOFF_MOST) {
         return Err(t!("backend-handoff-unreadable").into_owned());
     }
-    let mut bundle = handoff::read(&response.bytes().await.map_err(|_| unreachable())?)?;
+    let bytes = response.bytes().await.map_err(|_| unreachable())?;
+    tokio::task::block_in_place(|| read_bundle(shared, &bytes))
+}
+
+/// An account as it came, read, and its pictures kept with the covers. A picture is taken only
+/// under a picture's own name, and only as the picture it decodes to.
+fn read_bundle(shared: &Shared, bytes: &[u8]) -> Result<Bundle, String> {
+    let mut bundle = handoff::read(bytes)?;
     let pictures = std::mem::take(&mut bundle.pictures);
-    tokio::task::block_in_place(|| {
-        let mut library = shared.library.lock().unwrap();
-        for (name, encoded) in pictures.into_iter().filter(|(name, _)| name.starts_with(PICTURE_NAME)) {
-            let picture = base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|bytes| square_jpeg(&bytes));
-            if let Some(jpeg) = picture { let _ = library.keep_cover(&name, &jpeg); }
-        }
-    });
+    let mut library = shared.library.lock().unwrap();
+    for (name, encoded) in pictures.into_iter().filter(|(name, _)| name.starts_with(PICTURE_NAME)) {
+        let picture = base64::engine::general_purpose::STANDARD.decode(encoded).ok().and_then(|bytes| square_jpeg(&bytes));
+        if let Some(jpeg) = picture { let _ = library.keep_cover(&name, &jpeg); }
+    }
     Ok(bundle)
+}
+
+/// An account as it goes to another device, with the pictures of its own from where they are
+/// kept.
+fn bundle_body(shared: &Shared, mut bundle: Bundle) -> Option<Vec<u8>> {
+    bundle.pictures = tokio::task::block_in_place(|| {
+        let library = shared.library.lock().unwrap();
+        bundle.picture_names().into_iter().filter_map(|name| {
+            let bytes = library.cover(&name)?;
+            Some((name, base64::engine::general_purpose::STANDARD.encode(bytes)))
+        }).collect()
+    });
+    serde_json::to_vec(&bundle).ok()
 }
 
 /// The side a picture of the user's own is kept at.

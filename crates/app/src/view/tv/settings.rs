@@ -39,6 +39,9 @@ fn groups(state: &State) -> Vec<(Cow<'static, str>, Vec<Row>)> {
             row("setting:motion", t!("mobile-reduce-motion"), on_off(settings.reduce_motion), t!("desktop-reduce-motion-detail")),
             row(LANGUAGE, t!("common-language"), crate::i18n::current().name().into(), t!("common-language-detail")),
         ]),
+        (t!("desktop-handoff"), vec![
+            row(crate::state::tv::RECEIVE, t!("common-tv-handoff-row"), Cow::Borrowed(""), t!("common-tv-handoff-row-detail")),
+        ]),
         (t!("mobile-about"), vec![
             row("tv-version", t!("mobile-version"), env!("CARGO_PKG_VERSION").into(), Cow::Borrowed("")),
         ]),
@@ -89,6 +92,84 @@ pub(super) fn page(state: &State, window: Size, palette: ComponentPalette) -> El
     let column = Element::column(items).size(Some(width), None).centered_x();
     ScrollArea::new("tv-settings", column).visibility(UNSEEN_BAR).render().flex(1.0)
 }
+
+/// Bringing the account from a phone, as BitChord's TV signs in with one: a code for the
+/// phone to read, the steps beside it, and once the account came, what of it to bring in.
+pub(super) fn handoff(state: &State, handoff: &crate::state::Handoff, window: Size, palette: ComponentPalette) -> Element {
+    let inset = |element: Element| horizontal_inset(element, TEXT_INSET, TEXT_INSET);
+    let words = |text: Cow<'static, str>, size: f32| Text::new(text, palette).font_size(size).line_height(size * 1.35).render();
+    let mut items = vec![
+        Element::spacer().size(None, Some(BAR)),
+        inset(Text::new(t!("common-tv-handoff-title"), palette).font_size(30.0).line_height(36.0).render().font_family(FontFamily::SansBold)),
+        Element::spacer().size(None, Some(22.0)),
+    ];
+    let button = |id: &str, label: Cow<'static, str>, main: bool| {
+        let on = lit(state, id);
+        let (fill, ink) = if on { (PLATTER, PLATTER_INK) } else if main { (Color::rgba(255, 255, 255, 56), palette.text) } else { (CARD, palette.text) };
+        let label_text = Text::new(&*label, palette).font_size(15.0).render().font_family(FontFamily::SansMedium).foreground(ink).centered();
+        Element::clickable(id, Element::panel(horizontal_inset(label_text, 24.0, 24.0)).background(fill).round().size(None, Some(44.0)))
+            .accessible(limn::Access::new(limn::Role::Button).name(&*label)).focus_ring(false).round()
+            .animate_scale_about(format!("tv-lift:{id}"), if on { 1.06 } else { 1.0 }, limn::Point::new(0.5, 0.5))
+    };
+    let mut actions = Vec::new();
+    match &handoff.fetched {
+        Some(Ok(bundle)) => {
+            let parts = handoff.parts;
+            let on = |on: bool| if on { t!("common-on") } else { t!("common-off") };
+            let mut rows = Vec::new();
+            let mut part = |shown: bool, name: &'static str, title: Cow<'static, str>, about: String, taken: bool| {
+                if shown { rows.push(Row { id: name, title, value: on(taken), about: about.into() }); }
+            };
+            part(bundle.profile.is_some(), "handoff-part:profile", t!("desktop-handoff-profile"), bundle.profile.as_ref().map(|profile| profile.shown().to_owned()).unwrap_or_default(), parts.profile);
+            part(!bundle.playlists.is_empty(), "handoff-part:playlists", t!("desktop-playlists"), t!("desktop-profile-playlists", count = bundle.playlists.len()).into_owned(), parts.playlists);
+            part(!bundle.liked.is_empty(), "handoff-part:liked", t!("common-liked-songs"), songs(bundle.liked.len()), parts.liked);
+            part(!bundle.kept.is_empty(), "handoff-part:library", t!("desktop-handoff-library"), t!("desktop-handoff-library-detail").into_owned(), parts.library);
+            part(bundle.settings.is_some(), "handoff-part:settings", t!("common-settings"), t!("desktop-handoff-settings-detail").into_owned(), parts.settings);
+            part(bundle.equalizer.is_some(), "handoff-part:equalizer", t!("common-equalizer"), String::new(), parts.equalizer);
+            part(!bundle.heard.is_empty(), "handoff-part:history", t!("desktop-handoff-history"), songs(bundle.heard.len()), parts.history);
+            let card: Vec<Element> = rows.iter().enumerate().flat_map(|(index, row)| {
+                let line = (index > 0).then(|| horizontal_inset(Element::panel(Element::spacer()).background(HAIRLINE).size(None, Some(1.0)), TEXT_INSET, 0.0));
+                line.into_iter().chain(std::iter::once(cell(state, row, palette)))
+            }).collect();
+            items.extend([
+                inset(Text::new(t!("desktop-handoff-came").to_uppercase(), palette).font_size(12.0).render().font_family(FontFamily::SansSemibold).foreground(SECONDARY)),
+                Element::spacer().size(None, Some(7.0)),
+                Element::panel(Element::column(card)).background(CARD).radius(CARD_RADIUS),
+                Element::spacer().size(None, Some(8.0)),
+                inset(words(t!("desktop-handoff-replace-detail"), 13.0).foreground(SECONDARY)),
+            ]);
+            actions.extend([button("handoff-take", t!("desktop-handoff-take"), true), button("handoff-close", t!("common-cancel"), false)]);
+        }
+        Some(Err(message)) => {
+            items.push(inset(words(message.clone().into(), 15.0).foreground(SECONDARY)));
+            actions.extend([button(crate::state::tv::RECEIVE, t!("common-retry"), true), button("handoff-close", t!("common-cancel"), false)]);
+        }
+        None => {
+            // The code on white, as a camera reads it best; pulsing until it is made.
+            let tile = match &handoff.offer {
+                Some(Ok((_, Some(qr)))) => Element::panel(Element::raster_image(qr.clone()).size(Some(QR - 16.0), Some(QR - 16.0)).centered()).background(Color::WHITE).radius(CARD_RADIUS),
+                _ => limn::Skeleton::block("handoff-coming", ComponentPalette { raised: palette.selected, ..palette }, QR, QR).radius(CARD_RADIUS).render(),
+            }.size(Some(QR), Some(QR));
+            let step = |number: usize, text: Cow<'static, str>| Element::row(vec![
+                Element::panel(Text::new(number.to_string(), palette).font_size(13.0).render().font_family(FontFamily::SansSemibold).centered()).background(CARD).round().size(Some(26.0), Some(26.0)),
+                words(text, 15.0).foreground(SECONDARY).flex(1.0),
+            ]).gap(14.0);
+            let steps = match &handoff.offer {
+                Some(Err(message)) => vec![words(message.clone().into(), 15.0).foreground(SECONDARY)],
+                _ => vec![step(1, t!("common-tv-handoff-step-network")), step(2, t!("common-tv-handoff-step-scan")), step(3, t!("common-tv-handoff-step-send"))],
+            };
+            items.push(Element::row(vec![tile, Element::column(steps).gap(18.0).centered_y().flex(1.0)]).gap(32.0));
+            if matches!(handoff.offer, Some(Err(_))) { actions.push(button(crate::state::tv::RECEIVE, t!("common-retry"), true)); }
+            actions.push(button("handoff-close", t!("common-cancel"), false));
+        }
+    }
+    items.extend([Element::spacer().size(None, Some(26.0)), inset(Element::row(actions).gap(14.0))]);
+    let width = COLUMN.min(window.width - 2.0 * SIDE);
+    ScrollArea::new("tv-handoff", Element::column(items).size(Some(width), None).centered_x()).visibility(UNSEEN_BAR).render().flex(1.0)
+}
+
+/// The side of the code's white tile.
+const QR: f32 = 200.0;
 
 /// A row on its group's card: its name and its value, the white platter under the focus.
 fn cell(state: &State, row: &Row, palette: ComponentPalette) -> Element {

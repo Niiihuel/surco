@@ -1271,6 +1271,8 @@ fn phone_logging() {
 pub(crate) fn back_target(state: &State) -> Option<&'static str> {
     // A list's search closes before its page, as BitChord's.
     if state.page_searching { Some("page-search") }
+    // A television's code for a phone closes before the page it was asked from.
+    else if state.tv && state.handoff.is_some() { Some("handoff-close") }
     // A television's Up Next shuts, then its transport steps away, before its player.
     else if state.tv_in_player && state.tv_up_next { Some("tv-up-next") }
     else if state.tv_in_player && state.tv_transport.is_some() { Some("tv-transport-away") }

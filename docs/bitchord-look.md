@@ -98,6 +98,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   14) of 48 rows, hairlines from the words' start and none beside the focused row; what
   the focused row is for as its group's footnote, 13/18, in two lines of room that stay
   whether it speaks or not. Values are written out and change in place on select.
+- Bringing the account from a phone, as BitChord's TV signs in with one: Settings › Move to
+  another device › Bring from your phone shows a QR (on white, 200, corners 14; pulsing until
+  it is made) beside three numbered steps. The phone reads it in Receive › Scan code, chooses
+  what goes and sends it; the TV then lists what came as a settings card to bring in.
 - What is on its way stands in its own shape and pulses (limn's `Skeleton`, in step with the
   covers coming): the home's pick shelves, the search's shelves until the first results, a
   song list opening (cover, title, Play and rows), the lyrics' lines on the phone and the TV,

@@ -477,6 +477,14 @@ pub struct Handoff {
     pub fetching: bool,
     /// What came from the other device, or why nothing did.
     pub fetched: Option<Result<Bundle, String>>,
+    /// A television's: it shows a code for a phone to send its account to, rather than one to
+    /// read it from.
+    pub inbox: bool,
+    /// A phone's, sending to the television whose code it read: where, whether it is on its
+    /// way, and whether it got there.
+    pub push_to: Option<String>,
+    pub pushing: bool,
+    pub pushed: Option<Result<(), String>>,
 }
 
 /// A code as it is typed, shown as it is read: in capitals, in fours with dashes between, as
@@ -891,7 +899,7 @@ pub struct State {
     /// Whether Up Next is open under the television's scrubber.
     pub tv_up_next: bool,
     /// The page the television showed at its last frame.
-    pub tv_shown: Option<Page>,
+    pub tv_shown: Option<(Page, bool)>,
     /// The library category the television's focus last went to.
     pub tv_library: Option<String>,
     /// The tab the remote's focus rests on, and since when, to open it.
@@ -1699,6 +1707,11 @@ impl State {
     /// reads hands it over, and asks for it.
     #[cfg(any(target_os = "ios", target_os = "android", test))]
     pub fn receive_from(&mut self, link: &str) -> Vec<Command> {
+        // A television's code asks to be sent the account: what goes is chosen here.
+        if let Some(to) = handoff::inbox_of(link) {
+            self.handoff = Some(Handoff { push_to: Some(to), ..Handoff::default() });
+            return vec![Command::StopServing];
+        }
         self.handoff = Some(Handoff { receiving: true, address: link.to_owned(), ..Handoff::default() });
         // On the first run it is the step that brings an account.
         if let Some(onboarding) = self.onboarding.as_mut() { onboarding.step = onboarding::Step::Bring; }
@@ -2875,11 +2888,26 @@ impl State {
             _ if id.starts_with("handoff-part:") => {
                 let Some(handoff) = self.handoff.as_mut() else { return Vec::new() };
                 if let Some(part) = handoff.parts.by_name(&id["handoff-part:".len()..]) { *part = !*part; }
-                if handoff.receiving { return Vec::new(); }
+                if handoff.receiving || handoff.push_to.is_some() { return Vec::new(); }
                 let parts = handoff.parts;
                 vec![Command::Serve(self.bundle(parts))]
             }
             "handoff-scan" => vec![Command::ScanCode],
+            // A phone sends what was chosen to the television whose code it read.
+            "handoff-push" => {
+                let Some(handoff) = self.handoff.as_ref().filter(|handoff| !handoff.pushing) else { return Vec::new() };
+                let Some(to) = handoff.push_to.clone() else { return Vec::new() };
+                let bundle = self.bundle(handoff.parts);
+                let handoff = self.handoff.as_mut().unwrap();
+                handoff.pushing = true;
+                handoff.pushed = None;
+                vec![Command::Push { to, bundle }]
+            }
+            // A television shows a code for a phone to send it the account.
+            tv::RECEIVE => {
+                self.handoff = Some(Handoff { receiving: true, inbox: true, ..Handoff::default() });
+                vec![Command::Inbox]
+            }
             "handoff-copy" => {
                 self.copy = self.handoff.as_ref().and_then(|handoff| handoff.offer.as_ref()?.as_ref().ok()).map(|(offer, _)| offer.code.clone());
                 Vec::new()
@@ -2902,7 +2930,9 @@ impl State {
                 let Some(handoff) = self.handoff.take() else { return Vec::new() };
                 match handoff.fetched {
                     Some(Ok(bundle)) => {
-                        let commands = self.take_in(bundle, handoff.parts);
+                        let mut commands = self.take_in(bundle, handoff.parts);
+                        // A television's inbox closes once what came is in.
+                        if handoff.inbox { commands.push(Command::StopServing); }
                         // An account brought in on the first run is the end of its steps.
                         if self.onboarding.is_some() { self.end_first_run(); }
                         commands
@@ -3623,13 +3653,22 @@ impl State {
                 Vec::new()
             }
             Event::Offered(offer) => {
-                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving) { handoff.offer = Some(offer); }
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| !handoff.receiving || handoff.inbox) { handoff.offer = Some(offer); }
+                Vec::new()
+            }
+            Event::Pushed(pushed) => {
+                if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.push_to.is_some()) {
+                    handoff.pushing = false;
+                    handoff.pushed = Some(pushed);
+                }
                 Vec::new()
             }
             Event::Fetched(fetched) => {
                 if let Some(handoff) = self.handoff.as_mut().filter(|handoff| handoff.receiving) {
                     handoff.fetching = false;
                     if let Ok(bundle) = &fetched { handoff.parts = Self::parts_of(bundle); }
+                    // A television's focus goes to bringing in what came.
+                    if handoff.inbox && fetched.is_ok() { self.focus = Some("handoff-take".into()); }
                     handoff.fetched = Some(fetched);
                 }
                 Vec::new()

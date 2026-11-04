@@ -55,6 +55,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Library => library(state, palette),
         Page::Search if state.mobile_search => search(state, palette),
         Page::Search => home(state, palette),
+        // Bringing the account from a phone stands over the page it was asked from.
+        _ if state.handoff.as_ref().is_some_and(|handoff| handoff.inbox) => settings::handoff(state, state.handoff.as_ref().unwrap(), window, palette),
         Page::Settings => settings::page(state, window, palette),
         Page::Loading(_) => coming_page(palette),
         // The profile and the rest are the app's own pages, their controls

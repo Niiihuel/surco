@@ -569,17 +569,39 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
 /// the parts that go; or receiving one from the address another device shows, and choosing
 /// what of it comes and whether it joins what is here or takes its place.
 fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
-    use mobile::settings::switch;
     let Some(handoff) = &state.handoff else { return window_tree };
     // The first run brings an account in a step of its own.
     if state.onboarding.as_ref().is_some_and(|steps| steps.step == crate::state::onboarding::Step::Bring) { return window_tree; }
     let palette = dialog_palette();
     let _dense = (!state.mobile).then(mobile::settings::Dense::on);
+    // Sending to the television whose code was read: what goes, and whether it got there.
+    if handoff.push_to.is_some() {
+        let mut body = vec![Text::new(t!("desktop-handoff-what"), palette).muted().render()];
+        body.extend(going(state, handoff.parts));
+        if handoff.pushing {
+            body.push(Element::row(vec![Spinner::new("handoff-pushing", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-pushing"), palette).muted().render()]).gap(8.0));
+        }
+        match &handoff.pushed {
+            Some(Ok(())) => body.push(Alert::new(t!("desktop-handoff-push-title"), t!("desktop-handoff-pushed"), palette).tone(limn::AlertTone::Success).id("handoff-pushed").compact(true).render()),
+            Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff-push-title"), message, palette).id("handoff-error").compact(true).render()),
+            None => {}
+        }
+        let done = matches!(handoff.pushed, Some(Ok(())));
+        let close = card_button("handoff-close", t!("common-close"), done).render();
+        let footer = if done { ButtonGroup::new(vec![close]).align_end().render() }
+            else { dialog_footer(close, card_button("handoff-push", t!("desktop-handoff-push"), true).enabled(!handoff.pushing).render()) };
+        if state.mobile {
+            return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
+                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer).render();
+        }
+        return Card { body: Some(Element::column(body).gap(10.0)), go: (!done).then(|| ("handoff-push", t!("desktop-handoff-push"), !handoff.pushing)), widest: HANDOFF_WIDEST, returns: Some("account"),
+            ..Card::new("handoff", t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), ("handoff-close", t!("common-close"))) }
+            .render(window_tree, width);
+    }
     let form = if state.mobile { Modal::fitted_body_width(Modal::fit_width(width, 560.0).max(280.0)) } else { Card::inner(width, HANDOFF_WIDEST) };
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     let mut body = vec![tabs];
-    let collection = &state.collection;
     let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
     let mut confirm = None;
     if !handoff.receiving {
@@ -612,17 +634,8 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
                 });
             }
         }
-        let parts = handoff.parts;
-        body.extend([
-            Text::new(t!("desktop-handoff-what"), palette).muted().render(),
-            switch(&t!("desktop-handoff-profile"), Some(state.profile.shown()), "handoff-part:profile", parts.profile),
-            switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = collection.playlists.len())), "handoff-part:playlists", parts.playlists),
-            switch(&t!("common-liked-songs"), Some(&songs(collection.liked.len())), "handoff-part:liked", parts.liked),
-            switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library),
-            switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings),
-            switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer),
-            switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
-        ]);
+        body.push(Text::new(t!("desktop-handoff-what"), palette).muted().render());
+        body.extend(going(state, handoff.parts));
     } else {
         body.push(Text::new(t!("desktop-handoff-receive-detail"), palette).muted().render());
         if cfg!(target_os = "ios") || state.mobile {
@@ -689,6 +702,21 @@ pub(crate) fn came(bundle: &crate::handoff::Bundle, parts: crate::handoff::Parts
     if bundle.equalizer.is_some() { rows.push(switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer)); }
     if !bundle.heard.is_empty() { rows.push(switch(&t!("desktop-handoff-history"), Some(&songs(bundle.heard.len())), "handoff-part:history", parts.history)); }
     rows
+}
+
+/// What of the account here goes to another device, a switch a part.
+fn going(state: &State, parts: crate::handoff::Parts) -> Vec<Element> {
+    use mobile::settings::switch;
+    let collection = &state.collection;
+    vec![
+        switch(&t!("desktop-handoff-profile"), Some(state.profile.shown()), "handoff-part:profile", parts.profile),
+        switch(&t!("desktop-playlists"), Some(&t!("desktop-profile-playlists", count = collection.playlists.len())), "handoff-part:playlists", parts.playlists),
+        switch(&t!("common-liked-songs"), Some(&songs(collection.liked.len())), "handoff-part:liked", parts.liked),
+        switch(&t!("desktop-handoff-library"), Some(&t!("desktop-handoff-library-detail")), "handoff-part:library", parts.library),
+        switch(&t!("common-settings"), Some(&t!("desktop-handoff-settings-detail")), "handoff-part:settings", parts.settings),
+        switch(&t!("common-equalizer"), None, "handoff-part:equalizer", parts.equalizer),
+        switch(&t!("desktop-handoff-history"), Some(&t!("desktop-handoff-history-detail")), "handoff-part:history", parts.history),
+    ]
 }
 
 /// The side of the QR code a phone's camera reads.

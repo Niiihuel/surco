@@ -17,6 +17,10 @@ use crate::state::{Entry, Playlist, Profile, Settings};
 pub const VERSION: u32 = 1;
 /// The scheme a phone's camera hands a code to Surco by.
 const SCHEME: &str = "surco://receive?from=";
+/// The scheme of a code a television shows to be sent an account: the phone sends to it.
+const INBOX: &str = "surco://send?to=";
+/// The most a bundle sent to an inbox may weigh, its pictures included.
+pub const BUNDLE_MOST: usize = 64 * 1024 * 1024;
 /// The most a request to the bundle may say before it is answered.
 const REQUEST_MOST: usize = 8 * 1024;
 /// The ports a bundle is served on, so a code names one by its place among them.
@@ -156,9 +160,9 @@ fn decode(code: &str) -> Option<String> {
     Some(format!("http://{ip}:{}/{token:07x}", FIRST_PORT + slot))
 }
 
-/// Starts answering `body` on the local network, to the one who has its token. Asked for too
-/// many wrong tokens, it stops, and says so to `stopped` with the offer it made.
-pub async fn serve(body: Vec<u8>, stopped: impl FnOnce(Offer) + Send + 'static) -> Result<Serving, String> {
+/// A port on the local network and a token behind it, and the code and link (under `scheme`)
+/// that name them.
+async fn open(scheme: &str) -> Result<(TcpListener, String, Offer), String> {
     let Some(IpAddr::V4(ip)) = local_address() else { return Err(t!("backend-handoff-no-network").into_owned()) };
     let mut bound = None;
     for slot in 0..PORTS {
@@ -169,12 +173,18 @@ pub async fn serve(body: Vec<u8>, stopped: impl FnOnce(Offer) + Send + 'static) 
     }
     let (slot, listener) = bound.ok_or_else(|| t!("backend-handoff-no-port").into_owned())?;
     let token = fastrand::u32(..1 << TOKEN_BITS);
-    let body = Arc::new(Mutex::new(body));
-    let served = body.clone();
     let path = format!("/{token:07x}");
     let address = format!("http://{ip}:{}{path}", FIRST_PORT + slot);
-    let link = format!("{SCHEME}{}", percent_encoding::utf8_percent_encode(&address, percent_encoding::NON_ALPHANUMERIC));
-    let offer = Offer { code: encode(ip, slot, token), link };
+    let link = format!("{scheme}{}", percent_encoding::utf8_percent_encode(&address, percent_encoding::NON_ALPHANUMERIC));
+    Ok((listener, path, Offer { code: encode(ip, slot, token), link }))
+}
+
+/// Starts answering `body` on the local network, to the one who has its token. Asked for too
+/// many wrong tokens, it stops, and says so to `stopped` with the offer it made.
+pub async fn serve(body: Vec<u8>, stopped: impl FnOnce(Offer) + Send + 'static) -> Result<Serving, String> {
+    let (listener, path, offer) = open(SCHEME).await?;
+    let body = Arc::new(Mutex::new(body));
+    let served = body.clone();
     let made = offer.clone();
     let task = tokio::spawn(async move {
         let guard = Arc::new(Guard::default());
@@ -231,6 +241,89 @@ async fn answer(mut stream: tokio::net::TcpStream, path: String, body: Arc<Mutex
     let _ = stream.write_all(head.as_bytes()).await;
     let _ = stream.write_all(&body).await;
     let _ = stream.shutdown().await;
+}
+
+/// Starts taking a bundle on the local network, sent by the one who has its token: a
+/// television's, which a phone sends its account to. Each that comes, whole and no heavier
+/// than [`BUNDLE_MOST`], goes to `received`; what to do with it is asked there. Sent too
+/// many wrong tokens, it stops, as [`serve`] does.
+pub async fn inbox(received: impl Fn(Vec<u8>) + Send + Sync + 'static, stopped: impl FnOnce(Offer) + Send + 'static) -> Result<Serving, String> {
+    let (listener, path, offer) = open(INBOX).await?;
+    let made = offer.clone();
+    let received = Arc::new(received);
+    let task = tokio::spawn(async move {
+        let guard = Arc::new(Guard::default());
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => match accepted {
+                    Ok((stream, _)) => { tokio::spawn(take(stream, path.clone(), received.clone(), guard.clone())); }
+                    Err(_) => return,
+                },
+                () = guard.spent.notified() => break,
+            }
+        }
+        stopped(made);
+    });
+    Ok(Serving { body: Arc::default(), task, offer })
+}
+
+/// One request to an inbox: a bundle `POST`ed to its path is taken, nothing else is.
+async fn take(mut stream: tokio::net::TcpStream, path: String, received: Arc<impl Fn(Vec<u8>) + Send + Sync>, guard: Arc<Guard>) {
+    use std::sync::atomic::Ordering;
+    let mut request = Vec::new();
+    let mut chunk = [0u8; 8192];
+    while !request.windows(4).any(|end| end == b"\r\n\r\n") && request.len() < REQUEST_MOST {
+        match stream.read(&mut chunk).await {
+            Ok(0) | Err(_) => break,
+            Ok(read) => request.extend_from_slice(&chunk[..read]),
+        }
+    }
+    let Some(end) = request.windows(4).position(|end| end == b"\r\n\r\n") else { return };
+    let head = String::from_utf8_lossy(&request[..end]).into_owned();
+    let mut first = head.lines().next().unwrap_or_default().split(' ');
+    let asked = match (first.next(), first.next()) {
+        (Some("POST"), Some(asked)) => Some(asked),
+        _ => None,
+    };
+    let guessed = asked.is_some_and(|asked| asked.len() == path.len() && asked[1..].chars().all(|c| c.is_ascii_hexdigit()));
+    let spent = guard.misses.load(Ordering::SeqCst) >= MISSES_MOST;
+    let right = !spent && asked == Some(path.as_str());
+    if guessed && !right && guard.misses.fetch_add(1, Ordering::SeqCst) + 1 == MISSES_MOST {
+        guard.spent.notify_one();
+    }
+    let length = head.lines().find_map(|line| {
+        let (name, value) = line.split_once(':')?;
+        name.trim().eq_ignore_ascii_case("content-length").then(|| value.trim().parse::<usize>().ok()).flatten()
+    });
+    let status = match length {
+        _ if !right => "404 Not Found",
+        Some(length) if length <= BUNDLE_MOST => {
+            let mut body = request[end + 4..].to_vec();
+            body.truncate(length);
+            while body.len() < length {
+                match stream.read(&mut chunk).await {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => body.extend_from_slice(&chunk[..read.min(length - body.len())]),
+                }
+            }
+            // Cut short, it is not a bundle.
+            if body.len() == length { received(body); "200 OK" } else { "400 Bad Request" }
+        }
+        Some(_) => "413 Payload Too Large",
+        None => "411 Length Required",
+    };
+    let _ = stream.write_all(format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").as_bytes()).await;
+    let _ = stream.shutdown().await;
+}
+
+/// The inbox a television's code names, read by a phone's camera: its address, or None for
+/// any other link.
+#[cfg(any(target_os = "ios", target_os = "android", test))]
+pub fn inbox_of(link: &str) -> Option<String> {
+    let encoded = link.trim().strip_prefix(INBOX)?;
+    let address = percent_encoding::percent_decode_str(encoded).decode_utf8().ok()?;
+    // As a bundle's own place: a host and port and a token, on the local network.
+    locate(&address)
 }
 
 /// Where a bundle is, from what was typed or the QR code read: the short code, the link of the
@@ -333,6 +426,39 @@ mod tests {
         let end = answer.windows(4).position(|end| end == b"\r\n\r\n")?;
         let status = String::from_utf8_lossy(&answer[..end]).lines().next()?.to_owned();
         Some((status, answer[end + 4..].to_vec()))
+    }
+
+    #[test]
+    fn a_televisions_code_names_its_inbox_and_nothing_else() {
+        assert_eq!(inbox_of("surco://send?to=http%3A%2F%2F192%2E168%2E1%2E20%3A47310%2F3f9cab").as_deref(), Some("http://192.168.1.20:47310/3f9cab"));
+        assert_eq!(inbox_of("surco://receive?from=http%3A%2F%2F192%2E168%2E1%2E20%3A47310%2F3f9cab"), None, "a bundle to fetch is not an inbox");
+        assert_eq!(inbox_of("surco://send?to=https%3A%2F%2Fexample.com%2Fpage"), None, "not a page on the internet");
+    }
+
+    /// A bundle sent as a phone sends it, and the answer's status line.
+    async fn post(address: &str, body: &[u8], length: usize) -> Option<String> {
+        let (host, path) = address.split_once('/')?;
+        let mut stream = tokio::net::TcpStream::connect(host).await.ok()?;
+        stream.write_all(format!("POST /{path} HTTP/1.1\r\nHost: {host}\r\nContent-Length: {length}\r\n\r\n").as_bytes()).await.ok()?;
+        stream.write_all(body).await.ok()?;
+        let mut answer = Vec::new();
+        stream.read_to_end(&mut answer).await.ok()?;
+        Some(String::from_utf8_lossy(&answer).lines().next()?.to_owned())
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_inbox_takes_a_whole_bundle_sent_to_its_token_only() {
+        let (got, came) = std::sync::mpsc::channel();
+        // A machine with no network has nothing to take on.
+        let Ok(inbox) = inbox(move |body| { let _ = got.send(body); }, |_| {}).await else { return };
+        let address = inbox_of(&inbox.offer.link).unwrap().trim_start_matches("http://").to_owned();
+        let bundle = b"{\"version\":1}";
+        assert!(post(&address, bundle, bundle.len()).await.unwrap().contains("200"));
+        assert_eq!(came.recv_timeout(std::time::Duration::from_secs(2)).ok().as_deref(), Some(&bundle[..]));
+        assert!(post(&format!("{address}0"), bundle, bundle.len()).await.unwrap().contains("404"), "nothing from another token");
+        assert!(post(&address, bundle, BUNDLE_MOST + 1).await.unwrap().contains("413"), "too heavy");
+        assert!(get(&address).await.is_some_and(|(status, _)| status.contains("404")), "it gives nothing out");
+        assert!(came.try_recv().is_err(), "none of those was taken");
     }
 
     #[tokio::test(flavor = "multi_thread")]
