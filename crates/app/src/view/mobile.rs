@@ -104,9 +104,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Text::new(title.as_ref(), palette).font_size(size).truncate().render().font_family(FontFamily::SansBold)
     };
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
-    if state.mobile_ui.compact_header && matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !state.page_rows().is_empty() {
-        header.push(controls::playback("mobile-detail-header-play", false, 44.0, 22.0, palette).dispatch_as("page-play"));
-    }
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, &if state.queue_open { t!("mobile-back-to-song") } else { t!("mobile-show-queue") }, palette));
     } else if state.page == Page::Playing {
@@ -115,6 +112,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     }
     if state.page == Page::Library {
         header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
+    }
+    // A list's search and order, as BitChord's: together in a floating pill of the bar. An
+    // artist's page has neither, as BitChord's has not.
+    if matches!(state.page, Page::Album(_) | Page::Playlist(_) | Page::Mix(_)) && !state.page_tracks().is_empty() {
+        header.push(details::bar_tools(state, palette));
     }
     if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
         header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette)));
@@ -854,15 +856,17 @@ mod tests {
             assert_eq!(last.press_region(margin).unwrap().id, "mobile-mini-bar");
             tree.handle_event(limn::UiEvent::PointerDown(margin));
             assert!(tree.handle_event(limn::UiEvent::PointerUp(margin)).is_empty());
+            // Scrolled, the bar names the list between the way back and its search, as
+            // BitChord's: the search opens from there.
             state.mobile_ui.compact_header = true;
             tree.set_root(super::view(&state, size));
             let compact = tree.layout(size);
-            let id = "mobile-detail-header-play";
-            assert_eq!(compact.regions.iter().filter(|region| region.id == id).count(), 1);
+            let id = "page-search";
+            assert_eq!(compact.regions.iter().filter(|region| region.id == id && region.kind == limn::HitKind::Button).count(), 1);
             let button = compact.access.iter().find(|node| node.id == id).unwrap().rect;
             let point = limn::Point::new(button.x + 20.0, button.y + 20.0);
             tree.handle_event(limn::UiEvent::PointerDown(point));
-            assert_eq!(tree.handle_event(limn::UiEvent::PointerUp(point)), vec![UiAction::Clicked { id: "page-play".into() }]);
+            assert_eq!(tree.handle_event(limn::UiEvent::PointerUp(point)), vec![UiAction::Clicked { id: "page-search".into() }]);
         }
     }
 

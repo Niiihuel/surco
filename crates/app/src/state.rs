@@ -2052,7 +2052,7 @@ impl State {
     }
 
     /// The tracks the current page plays.
-    fn page_tracks(&self) -> &[Track] {
+    pub(crate) fn page_tracks(&self) -> &[Track] {
         match &self.page {
             Page::Artist(artist) => &artist.songs,
             Page::Album(album) => &album.tracks,
@@ -2490,6 +2490,12 @@ impl State {
             // closes the panel from it.
             "page-search" => {
                 self.search_page(!self.page_searching);
+                Vec::new()
+            }
+            // A phone's cross inside the field empties it and leaves it open, its keyboard up.
+            "page-search-clear" => {
+                self.page_search.clear();
+                self.focus = Some("page-query".to_owned());
                 Vec::new()
             }
             // Its button in the bar, and the link under what comes next in the panel.

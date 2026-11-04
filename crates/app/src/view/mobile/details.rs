@@ -104,6 +104,29 @@ fn tracks(state: &State, palette: ComponentPalette) -> Element {
     crate::view::windowed(built, range, count, crate::view::MOBILE_TRACK_PITCH, 4.0)
 }
 
+/// A list's search and order in the bar, as BitChord's: one floating pill, its magnifier a
+/// cross while the search is open.
+pub(in crate::view) fn bar_tools(state: &State, palette: ComponentPalette) -> Element {
+    let open = state.page_searching;
+    let search = icon("page-search", if open { Icon::Close } else { Icon::Search }, &if open { t!("desktop-close-search") } else { t!("mobile-search-list") }, palette);
+    let order = crate::view::page_order(state, icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette));
+    Element::panel(Element::row(vec![search, order])).background(FROST).border(HAIRLINE, 0.5).round().centered_y()
+}
+
+/// The field a list is searched in, as BitChord's: under the bar, on the page's colour, the
+/// list's songs that hold what is typed under it.
+fn search_field(state: &State, palette: ComponentPalette) -> Element {
+    let field = SearchField::new("page-query", &state.page_search, t!("mobile-search-list"), ComponentPalette { surface: Color::rgba(0, 0, 0, 90), ..SCHEME.on_raised() })
+        .size(ControlSize::Spacious).render().size(None, Some(46.0)).radius(12.0).border(HAIRLINE, 0.5);
+    if state.page_search.is_empty() { field } else { inside_cross(field, "page-search-clear", &t!("mobile-clear-search"), palette) }
+}
+
+/// A list's page while it is searched: the field and the songs it finds, the sleeve and its
+/// name scrolled away as BitChord carries its page up to the field.
+fn searched(state: &State, id: &str, palette: ComponentPalette) -> Element {
+    scroll(state, id, vec![search_field(state, palette), tracks(state, palette)])
+}
+
 fn scroll(state: &State, id: &str, sections: Vec<Element>) -> Element {
     let sections = page_search_slot(state).into_iter().chain(sections).collect();
     ScrollArea::new(
@@ -120,6 +143,7 @@ pub(in crate::view) fn album(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
+    if state.page_searching { return searched(state, "mobile-album", palette); }
     let side = cover_side(width);
     let metadata = [
         album.year.clone(),
@@ -222,6 +246,7 @@ pub(in crate::view) fn artist(
 /// A mix the home made, as a playlist reads: its picture, what it is and who it plays, and
 /// its songs.
 pub(in crate::view) fn mix(state: &State, mix: &Mix, width: f32, palette: ComponentPalette) -> Element {
+    if state.page_searching { return searched(state, "mobile-mix", palette); }
     let about = Element::column(vec![
         Text::eyebrow(t!("desktop-mix"), palette).render().center_content(),
         title(&crate::view::mix_name(mix), palette),
@@ -239,6 +264,7 @@ pub(in crate::view) fn playlist(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
+    if state.page_searching && !playlist.tracks.is_empty() { return searched(state, "mobile-playlist", palette); }
     let side = cover_side(width);
     let artwork = playlist.cover().cloned();
     let picture = if artwork.is_none() {
@@ -303,7 +329,7 @@ pub(in crate::view) fn playlist(
 mod tests {
     use super::*;
     use crate::backend::Command;
-    use limn::{DrawCommand, Frame, UiAction, UiTree};
+    use limn::{DrawCommand, Frame, HitKind, UiAction, UiTree};
 
     fn track(id: &str) -> Track {
         Track {
@@ -432,8 +458,6 @@ mod tests {
                 let mut ids = vec![
                     "page-play",
                     "page-shuffle",
-                    "page-search",
-                    "page-sort",
                     "more:page-track:0",
                     "more:page-track:1",
                 ];
@@ -443,6 +467,19 @@ mod tests {
                     ids.push("keep");
                 }
                 touch_controls(&frame(&state, width), width, &ids);
+                // A list's search and order are in the bar, as BitChord's; an artist has none.
+                let mut tree = UiTree::new(super::super::view(&state, Size::new(width, 844.0)));
+                tree.set_reduced_motion(true);
+                let shown = tree.layout(Size::new(width, 844.0));
+                let tools = !matches!(state.page, Page::Artist(_));
+                for id in ["page-search", "page-sort"] {
+                    let count = shown.regions.iter().filter(|region| region.id == id && region.kind == HitKind::Button).count();
+                    assert_eq!(count, usize::from(tools), "{id} in the bar on {:?} at {width}", state.page);
+                }
+                if tools {
+                    let search = shown.access.iter().find(|node| node.id == "page-search").unwrap().rect;
+                    assert!(search.x > width / 2.0 && search.x + search.width <= width + 0.1 && search.y < 60.0, "at the bar's end: {search:?}");
+                }
             }
         }
     }

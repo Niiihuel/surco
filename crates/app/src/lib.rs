@@ -1178,7 +1178,9 @@ fn phone_logging() {
 /// player down, a page back; None when there is nowhere left to go.
 #[cfg(any(target_os = "android", test))]
 fn back_target(state: &State) -> Option<&'static str> {
-    if state.page == state::Page::Playing && state.queue_open { Some("queue") }
+    // A list's search closes before its page, as BitChord's.
+    if state.page_searching { Some("page-search") }
+    else if state.page == state::Page::Playing && state.queue_open { Some("queue") }
     else if state.page == state::Page::Playing { Some("mobile-player-dismiss") }
     else if state.can_go_back() { Some("back") }
     else { None }
@@ -1188,6 +1190,20 @@ fn back_target(state: &State) -> Option<&'static str> {
 mod press_tests {
     use super::*;
     use surco_core::{Track, lyrics::Line};
+
+    #[test]
+    fn back_shuts_a_lists_search_before_it_leaves_the_list() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = state::Page::Library;
+        state.update(&UiAction::Clicked { id: "liked".into() });
+        assert_eq!(state.page, state::Page::Liked);
+        state.update(&UiAction::Clicked { id: "page-search".into() });
+        assert_eq!(back_target(&state), Some("page-search"));
+        state.update(&UiAction::Clicked { id: back_target(&state).unwrap().into() });
+        assert!(!state.page_searching && state.page == state::Page::Liked, "the search shut, the list still shown");
+        assert_eq!(back_target(&state), Some("back"));
+    }
 
     /// A finger stays down for several frames while the player's lyric card relays out under it.
     #[test]

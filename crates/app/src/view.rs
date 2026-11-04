@@ -3434,15 +3434,12 @@ fn shuffle_step(state: &State) -> (Icon, std::borrow::Cow<'static, str>) {
 fn page_actions(state: &State, own: Vec<Element>, palette: ComponentPalette) -> Element {
     if state.mobile {
         // A phone's are BitChord's, which lay out their own play and shuffle: only the page's
-        // others go to it, the whole list's download first.
+        // others go to it, the whole list's download first. Its search and order are in the bar.
         let download = state.page_downloaded().map(|kept| {
             let (glyph, hint) = if kept { (glyph::DOWNLOADED, t!("desktop-remove-download")) } else { (glyph::DOWNLOAD_CIRCLE, t!("desktop-download-offline")) };
             mobile::icon("page-download", Icon::Custom(glyph), &hint, palette)
         });
-        let row = mobile::details::actions(state, download.into_iter().chain(own).collect(), palette);
-        // UIKit's field at the page's top searches it instead, as dnmusic's lists.
-        if mobile::page_search_slot(state).is_some() { return row; }
-        return Element::column(vec![row, Element::row(page_search(state, palette)).gap(8.0)]).gap(12.0);
+        return mobile::details::actions(state, download.into_iter().chain(own).collect(), palette);
     }
     let round = ComponentPalette { surface: palette.text, text: SCHEME.canvas, hover: ROUND_HOVER, selected: ROUND_HELD, ..palette };
     let play = {
@@ -3546,13 +3543,18 @@ fn page_search(state: &State, palette: ComponentPalette) -> Vec<Element> {
         parts.push(toggle(if state.mobile { Icon::Search } else { Icon::Custom(glyph::SEARCH) }, &t!("desktop-search-page")));
     }
     // Beside it, the order the page's tracks are listed in.
+    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette).radius(22.0) }
+        else { header_button("page-sort", Icon::Sort, TooltipSpec::new(t!("desktop-sort-button")), palette).active(state.sort_open).render() };
+    parts.push(page_order(state, button).centered_y());
+    parts
+}
+
+/// The menu of orders the page's tracks can be listed in, opened from `button`.
+fn page_order(state: &State, button: Element) -> Element {
     let sorted = state.page_sort.as_ref().map_or("own", |sort| sort.key.as_str());
     let order = |key: &str, label: &str| DropdownMenuEntry::Item(DropdownMenuItem::new(format!("page-sort:{key}"), label).selected(sorted == key));
     let orders = vec![order("own", &t!("desktop-sort-list-order")), order("title", &t!("common-title")), order("album", &t!("common-album")), order("duration", &t!("desktop-duration"))];
-    let button = if state.mobile { mobile::icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette).radius(22.0) }
-        else { header_button("page-sort", Icon::Sort, TooltipSpec::new(t!("desktop-sort-button")), palette).active(state.sort_open).render() };
-    parts.push(DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", menu_palette()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render().centered_y());
-    parts
+    DropdownMenu::new(button, orders, state.sort_open, "page-sort-close", menu_palette()).sizing(menu_sizing(state)).width(SORT_MENU_WIDTH).placement(PopoverPlacement::BottomEnd).render()
 }
 
 const SORT_MENU_WIDTH: f32 = 200.0;
