@@ -98,8 +98,8 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   14) of 48 rows, hairlines from the words' start and none beside the focused row; what
   the focused row is for as its group's footnote, 13/18, in two lines of room that stay
   whether it speaks or not. Values are written out and change in place on select.
-- Search field as the cards: 576 × 48 on white at 7%, corners 14, no outline, 17 medium;
-  the white platter with dark words under the focus.
+- Search field in the tabs' capsule shape: 576 × 44 on the capsule's white at 8%, fully
+  round ends, no outline, 16 medium; the white platter with dark words under the focus.
 - Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title
   31/36 (two lines at most), the artist 16/600 in Apple's red #FA2D48, "N songs, M min" 13,
   a 43 shuffle circle and a 58 red Play; then the songs, 48 tall with a 34 cover (an album's
