@@ -210,6 +210,11 @@ impl State {
         self.find(query)
     }
 
+    /// Whether UIKit's search field takes the typing, over limn's: only with UIKit's bars.
+    fn native_search(&self) -> bool {
+        self.mobile_ui.native_surfaces && self.mobile_ui.native_bars
+    }
+
     fn mobile_submit(&mut self) -> Vec<Command> {
         self.search_due = None;
         self.mobile_ui.search_editing = false;
@@ -341,12 +346,12 @@ impl State {
                         let editing = id == "mobile-discover";
                         self.mobile_ui.search_editing = editing;
                         self.mobile_ui.blur = !editing;
-                        self.focus = (editing && !self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (editing && !self.native_search()).then(|| "search".into());
                     }
                     "mobile-search-edit" => {
                         self.mobile_ui.search_editing = true;
                         self.mobile_ui.blur = false;
-                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (!self.native_search()).then(|| "search".into());
                     }
                     "mobile-search-cancel" => {
                         self.mobile_ui.search_editing = false;
@@ -357,7 +362,7 @@ impl State {
                     "mobile-search-clear" | "search:clear" => {
                         self.mobile_ui.search_intent = self.mobile_ui.search_intent.wrapping_add(1);
                         self.mobile_query("", Instant::now());
-                        self.focus = (!self.mobile_ui.native_surfaces).then(|| "search".into());
+                        self.focus = (!self.native_search()).then(|| "search".into());
                         self.mobile_ui.blur = false;
                     }
                     "search-submit" => return Some(self.mobile_submit()),

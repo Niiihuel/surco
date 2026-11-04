@@ -338,6 +338,16 @@ mod tests {
     }
 
     #[test]
+    fn an_iphone_on_limns_bars_types_its_search_in_limns_field() {
+        let mut state = phone();
+        state.mobile_ui.native_surfaces = true;
+        state.update(&limn::UiAction::Clicked { id: "mobile-search".into() });
+        state.update(&limn::UiAction::Clicked { id: "mobile-search-edit".into() });
+        assert!(state.mobile_ui.search_editing);
+        assert_eq!(state.focus.as_deref(), Some("search"), "no UIKit field is there to take the keyboard");
+    }
+
+    #[test]
     fn native_search_has_one_touch_sized_slot_and_a_working_limn_fallback() {
         let mut state = phone();
         let size = Size::new(390.0, 100.0);
