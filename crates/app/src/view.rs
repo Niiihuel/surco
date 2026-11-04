@@ -3,6 +3,7 @@
 mod mobile;
 mod tv;
 pub(crate) use tv::scroller as tv_scroller;
+pub(crate) use tv::settings as tv_settings;
 mod equalizer;
 mod onboarding;
 mod wrapped;

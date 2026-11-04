@@ -6,6 +6,8 @@
 use super::*;
 use super::mobile::horizontal_inset;
 
+pub(crate) mod settings;
+
 /// Clear of the screen's overscan, as BitChord's TV keeps: 38 at the sides, 22 above and below.
 const SIDE: f32 = 38.0;
 const TOP: f32 = 22.0;
@@ -53,7 +55,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Page::Library => library(state, palette),
         Page::Search if state.mobile_search => search(state, palette),
         Page::Search => home(state, palette),
-        // The settings, the profile and the rest are the app's own pages, their controls
+        Page::Settings => settings::page(state, window, palette),
+        // The profile and the rest are the app's own pages, their controls
         // reached by the remote as any others.
         _ => Element::column(vec![Element::spacer().size(None, Some(BAR)), horizontal_inset(page(state, window.width - 2.0 * SIDE, palette), SIDE, SIDE).flex(1.0)]),
     };

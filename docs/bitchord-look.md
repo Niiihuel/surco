@@ -93,6 +93,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   Downloads with a chevron), 42 rows corners 11, the shown one on white at 12%; on the right
   what the focused one holds, songs as rows or a grid of 120 lockups. The focus going down
   the categories previews each.
+- Settings as tvOS's: the app's mark (120) on the left over what the focused row is for (13,
+  at most 272 wide); on the right the rows in their groups (12 headings), 42 tall on white
+  at 6%, their values written out ("On", "6 s", "High"), changed in place on select.
 - Album, playlist and artist pages scroll as one: a 232 cover (corners 10) beside the title
   31/36 (two lines at most), the artist 16/600 in Apple's red #FA2D48, "N songs, M min" 13,
   a 43 shuffle circle and a 58 red Play; then the songs, 48 tall with a 34 cover (an album's

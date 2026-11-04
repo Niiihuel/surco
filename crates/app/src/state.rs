@@ -2560,6 +2560,21 @@ impl State {
                 self.tv_library = Some(id[tv::LIBRARY.len()..].to_owned());
                 Vec::new()
             }
+            // A television's settings step their value along on select.
+            crate::view::tv_settings::CROSSFADE => {
+                let step = crate::view::tv_settings::CROSSFADE_STEP;
+                self.settings.crossfade = if self.settings.crossfade + step > CROSSFADE_MAX { 0.0 } else { ((self.settings.crossfade / step).round() + 1.0) * step };
+                vec![Command::Crossfade(f64::from(self.settings.crossfade))]
+            }
+            crate::view::tv_settings::QUALITY => {
+                let at = Quality::ALL.iter().position(|(quality, ..)| *quality == self.settings.quality).unwrap_or(0);
+                let (_, name, _) = Quality::ALL[(at + 1) % Quality::ALL.len()];
+                self.click(&format!("setting:quality:{name}"))
+            }
+            crate::view::tv_settings::LANGUAGE => {
+                let at = Language::ALL.iter().position(|language| *language == crate::i18n::current()).unwrap_or(0);
+                self.click(&format!("setting:language:{}", Language::ALL[(at + 1) % Language::ALL.len()].tag()))
+            }
             "tv-transport-away" => {
                 self.tv_transport = None;
                 self.tv_up_next = false;

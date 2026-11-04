@@ -296,3 +296,6 @@ common-together-joined = { $name } entró a la sala.
 common-together-suggested = { $name } sugirió «{ $title }».
 common-together-guest-suggest = Lo que elijas se le sugiere al anfitrión para su cola.
 common-together-guest-open = El anfitrión te deja poner, pausar y saltar canciones para todos.
+common-on = Activado
+common-off = Desactivado
+common-tv-settings-about = Reproducción, sonido y pantalla de Surco en esta tele.
