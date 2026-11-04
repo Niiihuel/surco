@@ -300,4 +300,3 @@ common-together-guest-suggest = What you choose is suggested to the host for the
 common-together-guest-open = The host lets you play, pause and skip songs for everyone.
 common-on = On
 common-off = Off
-common-tv-settings-about = Playback, sound and display for Surco on this TV.

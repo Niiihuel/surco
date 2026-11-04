@@ -881,7 +881,12 @@ impl eframe::App for Host {
                 if let Some(id) = self.state.tv_rest_focus() { self.tree.focus(id); }
             }
             // A television's view lifts what the remote's focus is on, as the tree just moved it.
-            self.state.tv_focused = self.tree.focused_id().map(str::to_owned);
+            let focused = self.tree.focused_id().map(str::to_owned);
+            // A setting's footnote sits under its group's card: it comes into sight with the row.
+            if focused != self.state.tv_focused && self.state.page == state::Page::Settings {
+                self.tree.reveal(view::tv_settings::NOTE_ANCHOR);
+            }
+            self.state.tv_focused = focused;
         }
         // Untouched since it was measured for input, that frame is this one too: building and
         // laying out a long list again costs a frame's worth of time for nothing.

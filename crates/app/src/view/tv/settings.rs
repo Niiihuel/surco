@@ -1,6 +1,6 @@
-//! The TV's settings, as BitChord's lays them out after tvOS: the app on the left with what
-//! the focused row is for, the rows in their groups on the right. Values are written out and
-//! change in place on select.
+//! The TV's settings as Apple's grouped lists: one centred column under a large title, each
+//! group's rows on a rounded card, what the focused row is for as its group's footnote.
+//! Values are written out and change in place on select.
 
 use std::borrow::Cow;
 
@@ -40,7 +40,7 @@ fn groups(state: &State) -> Vec<(Cow<'static, str>, Vec<Row>)> {
             row(LANGUAGE, t!("common-language"), crate::i18n::current().name().into(), t!("common-language-detail")),
         ]),
         (t!("mobile-about"), vec![
-            row("tv-version", t!("mobile-version"), env!("CARGO_PKG_VERSION").into(), t!("common-tv-settings-about")),
+            row("tv-version", t!("mobile-version"), env!("CARGO_PKG_VERSION").into(), Cow::Borrowed("")),
         ]),
     ]
 }
@@ -53,38 +53,66 @@ pub const LANGUAGE: &str = "tv-setting:language";
 pub const CROSSFADE_STEP: f32 = CROSSFADE_MAX / 4.0;
 
 pub(super) fn page(state: &State, window: Size, palette: ComponentPalette) -> Element {
-    let groups = groups(state);
-    let about = groups.iter().flat_map(|(_, rows)| rows).find(|row| lit(state, row.id)).map_or_else(|| t!("common-tv-settings-about"), |row| row.about.clone());
-    let left = Element::column(vec![
-        Element::spacer().flex(1.0),
-        app_mark().map_or_else(Element::spacer, |mark| Element::raster_image(mark)).size(Some(120.0), Some(120.0)).radius(27.0).centered_x(),
+    let inset = |element: Element| horizontal_inset(element, TEXT_INSET, TEXT_INSET);
+    let mut items = vec![
+        Element::spacer().size(None, Some(BAR)),
+        inset(Text::new(t!("common-settings"), palette).font_size(30.0).line_height(36.0).render().font_family(FontFamily::SansBold)),
         Element::spacer().size(None, Some(22.0)),
-        Text::new(about, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY).center_content().size(Some(272.0), None).centered_x(),
-        Element::spacer().flex(1.0),
-    ]).size(Some(window.width * 0.42), None);
-    let mut rows = Vec::new();
-    for (title, group) in groups {
-        rows.push(Text::new(title, palette).font_size(12.0).render().foreground(SECONDARY).padding(4.0));
-        rows.extend(group.iter().map(|row| list_row(state, row.id, &row.title, Some(&row.value), false, Color::rgba(255, 255, 255, 15), palette)));
+    ];
+    for (title, rows) in groups(state) {
+        let focused = rows.iter().position(|row| lit(state, row.id));
+        let mut card = Vec::new();
+        for (index, row) in rows.iter().enumerate() {
+            // As Apple's, no hairline runs beside the row the focus lifts.
+            if index > 0 && focused != Some(index) && focused != Some(index - 1) {
+                card.push(horizontal_inset(Element::panel(Element::spacer()).background(HAIRLINE).size(None, Some(1.0)), TEXT_INSET, 0.0));
+            } else if index > 0 {
+                card.push(Element::spacer().size(None, Some(1.0)));
+            }
+            card.push(cell(state, row, palette));
+        }
+        // The footnote keeps its room whether it speaks or not, so nothing moves as the focus does.
+        let note = focused.map(|index| rows[index].about.clone()).filter(|about| !about.is_empty()).unwrap_or_default();
+        items.extend([
+            inset(Text::new(title.to_uppercase(), palette).font_size(12.0).render().font_family(FontFamily::SansSemibold).foreground(SECONDARY)),
+            Element::spacer().size(None, Some(7.0)),
+            Element::panel(Element::column(card)).background(CARD).radius(CARD_RADIUS),
+            Element::spacer().size(None, Some(8.0)),
+            {
+                let note = inset(Text::new(note, palette).font_size(13.0).line_height(18.0).render().foreground(SECONDARY)).size(None, Some(NOTE));
+                if focused.is_some() { note.anchor(NOTE_ANCHOR) } else { note }
+            },
+            Element::spacer().size(None, Some(14.0)),
+        ]);
     }
-    rows.push(Element::spacer().size(None, Some(38.0)));
-    let right = ScrollArea::new("tv-settings", horizontal_inset(Element::column(rows).gap(5.0).padding(5.0), 0.0, SIDE - 5.0))
-        .visibility(UNSEEN_BAR).render().flex(1.0);
-    Element::column(vec![Element::spacer().size(None, Some(BAR)), Element::row(vec![left, right]).flex(1.0)])
+    let width = COLUMN.min(window.width - 2.0 * SIDE);
+    let column = Element::column(items).size(Some(width), None).centered_x();
+    ScrollArea::new("tv-settings", column).visibility(UNSEEN_BAR).render().flex(1.0)
 }
 
-/// Surco's mark, as the window and the task bar have it.
-fn app_mark() -> Option<limn::RasterImage> {
-    use base64::Engine as _;
-    use sha2::Digest as _;
-    const BYTES: &[u8] = include_bytes!("../../../assets/icon-rounded.png");
-    static MARK: std::sync::OnceLock<(String, std::sync::Arc<str>)> = std::sync::OnceLock::new();
-    let (digest, encoded) = MARK.get_or_init(|| {
-        let digest: String = sha2::Sha256::digest(BYTES).iter().map(|byte| format!("{byte:02x}")).collect();
-        (digest, base64::engine::general_purpose::STANDARD.encode(BYTES).into())
-    });
-    limn::RasterImage::new(digest.clone(), limn::RasterImageFormat::Png, BYTES.len() as u32, encoded.clone(), "Surco")
+/// A row on its group's card: its name and its value, the white platter under the focus.
+fn cell(state: &State, row: &Row, palette: ComponentPalette) -> Element {
+    let on = lit(state, row.id);
+    let (ink, soft) = if on { (PLATTER_INK, Color::rgb(80, 80, 86)) } else { (palette.text, SECONDARY) };
+    let line = Element::row(vec![
+        Text::new(&*row.title, palette).font_size(15.0).truncate().render().font_family(FontFamily::SansMedium).foreground(ink).centered_y().flex(1.0),
+        Text::new(&*row.value, palette).font_size(15.0).render().foreground(soft).centered_y(),
+    ]).gap(16.0);
+    let body = Element::panel(horizontal_inset(line, TEXT_INSET, TEXT_INSET)).background(if on { PLATTER } else { Color::TRANSPARENT }).radius(CARD_RADIUS - 2.0);
+    let body = if on { body.shadow(LIFT_SHADOW, limn::Point::new(0.0, 8.0), 20.0, 0.0) } else { body };
+    Element::clickable(row.id, body).accessible(limn::Access::new(limn::Role::Button).name(format!("{}, {}", row.title, row.value)).description(&*row.about))
+        .focus_ring(false).animate_scale_about(format!("tv-lift:{}", row.id), if on { 1.03 } else { 1.0 }, limn::Point::new(0.5, 0.5))
+        .size(None, Some(48.0))
 }
+
+/// The column's width at most, the cards' corners and floor, and where their words start.
+const COLUMN: f32 = 600.0;
+const CARD_RADIUS: f32 = 14.0;
+const CARD: Color = Color::rgba(255, 255, 255, 18);
+const TEXT_INSET: f32 = 16.0;
+/// Two lines of a footnote, and the name of the one that speaks, to bring it into sight.
+const NOTE: f32 = 36.0;
+pub const NOTE_ANCHOR: &str = "tv-settings-note";
 
 #[cfg(test)]
 mod tests {
@@ -92,7 +120,7 @@ mod tests {
     use limn::{UiAction, UiTree};
 
     #[test]
-    fn select_steps_a_value_along_and_the_left_says_what_the_focused_row_is_for() {
+    fn select_steps_a_value_along_and_the_focused_rows_group_notes_what_it_is_for() {
         let mut state = State::default();
         state.tv = true;
         state.update(&UiAction::Clicked { id: "settings".into() });
@@ -103,7 +131,11 @@ mod tests {
         assert_ne!(state.settings.quality, quality);
         state.tv_focused = Some("setting:mono".into());
         let size = Size::new(960.0, 540.0);
-        let frame = UiTree::new(crate::view::view(&state, size)).layout(size);
+        let mut tree = UiTree::new(crate::view::view(&state, size));
+        tree.layout(size);
+        // As the app does when the focus moves, the footnote is brought into sight.
+        tree.reveal(NOTE_ANCHOR);
+        let frame = tree.layout(size);
         assert!(frame.access.iter().any(|node| node.id == "setting:mono"));
         let painted: Vec<&str> = frame.commands.iter().filter_map(|command| match command {
             limn::DrawCommand::Text { text, .. } => Some(text.as_str()),
@@ -111,6 +143,6 @@ mod tests {
         }).collect();
         let detail = t!("desktop-mono-detail");
         let first = detail.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-        assert!(painted.iter().any(|text| text.starts_with(&first)), "the left says what mono is for: {painted:?}");
+        assert!(painted.iter().any(|text| text.starts_with(&first)), "its group's footnote says what mono is for: {painted:?}");
     }
 }
