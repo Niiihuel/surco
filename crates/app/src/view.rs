@@ -609,28 +609,31 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
             Some(Ok((offer, qr))) => {
-                let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)))
-                    .background(Color::WHITE).radius(RadiusRole::Card.px()).padding(6.0));
+                // As the television's: the code on white, numbered steps beside it.
+                let qr = qr.as_ref().map(|qr| Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)).centered())
+                    .background(Color::WHITE).radius(HANDOFF_TILE_RADIUS).size(Some(HANDOFF_CODE + 16.0), Some(HANDOFF_CODE + 16.0)));
+                let step = |number: usize, said: std::borrow::Cow<'static, str>, under: Option<Element>| {
+                    let mark = Element::panel(Text::new(number.to_string(), palette).font_size(12.0).render().font_family(FontFamily::SansSemibold).centered())
+                        .background(Color::rgba(255, 255, 255, 30)).round().size(Some(24.0), Some(24.0));
+                    let mut words = vec![Text::new(said, palette).font_size(14.0).line_height(20.0).muted().render()];
+                    words.extend(under);
+                    Element::row(vec![mark, Element::column(words).gap(10.0).flex(1.0)]).gap(12.0)
+                };
                 let copy = card_button("handoff-copy", t!("desktop-handoff-copy"), false).icon(Icon::Copy).sizing(CARD_BUTTON_SMALL).render();
                 // The code as it is typed: large, its characters apart, on a tile of its own.
-                let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(28.0).foreground(palette.text).centered())
-                    .background(palette.selected).radius(RadiusRole::Card.px()).padding(12.0);
-                let way = |title, detail| Element::column(vec![
-                    Text::new(title, palette).font_size(16.0).render().font_family(FontFamily::SansBold),
-                    Text::new(detail, palette).muted().render(),
-                ]).gap(4.0);
-                let mut ways = vec![way(t!("desktop-handoff-computer"), t!("desktop-handoff-computer-detail")), code, Element::row(vec![copy])];
+                let code = Element::panel(Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(26.0).foreground(palette.text).centered())
+                    .background(palette.selected).radius(HANDOFF_TILE_RADIUS).padding(12.0);
+                let typed = Element::column(vec![code, Element::row(vec![copy])]).gap(8.0);
+                let mut steps = vec![step(1, t!("desktop-handoff-step-network"), None)];
                 // Without a QR, the code alone.
-                if qr.is_some() {
-                    ways.extend([Element::spacer().size(None, Some(4.0)), way(t!("desktop-handoff-phone"), t!("desktop-handoff-phone-detail"))]);
-                }
+                if qr.is_some() { steps.push(step(2, t!("desktop-handoff-phone-detail"), None)); }
+                steps.push(step(steps.len() + 1, t!("desktop-handoff-computer-detail"), Some(typed)));
+                let steps = Element::column(steps).gap(18.0);
                 // Beside the QR where there is room for both; under it on a phone.
                 body.push(match qr {
-                    Some(qr) if form >= 2.0 * HANDOFF_CODE + 120.0 => Element::row(vec![qr, Element::column(ways).gap(8.0).flex(1.0)]).gap(20.0),
-                    qr => {
-                        ways.extend(qr.map(Element::centered_x));
-                        Element::column(ways).gap(8.0)
-                    }
+                    Some(qr) if form >= 2.0 * HANDOFF_CODE + 140.0 => Element::row(vec![qr, steps.flex(1.0)]).gap(24.0),
+                    Some(qr) => Element::column(vec![qr.centered_x(), steps]).gap(20.0),
+                    None => steps,
                 });
             }
         }
@@ -719,8 +722,9 @@ fn going(state: &State, parts: crate::handoff::Parts) -> Vec<Element> {
     ]
 }
 
-/// The side of the QR code a phone's camera reads.
+/// The side of the QR code a phone's camera reads, and the corners of its tile and the code's.
 const HANDOFF_CODE: f32 = 168.0;
+const HANDOFF_TILE_RADIUS: f32 = 14.0;
 /// What a code to type looks like, in its field before it is typed.
 pub(crate) const HANDOFF_PLACEHOLDER: &str = "XXXX-XXXX-XXXX";
 
