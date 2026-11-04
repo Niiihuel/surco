@@ -55,7 +55,7 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
         (
             Page::Library,
             "library",
-            vec!["import-open", "ios-paste:import-card"],
+            vec!["import-open", "ios-paste:import-card", "playlist-new"],
         ),
         (Page::Settings, "settings", vec!["settings-part:devices"]),
         (Page::SettingsPart(crate::state::SettingsPart::Devices), "settings-devices", vec!["setting:connections"]),
