@@ -457,7 +457,7 @@ fn up_next(state: &State, palette: ComponentPalette) -> Element {
         Element::row(vec![
             small("shuffle", shuffle_step(state).0, &shuffle_step(state).1, state.player.shuffle),
             small("repeat", if repeat == Repeat::One { Icon::RepeatOne } else { Icon::Repeat }, &t!("mobile-repeat"), repeat != Repeat::Off),
-            small("setting:autoplay", Icon::Custom(INFINITY), &t!("mobile-autoplay"), state.settings.autoplay),
+            small("setting:autoplay", Icon::Infinity, &t!("mobile-autoplay"), state.settings.autoplay),
         ]).gap(10.0),
     ]);
     let cards: Vec<Element> = state.player.upcoming.iter().take(SHELF).enumerate()
@@ -473,8 +473,6 @@ fn up_next(state: &State, palette: ComponentPalette) -> Element {
 
 /// Up Next's lockups, smaller than a shelf's.
 const UP_NEXT: f32 = 99.0;
-/// The autoplay's glyph: what plays on and on.
-const INFINITY: &str = include_str!("../../assets/icons/infinity.svg");
 
 /// The playhead, as BitChord's TV: a capsule 4 thick, 6 with a knob while the focus is on it,
 /// where select plays and pauses and left and right seek.
