@@ -117,7 +117,7 @@ pub(in crate::view) fn bar_tools(state: &State, palette: ComponentPalette) -> El
 /// list's songs that hold what is typed under it.
 fn search_field(state: &State, palette: ComponentPalette) -> Element {
     let field = SearchField::new("page-query", &state.page_search, t!("mobile-search-list"), ComponentPalette { surface: Color::rgba(0, 0, 0, 90), ..SCHEME.on_raised() })
-        .size(ControlSize::Spacious).render().size(None, Some(46.0)).radius(12.0).border(HAIRLINE, 0.5);
+        .size(ControlSize::Spacious).render().size(None, Some(46.0)).round().border(HAIRLINE, 0.5);
     if state.page_search.is_empty() { field } else { inside_cross(field, "page-search-clear", &t!("mobile-clear-search"), palette) }
 }
 
