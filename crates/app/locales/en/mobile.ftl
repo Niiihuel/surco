@@ -59,6 +59,7 @@ mobile-no-music-detail = Pick a song to start listening.
 mobile-play-failed = Couldn't play
 mobile-playback-position = Playback position
 mobile-repeat = Repeat
+mobile-volume = Volume
 mobile-unsynced-lyrics = Unsynced lyrics · { $source }
 mobile-lyrics-loading = Looking for lyrics…
 mobile-lyrics-missing = No lyrics available.

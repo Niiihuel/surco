@@ -631,9 +631,6 @@ const SUGGESTED_LOW: usize = 20;
 const RECENT_KEPT: usize = 8;
 /// How long the rows of the lyrics take to settle after the list jumps to a new line.
 const LYRIC_GLIDE: Duration = Duration::from_millis(560);
-/// dnmusic's paused cover, and the spring it steps back and forth on.
-const COVER_PAUSED: f32 = 0.82;
-const COVER_SPRING: Duration = Duration::from_millis(500);
 /// How much later each row sets off than the one nearer the line being sung, up to this many rows out.
 const LYRIC_RIPPLE: Duration = Duration::from_millis(34);
 const LYRIC_RIPPLE_ROWS: usize = 6;
@@ -1094,6 +1091,8 @@ pub struct State {
     pub about: Option<(String, Option<Known>)>,
     /// A later version of the app, and how far taking it in has got.
     pub update: Option<Release>,
+    /// The streams the last few tracks were fetched from, by their ids, the latest last.
+    formats: Vec<(String, String)>,
     pub updating: Updating,
     /// The later version is still to be said over the window: its card there has been
     /// neither closed nor followed.
@@ -1119,8 +1118,6 @@ pub struct State {
     lyric_card: ScalarSpring,
     /// Whether the card was on screen at the last layout; one that appears is in place at once.
     lyric_card_shown: bool,
-    /// The full player's cover, whole while it plays and stepped back while paused, as Apple Music's.
-    cover_rest: ScalarSpring,
     /// Consumed by the Host before following the new track's first timed line.
     pub(crate) lyrics_scroll_reset: bool,
     pub outputs: Vec<AudioOutputDevice>,
@@ -1232,6 +1229,8 @@ fn desktop_alias(action: &UiAction) -> Option<UiAction> {
         "panel-share" | "panel-go:share" => Some("now-share"),
         "panel-go:album" => Some("now-album"),
         "panel-go:artist" => Some("now-artist"),
+        // The phone player's line being sung opens the whole lyrics, as their button does.
+        "sung-line" => Some("lyrics"),
         _ => None,
     };
     match action {
@@ -1526,6 +1525,7 @@ impl Default for State {
             clip: None,
             about: None,
             update: None,
+            formats: Vec::new(),
             updating: Updating::Idle,
             update_toast: false,
             restart: false,
@@ -1544,7 +1544,6 @@ impl Default for State {
             lyric_glide: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
             lyric_card: ScalarSpring::new(0.0, Instant::now()).motion(SpringMotion::settling_in(LYRIC_GLIDE)),
             lyric_card_shown: false,
-            cover_rest: ScalarSpring::new(COVER_PAUSED, Instant::now()).motion(SpringMotion::settling_in(COVER_SPRING)),
             lyrics_scroll_reset: false,
             outputs: Vec::new(),
             outputs_loading: false,
@@ -1835,7 +1834,6 @@ impl State {
             || self.wash.is_active(now)
             || self.lyric_glide.is_active(now.checked_sub(LYRIC_RIPPLE * LYRIC_RIPPLE_ROWS as u32).unwrap_or(now))
             || self.lyric_card.is_active(now)
-            || self.cover_rest.is_active(now)
             // A story's step fills its bar as it is on screen.
             || self.replay_story.is_some()
             || self.replay_deck.is_active(now)
@@ -3638,6 +3636,13 @@ impl State {
                 self.updating = Updating::Failed(why);
                 Vec::new()
             }
+            // What plays and what is made ready after it are all a player names.
+            Event::Format { track_id, format } => {
+                self.formats.retain(|(id, _)| *id != track_id);
+                self.formats.push((track_id, format));
+                if self.formats.len() > 4 { self.formats.remove(0); }
+                Vec::new()
+            }
             Event::About { artist, found } => {
                 let covers = cover_requests(&mut self.covers, found.iter().map(|(artist, _)| &artist.artwork_url));
                 if let Some((asked, known)) = &mut self.about {
@@ -3895,12 +3900,7 @@ impl State {
         if player.position != self.player.position || player.playing != self.player.playing {
             self.heard = (player.position, Instant::now());
         }
-        let was_playing = std::mem::replace(&mut self.player, player).playing;
-        if self.player.playing != was_playing {
-            let (to, now) = (if self.player.playing { 1.0 } else { COVER_PAUSED }, Instant::now());
-            if self.motion { self.cover_rest.release(self.cover_rest.value(now), self.cover_rest.velocity(now), to, now) }
-            else { self.cover_rest.snap_to(to, now) }
-        }
+        self.player = player;
         // The song's own video in its place is that song still.
         let song = self.swapped.clone().or_else(|| self.player.current.clone());
         let (playing, position, duration) = (self.player.playing, self.player.position, self.player.duration);
@@ -4388,9 +4388,9 @@ impl State {
         true
     }
 
-    /// How large the full player's cover stands, a fraction of its whole side.
-    pub fn cover_rest(&self, now: Instant) -> f32 {
-        self.cover_rest.value(now)
+    /// The stream the track `id` plays from, as `Opus · 141 kbps · 48 kHz`, once it is fetched.
+    pub fn format_of(&self, id: &str) -> Option<&str> {
+        self.formats.iter().rev().find(|(track, _)| track == id).map(|(_, format)| format.as_str())
     }
 
     pub fn lyric_card_offset(&self, now: Instant) -> f32 {
