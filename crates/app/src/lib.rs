@@ -912,6 +912,13 @@ impl eframe::App for Host {
         let frame = follow_page_actions(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_tv_scroll(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
         let frame = follow_title(&mut self.state, &mut self.tree, window, &mut self.notice).unwrap_or(frame);
+        // A text menu's Paste on the desktop: egui reads the system's clipboard and types it
+        // into the field, which keeps the focus, on the next frame.
+        #[cfg(not(any(target_os = "ios", target_os = "android")))]
+        if let Some(target) = self.state.paste.take() {
+            self.tree.focus(&target);
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestPaste);
+        }
         #[cfg(any(target_os = "ios", target_os = "android"))]
         let frame = {
             let mut frame = frame;

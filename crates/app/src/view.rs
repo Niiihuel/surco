@@ -797,16 +797,25 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         t!("desktop-import-hint")
     };
     let out = Text::new(t!("desktop-import-export-hint"), palette).role(TextRole::Caption).muted().render();
-    let mut fields = import_guide(state, Card::inner(width, 480.0), palette);
+    let mut fields = import_guide(state, Card::inner(width, IMPORT_WIDEST), palette);
     fields.extend([field, Text::new(about, palette).role(TextRole::Caption).muted().render()]);
     fields.push(out);
-    Card { body: Some(Element::column(fields).gap(8.0)), go: Some(("import-go", t!("common-import"), true)), widest: 480.0, focus: Some("import-link"),
+    Card { art: import_art(width), inset_art: false, inline: true, body: Some(Element::column(fields).gap(10.0)), go: Some(("import-go", t!("common-import"), true)), widest: IMPORT_WIDEST, focus: Some("import-link"),
         ..Card::new("import", t!("desktop-import-title"), t!("desktop-import-detail"), ("import-cancel", t!("common-cancel"))) }
         .render(window_tree, width)
 }
 
-/// The panel the import's steps stand on, a step lighter than its card.
-const STEPS_PANEL: Color = Color::rgb(52, 52, 52);
+/// How wide the import's card stands, the same from its link to its last song.
+const IMPORT_WIDEST: f32 = 480.0;
+
+/// The import's picture across the top of its card: the apps the music comes from, and Surco.
+fn import_art(width: f32) -> Option<Element> {
+    let side = Card::side(width, IMPORT_WIDEST);
+    import_picture().map(|picture| Element::raster_image(picture.cover()).size(Some(side), Some(side * 130.0 / 460.0)))
+}
+
+/// A step's number, on a round badge as the TV's.
+const STEP_BADGE: Color = Color::rgba(255, 255, 255, 30);
 
 /// Where a list is brought in from, and the way to copy its link there, step by step: the
 /// app chosen, or the one a link pasted is of.
@@ -819,21 +828,18 @@ fn import_guide(state: &State, width: f32, palette: ComponentPalette) -> Vec<Ele
         ImportSource::Apple => t!("desktop-import-step-copy-apple"),
         ImportSource::YouTube => t!("desktop-import-step-copy-youtube"),
     };
-    // Each step a line of its own on a lifted panel, its number in a round badge beside it.
+    // As the TV's steps: each its number on a round badge, its words beside it, no panel.
     let step = |number: usize, text: std::borrow::Cow<'static, str>| {
-        let badge = Element::panel(Element::text(number.to_string()).font_family(FontFamily::SansBold).font_size(13.0).foreground(SCHEME.canvas).centered())
-            .background(palette.text).radius(13.0).size(Some(26.0), Some(26.0));
-        Element::row(vec![badge.centered_y(), Text::new(text, palette).font_size(14.0).render().flex(1.0).centered_y()]).gap(12.0)
+        let badge = Element::panel(Element::text(number.to_string()).font_family(FontFamily::SansSemibold).font_size(13.0).foreground(palette.text).centered())
+            .background(STEP_BADGE).round().size(Some(26.0), Some(26.0));
+        Element::row(vec![badge.centered_y(), Text::new(text, palette).font_size(15.0).line_height(20.0).muted().render().flex(1.0).centered_y()]).gap(14.0)
     };
     let steps = Element::column(vec![
         step(1, t!("desktop-import-step-open", app = chosen.name())),
         step(2, copy),
         step(3, t!("desktop-import-step-paste")),
-    ]).gap(14.0).padding(16.0);
-    vec![
-        segments("import-source", width, tabs),
-        Element::panel(steps).background(STEPS_PANEL).radius(12.0),
-    ]
+    ]).gap(18.0).padding(4.0);
+    vec![segments("import-source", width, tabs), steps]
 }
 
 /// The songs of a list brought in that the catalog does not have, to be looked for by hand.
@@ -870,12 +876,11 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
 /// bar that fills as its songs are looked for, and the way to leave it to go on alone; or
 /// why it could not be brought in, and the way to try again.
 pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
-    let Some((_, failed)) = &state.import_run else { return window_tree };
+    let Some((_, failed)) = state.import_run.as_ref().filter(|_| !state.import_hidden) else { return window_tree };
     let (title, about) = import_run_words(state);
     let palette = if state.mobile { palette } else { Card::palette(GREY_CARD) };
     let body = failed.is_none().then(|| {
-        let done = state.import_progress.filter(|(_, of)| *of > 0).map_or(0.0, |(done, of)| done as f32 / of as f32);
-        let bar = Progress::new(done, ComponentPalette { selected: BAR_REST, ..palette }).id("import-progress").render().accessibility_label(about.clone());
+        let bar = Progress::new(import_done(state), ComponentPalette { selected: BAR_REST, ..palette }).id("import-progress").render().accessibility_label(about.clone());
         let wait = Text::new(t!("desktop-import-wait"), palette).role(TextRole::Caption).muted().render();
         Element::column(vec![bar, if state.mobile { wait } else { wait.center_content() }]).gap(16.0)
     });
@@ -887,11 +892,32 @@ pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32,
             .footer(ButtonGroup::new(buttons).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render());
         return match body { Some(body) => sheet.body(body), None => sheet }.render();
     }
-    let side = Card::side(width, 420.0);
-    let art = import_picture().map(|picture| Element::raster_image(picture.cover()).size(Some(side), Some(side * 130.0 / 460.0)));
-    Card { art, inset_art: false, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
+    Card { art: import_art(width), inset_art: false, inline: true, widest: IMPORT_WIDEST, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
         ..Card::new("import-run", title, about, ("import-hide", way_out)) }
         .render(window_tree, width)
+}
+
+/// How much of the list being brought in has been looked for, from 0 to 1.
+fn import_done(state: &State) -> f32 {
+    state.import_progress.filter(|(_, of)| *of > 0).map_or(0.0, |(done, of)| done as f32 / of as f32)
+}
+
+/// Work going on out of sight, as a ring beside the bell that fills with it: a list hidden as
+/// it is brought in, which comes back pressed, or a later version coming down, whose card
+/// with what is new it leads to. Its tooltip says how far it has got.
+fn work_ring(state: &State, palette: ComponentPalette) -> Option<Element> {
+    let (id, done, hint) = if state.import_hidden && state.import_run.is_some() {
+        let (title, about) = import_run_words(state);
+        ("import-show", import_done(state), format!("{title} · {about}"))
+    } else if let (Updating::Fetching(done), Some(release), false) = (&state.updating, &state.update, state.page == Page::News) {
+        ("news", *done, t!("desktop-update-downloading", version = release.version.as_str()).into_owned())
+    } else {
+        return None;
+    };
+    let ring = Progress::new(done, ComponentPalette { selected: BAR_REST, ..palette }).ring(18.0).render().accessibility_label(hint.clone());
+    let button = Element::clickable(id, ring.centered()).accessible(limn::Access::new(limn::Role::Button).name(hint.clone()))
+        .hover_background(SCHEME.hover).radius(16.0).size(Some(32.0), Some(32.0));
+    Some(limn::Tooltip::new(button, id, hint, palette).placement(TooltipPlacement::Below).render().centered_y())
 }
 
 /// What the card of a list being brought in says: that it is coming and how far it has got,
@@ -1058,6 +1084,9 @@ struct Card {
     returns: Option<&'static str>,
     /// Whether its picture stands inside the card's padding, rounded, rather than edge to edge.
     inset_art: bool,
+    /// Whether its way out stands inside it, beside the button that goes ahead, as the TV's
+    /// actions do, rather than under it.
+    inline: bool,
 }
 
 /// A card's colour, its words' and its button's.
@@ -1079,7 +1108,7 @@ const CARD_BODY_MOST: f32 = 440.0;
 
 impl Card {
     fn new(id: &'static str, title: impl Into<std::borrow::Cow<'static, str>>, about: impl Into<std::borrow::Cow<'static, str>>, way_out: (&'static str, std::borrow::Cow<'static, str>)) -> Self {
-        Self { title: title.into(), about: about.into(), way_out, dismiss: None, art: None, body: None, go: None, colors: GREY_CARD, widest: 420.0, id, focus: None, returns: None, inset_art: true }
+        Self { title: title.into(), about: about.into(), way_out, dismiss: None, art: None, body: None, go: None, colors: GREY_CARD, widest: 420.0, id, focus: None, returns: None, inset_art: true, inline: false }
     }
 
     /// How wide a card that stands at most `widest` is in a window `width` wide.
@@ -1111,13 +1140,26 @@ impl Card {
             let scroll = ScrollArea::new(format!("{}:body", self.id), body).appearance(spotify_bar()).visibility(SPOTIFY_BAR_SHOWS);
             copy.push(scroll.render().max_height(CARD_BODY_MOST));
         }
-        if let Some((id, words, answers)) = self.go {
+        let go = self.go.map(|(id, words, answers)| {
             // One that does not answer yet is faded.
             let faded = |color: Color| if answers { color } else { Color { a: color.a / 2, ..color } };
             let label = Element::text(words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(faded(self.colors.ink)).center_content();
-            let pill = Element::panel(label.centered()).background(faded(self.colors.button)).radius(26.0).size(Some(side * 0.62), Some(52.0));
+            let pill = Element::panel(label.centered()).background(faded(self.colors.button)).radius(26.0);
+            let pill = if self.inline { pill.size(None, Some(48.0)) } else { pill.size(Some(side * 0.62), Some(52.0)) };
             let said = limn::Access::new(limn::Role::Button).name(words).disabled(!answers);
-            let go = if answers { Element::clickable(id, pill).accessible(said) } else { pill.accessible(said) };
+            if answers { Element::clickable(id, pill).accessible(said) } else { pill.accessible(said) }
+        });
+        let (close_id, close_words) = self.way_out;
+        if self.inline {
+            // Both ways at the card's foot, side by side, the way out a quiet pill.
+            let label = Element::text(close_words.clone()).font_family(FontFamily::SansBold).font_size(16.0).foreground(Color::WHITE).center_content();
+            let out = Element::clickable(close_id, label.centered()).accessible(limn::Access::new(limn::Role::Button).name(close_words.clone()))
+                .background(Color::rgba(255, 255, 255, 24)).hover_background(Color::rgba(255, 255, 255, 40)).pressed_background(Color::rgba(255, 255, 255, 56))
+                .radius(26.0).size(None, Some(48.0));
+            let mut ways = vec![out.flex(1.0)];
+            ways.extend(go.map(|go| go.flex(1.0)));
+            copy.extend([Element::spacer().size(None, Some(8.0)), Element::row(ways).gap(12.0)]);
+        } else if let Some(go) = go {
             copy.extend([Element::spacer().size(None, Some(8.0)), go.centered_x()]);
         }
         let mut parts = Vec::new();
@@ -1131,7 +1173,6 @@ impl Card {
         }));
         parts.push(Element::column(copy).gap(12.0).padding(CARD_PAD));
         let card = Element::panel(Element::column(parts)).background(self.colors.surface).radius(WELCOME_RADIUS).clip_children().size(Some(side), None);
-        let (close_id, close_words) = self.way_out;
         // The way out, a pill of its own size that turns white under the pointer, as the button
         // above it is.
         let words = |ink: Color| Element::row(vec![
@@ -1145,7 +1186,7 @@ impl Card {
             pill(Color::WHITE, Color::rgb(0, 0, 0)).reveal_on_hover(format!("{close_id}:over")),
         ])).hover_region().accessible(limn::Access::new(limn::Role::Button).name(close_words)).centered_x();
         // As wide as the card, so the window centres it.
-        let dialog = Element::column(vec![card, close]).gap(12.0).size(Some(side), None)
+        let dialog = if self.inline { card } else { Element::column(vec![card, close]).gap(12.0).size(Some(side), None) }
             .accessible(limn::Access::new(limn::Role::Dialog).id(format!("{}:dialog", self.id)).name(named));
         let mut popover = Element::popover(window_tree, dialog, self.dismiss.unwrap_or(close_id), PopoverPlacement::Center).popover_scrim(Color::rgba(0, 0, 0, 200));
         if let Some(focus) = self.focus { popover = popover.popover_initial_focus(focus); }
@@ -1506,7 +1547,7 @@ fn top_bar(state: &State, width: f32, palette: ComponentPalette) -> Element {
             Element::stack(vec![bell, Element::row(vec![Element::spacer().flex(1.0), chip])])
         }
     };
-    let trailing: Vec<Element> = vec![bell, account(state, palette)].into_iter().chain(rule(right)).collect();
+    let trailing: Vec<Element> = work_ring(state, palette).into_iter().chain([bell, account(state, palette)]).chain(rule(right)).collect();
     let bar = TopBar::new(TOP_BAR, &state.query, t!("common-search-placeholder"), palette)
         .home_icons(Icon::Custom(glyph::HOME), Icon::Custom(glyph::HOME_FILL))
         .browse_icons(Icon::Custom(glyph::BROWSE), Icon::Custom(glyph::BROWSE_FILL))
@@ -4587,6 +4628,13 @@ mod tests {
             _ => None,
         });
         assert_eq!(percent, Some(FontFamily::Sans), "its share is said in the type the player's times are in");
+        // Away from its card, it comes down as a ring beside the bell, which leads back to it.
+        let news = std::mem::replace(&mut state.page, Page::Search);
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        let ring = frame.commands.iter().find_map(|command| match command { limn::DrawCommand::ProgressRing { fraction, .. } => *fraction, _ => None });
+        assert_eq!(ring, Some(0.42));
+        assert!(frame.regions.iter().any(|region| region.id == "news"));
+        state.page = news;
         state.apply(Event::UpdateInstalled);
         let (texts, ids) = shown(&state);
         assert!(texts.iter().any(|text| text == "Surco 9.0.0 está lista") && ids.iter().any(|id| id == "update-restart"));
@@ -4614,6 +4662,16 @@ mod tests {
         assert!(ids.iter().any(|id| id == "import-run:dialog") && ids.iter().any(|id| id == "import-hide") && ids.iter().any(|id| id == "import-progress"));
         assert!(!ids.iter().any(|id| id == "import-retry"), "nothing to try again while it comes");
         assert_eq!(state.page, Page::Search, "the page under it stays, not one that waits for it");
+
+        // Hidden, it goes on as a ring beside the bell that fills with it; pressed, it is back.
+        state.update(&limn::UiAction::Clicked { id: "import-hide".into() });
+        let frame = UiTree::new(view(&state, size)).layout(size);
+        assert!(!frame.access.iter().any(|node| node.id == "import-run:dialog"));
+        let ring = frame.commands.iter().find_map(|command| match command { limn::DrawCommand::ProgressRing { fraction, .. } => *fraction, _ => None });
+        assert_eq!(ring, Some(12.0 / 150.0), "the ring is as full as the list is looked for");
+        assert!(frame.regions.iter().any(|region| region.id == "import-show"));
+        state.update(&limn::UiAction::Clicked { id: "import-show".into() });
+        assert!(shown(&state, size).1.iter().any(|id| id == "import-run:dialog"));
 
         state.apply(Event::Opened { target: Target::Import(link.into()), result: Err("No pudimos leer esa playlist.".into()) });
         let (texts, ids) = shown(&state, size);
