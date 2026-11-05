@@ -322,15 +322,17 @@ fn mix(from: Color, to: Color, amount: f32) -> Color {
     Color::rgb(channel(from.r, to.r), channel(from.g, to.g), channel(from.b, to.b))
 }
 
+/// A colour's relative luminance, from 0 for black to 1 for white.
+fn luminance(color: Color) -> f32 {
+    let linear = |channel: u8| {
+        let s = f32::from(channel) / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
 /// Keep even a very bright cover readable with Surco's secondary text token.
 fn cover_tone(tint: Color, amount: f32) -> Color {
-    let luminance = |color: Color| {
-        let linear = |channel: u8| {
-            let s = f32::from(channel) / 255.0;
-            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-        };
-        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-    };
     let mut color = mix(SCHEME.canvas, tint, amount);
     for _ in 0..16 {
         if (luminance(SCHEME.muted) + 0.05) / (luminance(color) + 0.05) >= 4.5 { break; }
@@ -346,8 +348,12 @@ fn song_ground(state: &State, window: Size) -> Option<Element> {
     if !matches!(state.page, Page::Playing | Page::Lyrics) || state.queue_open { return None; }
     let url = state.current()?.artwork_url.as_deref()?;
     let blurred = state.artwork.get(&crate::state::backdrop_key(url))?;
-    // BitChord's 34 → 64%, a step darker as limn blends in linear light.
-    let scrim = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::rgba(0, 0, 0, 160), Color::rgba(0, 0, 0, 205)]);
+    // The player's is BitChord's own shade, 34 → 48% → 64%, which gives its screens' greys over
+    // the same cover. A near-white cover, and the lyrics, keep the deeper one white words stay
+    // legible on over any cover.
+    let light = state.tints.get(url).is_some_and(|tint| luminance(*tint) > 0.6);
+    let shade = if state.page == Page::Playing && !light { [87, 122, 163] } else { [120, 160, 205] };
+    let scrim = Element::panel(Element::spacer()).vertical_gradient(shade.map(|alpha| Color::rgba(0, 0, 0, alpha)).to_vec());
     let whole = |element: Element| element.size(Some(window.width), Some(window.height));
     Some(Element::stack(vec![whole(Element::raster_image(blurred.clone().cover())), whole(scrim)]))
 }

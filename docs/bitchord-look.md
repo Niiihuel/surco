@@ -78,7 +78,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 
 ## Phone player
 
-- Background: the cover blurred over the whole screen under a black scrim of 0.34 → 0.64.
+- Background: the cover blurred over the whole screen under BitChord's black scrim of 0.34 →
+  0.48 → 0.64, which gives its screens' greys over the same cover (measured within 3 of 255).
+  The lyrics, and a near-white cover's player, keep a deeper 0.47 → 0.80 for white words.
   limn has no blur: the cover is drawn tiny and stretched, which blurs it the same way.
 - The cover runs edge to edge across the top, under the status bar, as BitChord's full-bleed
   banner: square, taller where the controls would only spread more than 24 each side of the
