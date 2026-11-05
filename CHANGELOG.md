@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.17.2
+
+### Changed
+
+- Importing a playlist is one window from the link to its last song: the steps to copy the
+  link are numbered as on the TV, and both buttons stand inside it.
+- Hidden, a playlist being imported goes on as a ring beside the bell that fills as its
+  songs are found: its tooltip says how far it has got, and a click brings the window back.
+  If it cannot come in, the window comes back to say why. A new version coming down shows
+  the same ring.
+
+### Fixed
+
+- On Linux, Windows and macOS, a link copied in another app pastes into Surco (Ctrl+V,
+  Cmd+V on macOS, or the field's menu), and what Surco copies reaches other apps.
+
 ## 0.17.1
 
 ### Fixed
