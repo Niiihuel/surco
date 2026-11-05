@@ -1,6 +1,7 @@
 [workspace]
 resolver = "2"
 members = ["crates/*"]
+exclude = ["vendor"]
 
 [workspace.package]
 version = "0.17.0"
@@ -32,3 +33,9 @@ debug = false
 # The equaliser and the Opus decoder run per sample on the mixing thread.
 [profile.dev.package.surco-audio]
 opt-level = 2
+
+# eframe 0.37.0 as published, but for one line: on iOS it sized its surface to the safe area
+# while egui lays out over the whole screen, so the picture was stretched and lost its foot.
+# Drop it once eframe sizes the surface from the screen there.
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }
