@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.1
+
+### Fixed
+
+- On the iPhone everything round was oval and the tab bar was cut off at the bottom: the
+  picture was drawn for the screen's safe area and stretched over the whole of it.
+- The phone's player shows its cover sharp, decoded at the size it spans the screen.
+- Lyrics fill word by word for many more songs: Apple Music's word-timed lyrics are asked of
+  BetterLyrics too, as most of LyricsPlus's mirrors are down and the one up lacks many songs.
+
 ## 0.17.0
 
 ![The phone's player, its cover edge to edge](https://raw.githubusercontent.com/Niiihuel/surco/v0.17.0/docs/releases/0.17.0/player.jpg)

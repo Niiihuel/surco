@@ -102,8 +102,8 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   0.46, blur and step back to 0.98; what was sung stays lit, what is to come is at 45%.
 - The line being sung fills behind a 30-point soft edge as each word is sung, the word
   rising 2 and settling 700 ms after it ends. That needs word timing, which LyricsPlus
-  (Apple Music, Musixmatch, QQ) gives and LRCLIB does not: both are asked at once and the
-  word-timed answer wins. A line timed only as a whole lights at once, as BitChord's does.
+  (Apple Music, Musixmatch, QQ) and BetterLyrics (Apple Music's TTML) give and LRCLIB does
+  not: all three are asked at once and the word-timed answer wins, LyricsPlus's first. A line timed only as a whole lights at once, as BitChord's does.
 
 ## TV
 

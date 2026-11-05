@@ -1,4 +1,4 @@
-//! LyricsPlus and LRCLIB requests are kept separate from the player/audio lifetime.
+//! LyricsPlus, BetterLyrics and LRCLIB requests are kept separate from the player/audio lifetime.
 
 use std::time::{Duration, Instant};
 use std::sync::Mutex;
@@ -15,6 +15,9 @@ const TIMEOUT: Duration = Duration::from_secs(12);
 /// any of which may be down or lack a song another has; these two answered on 2026-11-04.
 const LYRICS_PLUS: [&str; 2] = ["https://lyricsplus.binimum.org", "https://lyricsplus.prjktla.my.id"];
 const LYRICS_PLUS_TIMEOUT: Duration = Duration::from_secs(8);
+/// BetterLyrics, which BitChord asks too: Apple Music's lyrics as TTML, timed by the word for
+/// most songs. On 2026-11-05 it had songs LyricsPlus's one mirror still up lacked.
+const BETTER_LYRICS: &str = "https://lyrics-api.boidu.dev/getLyrics";
 const USER_AGENT: &str = concat!("Surco/", env!("CARGO_PKG_VERSION"), " (https://github.com/Niiihuel/surco)");
 
 #[derive(Clone, Debug, PartialEq)]
@@ -46,15 +49,18 @@ pub struct Provider {
 impl Provider {
     pub async fn fetch(&self, youtube: &YouTube, track: &Track) -> Result<Option<Found>, Failure> {
         self.cached(track, async {
-            // Asked together, so the wait is the slower one's. Words timed one by one win, as
-            // a phone's lyrics fill with them; then LRCLIB's timed lines, then LyricsPlus's.
-            let (plus, primary) = tokio::join!(lyrics_plus(youtube, track), self.fetch_from(youtube, track, ENDPOINT, TIMEOUT));
-            let word_timed = plus.as_ref().is_some_and(|lines| lines.iter().any(|line| !line.words.is_empty()));
-            let primary = match (plus, primary) {
-                (Some(lines), _) if word_timed => Ok(Some(Found::Synced(lines))),
-                (_, Ok(Some(found @ Found::Synced(_)))) => Ok(Some(found)),
-                (Some(lines), _) => Ok(Some(Found::Synced(lines))),
-                (None, primary) => primary,
+            // Asked together, so the wait is the slowest one's. Words timed one by one win, as
+            // a phone's lyrics fill with them, LyricsPlus's before BetterLyrics's; then LRCLIB's
+            // timed lines, then either's.
+            let (plus, better, primary) = tokio::join!(lyrics_plus(youtube, track), better_lyrics(youtube, track), self.fetch_from(youtube, track, ENDPOINT, TIMEOUT));
+            let word_timed = |lines: &Option<Vec<Line>>| lines.as_ref().is_some_and(|lines| lines.iter().any(|line| !line.words.is_empty()));
+            let (plus_timed, better_timed) = (word_timed(&plus), word_timed(&better));
+            let primary = match (plus, better, primary) {
+                (Some(lines), _, _) if plus_timed => Ok(Some(Found::Synced(lines))),
+                (_, Some(lines), _) if better_timed => Ok(Some(Found::Synced(lines))),
+                (_, _, Ok(Some(found @ Found::Synced(_)))) => Ok(Some(found)),
+                (Some(lines), _, _) | (None, Some(lines), _) => Ok(Some(Found::Synced(lines))),
+                (None, None, primary) => primary,
             };
             resolve(primary, async {
                 let found = tokio::time::timeout(Duration::from_secs(8), youtube.lyrics(&track.id)).await;
@@ -181,6 +187,60 @@ async fn lyrics_plus_at(youtube: &YouTube, track: &Track, host: &str, title: &st
     (!lines.is_empty()).then_some(lines)
 }
 
+/// BetterLyrics's lines for `track`, for each name its artist may be catalogued under in turn;
+/// none when it is down, slow or has not got the song.
+async fn better_lyrics(youtube: &YouTube, track: &Track) -> Option<Vec<Line>> {
+    let title = search_title(&track.title);
+    for artist in search_artists(&track.artist) {
+        let mut query = vec![("s", title.clone()), ("a", artist.to_owned())];
+        if track.duration_ms >= 1000 { query.push(("d", (track.duration_ms / 1000).to_string())); }
+        if let Some(album) = track.album.as_ref().filter(|album| !album.is_empty()) { query.push(("al", album.clone())); }
+        let request = youtube.http().get(BETTER_LYRICS).header("User-Agent", USER_AGENT).timeout(LYRICS_PLUS_TIMEOUT).query(&query);
+        let Some(response) = request.send().await.ok().filter(|response| response.status().is_success()) else { continue };
+        let Some(answer) = response.bytes().await.ok().and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok()) else { continue };
+        let lines = ttml_lines(answer["ttml"].as_str().unwrap_or_default());
+        if !lines.is_empty() { return Some(lines); }
+    }
+    None
+}
+
+/// Apple Music's TTML as lines, in the order they are sung: each `<p>` a line, its `<span>`s
+/// the words or syllables it is timed by, glued into words where no space parts them; a line
+/// timed only as a whole keeps its text alone. Background vocals are left out, as the lead's
+/// line is what fills.
+fn ttml_lines(ttml: &str) -> Vec<Line> {
+    const METADATA: &str = "http://www.w3.org/ns/ttml#metadata";
+    let Ok(document) = roxmltree::Document::parse(ttml) else { return Vec::new() };
+    let time = |node: roxmltree::Node, name: &str| node.attribute(name).and_then(ttml_ms);
+    let lead = |node: &roxmltree::Node| node.attribute((METADATA, "role")) != Some("x-bg");
+    let mut lines: Vec<Line> = document.descendants().filter(|node| node.has_tag_name("p")).filter_map(|p| {
+        let at = time(p, "begin")?;
+        // A space between two spans ends the word in hand; spans side by side are its syllables.
+        let runs: Vec<(u64, u64, String)> = p.children().filter(lead).filter_map(|child| match child.text() {
+            Some(text) if child.is_text() => Some((0, 0, if text.trim().is_empty() { text.to_owned() } else { " ".to_owned() })),
+            _ if child.has_tag_name("span") => Some((time(child, "begin")?, time(child, "end")?,
+                child.descendants().filter(|node| node.is_text()).filter_map(|node| node.text()).collect())),
+            _ => None,
+        }).collect();
+        let words = words_from_runs(&runs.iter().map(|(start, end, text)| (*start, *end, text.as_str())).collect::<Vec<_>>());
+        if let Some(first) = words.first() {
+            let text = words.iter().map(|word| word.text.as_str()).collect::<Vec<_>>().join(" ");
+            return Some(Line { at_ms: at.min(first.start_ms), text, words });
+        }
+        let text: String = p.children().filter(lead).flat_map(|child| child.descendants()).filter(|node| node.is_text()).filter_map(|node| node.text()).collect();
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        (!text.is_empty()).then(|| Line { at_ms: at, text, words: Vec::new() })
+    }).collect();
+    lines.sort_by_key(|line| line.at_ms);
+    lines
+}
+
+/// A TTML clock value in milliseconds: `26.158`, `1:02.5`, `00:01:02.5` or `26.158s`.
+fn ttml_ms(value: &str) -> Option<u64> {
+    let seconds = value.trim().trim_end_matches('s').split(':').try_fold(0.0, |total: f64, part| Some(total * 60.0 + part.parse::<f64>().ok()?))?;
+    (seconds.is_finite() && seconds >= 0.0).then(|| (seconds * 1000.0).round() as u64)
+}
+
 /// LyricsPlus's v2 answer as lines, in the order they are sung: each line's words glued back
 /// from the syllables it comes in, or the line alone where only it is timed.
 fn plus_lines(answer: &serde_json::Value) -> Vec<Line> {
@@ -248,6 +308,23 @@ async fn fetch_at(youtube: &YouTube, track: &Track, endpoint: &str, timeout: Dur
 mod tests {
     use super::*;
     use std::{io::{Read, Write}, net::TcpListener, sync::mpsc, thread};
+
+    #[test]
+    fn apple_ttml_is_read_into_words_lines_and_their_times() {
+        let ttml = r#"<tt xmlns="http://www.w3.org/ns/ttml" xmlns:ttm="http://www.w3.org/ns/ttml#metadata"><body><div>
+            <p begin="1:02.5" end="1:05"><span begin="1:02.5" end="1:03">Well,</span> <span begin="1:03" end="1:03.4">beau</span><span begin="1:03.4" end="1:04">ti</span><span begin="1:04" end="1:04.5">ful</span> <span ttm:role="x-bg"><span begin="1:04.5" end="1:05">(ooh)</span></span></p>
+            <p begin="26.158s" end="28.9">A line   timed whole</p>
+            <p end="30">Untimed, left out</p>
+        </div></body></tt>"#;
+        let lines = ttml_lines(ttml);
+        assert_eq!(lines.len(), 2, "{lines:?}");
+        assert_eq!((lines[0].at_ms, lines[0].text.as_str(), lines[0].words.is_empty()), (26_158, "A line timed whole", true));
+        let sung = &lines[1];
+        assert_eq!((sung.at_ms, sung.text.as_str()), (62_500, "Well, beautiful"), "syllables side by side are one word, the background vocal is left out");
+        assert_eq!(sung.words.iter().map(|word| (word.start_ms, word.end_ms)).collect::<Vec<_>>(), vec![(62_500, 63_000), (63_000, 64_500)]);
+        assert!(ttml_lines("not xml").is_empty());
+        assert_eq!((ttml_ms("00:01:02.5"), ttml_ms("26.158s"), ttml_ms("-1"), ttml_ms("x")), (Some(62_500), Some(26_158), None, None));
+    }
 
     fn track() -> Track {
         Track { id: "song".into(), title: "Song".into(), artist: "Artist".into(),
