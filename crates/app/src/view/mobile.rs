@@ -89,11 +89,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
         header.push(face.centered_y());
     }
-    if (state.can_go_back() && !tab) || state.page == Page::Playing {
+    // Over the player's banner its handle stands alone, as BitChord's, with what plays under it.
+    let banner_head = state.page == Page::Playing && !state.queue_open;
+    if ((state.can_go_back() && !tab) || state.page == Page::Playing) && !banner_head {
         header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
     }
     let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
-    let copy = if detail && !state.mobile_ui.compact_header {
+    let copy = if banner_head {
+        player_handle(&title, palette)
+    } else if detail && !state.mobile_ui.compact_header {
         // The page's own heading names it under its cover; the bar does once that has scrolled away.
         Element::spacer()
     } else if state.page == Page::Playing {
@@ -106,9 +110,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
     if state.page == Page::Playing && state.queue_open {
         header.push(icon("queue", Icon::Playlist, &if state.queue_open { t!("mobile-back-to-song") } else { t!("mobile-show-queue") }, palette));
-    } else if state.page == Page::Playing {
-        // The song's options are beside its name, as BitChord's; this keeps the title centred.
-        header.push(Element::spacer().size(Some(TAP), Some(TAP)));
     }
     if state.page == Page::Library {
         header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
@@ -149,7 +150,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         // What the lines are seen through, between the header and the transport.
         lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(window.height), palette)
     } else if state.page == Page::Playing {
-        player::screen(state, width, window.height - top_height - insets.bottom, palette)
+        player::screen(state, width, window, top_height, palette)
     } else {
         page(state, width, palette)
     };
@@ -221,6 +222,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
+    let content = match player_banner(state, window) { Some(banner) => Element::stack(vec![banner, content]), None => content };
     let content = match ground { Some(ground) => Element::stack(vec![ground, content]), None => content };
     let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
         .size(Some(window.width), Some(window.height));
@@ -320,15 +322,17 @@ fn mix(from: Color, to: Color, amount: f32) -> Color {
     Color::rgb(channel(from.r, to.r), channel(from.g, to.g), channel(from.b, to.b))
 }
 
+/// A colour's relative luminance, from 0 for black to 1 for white.
+fn luminance(color: Color) -> f32 {
+    let linear = |channel: u8| {
+        let s = f32::from(channel) / 255.0;
+        if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
+    };
+    0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
+}
+
 /// Keep even a very bright cover readable with Surco's secondary text token.
 fn cover_tone(tint: Color, amount: f32) -> Color {
-    let luminance = |color: Color| {
-        let linear = |channel: u8| {
-            let s = f32::from(channel) / 255.0;
-            if s <= 0.04045 { s / 12.92 } else { ((s + 0.055) / 1.055).powf(2.4) }
-        };
-        0.2126 * linear(color.r) + 0.7152 * linear(color.g) + 0.0722 * linear(color.b)
-    };
     let mut color = mix(SCHEME.canvas, tint, amount);
     for _ in 0..16 {
         if (luminance(SCHEME.muted) + 0.05) / (luminance(color) + 0.05) >= 4.5 { break; }
@@ -344,10 +348,35 @@ fn song_ground(state: &State, window: Size) -> Option<Element> {
     if !matches!(state.page, Page::Playing | Page::Lyrics) || state.queue_open { return None; }
     let url = state.current()?.artwork_url.as_deref()?;
     let blurred = state.artwork.get(&crate::state::backdrop_key(url))?;
-    // BitChord's 34 → 64%, a step darker as limn blends in linear light.
-    let scrim = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::rgba(0, 0, 0, 160), Color::rgba(0, 0, 0, 205)]);
+    // The player's is BitChord's own shade, 34 → 48% → 64%, which gives its screens' greys over
+    // the same cover. A near-white cover, and the lyrics, keep the deeper one white words stay
+    // legible on over any cover.
+    let light = state.tints.get(url).is_some_and(|tint| luminance(*tint) > 0.6);
+    let shade = if state.page == Page::Playing && !light { [87, 122, 163] } else { [120, 160, 205] };
+    let scrim = Element::panel(Element::spacer()).vertical_gradient(shade.map(|alpha| Color::rgba(0, 0, 0, alpha)).to_vec());
     let whole = |element: Element| element.size(Some(window.width), Some(window.height));
     Some(Element::stack(vec![whole(Element::raster_image(blurred.clone().cover())), whole(scrim)]))
+}
+
+/// The player's cover, edge to edge across the top over its ground, which it dissolves into;
+/// a shade over its top keeps the system's bar and the handle legible on a light cover.
+fn player_banner(state: &State, window: Size) -> Option<Element> {
+    if state.page != Page::Playing || state.queue_open { return None; }
+    let insets = state.mobile_ui.content_insets;
+    let banner = player::banner(state, window.width, player::banner_height(window, insets.bottom))?;
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::TRANSPARENT]).size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
+    let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    Some(Element::stack(vec![at_top(banner), at_top(shade)]))
+}
+
+/// BitChord's handle over the player's banner, what plays named under it; pressed, it puts
+/// the player away, as dragging it down does.
+fn player_handle(title: &str, palette: ComponentPalette) -> Element {
+    let grip = Element::panel(Element::spacer()).background(Color::rgba(255, 255, 255, 150)).round().size(Some(36.0), Some(5.0)).centered_x();
+    let words = Text::new(title, palette).font_size(13.0).ink(Color::rgba(255, 255, 255, 225)).truncate().render().font_family(FontFamily::SansMedium).centered_x();
+    Element::clickable("mobile-player-dismiss", Element::column(vec![grip, words]).gap(6.0).centered())
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close")))
+        .size(Some(200.0), Some(TAP))
 }
 
 fn page_surface(state: &State) -> (Color, Color) {
@@ -584,7 +613,12 @@ pub(super) fn suggested(state: &State, shown: &[&Track], palette: ComponentPalet
 /// Outside the phone's shell, which knows its height, the player is as tall as a square cover
 /// and its controls.
 pub(super) fn playing(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    player::screen(state, width, width + player::CONTROLS, palette)
+    let window = Size::new(width, width + player::CONTROLS);
+    let screen = player::screen(state, width, window, 0.0, palette);
+    match player::banner(state, width, player::banner_height(window, 0.0)) {
+        Some(banner) => Element::stack(vec![Element::column(vec![banner, Element::spacer().flex(1.0)]), screen]).size(None, Some(window.height)),
+        None => screen,
+    }
 }
 
 #[cfg(test)]

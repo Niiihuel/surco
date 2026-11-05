@@ -14,8 +14,6 @@ const FOOT: f32 = 48.0;
 const SONGS: usize = 4;
 /// How many artists all the results list as rows, as BitChord's; their segment lists the rest.
 const ARTISTS: usize = 3;
-/// BitChord's field: rounded by 11 on the raised grey, the magnifier and words at its start.
-const FIELD_RADIUS: f32 = 11.0;
 
 pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     let editing = state.mobile_ui.search_editing;
@@ -30,16 +28,17 @@ pub(super) fn field(state: &State, palette: ComponentPalette) -> Element {
     // The cross that empties it is always inside the field, at its end.
     let field = if editing {
         SearchField::new("search", &state.query, t!("common-search-placeholder"), SCHEME.on_raised())
-            .size(ControlSize::Spacious).render().size(None, Some(TAP)).radius(FIELD_RADIUS)
+            .size(ControlSize::Spacious).render().size(None, Some(TAP)).round()
     } else {
-        // BitChord's: the field itself, at rest, until it is touched.
+        // The field itself, at rest, until it is touched: a capsule on the raised grey, as the
+        // tabs, the player's bar and the segments under it are.
         let empty = state.query.is_empty();
         let words = Text::new(if empty { t!("common-search-placeholder") } else { state.query.as_str().into() }, palette).font_size(16.0).truncate().render();
         let copy = Element::row(vec![Element::icon(Icon::Search).large_icon(18.0).foreground(palette.muted).centered_y(),
             if empty { words.foreground(palette.muted) } else { words }.centered_y().flex(1.0)]).gap(8.0).padding(12.0);
         Element::clickable("mobile-search-edit", copy).accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-search-music")))
             .background(if compact { SCHEME.hover } else { SCHEME.raised }).pressed_background(SCHEME.hover)
-            .radius(FIELD_RADIUS).size(None, Some(TAP))
+            .round().size(None, Some(TAP))
     };
     let field = if state.query.is_empty() { field } else { inside_cross(field, "mobile-search-clear", &t!("mobile-clear-search"), palette) }.flex(1.0);
     let mut row = vec![field];
@@ -424,8 +423,8 @@ mod tests {
             let target = frame.regions.iter().find(|region| region.id == id).unwrap().rect;
             assert!(target.width >= TAP && target.height >= TAP);
             assert!(frame.commands.iter().any(|command| matches!(command,
-                DrawCommand::FillRect { rect, radius, .. } if *rect == target && (*radius - FIELD_RADIUS).abs() < 0.01)),
-                "{id} paints BitChord's field over its whole touch height, rounded by 11");
+                DrawCommand::FillRect { rect, radius, .. } if *rect == target && (*radius - target.height / 2.0).abs() < 0.01)),
+                "{id} paints the field over its whole touch height, a capsule as the tabs are");
         };
         assert_capsule(&UiTree::new(field(&state, SCHEME.palette())).layout(size), "mobile-search-edit");
         state.mobile_ui.search_editing = true;
