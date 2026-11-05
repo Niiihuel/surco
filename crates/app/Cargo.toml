@@ -62,6 +62,9 @@ qrcode = { version = "0.14.1", default-features = false }
 # MIT/Apache-2.0. A later version is announced by the system's own notifications; on Linux
 # over the zbus already in the tree.
 [target.'cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))'.dependencies]
+# The system's clipboard, which egui reaches only with it: without it a link copied in a
+# browser never pasted, and what the app copied stayed inside it. A phone's is its own.
+eframe = { version = "0.37.0", default-features = false, features = ["clipboard"] }
 notify-rust = "4"
 # MIT. The system's own dialog for a picture of the user's: the desktop portal on Linux, over
 # the zbus already in the tree.
