@@ -47,7 +47,8 @@ pub(super) fn banner(state: &State, width: f32, height: f32) -> Option<Element> 
         let note = Element::icon(Icon::MusicNote).large_icon(64.0).foreground(SOFT).centered();
         return (!coming).then(|| note.size(Some(width), Some(height)));
     };
-    let banner = Element::raster_image(image.clone().cover().dissolve_bottom(BANNER_DISSOLVE)).size(Some(width), Some(height));
+    // Decoded whole: limn's thumbnails stop at 1024 pixels, short of a phone's 1206 across.
+    let banner = Element::raster_image(image.clone().cover().full_resolution().dissolve_bottom(BANNER_DISSOLVE)).size(Some(width), Some(height));
     Some(banner.animate_enter(format!("mobile-player-banner:{}", track.id)))
 }
 

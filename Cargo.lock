@@ -5111,6 +5111,7 @@ dependencies = [
  "rfd",
  "ring",
  "rodio",
+ "roxmltree",
  "rustls",
  "rustls-platform-verifier",
  "serde",

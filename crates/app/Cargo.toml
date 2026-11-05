@@ -43,6 +43,8 @@ ring = "0.17"
 # The index of what is kept for offline listening.
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# Already in the tree through limn's SVG icons: Apple Music's TTML lyrics, as BetterLyrics hands them.
+roxmltree = "0.21.1"
 # The hour of the day, for the greeting. Already in the tree through the catalog.
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 base64 = "0.22"
