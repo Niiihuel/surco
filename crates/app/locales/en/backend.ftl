@@ -15,6 +15,7 @@ backend-update-no-sum = The version doesn't say how to verify its program.
 backend-update-mismatch = The download isn't the program the version published.
 backend-update-no-location = Couldn't tell where the program is installed.
 backend-update-replace-failed = Couldn't replace the program: { $error }
+backend-update-allow = Allow Surco to install apps, then tap Retry.
 backend-no-audio = YouTube didn't offer audio for this track.
 backend-download-cut = The download stopped before it finished.
 backend-save-failed = Couldn't save to disk: { $error }

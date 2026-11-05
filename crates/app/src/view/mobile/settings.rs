@@ -361,11 +361,17 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
         action("onboarding-taste", &t!("common-onboarding-taste"), None, Some(chevron()), true, false),
     ], "");
 
-    let about = group(&t!("mobile-about"), vec![
-        cell(line(&t!("mobile-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white)),
+    let mut about = vec![cell(line(&t!("mobile-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white))];
+    // A later version leads to the page of what is new, where it is taken in.
+    if let Some(release) = &state.update {
+        let detail = t!("desktop-update-current", version = release.version.as_str(), current = env!("CARGO_PKG_VERSION"));
+        about.push(action("news", &t!("desktop-update-available"), Some(&detail), Some(chevron()), true, false));
+    }
+    about.extend([
         action("patches", &t!("common-patches"), None, Some(chevron()), true, false),
         cell(line(&t!("mobile-licenses"), Some(&t!("mobile-licenses-detail")), None, white)),
-    ], "");
+    ]);
+    let about = group(&t!("mobile-about"), about, "");
 
     // What cannot be undone sits last, each behind a confirmation.
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));

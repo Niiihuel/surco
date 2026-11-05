@@ -15,6 +15,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -24,18 +25,20 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * The phone's everyday services for the Rust app: the clipboard, the share sheet, notifications,
- * the photo picker, the code reader, and leaving the app on Back. Every call is answered on the main thread,
+ * the photo picker, the code reader, the installer of a later version, and leaving the app on Back. Every call is answered on the main thread,
  * where the platform wants these; [handle] is called from any thread.
  */
 object SurcoSystem {
@@ -59,6 +62,7 @@ object SurcoSystem {
         "system.pick_photo" -> pickPhoto()
         "system.scan" -> scanCode()
         "system.leave" -> leave()
+        "system.install" -> install(JSONObject(json).getString("path"))
         "system.args" -> JSONObject().put("args", SurcoBridge.launchArgs?.let { org.json.JSONArray(it.toList()) } ?: JSONObject.NULL).toString()
         "system.tv" -> JSONObject().put("tv", television()).toString()
         else -> null
@@ -239,6 +243,25 @@ object SurcoSystem {
 
     private fun leave(): String? = onMain { activity ->
         activity.moveTaskToBack(true)
+        answer(true)
+    }
+
+    /**
+     * Hands a package Rust fetched and checked to Android's installer. A sideloaded app may install
+     * others only once the user allows it, so that switch opens first and Rust is told; a TV with
+     * no such screen goes straight to the installer, which asks there.
+     */
+    private fun install(path: String): String? = onMain { activity ->
+        if (!activity.packageManager.canRequestPackageInstalls()) {
+            val allow = Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${activity.packageName}"))
+            if (runCatching { activity.startActivity(allow) }.isSuccess) return@onMain answer(false, "permission")
+        }
+        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.updates", File(path))
+        activity.startActivity(
+            Intent(Intent.ACTION_INSTALL_PACKAGE)
+                .setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION),
+        )
         answer(true)
     }
 

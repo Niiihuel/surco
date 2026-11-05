@@ -14,13 +14,15 @@ JNI door between the two sides. Its package is fixed, because Rust finds the cla
 - Kotlin calls Rust with `SurcoBridge.nativeEvent(kind, json)`, which Rust receives in
   `Java_io_github_niiihuel_surco_SurcoBridge_nativeEvent`.
 
-`MainActivity` sends two kinds of event:
+`MainActivity` sends three kinds of event:
 
 - `window.insets`: `{"top","bottom","left","right","ime"}` in dp. The first four are the system
   bars and display cutout; `ime` is the keyboard's height. Rust lays out around them, so the
   activity does not resize for the keyboard (`adjustNothing`).
 - `window.back`: the system back gesture or button. Rust decides what back does, and asks the
   shell to leave when it has nowhere to go.
+- `window.submit`: the keyboard's Return, Search or Done key. GameActivity reports it as an
+  editor action, which winit drops; Rust sends the focused field as Enter would.
 
 The activity is not recreated on configuration changes, because the Rust loop lives in it. The
 manifest lists those changes under `android:configChanges`.
@@ -75,6 +77,25 @@ export ANDROID_NDK_HOME=$(readlink -f ~/Android/ndk/libexec/android-sdk/ndk-bund
 
 CI runs the same two commands on `ubuntu-24.04` (`.github/workflows/android.yml`) and uploads the
 APK as `android-debug-apk`.
+
+## Updates
+
+A release (see [the README](../README.md#releases)) carries `surco-X.Y.Z-android-arm64.apk`,
+listed in its `SHA256SUMS`. The app fetches it, checks it, keeps it as `files/updates/surco.apk`
+and hands it to Android's installer through a `FileProvider` (`system.install`). Android asks
+the user once to let Surco install apps, and then to install each version.
+
+Android installs a version over another only when both are signed with the same key, so the
+release workflow signs with one kept in two repository secrets:
+
+- `ANDROID_KEYSTORE_BASE64`: a PKCS#12 keystore, base64, holding the key under the alias `surco`.
+- `ANDROID_KEYSTORE_PASSWORD`: its password, which is also the key's.
+
+Without them the release fails rather than publish a package that cannot update. The debug APKs
+CI builds carry a key of their own, made afresh on each runner: going from one to a release
+means uninstalling first, and so losing what the app kept unless it was moved to another
+device. To sign a build by hand, set `SURCO_KEYSTORE` to the keystore's path and
+`SURCO_KEYSTORE_PASSWORD`, then `gradle -p android assembleRelease`.
 
 ## Forks
 

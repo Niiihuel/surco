@@ -273,6 +273,7 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Downloads => t!("common-downloads"),
         Page::Liked => t!("common-liked-songs"),
         Page::Patches => t!("common-patches"),
+        Page::News => t!("desktop-news"),
         Page::Profile => t!("desktop-profile"),
         Page::Replay => t!("common-replay"),
         Page::Recognize => t!("common-recognize-title"),

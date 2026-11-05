@@ -510,6 +510,12 @@ impl eframe::App for Host {
                         self.state.update(&UiAction::Clicked { id: id.into() })
                     } else { android_system::leave(); continue }
                 }
+                // The keyboard's Return or Search key sends the field it types into, as Enter does.
+                "window.submit" => {
+                    let focused = self.tree.focused_id().and_then(|id| Some((id.to_owned(), self.tree.input_value(id)?.to_owned())));
+                    let Some((id, value)) = focused else { continue };
+                    self.state.update(&UiAction::Submitted { id, value })
+                }
                 "system.scanned" => match android_system::scanned(&body) {
                     Some(link) => self.state.receive_from(&link),
                     None => continue,

@@ -15,6 +15,7 @@ backend-update-no-sum = La versión no dice cómo comprobar su programa.
 backend-update-mismatch = Lo que se bajó no es el programa que la versión publicó.
 backend-update-no-location = No se sabe dónde está instalado el programa.
 backend-update-replace-failed = No se pudo reemplazar el programa: { $error }
+backend-update-allow = Permití que Surco instale apps y tocá Reintentar.
 backend-no-audio = YouTube no ofreció audio para este tema.
 backend-download-cut = La descarga se cortó antes de terminar.
 backend-save-failed = No se pudo guardar en el disco: { $error }

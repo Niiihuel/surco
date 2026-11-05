@@ -48,6 +48,12 @@ class MainActivity : GameActivity() {
         })
     }
 
+    /** The keyboard's Return, Search or Done: winit drops it, so Rust is told here to send the field. */
+    override fun onEditorAction(action: Int) {
+        super.onEditorAction(action)
+        send("window.submit", "{}")
+    }
+
     private fun send(kind: String, json: String) {
         try {
             SurcoBridge.nativeEvent(kind, json)
