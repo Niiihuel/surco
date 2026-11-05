@@ -102,7 +102,9 @@ later.
 
 `crates/audio` is adapted from [noFAYZ/zuno](https://github.com/noFAYZ/zuno)
 (Apache-2.0, see `LICENSES/Apache-2.0.txt`); each adapted file names its origin and what
-changed. The icons under `crates/app/assets/icons` are from Lucide (ISC, see
+changed.
+`vendor/eframe` is [eframe](https://github.com/emilk/egui) 0.37.0 (MIT or Apache-2.0, used
+under Apache-2.0) with one line changed, marked `Surco:`: on iOS its surface spans the screen. The icons under `crates/app/assets/icons` are from Lucide (ISC, see
 `LICENSES/ISC-lucide.txt`). The interface is set in
 [Figtree](https://github.com/erikdkennedy/figtree) (SIL Open Font License 1.1, see
 `LICENSES/OFL-1.1-figtree.txt`), and Replay's headlines in
