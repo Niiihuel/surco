@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.17.0
+
+![The phone's player, its cover edge to edge](https://raw.githubusercontent.com/Niiihuel/surco/v0.17.0/docs/releases/0.17.0/player.jpg)
+
+### Added
+
+- Android takes later versions in by itself: the phone and the TV offer one as the desktop
+  does, fetch it, check it against its release and hand it to Android's installer. The first
+  time, Android asks to let Surco install apps. Releases now carry a signed package for
+  Android. One installed from an earlier build has to be uninstalled once to take it: move
+  your account to another device first (Settings › Move to another device), or what you have
+  is lost.
+- The phone's player names the stream it plays, as `Opus · 141 kbps · 48 kHz`, and has
+  Surco's volume under its transport.
+
+### Changed
+
+- The phone's player runs its cover edge to edge across the top, dissolving into the
+  cover's colours under the controls, as BitChord's: the line being sung leads to the
+  lyrics, the skips are two triangles, and a grip at the top puts it away.
+- The phone's search fields are capsules, as the tabs and the player's bar are.
+
+### Fixed
+
+- On Android, the keyboard's Search key sends the search.
+- Nothing shows any more between the phone's floating bars or beside the tabs, and the mini
+  player's cover keeps its corners under its rim.
+
 ## 0.16.0
 
 ![An album on Android TV, its songs reached by the remote](https://raw.githubusercontent.com/Niiihuel/surco/v0.16.0/docs/releases/0.16.0/tv-album.jpg)

@@ -73,6 +73,19 @@ pub fn notify(title: &str, body: &str) {
     crate::android::call("system.notify", &json!({ "title": title, "body": body }).to_string());
 }
 
+/// Hands the package at `path` to Android's installer, which asks the user. Until Surco is let
+/// install apps, Android's switch for that is opened instead and this says so.
+#[cfg(target_os = "android")]
+pub fn install_package(path: &std::path::Path) -> Result<(), String> {
+    let answer = crate::android::call("system.install", &json!({ "path": path.to_string_lossy() }).to_string());
+    let answer: Value = answer.and_then(|answer| serde_json::from_str(&answer).ok()).unwrap_or_default();
+    match (answer["ok"].as_bool(), answer["error"].as_str()) {
+        (Some(true), _) => Ok(()),
+        (_, Some("permission")) => Err(crate::i18n::t!("backend-update-allow").into_owned()),
+        (_, error) => Err(error.unwrap_or("Android did not open its installer").to_owned()),
+    }
+}
+
 /// Sends the app to the background, as Back does when there is nowhere left to go inside it.
 #[cfg(target_os = "android")]
 pub fn leave() {

@@ -393,11 +393,14 @@ fn window_view(state: &State, window: Size) -> Element {
         }
         return handoff_dialog(state, steps, window.width);
     }
-    if state.tv {
-        return tv::view(state, window);
-    }
-    if state.mobile {
-        return mobile::view(state, window);
+    // A later version is offered over the phone and the TV as over the desktop; one that has to be
+    // taken stands alone.
+    if state.tv || state.mobile {
+        let tree = if state.tv { tv::view(state, window) } else { mobile::view(state, window) };
+        if state.update.as_ref().is_some_and(|release| release.mandatory) {
+            return update_dialog(state, tree, window.width);
+        }
+        return update_offer(state, tree, window.width);
     }
     let palette = SCHEME.palette();
     if state.cinema {
@@ -4911,6 +4914,34 @@ mod tests {
         // A breath from shut: the page stands where it will once the strip is there.
         state.panel_slide = limn::ScalarTransition::new(0.001, std::time::Instant::now());
         assert!((edge(&state) - shut).abs() < 1.0, "{} against {shut}", edge(&state));
+    }
+
+    #[test]
+    fn a_later_version_is_offered_on_the_phone_and_the_tv_and_leads_to_where_it_is_taken() {
+        let release = Release { version: "9.0.0".into(), page: "https://example/9".into(), program: Some(("https://example/p".into(), "https://example/s".into())), mandatory: false, notes: Vec::new() };
+        let ids = |state: &State, size: Size| UiTree::new(view(state, size)).layout(size).regions.iter().map(|region| region.id.clone()).collect::<Vec<_>>();
+        for (tv, size) in [(false, Size::new(390.0, 844.0)), (true, Size::new(1280.0, 720.0))] {
+            let mut state = State::default();
+            (state.mobile, state.tv) = (!tv, tv);
+            state.apply(Event::Update(release.clone()));
+            assert!(ids(&state, size).iter().any(|id| id == "update-toast"), "offered over the page, tv: {tv}");
+            state.update(&limn::UiAction::Clicked { id: "update-toast".into() });
+            assert!(state.page == Page::News && ids(&state, size).iter().any(|id| id == "update-get"), "its card, where it is taken in, tv: {tv}");
+            state.update(&limn::UiAction::Clicked { id: "update-get".into() });
+            assert_eq!(state.updating, Updating::Fetching(0.0));
+        }
+        // Put away, the phone's settings still lead to it.
+        let size = Size::new(390.0, 844.0);
+        let mut state = State::default();
+        state.mobile = true;
+        state.apply(Event::Update(release.clone()));
+        state.update(&limn::UiAction::Clicked { id: "update-toast-close".into() });
+        state.page = Page::SettingsPart(crate::state::SettingsPart::About);
+        assert!(ids(&state, size).iter().any(|id| id == "news") && !ids(&state, size).iter().any(|id| id == "update-toast"));
+        // One that has to be taken stands alone on the phone too.
+        state.apply(Event::Update(Release { mandatory: true, ..release }));
+        let found = ids(&state, size);
+        assert!(found.iter().any(|id| id == "update-get") && found.iter().any(|id| id == "update-page") && !found.iter().any(|id| id == "update-toast-close"), "{found:?}");
     }
 
     #[test]

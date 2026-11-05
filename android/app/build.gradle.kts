@@ -28,10 +28,27 @@ android {
         versionName = surcoVersion
     }
 
+    // A version takes the place of the one installed only when both carry the same key: the
+    // release workflow passes it, and a build without it is left unsigned.
+    val keystore = providers.environmentVariable("SURCO_KEYSTORE").orNull
+    signingConfigs {
+        if (keystore != null) {
+            create("release") {
+                storeFile = file(keystore)
+                storeType = "pkcs12"
+                storePassword = providers.environmentVariable("SURCO_KEYSTORE_PASSWORD").get()
+                keyAlias = "surco"
+                keyPassword = storePassword
+            }
+        }
+    }
+
     buildTypes {
         release {
-            isMinifyEnabled = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // Not shrunk: the C++ under GameActivity reaches Java by name, which R8 cannot see,
+            // and the Kotlin is a sliver of the package beside the Rust library.
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.findByName("release")
         }
     }
 }

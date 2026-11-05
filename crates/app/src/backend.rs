@@ -1514,6 +1514,12 @@ async fn install_update(shared: &Shared, release: &Release) -> Result<(), String
     let listed = listed.error_for_status().map_err(|error| said(&error))?.text().await.map_err(|error| said(&error))?;
     let name = program.rsplit('/').next().unwrap_or_default();
     let sum = update::sum_for(&listed, name).ok_or_else(|| t!("backend-update-no-sum"))?.to_owned();
+    // Android's installer may have been left without installing, or not been allowed yet: the
+    // package it was handed is offered again rather than fetched again.
+    #[cfg(target_os = "android")]
+    if let Some(kept) = android_package().filter(|kept| std::fs::read(kept).is_ok_and(|bytes| update::matches(&bytes, &sum))) {
+        return crate::android_system::install_package(&kept);
+    }
 
     let fetched = http.get(program).header("User-Agent", AGENT).send().await.map_err(|error| said(&error))?;
     let mut fetched = fetched.error_for_status().map_err(|error| said(&error))?;
@@ -1531,8 +1537,35 @@ async fn install_update(shared: &Shared, release: &Release) -> Result<(), String
     if !update::matches(&bytes, &sum) {
         return Err(t!("backend-update-mismatch").into_owned());
     }
+    put_in_place(bytes).await
+}
+
+/// Puts the checked program where the one that runs is: the next start is the new one.
+#[cfg(not(target_os = "android"))]
+async fn put_in_place(bytes: Vec<u8>) -> Result<(), String> {
     let running = update::running().ok_or_else(|| t!("backend-update-no-location"))?;
-    tokio::task::spawn_blocking(move || update::install(&bytes, running)).await.map_err(|error| said(&error))?.map_err(|error| t!("backend-update-replace-failed", error = error.to_string()).into_owned())
+    tokio::task::spawn_blocking(move || update::install(&bytes, running)).await.map_err(|error| error.to_string())?.map_err(|error| t!("backend-update-replace-failed", error = error.to_string()).into_owned())
+}
+
+/// Where Android's checked package is kept for its installer, under the app's own files.
+// shortcut: the package installed stays on disk until the next one replaces it; remove it at
+// start once that space matters.
+#[cfg(target_os = "android")]
+fn android_package() -> Option<std::path::PathBuf> {
+    Some(crate::android::data_dir()?.join("updates").join("surco.apk"))
+}
+
+/// Android installs a package only through its own installer, which asks the user: the
+/// package is kept for it, one at a time, and handed over.
+#[cfg(target_os = "android")]
+async fn put_in_place(bytes: Vec<u8>) -> Result<(), String> {
+    let kept = android_package().ok_or_else(|| t!("backend-update-no-location"))?;
+    let written = kept.clone();
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(written.parent().unwrap_or(&written))?;
+        std::fs::write(&written, bytes)
+    }).await.map_err(|error| error.to_string())?.map_err(|error| t!("backend-update-replace-failed", error = error.to_string()).into_owned())?;
+    crate::android_system::install_package(&kept)
 }
 
 /// How far ahead of where the song is its other rendition is made ready, and how long the

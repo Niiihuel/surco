@@ -2,8 +2,6 @@
 //! program, whether what was fetched is that file, and putting it where the running
 //! program is.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -22,6 +20,7 @@ fn target() -> Option<&'static str> {
         ("linux", "x86_64") => Some("linux-x86_64"),
         ("windows", "x86_64") => Some("windows-x86_64.exe"),
         ("macos", "aarch64") => Some("macos-arm64"),
+        ("android", "aarch64") => Some("android-arm64.apk"),
         _ => None,
     }
 }
@@ -123,8 +122,10 @@ pub fn matches(bytes: &[u8], sum: &str) -> bool {
 }
 
 /// Puts `program` where `running` is. The program that runs goes on from the file it was
-/// started from; the next start is the new one.
-pub fn install(program: &[u8], running: &Path) -> io::Result<()> {
+/// started from; the next start is the new one. Android's installer does this there.
+#[cfg(not(target_os = "android"))]
+pub fn install(program: &[u8], running: &Path) -> std::io::Result<()> {
+    use std::fs;
     let fresh = running.with_extension("new");
     fs::write(&fresh, program)?;
     #[cfg(unix)]
@@ -178,7 +179,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "android"))]
     fn the_new_program_takes_the_place_of_the_one_that_runs() {
+        use std::fs;
         let directory = std::env::temp_dir().join(format!("surco-update-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         let running = directory.join("surco");

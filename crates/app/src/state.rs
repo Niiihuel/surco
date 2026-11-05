@@ -3626,6 +3626,12 @@ impl State {
                 self.updating = Updating::Fetching(done);
                 Vec::new()
             }
+            // Android's installer takes it from here, and closes the app as it installs: left
+            // without installing, it is offered again, from the package kept.
+            Event::UpdateInstalled if cfg!(target_os = "android") => {
+                self.updating = Updating::Idle;
+                Vec::new()
+            }
             // One that had to be taken starts as soon as it is in place.
             Event::UpdateInstalled => {
                 self.updating = Updating::Ready;

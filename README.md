@@ -87,10 +87,11 @@ hardware checks in [the iOS validation notes](docs/ios.md).
 
 ## Releases
 
-A tag `v1.2.3` that matches the version in `Cargo.toml` builds Linux, Windows and macOS
-and publishes them together. A running app finds the release, fetches the program of its
+A tag `v1.2.3` that matches the version in `Cargo.toml` builds Linux, Windows, macOS and
+Android and publishes them together. A running app finds the release, fetches the program of its
 system, checks it against the release's sums and puts it in its own place; the user
-restarts when they choose. `minimum` in `Cargo.toml` is the oldest version that may keep
+restarts when they choose. On Android the package is handed to the system's installer
+([signing](docs/android.md#updates)). `minimum` in `Cargo.toml` is the oldest version that may keep
 running: a build older than the minimum of the latest release has to take it in before
 it goes on.
 
