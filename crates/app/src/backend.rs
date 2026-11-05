@@ -327,6 +327,8 @@ pub enum Event {
     /// The later version is in place: the next start is it. Or why it is not.
     UpdateInstalled,
     UpdateFailed(String),
+    /// The stream a track is played from, as the player names it under its cover.
+    Format { track_id: String, format: String },
     /// The device that was asked for is gone: the system's own plays instead.
     OutputLost,
 }
@@ -1845,6 +1847,7 @@ async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Lo
         error.to_string()
     })?;
     let best = stream.at_most(shared.quality.load(Ordering::SeqCst)).ok_or_else(|| t!("backend-no-audio"))?.clone();
+    (shared.reply)(Event::Format { track_id: track.id.clone(), format: stream_format(&best.mime, best.average_bitrate) });
     let buffer = MediaBuffer::new(usize::try_from(best.size).ok().filter(|size| *size > 0));
     let load = Load {
         track_id: track.id.clone(),
@@ -1857,6 +1860,17 @@ async fn fetch(shared: &Arc<Shared>, track: &Track, standby: bool) -> Result<(Lo
     };
     let task = tokio::spawn(download(shared.clone(), best, buffer.clone()));
     Ok((load, Download { track_id: track.id.clone(), task, buffer }))
+}
+
+/// A stream as the player names it, `Opus · 141 kbps · 48 kHz`: its codec, its average rate
+/// and the rate it decodes at, which YouTube's Opus and AAC each have one of.
+fn stream_format(mime: &str, bits_per_second: u64) -> String {
+    let codecs = mime.split("codecs=").nth(1).unwrap_or(mime).trim_matches(['"', ' ']);
+    let (codec, rate) = if codecs.starts_with("opus") { ("Opus", Some("48 kHz")) }
+        else if codecs.starts_with("mp4a") { ("AAC", Some("44.1 kHz")) }
+        else { (codecs.split(['.', ';']).next().unwrap_or(codecs), None) };
+    let kbps = (bits_per_second > 0).then(|| format!("{} kbps", (bits_per_second as f64 / 1000.0).round()));
+    [Some(codec), kbps.as_deref(), rate].into_iter().flatten().filter(|part| !part.is_empty()).collect::<Vec<_>>().join(" · ")
 }
 
 /// Fills `buffer` with the stream. YouTube throttles a plain GET to a crawl, so every request
@@ -2132,6 +2146,13 @@ mod tests {
     }
     impl std::error::Error for Wrapped {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> { Some(&self.0) }
+    }
+
+    #[test]
+    fn a_stream_is_named_by_its_codec_rate_and_decoding() {
+        assert_eq!(super::stream_format("audio/webm; codecs=\"opus\"", 141_234), "Opus · 141 kbps · 48 kHz");
+        assert_eq!(super::stream_format("audio/mp4; codecs=\"mp4a.40.2\"", 129_500), "AAC · 130 kbps · 44.1 kHz");
+        assert_eq!(super::stream_format("audio/webm; codecs=\"vorbis\"", 0), "vorbis");
     }
 
     #[test]

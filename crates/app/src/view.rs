@@ -257,6 +257,9 @@ mod glyph {
     pub const SMART_SHUFFLE: &str = include_str!("../assets/icons/glyph/shuffle-smart.svg");
     pub const PREVIOUS: &str = include_str!("../assets/icons/glyph/previous.svg");
     pub const NEXT: &str = include_str!("../assets/icons/glyph/next.svg");
+    /// The phone player's skips, as Apple Music's: two triangles, with no bar.
+    pub const BACKWARD: &str = include_str!("../assets/icons/glyph/backward.svg");
+    pub const FORWARD: &str = include_str!("../assets/icons/glyph/forward.svg");
     pub const REPEAT: &str = include_str!("../assets/icons/glyph/repeat.svg");
     pub const REPEAT_ONE: &str = include_str!("../assets/icons/glyph/repeat-one.svg");
     pub const NOW_PLAYING_VIEW: &str = include_str!("../assets/icons/glyph/now-playing-view.svg");

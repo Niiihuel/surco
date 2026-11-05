@@ -17,9 +17,9 @@ concurrency:
 
 env:
   # The commit of limn the app is built against: limn moves on its own, and a build of
-  # the app must not change under it. This is limn's main with the remote's spatial focus
-  # and gradients on laid-out text.
-  LIMN_REF: cff79e98285b4b73b9bbee1fe3a50495e2f2ec7f
+  # the app must not change under it. This is limn's main with a picture whose foot dissolves
+  # and corners kept inside a rounded clip.
+  LIMN_REF: 1cab09c1af96533116b91debf547c4f5d72e3122
   # Match TestFlight's Xcode/SDK; macos-26 includes the iOS 26.5 simulator runtime.
   DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
   IPHONEOS_DEPLOYMENT_TARGET: '15.0'
