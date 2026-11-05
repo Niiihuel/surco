@@ -15,9 +15,9 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
   # The commit of limn the app is built against: limn moves on its own, and a build of
-  # the app must not change under it. This is limn's feat/dissolve-bottom (Niiihuel/limn#185):
-  # its main with a picture whose foot dissolves, and corners kept inside a rounded clip.
-  LIMN_REF: b9f1c07e1989acd2f5c721abdb68ca0892ac9cd2
+  # the app must not change under it. This is limn's main with a picture whose foot dissolves
+  # and corners kept inside a rounded clip.
+  LIMN_REF: 1cab09c1af96533116b91debf547c4f5d72e3122
 
 jobs:
   build:
