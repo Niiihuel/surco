@@ -989,9 +989,12 @@ pub struct State {
     pub missed_open: bool,
     /// How many songs of the list being brought in have been looked for, out of how many.
     pub import_progress: Option<(usize, usize)>,
-    /// The list being brought in while its card stands over the window: its link, and why it
-    /// could not be brought in, once that is known. Hidden, it goes on to the library.
+    /// The list being brought in: its link, and why it could not be brought in, once that is
+    /// known. Its card stands over the window unless it was hidden.
     pub import_run: Option<(String, Option<String>)>,
+    /// The list being brought in goes on out of sight, a ring beside the bell on the desktop;
+    /// it lands in the library, or its card comes back to say why it could not.
+    pub import_hidden: bool,
     pub confirm: Option<Confirm>,
     /// The room the downloads take on disk.
     pub saved_bytes: u64,
@@ -1478,6 +1481,7 @@ impl Default for State {
             missed_open: false,
             import_progress: None,
             import_run: None,
+            import_hidden: false,
             confirm: None,
             saved_bytes: 0,
             left_width: Side::Left.limits().default,
@@ -1967,6 +1971,7 @@ impl State {
     fn bring_in(&mut self, link: String) -> Vec<Command> {
         self.import_progress = None;
         self.import_run = Some((link.clone(), None));
+        self.import_hidden = false;
         vec![Command::Open(Target::Import(link))]
     }
 
@@ -3410,9 +3415,17 @@ impl State {
                 self.settings.import_dismissed = true;
                 self.bring_in(link)
             }
-            // Hidden, the list is still brought in: it lands in the library.
+            // Hidden, the list is still brought in: it lands in the library. One that could
+            // not be brought in is put away.
             "import-hide" => {
-                self.import_run = None;
+                match self.import_run.as_ref() {
+                    Some((_, None)) => self.import_hidden = true,
+                    _ => self.import_run = None,
+                }
+                Vec::new()
+            }
+            "import-show" => {
+                self.import_hidden = false;
                 Vec::new()
             }
             "import-retry" => match self.import_run.take() {
@@ -3549,20 +3562,22 @@ impl State {
                 for track in tracks {
                     self.collection.add(id, track);
                 }
-                // Waited for on its card, as on its page.
-                let carded = matches!(&target, Target::Import(link) if self.import_run.as_ref().is_some_and(|(run, _)| run == link));
+                // Waited for on its card, as on its page; hidden, it is left in the library.
+                let ours = matches!(&target, Target::Import(link) if self.import_run.as_ref().is_some_and(|(run, _)| run == link));
+                let carded = ours && !std::mem::take(&mut self.import_hidden);
+                if ours { self.import_run = None; }
                 if !carded && self.page != Page::Loading(target) {
                     return Vec::new();
                 }
-                self.import_run = None;
                 self.query.clear();
                 self.go(Page::Playlist(id));
                 self.imported = Some((id, missed));
                 self.page_covers()
             }
-            // Its card says why, and offers to try again.
+            // Its card says why, and offers to try again, come back if it was hidden.
             Event::Opened { target: Target::Import(link), result: Err(message) } if self.import_run.as_ref().is_some_and(|(run, _)| *run == link) => {
                 self.import_progress = None;
+                self.import_hidden = false;
                 self.import_run = Some((link, Some(message)));
                 Vec::new()
             }
@@ -4156,7 +4171,7 @@ impl State {
     /// what offers itself over the window waits for it to close.
     pub fn dialog_open(&self) -> bool {
         self.replay_story.is_some() || self.room_invite || self.welcome || self.onboarding.is_some() || self.sharing.is_some() || self.creating.is_some() || self.importing.is_some()
-            || self.import_run.is_some() || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some() || self.cropping.is_some()
+            || (self.import_run.is_some() && !self.import_hidden) || self.missed_open || self.confirm.is_some() || self.handoff.is_some() || self.profile_draft.is_some() || self.cropping.is_some()
     }
 
     /// What plays and what follows it, to be gone on with the next time the app opens.
@@ -5568,8 +5583,30 @@ mod tests {
         assert_eq!(click(&mut state, "import-retry"), vec![Command::Open(target.clone())]);
         assert_eq!(state.import_run, Some((link.into(), None)), "tried again, it is coming once more");
         click(&mut state, "import-hide");
+        assert!(state.import_hidden && !state.dialog_open(), "hidden, it goes on out of sight");
         state.apply(Event::Opened { target, result: Err("sin red".into()) });
-        assert!(state.import_run.is_none() && !state.dialog_open(), "hidden, its failure is not brought back");
+        assert!(!state.import_hidden && state.dialog_open(), "its failure brings its card back, to say why");
+        click(&mut state, "import-hide");
+        assert!(state.import_run.is_none(), "one that could not come in is put away");
+    }
+
+    #[test]
+    fn a_list_hidden_as_it_comes_in_is_shown_again_and_lands_in_the_library() {
+        let mut state = State::default();
+        let link = "https://open.spotify.com/playlist/3U5Re9YvytJ2PUXf8mTwgY";
+        let target = Target::Import(link.into());
+        state.query = link.into();
+        state.search();
+        click(&mut state, "import-hide");
+        assert!(state.import_hidden && state.import_run.is_some());
+        click(&mut state, "import-show");
+        assert!(!state.import_hidden && state.dialog_open(), "the ring brings its card back");
+        click(&mut state, "import-hide");
+        let tracks = vec![track("a"), track("b")];
+        state.apply(Event::Opened { target, result: Ok(Content::List { name: "Trap Hood".into(), tracks, missed: Vec::new() }) });
+        assert!(state.import_run.is_none() && !state.import_hidden, "done, nothing is left of it");
+        assert_eq!(state.page, Page::Search, "hidden, it does not take the page over");
+        assert!(state.collection.playlists.iter().any(|playlist| playlist.name == "Trap Hood" && playlist.tracks.len() == 2), "it is in the library");
     }
 
     #[test]
