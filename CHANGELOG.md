@@ -20,6 +20,8 @@
   goes through, from the decoder to the device, as the engine reports it.
 - The phone's tabs are Home, Explore and Library, with Search a circle beside them, as
   BitChord's; going down a page folds them into one row with the mini player.
+- The phone's home leads with BitChord's Top Picks, tall cards with the time of day's mix
+  among them, then what was played lately and the moods to find yours in.
 - Explore shows YouTube Music's moods and genres as BitChord's cards, each in the service's
   own colour with its first list's cover drawn in it; a card opens its lists, and a list
   opens to be played without being added to the library.

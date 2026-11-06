@@ -250,3 +250,5 @@ mobile-info-album = Album
 mobile-info-length = Length
 mobile-info-stream = Stream
 mobile-info-id = ID
+mobile-top-picks = Top picks for you
+mobile-find-mood = Find your mood

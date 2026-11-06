@@ -250,3 +250,5 @@ mobile-info-album = Álbum
 mobile-info-length = Duración
 mobile-info-stream = Flujo
 mobile-info-id = ID
+mobile-top-picks = Para vos
+mobile-find-mood = Tu estado de ánimo

@@ -4339,6 +4339,8 @@ impl State {
             self.picks_coming = [true; 3];
             commands.push(Command::Discover(taste));
         }
+        // A phone's home finds its mood in the catalog's moods, which Explore shows too.
+        if self.mobile && !std::mem::replace(&mut self.moods_asked, true) { commands.push(Command::Moods); }
         commands
     }
 
@@ -5730,6 +5732,15 @@ mod tests {
         click(&mut state, "lyrics");
         assert_eq!(state.page, Page::Lyrics);
         assert!(!state.canvas(), "and so do the lyrics");
+    }
+
+    #[test]
+    fn a_phones_home_asks_the_moods_once_for_its_moods_shelf() {
+        let mut state = State { mobile: true, ..State::default() };
+        assert!(state.ask_picks().contains(&Command::Moods));
+        assert!(!state.ask_picks().contains(&Command::Moods), "once");
+        assert!(!click(&mut state, "browse").contains(&Command::Moods), "Explore finds them asked");
+        assert!(!State::default().ask_picks().contains(&Command::Moods), "a window has no moods shelf");
     }
 
     #[test]

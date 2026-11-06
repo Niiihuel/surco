@@ -65,9 +65,13 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 
 - Song row: 4 above and below, 52 art, 14 gap, title 16/600 over artist 14 secondary,
   duration 12/600, a ⋮ of 36. The playing row: accent title over accent at 14%.
-- Home: the time-of-day greeting large; a lead shelf of hero cards 70% of the width (at most
-  320, ratio 0.92, corners 18) with the title over a dark gradient; recents as pages of 4 rows
-  (48 art); other shelves of 150 square cards, corners 12, 10 apart.
+- Home: the time-of-day greeting large; "Top picks for you" leads, BitChord's cards 60% of the
+  width (at most 280, three wide to four tall, corners 12, 14 apart), the time of day's mix
+  among them, what it is (13) over its name (17 bold) and who it plays (13 at 86%) over a
+  shade clear to 45%, black at 45% by 72% and 82% at the foot; then recents as pages of 4
+  rows (48 art); then "Find your mood", the catalog's moods as 150 squares of their colour
+  with their first list's cover drawn in it and their name under, its "See all" Explore;
+  other shelves of 150 square cards, corners 12, 10 apart.
 - Search: a 46 field, a capsule as the tabs and the segments, on surface variant; a segmented control (track #767680 at 24%,
   chosen #636366); results grouped under titles; artists with round art.
 - Library: "Library" as a display heading, then folder rows 54 tall with a chevron, then

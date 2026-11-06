@@ -2066,8 +2066,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
     let height = if width >= 1599.0 { 80.0 } else if width >= 1141.0 { 64.0 } else { 48.0 };
     if state.mobile {
-        // A phone's are BitChord's recents instead: rows four to a page, the pages side by side.
-        sections.extend(mobile::home::recents(state, width, palette));
+        // A phone's are BitChord's recents instead, after its Top Picks.
     } else {
         let quick = |id: String, name: &str, picture: Element, sounding: bool| {
             // What plays shows its sound at the row's end; the others, their play under the pointer.
@@ -2119,17 +2118,23 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     // The catalog's picks as lists, Spotify's mixes: the time of day's leads, large, and the
     // rest are the cards of a shelf.
     let mixes = state.mixes();
-    if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment) {
+    if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment).filter(|_| !state.mobile) {
         sections.push(moment_card(state, index, mix, width, palette).animate_enter("home-moment"));
     }
-    // On a phone they lead as BitChord's hero cards.
-    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment)
+    // On a phone they lead as BitChord's Top Picks, the time of day's among them.
+    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| state.mobile || mix.kind != MixKind::Moment)
         .map(|(index, mix)| if state.mobile { mobile::home::hero(state, index, mix, width, palette) } else { mix_tile(state, index, mix, palette) }).collect();
+    let (eyebrow, title) = if state.mobile { (None, t!("mobile-top-picks")) } else { (Some(t!("desktop-made-for-you")), t!("desktop-your-mixes")) };
     if !cards.is_empty() {
         // Picks arrive after the page: they settle in rather than appear.
-        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
+        sections.push(headed_shelf(state, "home-mixes", None, eyebrow.as_deref(), &title, cards, palette).animate_enter("home-mixes"));
     } else if state.picks_coming[0] {
-        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), coming_tiles(state, false, palette), palette));
+        sections.push(headed_shelf(state, "home-mixes", None, eyebrow.as_deref(), &title, coming_tiles(state, false, palette), palette));
+    }
+    // Then, as BitChord's: what was played lately, rows four to a page, and the moods.
+    if state.mobile {
+        sections.extend(mobile::home::recents(state, width, palette));
+        sections.extend(mobile::home::moods(state, palette));
     }
     // Today's: what goes with the latest plays, as Spotify's "Recommended for today".
     let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
