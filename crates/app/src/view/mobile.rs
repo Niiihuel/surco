@@ -201,8 +201,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Element::spacer()
     } else if state.page == Page::Playing {
         Text::new(title.as_ref(), palette).font_size(14.0).truncate().render()
-    } else if tab {
-        // A tab's name stands large under the bar, the page's first row, as BitChord's.
+    } else if tab || (state.page == Page::Settings && !state.mobile_ui.compact_header) {
+        // A tab's name stands large under the bar, the page's first row, as BitChord's;
+        // Settings' too, as iOS's, until it has gone up under the bar.
         Element::spacer()
     } else {
         // A tab's name stands large, as BitChord's headings; a page pushed on it a step smaller.
@@ -270,7 +271,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         content.style.bottom_background_fade = None;
     }
     // A tab's name, large, as the first row of its page: UIKit draws its own over native bars.
-    if tab && !large_title(state) {
+    if (tab || state.page == Page::Settings) && !large_title(state) {
         let name = Text::new(title.as_ref(), palette).font_size(TAB_TITLE).truncate().render().font_family(FontFamily::SansBold).centered_y();
         prepend_notice(&mut content, &mut Some(horizontal_inset(name, 16.0, 16.0).size(None, Some(MOBILE_LARGE_TITLE))));
     }

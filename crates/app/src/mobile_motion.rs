@@ -291,7 +291,7 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
     let scroll = if state.mobile { tree.anchor_offset(crate::view::PAGE_TOP).map_or(0.0, |top| (-top).max(0.0)) } else { 0.0 };
     let searching = crate::view::search_in_header(state);
     // A large title gives the bar its name once it has scrolled up under it, as UIKit's does.
-    let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
+    let compact = if (crate::view::mobile_large_title(state) || state.page == Page::Settings) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
     let scrolled = scroll > 0.5;
     // The bar folds on every page that goes down, the search's results too, as BitChord's.

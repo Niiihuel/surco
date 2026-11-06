@@ -268,3 +268,15 @@ mobile-share-messages = Mensajes
 mobile-share-mail = Correo
 mobile-share-more = Más
 mobile-share-open = Abrir en YouTube Music
+
+## Settings, as one list
+mobile-settings-liked = { $count ->
+    [one] 1 me gusta
+   *[other] { $count } me gusta
+}
+mobile-settings-music = Tu música
+mobile-settings-import = Importar playlist
+mobile-settings-import-detail = Desde el enlace de otra app
+mobile-settings-handoff-detail = Por Wi-Fi, con su QR o su código
+mobile-settings-more = Más
+mobile-settings-version = Versión { $version }

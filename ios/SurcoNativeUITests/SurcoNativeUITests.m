@@ -305,8 +305,7 @@
 - (void)testConnectionsUseNativeRouteAndVolumeControlsWithoutPlayback {
     [self launch];
     [self canvasTap:@"settings" page:@"home"];
-    [self canvasTap:@"settings-part:devices" page:@"settings"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
     XCUIElement *volume = self.app.sliders[@"volume"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     XCTAssertTrue([self element:@"sheet-route-picker"].exists);
@@ -325,7 +324,7 @@
     [self attachScreenshot:@"native-connections-route-and-volume"];
     [[self element:@"sheet-close"] tap];
     [self waitFor:volume predicate:@"exists == NO"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
     [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
     XCTAssertEqualObjects(volume.value, adjusted, @"Reopening restores the volume received by Rust");
@@ -343,7 +342,7 @@
     [self attachScreenshot:@"native-connections-restored-to-zero"];
     [[self element:@"sheet-close"] tap];
     [self waitFor:volume predicate:@"exists == NO"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
     XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
     [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
     XCTAssertEqualObjects(volume.value, before, @"The exact minimum persists after closing and reopening");
@@ -415,7 +414,7 @@
         thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.9)]];
     [NSThread sleepForTimeInterval:1.0];
     [self canvasTap:@"settings" page:@"home"];
-    [[self entryCoordinate:@"settings-part:devices" page:@"settings"] pressForDuration:0.05
+    [[self entryCoordinate:@"setting:connections" page:@"settings"] pressForDuration:0.05
         thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.12)]];
     [NSThread sleepForTimeInterval:1.0];
     // Evidence for review: rows under the header fade into the progressive edge.
