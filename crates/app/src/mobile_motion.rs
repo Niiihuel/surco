@@ -34,6 +34,9 @@ pub struct Motion {
     search: ScalarTransition,
     /// From the bar open (0) to folded into one row (1).
     bar: ScalarSpring,
+    /// The player has just gone down off the page it covered: the page, drawn beneath it all
+    /// along, is to stand as it was, none of its parts entering anew.
+    uncovered: bool,
     /// The search header's height as last drawn, and when.
     search_drawn: Option<(f32, Instant)>,
     showing: bool,
@@ -69,12 +72,15 @@ impl Motion {
     pub fn new(now: Instant) -> Self {
         Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), collapse: ScalarTransition::new(0.0, now),
             search: ScalarTransition::new(HEADER, now), search_drawn: None,
-            bar: ScalarSpring::new(0.0, now).motion(SpringMotion { stiffness: 400.0, damping_ratio: 1.0 }),
+            bar: ScalarSpring::new(0.0, now).motion(SpringMotion { stiffness: 400.0, damping_ratio: 1.0 }), uncovered: false,
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
             primary: None, underlay: None }
     }
 
     pub fn set_reduced_motion(&mut self, reduced: bool) { self.reduced = reduced; }
+
+    /// Whether the player has just uncovered the page under it, once.
+    pub fn take_uncovered(&mut self) -> bool { std::mem::take(&mut self.uncovered) }
 
     pub fn advance(&mut self, state: &mut State, size: Size, now: Instant) -> Vec<Command> {
         let reduced = self.reduced || state.settings.reduce_motion;
@@ -108,6 +114,7 @@ impl Motion {
             let id = if state.can_go_back() { "back" } else { "home" };
             let commands = state.update(&UiAction::Clicked { id: id.into() });
             state.mobile_ui.revealed = Some(crate::view::mobile_route_key(state));
+            self.uncovered = true;
             return commands;
         }
         state.mobile_ui.player_offset = self.offset(now);
@@ -288,7 +295,9 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
     let scrolled = scroll > 0.5;
     // The bar folds on every page that goes down, the search's results too, as BitChord's.
-    let folded = fold(&mut state.mobile_ui, scroll);
+    // Under the player or the lyrics there is no bar and no page of its: coming back, the page
+    // is where it was, not a jump to fold on.
+    let folded = !matches!(state.page, Page::Playing | Page::Lyrics) && fold(&mut state.mobile_ui, scroll);
     let scroll = if searching { 0.0 } else { scroll };
     // Followed every frame by the native title, without laying the page out again.
     state.mobile_ui.page_scroll = scroll;

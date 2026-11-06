@@ -72,6 +72,9 @@ pub(super) fn banner_height(window: Size, bottom: f32) -> f32 {
 /// The playing song's cover across `width`, `height` tall, its foot dissolving: the large
 /// rendition once it has arrived. A song with no cover to be had shows the music's glyph in
 /// its place; nothing stands there while one is on its way.
+/// How long after a song begins its banner still comes in with a fade.
+const BANNER_FRESH: std::time::Duration = std::time::Duration::from_millis(1200);
+
 pub(super) fn banner(state: &State, width: f32, height: f32) -> Option<Element> {
     let track = state.current()?;
     let Some(image) = largest(state, track).and_then(|url| state.artwork.get(&url)) else {
@@ -81,14 +84,18 @@ pub(super) fn banner(state: &State, width: f32, height: f32) -> Option<Element> 
     };
     // Decoded whole: limn's thumbnails stop at 1024 pixels, short of a phone's 1206 across.
     let banner = Element::raster_image(image.clone().cover().full_resolution().dissolve_bottom(BANNER_DISSOLVE)).size(Some(width), Some(height));
-    Some(banner.animate_enter(format!("mobile-player-banner:{}", track.id)))
+    // Another song's cover fades in; the same one back from a flight is already there: its
+    // entrance again would blank it for a frame and set it down a little lower.
+    let fresh = state.mobile_ui.song_since.is_some_and(|since| since.elapsed() < BANNER_FRESH);
+    Some(if fresh { banner.animate_enter(format!("mobile-player-banner:{}", track.id)) } else { banner })
 }
 
-/// The playing song's cover filling `width` by `height`, without the banner's dissolve: what
-/// travels between the banner and the lyrics' or the queue's head.
-pub(super) fn picture(state: &State, width: f32, height: f32) -> Option<Element> {
+/// The playing song's cover filling `width` by `height`, with `banner` of the banner's dissolve:
+/// what travels between the banner and the lyrics' or the queue's head or the mini player.
+pub(super) fn picture(state: &State, width: f32, height: f32, banner: f32) -> Option<Element> {
     let image = largest(state, state.current()?).and_then(|url| state.artwork.get(&url))?;
-    Some(Element::raster_image(image.clone().cover().full_resolution()).size(Some(width), Some(height)))
+    Some(Element::raster_image(image.clone().cover().full_resolution().dissolve_bottom(BANNER_DISSOLVE * banner.clamp(0.0, 1.0)))
+        .size(Some(width), Some(height)))
 }
 
 /// The controls under the banner, in a screen `window` whose bars take `top`.

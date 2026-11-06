@@ -91,6 +91,9 @@ pub(crate) struct MobileUi {
     pub bar_travel: f32,
     /// How far down the page was when the bar last looked.
     pub bar_scroll: f32,
+    /// When the song playing became the one it is: its banner fades in only then, not each
+    /// time it comes back from a flight into the mini player or the lyrics' head.
+    pub song_since: Option<std::time::Instant>,
     /// How far the bar has folded into one row, from 0 open to 1 folded, as its spring has got.
     pub bar_fold: f32,
     pub search_editing: bool,

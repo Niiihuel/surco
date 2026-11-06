@@ -119,6 +119,10 @@ struct Script {
     focus: Vec<(Duration, String)>,
     /// Which scroll to move, how far down, and when.
     scrolls: Vec<(Duration, String, f32)>,
+    /// Every frame drawn from a moment on, for so many, saved numbered in a folder: QA's way to
+    /// see a motion frame by frame.
+    record: Option<(PathBuf, Duration, usize)>,
+    recorded: usize,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -680,6 +684,8 @@ impl eframe::App for Host {
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
         let commands = self.motion.advance(&mut self.state, window, Instant::now());
+        // The page the player uncovers was drawn under it all along: it stands as it was.
+        if self.motion.take_uncovered() { self.tree.settle_entrances(); }
         self.send(commands);
         // Escape leaves the whole window to the app again, and the screen follows.
         if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -891,6 +897,8 @@ impl eframe::App for Host {
         let now = Instant::now();
         let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient() || self.state.cover_moving();
         let commands = self.motion.advance(&mut self.state, window, now);
+        // The page the player uncovers was drawn under it all along: it stands as it was.
+        if self.motion.take_uncovered() { self.tree.settle_entrances(); }
         acted |= !commands.is_empty();
         self.send(commands);
         if self.state.tv {
@@ -962,6 +970,8 @@ impl eframe::App for Host {
                                 self.send(commands);
                             }
                             let commands = self.motion.advance(&mut self.state, window, Instant::now());
+                            // The page the player uncovers was drawn under it all along: it stands as it was.
+                            if self.motion.take_uncovered() { self.tree.settle_entrances(); }
                             self.send(commands);
                             frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
                         }
@@ -1015,6 +1025,18 @@ impl eframe::App for Host {
         }
         self.motion.remember(&frame, &self.state, window);
 
+        if let Some((dir, start, count)) = self.script.record.clone() {
+            let at = self.opened.elapsed();
+            if at >= start && self.script.recorded < count {
+                let path = dir.join(format!("{:03}-{}ms.png", self.script.recorded, at.as_millis()));
+                self.script.recorded += 1;
+                ctx.request_screenshot(move |image| {
+                    let [width, height] = image.size;
+                    let _ = image::save_buffer(&path, image.as_raw(), width as u32, height as u32, image::ColorType::Rgba8);
+                });
+                ctx.request_repaint();
+            }
+        }
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
         } else if !on_screen() {
@@ -1107,6 +1129,10 @@ fn graphics_configuration() -> eframe::WgpuConfiguration {
             });
         }
     }
+    // QA records a motion frame by frame: a window out of sight gets a frame a second at vsync.
+    if std::env::var_os("SURCO_QA_NO_VSYNC").is_some() {
+        configuration.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
+    }
     configuration
 }
 
@@ -1147,6 +1173,14 @@ pub fn run() -> eframe::Result {
                     _ => UiAction::Clicked { id: what.to_owned() },
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
+            }
+            "--record" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                if let Some((dir, count)) = what.split_once('=') {
+                    let _ = std::fs::create_dir_all(dir);
+                    script.record = Some((PathBuf::from(dir), Duration::from_millis(at.parse().unwrap_or(0)), count.parse().unwrap_or(30)));
+                }
             }
             "--scroll" => {
                 let value = value();

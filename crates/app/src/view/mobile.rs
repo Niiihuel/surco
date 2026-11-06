@@ -313,8 +313,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
         .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
-    // The cover goes its own way as the player comes down, into the mini player's thumbnail.
-    let tree = match docking_cover(state, window) { Some(cover) => Element::stack(vec![tree, cover]), None => tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
     super::wrapped::story(state, dialogs(state, tree, window, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
@@ -553,11 +551,25 @@ fn song_ground(state: &State, window: Size) -> Option<Element> {
 /// The player's cover, edge to edge across the top over its ground, which it dissolves into;
 /// a shade over its top keeps the system's bar and the handle legible on a light cover.
 fn player_banner(state: &State, window: Size) -> Option<Element> {
-    if state.page != Page::Playing || state.queue_open || cover_flight(state, window.height).is_some() || docking(state, window).is_some() { return None; }
+    if state.page != Page::Playing || state.queue_open || cover_flight(state, window.height).is_some() { return None; }
     let insets = state.mobile_ui.content_insets;
-    let banner = player::banner(state, window.width, player::banner_height(window, insets.bottom))?;
-    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::TRANSPARENT]).size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
     let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    // On its way to or from the mini player, the cover goes its own way under the player's
+    // header and controls, and becomes the banner, its dissolve and its shade, as it arrives:
+    // where it lands nothing changes from one frame to the next.
+    let (banner, at) = match docking(state, window) {
+        Some(at) => {
+            let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), mini_thumb(state, window));
+            let mix = |a: f32, b: f32| a + (b - a) * at;
+            // The sheet it is drawn on is lowered by the player's offset; the cover is not.
+            let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height), 1.0 - at)?
+                .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y) - state.mobile_ui.player_offset));
+            (Element::row(vec![picture, Element::spacer().flex(1.0)]), at)
+        }
+        None => (player::banner(state, window.width, player::banner_height(window, insets.bottom))?, 0.0),
+    };
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, (120.0 * (1.0 - at)) as u8), Color::TRANSPARENT])
+        .size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
     Some(Element::stack(vec![at_top(banner), at_top(shade)]))
 }
 
@@ -575,10 +587,13 @@ fn flying_cover(state: &State, window: Size) -> Option<Element> {
     let insets = state.mobile_ui.content_insets;
     let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), lyrics::thumb(insets));
     let mix = |a: f32, b: f32| a + (b - a) * at;
-    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height))?
+    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height), 1.0 - at)?
         .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y)));
-    Some(Element::column(vec![Element::row(vec![picture, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
-        .size(Some(window.width), Some(window.height)))
+    // The banner's shade comes back with it.
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, (120.0 * (1.0 - at)) as u8), Color::TRANSPARENT])
+        .size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
+    let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    Some(Element::stack(vec![at_top(Element::row(vec![picture, Element::spacer().flex(1.0)])), at_top(shade)]))
 }
 
 /// How far the player has come down toward the mini player, while it is on its way down or up.
@@ -595,19 +610,6 @@ fn mini_thumb(state: &State, window: Size) -> limn::Rect {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
     let pill = window.height - (insets.bottom.max(15.0) + 6.0) - NAV_HEIGHT - MINI_HEIGHT;
     limn::Rect::new(insets.left + (width - span) / 2.0 + MINI_INSET, pill + (MINI_PILL - MINI_ART) / 2.0, MINI_ART, MINI_ART)
-}
-
-/// The player's cover leaving with it, as BitChord's: while the player comes down it shrinks
-/// from the banner into the mini player's thumbnail, and grows back from it as the player
-/// rises, at the pace the player moves, a finger's too.
-fn docking_cover(state: &State, window: Size) -> Option<Element> {
-    let at = docking(state, window)?;
-    let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, state.mobile_ui.content_insets.bottom)), mini_thumb(state, window));
-    let mix = |a: f32, b: f32| a + (b - a) * at;
-    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height))?
-        .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y)));
-    Some(Element::column(vec![Element::row(vec![picture, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
-        .size(Some(window.width), Some(window.height)))
 }
 
 /// The video's showing, once its first frame is on the screen behind a phone's player.

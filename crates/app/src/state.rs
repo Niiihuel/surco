@@ -4077,6 +4077,7 @@ impl State {
             // Another song's video comes with the controls over it, and its lyrics in step.
             self.mobile_ui.controls_away = false;
             self.lyrics_offset = 0.0;
+            self.mobile_ui.song_since = Some(Instant::now());
         }
         // The video's sound in a song's place is that song still: until the song is back
         // with the window, or something else plays.
