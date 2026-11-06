@@ -864,22 +864,35 @@ pub(in crate::view) const THUMB: f32 = 52.0;
 const SEGMENT_TRACK: Color = Color::rgb(34, 34, 37);
 const SEGMENT_ON: Color = Color::rgb(99, 99, 102);
 const SEGMENT_HEIGHT: f32 = 36.0;
+/// aurora's lifted knob, dark: nearly clear, sharp, bending 10 at its rim and magnifying the
+/// labels under it 1.1; it lifts to 1.3.
+const SEGMENT_LENS: limn::GlassMaterial = limn::GlassMaterial {
+    blur: 0.0, refraction: 10.0, dispersion: 0.4, saturation: 1.2, magnify: 1.1, bezel: 7.0,
+    ..limn::GlassMaterial::new(Color::rgba(255, 255, 255, 41))
+};
+const SEGMENT_LIFT: f32 = 1.3;
 
 /// BitChord's segmented control: its `cells`, (id, label, chosen), in one pill track, the one
 /// chosen on a lighter pill that slides, under `platter`, to the next one chosen. Each is
 /// touched on the track's whole height, and said to be a `role`.
 pub(in crate::view) fn segments<'a>(cells: impl Iterator<Item = (&'a str, &'a str, bool)>, role: limn::Role, platter: &str, palette: ComponentPalette) -> Element {
-    let cells = cells.map(|(id, label, on)| {
+    let cells: Vec<_> = cells.collect();
+    let knob = SEGMENT_HEIGHT - 6.0;
+    let children = cells.iter().map(|&(id, label, on)| {
         let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
-        let pill = |cell: Element| Element::column(vec![Element::spacer().flex(1.0), cell.size(None, Some(SEGMENT_HEIGHT - 6.0)), Element::spacer().flex(1.0)]);
-        let cell = if on {
-            pill(Element::stack(vec![Element::panel(Element::spacer()).background(SEGMENT_ON).round().animate_move(platter), copy]))
-        } else { copy };
-        Element::clickable(id, cell).accessible(limn::Access::new(role).name(label).selected(on)).size(None, Some(TAP)).flex(1.0)
+        Element::clickable(id, copy).accessible(limn::Access::new(role).name(label).selected(on)).radius(knob / 2.0)
+            .size(None, Some(TAP)).flex(1.0).indicator_slot(id)
     }).collect();
+    // aurora's segmented control: the knob slides on to the one chosen, lifting into a clear
+    // lens over the labels for half its way and landing with a squash.
+    let mut strip = Element::tab_strip(children, cells.iter().map(|cell| cell.0.to_owned()).collect());
+    if let Some(chosen) = cells.iter().find(|cell| cell.2) {
+        strip = strip.tab_selection(platter, chosen.0, SEGMENT_ON, knob / 2.0, limn::tokens().motion.move_ms)
+            .tab_selection_height(knob).glass_selection(SEGMENT_LENS).selection_lift(SEGMENT_LIFT);
+    }
     let track = Element::panel(Element::spacer()).background(SEGMENT_TRACK).round().size(None, Some(SEGMENT_HEIGHT));
     Element::stack(vec![Element::column(vec![Element::spacer().flex(1.0), track, Element::spacer().flex(1.0)]),
-        horizontal_inset(Element::row(cells), 3.0, 3.0)]).size(None, Some(TAP))
+        horizontal_inset(strip, 3.0, 3.0)]).size(None, Some(TAP))
 }
 /// The row of the song that plays: a faint platter, faint as limn blends in linear light.
 const PLAYING_ROW: Color = Color::rgba(255, 255, 255, 8);

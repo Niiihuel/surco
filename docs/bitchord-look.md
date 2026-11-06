@@ -89,7 +89,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   with their first list's cover drawn in it and their name under, its "See all" Explore;
   other shelves of 150 square cards, corners 12, 10 apart.
 - Search: a 46 field, a capsule as the tabs and the segments, on surface variant; a segmented control (track #767680 at 24%,
-  chosen #636366); results grouped under titles; artists with round art.
+  chosen #636366) whose knob moves as aurora's: on to the one chosen on a snappy spring, lifted
+  1.3 into a clear lens over the labels for half its way, landing with a squash; results
+  grouped under titles; artists with round art.
 - Library: the tab opens BitChord's overview. "Your listening experience" across the top:
   cards 78% of the width (at most 340), three tall to five wide, corners 22, nearly black
   with a breath of plum (40, 34, 38) on a soft shadow: small capitals 11 bold, spaced apart
