@@ -244,56 +244,37 @@ fn part_about(part: SettingsPart) -> std::borrow::Cow<'static, str> {
 const CONNECTED: &str = include_str!("../../../assets/icons/share-2.svg");
 
 fn part_glyph(part: SettingsPart) -> Icon {
-    // A desktop draws Surco's own glyphs; a phone keeps the platform's.
-    if DENSE_PAGE.get() {
-        use crate::view::glyph;
-        return Icon::Custom(match part {
-            SettingsPart::Playback => glyph::VOLUME_HIGH,
-            SettingsPart::Audio => glyph::EQUALIZER,
-            SettingsPart::Devices => glyph::DEVICE,
-            SettingsPart::Display => glyph::DISPLAY,
-            SettingsPart::Library => glyph::LIBRARY,
-            SettingsPart::Connected => CONNECTED,
-            SettingsPart::About => glyph::INFO,
-            SettingsPart::Storage => glyph::DOWNLOAD,
-        });
-    }
-    match part {
-        SettingsPart::Playback => Icon::Volume,
-        SettingsPart::Audio => Icon::ChartBar,
-        SettingsPart::Devices => Icon::Custom(AUDIO_ROUTE),
-        SettingsPart::Display => Icon::Palette,
-        SettingsPart::Library => Icon::Playlist,
-        SettingsPart::Connected => Icon::Custom(CONNECTED),
-        SettingsPart::About => Icon::InfoCircle,
-        SettingsPart::Storage => Icon::Custom(include_str!("../../../assets/icons/download.svg")),
-    }
+    use crate::view::glyph;
+    Icon::Custom(match part {
+        SettingsPart::Playback => glyph::VOLUME_HIGH,
+        SettingsPart::Audio => glyph::EQUALIZER,
+        SettingsPart::Devices => glyph::DEVICE,
+        SettingsPart::Display => glyph::DISPLAY,
+        SettingsPart::Library => glyph::LIBRARY,
+        SettingsPart::Connected => CONNECTED,
+        SettingsPart::About => glyph::INFO,
+        SettingsPart::Storage => glyph::DOWNLOAD,
+    })
 }
 
-/// The settings page's rows: on the list of parts, a row for each; on a part's page, its
-/// groups apart by hairlines. `sections` are every group with the part it belongs to. The
-/// desktop titles the page itself; the phone's header does.
-pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Element)>, titled: bool, palette: ComponentPalette) -> Vec<Element> {
+/// The desktop's settings: on the list of parts, a row for each with its glyph, what it holds
+/// and a chevron; on a part's page, its title over its groups apart by hairlines. `sections`
+/// are every group with the part it belongs to. The phone lays out its own, as one list.
+pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Element)>, palette: ComponentPalette) -> Vec<Element> {
     let scale = scale();
     let title = |text: &str| horizontal_inset(Text::new(text, palette).role(TextRole::Heading).font_size(scale.page).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let Page::SettingsPart(shown) = state.page else {
-        // A phone's are BitChord's: a 22 glyph, 14 from the words.
-        let (glyph_side, gap) = if carded() { (22.0, 14.0) } else { (scale.glyph, ROW_GAP) };
         let rows: Vec<Element> = SettingsPart::ALL.into_iter().map(|part| {
             let (name, about) = (part_title(part), part_about(part));
-            let glyph = Element::icon(part_glyph(part)).large_icon(glyph_side).foreground(Color::WHITE).size(Some(glyph_side), Some(glyph_side));
-            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(gap);
+            let glyph = Element::icon(part_glyph(part)).large_icon(scale.glyph).foreground(Color::WHITE).size(Some(scale.glyph), Some(scale.glyph));
+            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(ROW_GAP);
             pressable(&format!("settings-part:{}", part.slug()), &name, Some(&about), cell(row.min_size(0.0, scale.part)), true)
         }).collect();
-        let mut page: Vec<Element> = titled.then(|| title(&t!("common-settings"))).into_iter().collect();
-        // On a phone, one card; its hairlines start under the words, past the glyphs.
-        page.push(if carded() { card(rows, GUTTER + glyph_side + gap) } else { Element::column(rows).gap(4.0) });
-        return page;
+        return vec![title(&t!("common-settings")), Element::column(rows).gap(4.0)];
     };
-    let mut page: Vec<Element> = titled.then(|| title(&part_title(shown))).into_iter().collect();
+    let mut page = vec![title(&part_title(shown))];
     for (index, (_, group)) in sections.into_iter().filter(|(part, _)| *part == shown).enumerate() {
-        // A phone's cards stand apart by room alone.
-        if index > 0 && !carded() { page.push(Separator::horizontal(palette).render()); }
+        if index > 0 { page.push(Separator::horizontal(palette).render()); }
         page.push(group);
     }
     page
