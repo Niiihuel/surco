@@ -3,10 +3,8 @@
 use super::*;
 
 const GUTTER: f32 = 16.0;
-/// BitChord's discs under a page's name: 50 across, white at 7% within a rim at 10%.
+/// BitChord's discs under a page's name: 50 across.
 const DISC: f32 = 50.0;
-const DISC_FILL: Color = Color::rgba(255, 255, 255, 18);
-const DISC_RIM: Color = Color::rgba(255, 255, 255, 26);
 const PLAY_PILL: f32 = 50.0;
 /// The widest the Play pill grows; narrower, it gives way to the discs beside it.
 const PLAY_PILL_MOST: f32 = 180.0;
@@ -50,10 +48,16 @@ fn meta(value: String, palette: ComponentPalette) -> Element {
     Text::new(value, palette).font_size(12.0).muted().render().font_family(FontFamily::SansMedium).center_content()
 }
 
-/// A page's own action, as a disc of BitChord's.
-fn disc(action: Element, side: f32) -> Element {
-    Element::panel(action.centered()).background(DISC_FILL).border(DISC_RIM, 1.0).round().size(Some(side), Some(side)).centered_y()
+/// A page's own action, as a disc of BitChord's in aurora's interactive glass, its press kept
+/// under `key`.
+fn disc(action: Element, side: f32, key: &str) -> Element {
+    super::pane_of_glass(Element::panel(action.centered()), true).glass_press(format!("page-disc:{key}")).round()
+        .size(Some(side), Some(side)).centered_y()
 }
+
+/// An artist followed, as BitChord's: a star that fills.
+const STAR: &str = include_str!("../../../assets/icons/star.svg");
+const STAR_FILL: &str = include_str!("../../../assets/icons/star-fill.svg");
 
 /// The actions under a page's name, as BitChord's, centred: shuffle and the page's `own`
 /// (keep, download, its menu) as discs either side of a white Play pill; an artist's play a
@@ -63,7 +67,7 @@ pub(in crate::view) fn actions(state: &State, own: Vec<Element>, palette: Compon
     let side = if artist { ARTIST_DISC } else { DISC };
     let (glyph, hint) = shuffle_step(state);
     let shuffle = controls::action("page-shuffle", glyph, &hint, 22.0, palette);
-    let shuffle = disc(if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle }, side);
+    let shuffle = disc(if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle }, side, "shuffle");
     let play = if artist {
         controls::playback("page-play", false, ARTIST_PLAY, 30.0, palette)
     } else {
@@ -77,7 +81,7 @@ pub(in crate::view) fn actions(state: &State, own: Vec<Element>, palette: Compon
     };
     // The pill takes the room first; once it is at its widest the rest centres the row.
     let mut row = vec![Element::spacer().flex(0.05), shuffle, play];
-    row.extend(own.into_iter().map(|action| disc(action, side)));
+    row.extend(own.into_iter().enumerate().map(|(index, action)| disc(action, side, &index.to_string())));
     row.push(Element::spacer().flex(0.05));
     Element::row(row).gap(if artist { 24.0 } else { 12.0 })
 }
@@ -182,7 +186,7 @@ pub(in crate::view) fn album(
         palette,
     );
     let actions = if album.tracks.is_empty() {
-        Element::row(vec![disc(kept, DISC)]).centered_x()
+        Element::row(vec![disc(kept, DISC, "keep")]).centered_x()
     } else {
         page_actions(state, vec![kept], palette)
     };
@@ -206,9 +210,11 @@ pub(in crate::view) fn artist(
 ) -> Element {
     let hero = artist_hero(state, &artist.name, &artist.artwork_url, width, palette);
     let mut sections = Vec::new();
-    let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
+    let kept = state.keeps_page();
+    let followed = icon("keep", Icon::Custom(if kept { STAR_FILL } else { STAR }),
+        &if kept { t!("mobile-unfollow-artist") } else { t!("mobile-follow-artist") }, palette);
     sections.push(if artist.songs.is_empty() {
-        Element::row(vec![disc(followed, ARTIST_DISC)]).centered_x()
+        Element::row(vec![disc(followed, ARTIST_DISC, "keep")]).centered_x()
     } else {
         page_actions(state, vec![followed], palette)
     });
@@ -364,7 +370,7 @@ pub(in crate::view) fn playlist(
     // As the desktop's: what else a list can do waits behind its dots.
     let more = crate::view::playlist_menu(state, playlist, palette);
     if playlist.tracks.is_empty() {
-        sections.push(Element::row(vec![disc(more, DISC)]).centered_x());
+        sections.push(Element::row(vec![disc(more, DISC, "more")]).centered_x());
         sections.push(blank(Icon::MusicNote, t!("mobile-playlist-empty"), t!("mobile-playlist-empty-detail"), None, palette));
     } else {
         sections.push(page_actions(state, vec![more], palette));

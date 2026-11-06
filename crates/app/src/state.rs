@@ -2903,6 +2903,14 @@ impl State {
                 }
                 Vec::new()
             }
+            // An artist's link, BitChord's share at the top of their page: copied, and said so.
+            "artist-share" => {
+                if let Page::Artist(artist) = &self.page {
+                    self.copy = Some(format!("https://music.youtube.com/channel/{}", artist.id));
+                    self.mobile_ui.notice = Some(t!("common-link-copied").into_owned());
+                }
+                Vec::new()
+            }
             // The folded bar's tab circle opens it again; it folds once the page goes down again.
             "mobile-bar-open" => {
                 self.mobile_ui.bar_inline = false;

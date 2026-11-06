@@ -20,7 +20,7 @@ pub(super) fn render(state: &State, base: Element, window: Size, palette: Compon
     pipeline(state, sleep_sheet(state, connections(state, library_sheet(state, base, palette), palette), palette), width, palette)
 }
 
-const SHARE: &str = include_str!("../../../assets/icons/share-2.svg");
+pub(super) const SHARE: &str = include_str!("../../../assets/icons/share-2.svg");
 const HEART_CRACK: &str = include_str!("../../../assets/icons/heart-crack.svg");
 const LIST_PLUS: &str = include_str!("../../../assets/icons/list-plus.svg");
 const LIST_START: &str = include_str!("../../../assets/icons/list-start.svg");
@@ -484,6 +484,33 @@ mod pipeline_tests {
     use super::*;
     use crate::player::PlayerView;
     use limn::{DrawCommand, UiAction, UiTree};
+
+    #[test]
+    fn the_pipeline_melts_back_into_its_card_when_it_is_done() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = Page::Playing;
+        state.mobile_ui.connections = true;
+        state.mobile_ui.sheet_from = Some(limn::Rect::new(20.0, 700.0, 350.0, 60.0));
+        let window = Size::new(390.0, 844.0);
+        let view = |state: &State| render(state, Element::spacer().size(Some(390.0), Some(844.0)), window, SCHEME.palette());
+        let panes = |frame: &limn::Frame| frame.commands.iter().filter(|command| matches!(command, DrawCommand::Glass { .. })).count();
+        let now = std::time::Instant::now();
+        let mut tree = UiTree::new(view(&state));
+        tree.layout_at(window, now);
+        // The pipeline is opened from the output sheet, over it.
+        state.mobile_ui.pipeline = true;
+        tree.set_root(view(&state));
+        tree.layout_at(window, now);
+        assert_eq!(panes(&tree.layout_at(window, now + std::time::Duration::from_millis(800))), 2, "the sheet and the pipeline over it");
+        state.update(&UiAction::Clicked { id: "audio-pipeline-close".into() });
+        tree.set_root(view(&state));
+        tree.layout_at(window, now + std::time::Duration::from_millis(800));
+        let leaving = tree.layout_at(window, now + std::time::Duration::from_millis(880));
+        assert_eq!(panes(&leaving), 2, "the pipeline still on its way back into the card");
+        let widths: Vec<f32> = leaving.commands.iter().filter_map(|command| match command { DrawCommand::Glass { rect, .. } => Some(rect.width), _ => None }).collect();
+        assert!(widths[1] < widths[0], "and over the sheet it was opened from, not under it: {widths:?}");
+    }
 
     #[test]
     fn the_pipeline_tells_what_the_engine_set_up_from_the_decoder_to_the_device() {

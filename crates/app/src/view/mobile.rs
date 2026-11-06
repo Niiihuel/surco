@@ -158,6 +158,13 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette), "header-settings"));
     }
     header.extend(face);
+    // An artist's page has BitChord's capsule at the bar's end: a share and the account's face.
+    if matches!(state.page, Page::Artist(_)) || artist_coming(state) {
+        let share = icon("artist-share", Icon::Custom(sheets::SHARE), &t!("desktop-share"), palette);
+        let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
+            .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
+        header.push(pane_of_glass(Element::panel(Element::row(vec![share, face])), true).glass_press("header-artist").round().centered_y());
+    }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     // Under Liquid Glass the field floats at the foot, as Apple Music's, below a plain header.

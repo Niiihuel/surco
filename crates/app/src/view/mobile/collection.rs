@@ -11,8 +11,11 @@ const CARD_MOST: f32 = 340.0;
 const CARD_RATIO: f32 = 0.63;
 const CARD_RADIUS: f32 = 22.0;
 const CARD_PAD: f32 = 20.0;
-const CARD_GROUND: [Color; 2] = [Color::rgb(62, 48, 56), Color::rgb(30, 24, 28)];
-const CARD_EYEBROW: Color = Color::rgba(255, 255, 255, 180);
+/// BitChord's card: nearly black with a breath of plum, one colour, on a soft shadow.
+const CARD_GROUND: Color = Color::rgb(40, 34, 38);
+const CARD_SHADOW: Color = Color::rgba(0, 0, 0, 110);
+const CARD_EYEBROW: Color = Color::rgba(255, 255, 255, 200);
+const CARD_QUIET: Color = Color::rgba(255, 255, 255, 170);
 /// A row of the library: 55 tall, its glyph 24 in a 40 column, a hairline under its words.
 const ROW_HEIGHT: f32 = 55.0;
 const ROW_GLYPH: f32 = 40.0;
@@ -45,32 +48,35 @@ fn cards(state: &State, year: &Summary, now: chrono::DateTime<chrono::FixedOffse
     let since = state.collection.plays.iter().map(|play| play.at).min()
         .and_then(|at| chrono::DateTime::from_timestamp(at, 0))
         .map(|at| at.with_timezone(&chrono::Local).format("%m/%y").to_string());
-    let caps = |text: &str, size: f32, ink: Color| Text::new(text.to_uppercase(), palette).font_size(size).ink(ink).truncate().render()
-        .font_family(FontFamily::SansMedium);
+    // BitChord's small capitals stand apart: limn sets no tracking, so a hair space does.
+    let caps = |text: &str, size: f32, ink: Color| Text::new(spaced(&text.to_uppercase()), palette).font_size(size).ink(ink).truncate().render()
+        .font_family(FontFamily::SansBold);
+    // The account's name and the date in a typewriter's bold, as BitChord's: open enough as it is.
+    let typed = |text: String, size: f32| Text::new(text, palette).font_size(size).truncate().render().font_family(FontFamily::MonospaceBold);
     let card = |id: &str, eyebrow: &str, big: String, under: String, foot: (String, String), corner: Option<Element>| {
-        let top = caps(eyebrow, 13.0, CARD_EYEBROW);
+        let top = caps(eyebrow, 11.0, CARD_EYEBROW);
         let figure = Element::column(vec![
-            Text::new(big, palette).font_size(32.0).truncate().render().font_family(FontFamily::Display),
-            caps(&under, 13.0, CARD_EYEBROW),
-        ]).gap(2.0);
+            Text::new(big, palette).font_size(30.0).truncate().render().font_family(FontFamily::SansBold),
+            caps(&under, 11.5, CARD_QUIET),
+        ]).gap(0.0);
         let foot = Element::row(vec![
             Element::column(vec![
-                Text::new(foot.0, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansBold),
-                Text::new(foot.1, palette).font_size(13.0).muted().truncate().render(),
+                typed(foot.0, 15.0),
+                Text::new(foot.1, palette).font_size(13.0).ink(CARD_QUIET).truncate().render(),
             ]).gap(2.0).flex(1.0),
             corner.unwrap_or_else(Element::spacer),
-        ]).gap(12.0);
-        let body = Element::column(vec![top, Element::spacer().flex(1.0), figure, Element::spacer().flex(1.0), foot]).padding(CARD_PAD);
-        let face = Element::panel(body).vertical_gradient(CARD_GROUND.to_vec()).radius(CARD_RADIUS).border(THUMB_RIM, 0.5)
-            .size(Some(across), Some(tall)).clip_children();
+        ]).gap(10.0);
+        let body = Element::column(vec![top, Element::spacer().flex(1.0), figure, Element::spacer().size(None, Some(18.0)), foot]).padding(CARD_PAD);
+        let face = Element::panel(body).background(CARD_GROUND).radius(CARD_RADIUS).border(THUMB_RIM, 0.5)
+            .shadow(CARD_SHADOW, limn::Point::new(0.0, 8.0), 24.0, 0.0).size(Some(across), Some(tall)).clip_children();
         Element::clickable(id, face).dispatch_as("replay").accessible(limn::Access::new(limn::Role::Button).name(eyebrow)).radius(CARD_RADIUS)
     };
     // Flush with the card's right edge, as BitChord's "member since".
     let flush = |line: Element| Element::row(vec![Element::spacer().flex(1.0), line]);
     let joined = since.map(|since| Element::column(vec![
-        flush(caps(&t!("mobile-listening-since"), 10.0, CARD_EYEBROW)),
-        flush(Text::new(since, palette).font_size(16.0).render().font_family(FontFamily::SansBold)),
-    ]).gap(1.0));
+        flush(caps(&t!("mobile-listening-since"), 8.5, CARD_QUIET)),
+        flush(typed(since, 15.0)),
+    ]).gap(2.0));
     let mut tiles = vec![card("library-card:minutes", &t!("mobile-listening-experience"), super::super::wrapped::grouped(year.minutes),
         t!("mobile-minutes-listened").into_owned(), (name.clone(), plays.clone()), joined)];
     if let Some(top) = year.top_songs.first() {
@@ -82,6 +88,17 @@ fn cards(state: &State, year: &Summary, now: chrono::DateTime<chrono::FixedOffse
             t!("common-replay-plays-of", count = top.plays).into_owned(), (name, plays), None));
     }
     Element::horizontal_scroll_2d("library-cards", Element::row(tiles).gap(16.0)).drag_to_pan().scrollbar_visibility(SCROLL_INDICATOR)
+}
+
+/// `text` with a hair space between its letters, BitChord's open tracking.
+fn spaced(text: &str) -> String {
+    let mut letters = text.chars();
+    let mut out: String = letters.next().into_iter().collect();
+    for letter in letters {
+        out.push('\u{200A}');
+        out.push(letter);
+    }
+    out
 }
 
 /// BitChord's rows under the cards. Surco keeps no local folders or cache to list: its

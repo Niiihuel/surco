@@ -91,10 +91,12 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Search: a 46 field, a capsule as the tabs and the segments, on surface variant; a segmented control (track #767680 at 24%,
   chosen #636366); results grouped under titles; artists with round art.
 - Library: the tab opens BitChord's overview. "Your listening experience" across the top:
-  cards 78% of the width (at most 340), three tall to five wide, corners 22, on a plum shade
-  (62, 48, 56 down to 30, 24, 28): the year's minutes in Display 32, then its song and its
-  artist, the account's name and the year's plays at the foot, and "Listening since" with
-  the first play kept, flush right (Surco has no account to have joined). Each opens Replay.
+  cards 78% of the width (at most 340), three tall to five wide, corners 22, nearly black
+  with a breath of plum (40, 34, 38) on a soft shadow: small capitals 11 bold, spaced apart
+  by hair spaces as BitChord's tracking, the year's minutes 30 bold over them, the account's
+  name in a typewriter's bold 15 over the year's plays, and "Listening since" with the first
+  play kept, flush right, its date in the same bold (Surco has no account to have joined).
+  Then its song and its artist on cards of their own. Each opens Replay.
   Then a row 55 tall with a chevron for the downloads (Surco keeps no local folders or cache
   to list), then shelves with "See all": Playlists, after New, Import and Liked (pink into
   violet), and the artists kept, round. "See all" is the whole list of that kind, the grid
@@ -107,7 +109,8 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   header until the name has gone up under it, dissolving over its lower half into the page's
   colour; the name centred over its foot in Display, 44 down to 28 to stay on one line (where
   BitChord has the artist's logo, which Surco does not have); a 70 Play circle between 52
-  shuffle and follow circles. Then the newest release on a card (96 cover, corners 12, what
+  shuffle and follow (a star) circles of aurora's interactive glass. At the bar's end, a
+  capsule of glass with a share, which copies the artist's link, and the account's face. Then the newest release on a card (96 cover, corners 12, what
   it is and its year over its name in 20 bold, on white at 6%, corners 20), "Top songs" 24
   bold, and the albums and singles shelves. While it comes, its photo and name stand where
   they are known from where the artist was chosen, and the rest pulses in its places.
