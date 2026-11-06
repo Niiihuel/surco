@@ -7,11 +7,15 @@ use limn::{BottomSheet, Separator};
 #[path = "library_tests.rs"]
 mod library_tests;
 
-pub(super) fn render(state: &State, base: Element, width: f32, palette: ComponentPalette) -> Element {
+pub(super) fn render(state: &State, base: Element, window: Size, palette: ComponentPalette) -> Element {
+    let width = window.width;
     let context = state.mobile_ui.context.as_ref();
-    let body = context.map_or_else(Element::spacer, |context| song_menu(state, &context.row, &context.track, palette));
-    let base = BottomSheet::new(base, context.is_some(), t!("common-song-options"), "", "mobile-context-close", SCHEME.menu())
-        .max_height(680.0).body(body).render();
+    let menu = context.map(|context| song_menu(state, &context.row, &context.track, palette));
+    let base = match state.mobile_ui.menu_origin {
+        Some(origin) => bubble(base, menu, origin, (state.mobile_ui.content_insets.top, window.height - state.mobile_ui.content_insets.bottom)),
+        None => BottomSheet::new(base, context.is_some(), t!("common-song-options"), "", "mobile-context-close", SCHEME.menu())
+            .max_height(680.0).body(menu.unwrap_or_else(Element::spacer)).render(),
+    };
     let base = offset_sheet(state, info_sheet(state, picker(state, base, palette), palette), palette);
     pipeline(state, sleep_sheet(state, connections(state, library_sheet(state, base, palette), palette), palette), width, palette)
 }
@@ -26,6 +30,38 @@ const ARTIST: &str = include_str!("../../../assets/icons/user-round.svg");
 const TRASH: &str = include_str!("../../../assets/icons/trash-2.svg");
 const CIRCLE_MINUS: &str = include_str!("../../../assets/icons/circle-minus.svg");
 const SLIDERS: &str = include_str!("../../../assets/icons/sliders.svg");
+
+/// BitChord's menu: a tall pane of glass, as wide as its rows want, that grows out of the
+/// button or row that opened it and goes back into it, its rows arriving last.
+const BUBBLE_WIDTH: f32 = 262.0;
+const BUBBLE_RADIUS: f32 = 32.0;
+const BUBBLE_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 40.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 33, 215)) };
+/// BitChord's menu opens on a stiff spring and closes in 170 ms.
+const BUBBLE_OPEN_MS: u16 = 320;
+const BUBBLE_CLOSE_MS: u16 = 170;
+/// How far it keeps from the screen's safe edges.
+const BUBBLE_MARGIN: f32 = 8.0;
+
+/// `safe` is the screen's top and foot clear of the system's bars.
+fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, f32)) -> Element {
+    let Some(menu) = menu else { return base };
+    let (top, foot) = (safe.0 + BUBBLE_MARGIN, safe.1 - BUBBLE_MARGIN);
+    // A long menu scrolls within the screen's safe edges rather than running off it.
+    let surface = Element::panel(Element::scroll("mobile-context-menu", menu.padding(10.0)))
+        .glass(BUBBLE_GLASS).radius(BUBBLE_RADIUS).clip_children()
+        .size(Some(BUBBLE_WIDTH), None).max_height((foot - top).max(TAP));
+    // Its right edge is the trigger's: it runs down from the trigger's top, or, where that
+    // leaves too little room, ends at the foot and covers the trigger, as BitChord's does.
+    let from = origin.y.clamp(top, foot);
+    let edge = Element::spacer().size(Some(0.0), Some(foot - from));
+    let trigger = Element::popover(edge, surface, "mobile-context-close", limn::PopoverPlacement::LeftStart)
+        .popover_gap(0.0)
+        .popover_morph(origin, origin.width.min(origin.height) / 2.0)
+        .popover_animation_ms(BUBBLE_OPEN_MS).popover_close_animation_ms(BUBBLE_CLOSE_MS);
+    let placed = Element::column(vec![Element::spacer().size(None, Some(from)),
+        Element::row(vec![Element::spacer().size(Some(origin.x + origin.width), None), trigger])]);
+    Element::stack(vec![base, placed])
+}
 
 /// What can be done with a song, grouped as BitChord's menu: liking it, not wanting it and
 /// sharing it across the top; then putting it in a list; playing it; going to where it comes
@@ -58,7 +94,7 @@ fn song_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette)
         item("next", &t!("desktop-play-next"), Icon::Custom(LIST_START), None),
         item("queue", &t!("desktop-add-to-queue"), Icon::Custom(LIST_PLUS), None),
         if state.is_saved(&track.id) { item("unsave", &t!("desktop-remove-download"), Icon::Custom(TRASH), None) }
-            else { item("save", &t!("desktop-download-offline"), Icon::Custom(crate::view::DOWNLOAD), None) },
+            else { item("save", &t!("desktop-download"), Icon::Custom(crate::view::DOWNLOAD), None) },
     ];
     if row.starts_with("upcoming:") { play.push(item("unqueue", &t!("mobile-remove-from-queue"), Icon::Minus, None)); }
     if matches!(state.page, Page::Playlist(_)) && row.starts_with("page-track:") {
@@ -367,7 +403,7 @@ mod menu_tests {
     fn the_songs_menu_is_grouped_as_bitchords_with_its_timer_and_lyrics_step_for_what_plays() {
         let mut state = phone();
         click(&mut state, "more:current");
-        let mut tree = UiTree::new(render(&state, Element::spacer().size(Some(390.0), Some(844.0)), 390.0, SCHEME.palette()));
+        let mut tree = UiTree::new(render(&state, Element::spacer().size(Some(390.0), Some(844.0)), Size::new(390.0, 844.0), SCHEME.palette()));
         tree.set_reduced_motion(true);
         let frame = tree.layout(Size::new(390.0, 844.0));
         let ids: Vec<_> = frame.access.iter().map(|node| node.id.as_str()).filter(|id| id.starts_with("do:")).collect();
@@ -375,6 +411,25 @@ mod menu_tests {
         for id in ["do:playlists:current", "do:radio:current", "do:next:current", "do:queue:current", "do:artist:current", "do:info:current", "do:sleep:current", "do:offset:current"] {
             assert!(ids.contains(&id), "{id} in {ids:?}");
         }
+    }
+
+    #[test]
+    fn the_menu_is_glass_grown_from_its_button_its_right_edge_the_buttons_and_kept_clear_of_the_bars() {
+        let mut state = phone();
+        state.mobile_ui.content_insets.top = 47.0;
+        state.mobile_ui.content_insets.bottom = 34.0;
+        let button = limn::Rect::new(320.0, 440.0, 44.0, 44.0);
+        state.mobile_ui.menu_origin = Some(button);
+        click(&mut state, "more:current");
+        let window = Size::new(390.0, 844.0);
+        let mut tree = UiTree::new(render(&state, Element::spacer().size(Some(390.0), Some(844.0)), window, SCHEME.palette()));
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(window);
+        let pane = frame.commands.iter().find_map(|command| match command { limn::DrawCommand::Glass { rect, .. } => Some(*rect), _ => None })
+            .expect("the menu is a pane of glass");
+        assert!((pane.x + pane.width - (button.x + button.width)).abs() < 0.5, "its right edge is the button's: {pane:?}");
+        assert!(pane.y >= 47.0 && pane.y + pane.height <= 844.0 - 34.0, "clear of the bars: {pane:?}");
+        assert!(frame.regions.iter().any(|region| region.id == "do:info:current"), "its rows are there to press");
     }
 
     #[test]
@@ -437,7 +492,7 @@ mod pipeline_tests {
         // or scrolled to its end.
         let texts = |state: &State, end: bool| {
             let size = Size::new(390.0, 844.0);
-            let mut tree = UiTree::new(render(state, Element::spacer().size(Some(390.0), Some(844.0)), 390.0, SCHEME.palette()));
+            let mut tree = UiTree::new(render(state, Element::spacer().size(Some(390.0), Some(844.0)), Size::new(390.0, 844.0), SCHEME.palette()));
             tree.set_reduced_motion(true);
             let frame = tree.layout(size);
             if end {

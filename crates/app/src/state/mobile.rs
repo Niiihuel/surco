@@ -95,6 +95,9 @@ pub(crate) struct MobileUi {
     /// The host consumes this once after changing the view.
     pub blur: bool,
     pub context: Option<TrackContext>,
+    /// Where the song's menu grows from and goes back into: the button or row that opened it,
+    /// in the window's points, as the host found it. Without it the menu is a sheet.
+    pub menu_origin: Option<limn::Rect>,
     pub library: Option<LibraryContext>,
     pub connections: bool,
     /// Whether the Audio Pipeline stands over the output sheet.

@@ -53,12 +53,14 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   genres, each a search.
 - Mini player: a pill 56 tall floating 8 above the tab bar. 40 art (corners 8), title over
   artist, play/pause and next. Swipe sideways to skip, drag up or tap to open the player.
-- Both bars are frosted. limn has no backdrop blur, so they are a dark tint at high opacity
-  with a 0.5 hairline at white 10%.
+- Both bars, the header's circles and a list's tools are limn's glass, after aurora's: the page
+  is rendered again beneath them, blurred in the middle (36) and sharp and bent at the rim,
+  under a dark veil (26, 26, 28 at 185) that keeps the labels legible over a bright cover.
+  The chosen tab's lit platter slides to the next, a clear lens while it travels.
 - Top bar: status inset + 52, no pane. Floating 44 circles for back and actions, a 28 face.
   Page titles are large headings at the top of the list, not in the bar.
-- Edges: content fades out under a 180 gradient at the foot (254 with the mini player), solid by
-  the mini player's foot, so nothing shows between the bars or beside the tabs' rounded ends.
+- Edges: rows pass seen beneath the glass, as BitChord's, deepening only by the home
+  indicator.
 - Pushed pages cross-fade over 180 ms; tabs switch without a transition.
 
 ## Phone screens
@@ -157,7 +159,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   playlist (which offers the lists); radio, play next, add to queue, download; album, artist,
   song info; and for what plays, the timer and the lyrics' step (half a second each way,
   back to 0 with the next song). A song disliked is skipped when it comes and kept out of
-  the picks. Still a sheet: the glass that opens from its button waits for limn's.
+  the picks. A pane of glass 262 wide, corners 32, that grows out of the ⋯ (or the row held)
+  over 320 ms with a small rebound, its rows last, and goes back into it in 170 ms. Its right
+  edge is the button's; it runs down from the button, or ends at the foot and covers it when
+  that leaves too little room, as BitChord's does.
 - Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's
   website demo: `bitchord.kushagrasingh.in`). Lines away from it fade to 0.8, 0.7, 0.58,
   0.46, blur and step back to 0.98; what was sung stays lit, what is to come is at 45%.

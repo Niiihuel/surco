@@ -32,10 +32,10 @@ const MINI_PILL: f32 = 56.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
-// shortcut: limn has no backdrop blur, and blending in linear light lets even 8% of a white
-// row through a dark tint, so the frosted bars are opaque; let rows pass blurred beneath them
-// once limn can blur.
-const FROST: Color = Color::rgb(24, 24, 26);
+/// BitChord's glass, dark: the page passes beneath blurred, and sharp and bent at the rim.
+pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 36.0, ..limn::GlassMaterial::new(Color::rgba(26, 26, 28, 185)) };
+/// The chosen tab's lens while it travels: clear, magnifying what it passes over.
+const LENS: limn::GlassMaterial = limn::GlassMaterial { blur: 0.0, magnify: 1.1, bezel: 6.0, ..limn::GlassMaterial::new(Color::rgba(255, 255, 255, 0)) };
 const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
 /// The hairline every thumbnail keeps, so a dark cover does not sink into the page.
 pub(in crate::view) const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
@@ -90,7 +90,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tab = matches!(state.page, Page::Search | Page::Library | Page::Browse) && !state.mobile_search;
     // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
     // bare on the song.
-    let disc = |button: Element| if state.page == Page::Playing { button } else { button.background(FROST).border(HAIRLINE, 0.5) };
+    let disc = |button: Element| if state.page == Page::Playing { button } else { button.glass(GLASS) };
     if tab {
         let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
@@ -233,7 +233,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         else if native_chrome && state.mobile_ui.glass { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }
         else if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
         else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
-        else { footer.vertical_gradient(chrome::floating_fade(SCHEME.canvas)) }.block_pointer("mobile-footer-bar");
+        // Rows pass seen beneath the glass, as BitChord's, deepening only by the home indicator.
+        else { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }.block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
@@ -248,7 +249,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = match docking_cover(state, window) { Some(cover) => Element::stack(vec![tree, cover]), None => tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
-    super::wrapped::story(state, dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
+    super::wrapped::story(state, dialogs(state, tree, window, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
 }
 
 /// BitChord's Explore: the catalog's moods and genres two to a row, each a card of its colour
@@ -331,13 +332,14 @@ pub(in crate::view) fn mood_page(state: &State, params: &str, width: f32, palett
 /// the limn ones stay for other platforms or if the bridge is unavailable. The greeting,
 /// the profile and moving an account are limn's on every platform: no UIKit surface draws
 /// them, and left behind the bridge they would open to nothing.
-fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, uikit: bool) -> Element {
+fn dialogs(state: &State, tree: Element, window: Size, palette: ComponentPalette, uikit: bool) -> Element {
+    let width = window.width;
     let tree = welcome_dialog(state, tree, width);
     let tree = super::jam::invite(state, super::profile_dialog(state, super::handoff_dialog(state, tree, width), width), width);
     // limn's on the iPhone too: it stands over everything, as moving an account does.
     let tree = super::crop::dialog(state, tree, width);
     if uikit { return tree; }
-    let tree = sheets::render(state, tree, width, palette);
+    let tree = sheets::render(state, tree, window, palette);
     let tree = share_dialog(state, tree, width, palette);
     let tree = playlist_dialog(state, tree, width, palette);
     let tree = missed_dialog(state, super::import_run_dialog(state, import_dialog(state, tree, width, palette), width, palette), width, palette);
@@ -605,7 +607,7 @@ pub(crate) fn route_key(state: &State) -> String {
 /// and Search, each gliding to its place.
 fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
-    let disc = |content: Element| Element::panel(content).background(FROST).border(HAIRLINE, 0.5).round().clip_children();
+    let disc = |content: Element| Element::panel(content).glass(GLASS).round().clip_children();
     let circle = |id: &str, glyph: Icon, label: &str, lit: bool| {
         let face = Element::icon(glyph).large_icon(24.0).foreground(if lit { palette.text } else { palette.muted }).centered();
         disc(Element::clickable(id, face).accessible(limn::Access::new(limn::Role::Button).name(label).selected(lit)).round())
@@ -630,13 +632,17 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
                 Text::new(label, palette).font_size(10.0).render().font_family(limn::FontFamily::SansMedium).foreground(ink).centered_x()
                     .animate_foreground(format!("mobile-tab:{id}:label")),
             ]).gap(3.0).centered();
-            let cell = if selected {
-                Element::stack(vec![Element::panel(Element::spacer()).background(TAB_LIT).round().animate_move("mobile-tab-platter"), copy])
-            } else { copy };
-            Element::clickable(id, cell).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
-                .size(None, Some(NAV_HEIGHT - 8.0)).flex(1.0)
+            Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
+                .size(None, Some(NAV_HEIGHT - 8.0)).flex(1.0).indicator_slot(id)
         };
-        let tabs = Element::row(tabs(state).into_iter().map(|(id, glyph, _, label, selected)| tab(id, glyph, label, selected)).collect()).padding(4.0);
+        let tabs = tabs(state);
+        // The lit platter slides to the tab chosen, a lens while it travels, as BitChord's.
+        let mut strip = Element::tab_strip(tabs.iter().map(|&(id, glyph, _, label, selected)| tab(id, glyph, label, selected)).collect(),
+            tabs.iter().map(|tab| tab.0.to_owned()).collect());
+        if let Some(chosen) = tabs.iter().find(|tab| tab.4) {
+            strip = strip.tab_selection("mobile-tab-platter", chosen.0, TAB_LIT, (NAV_HEIGHT - 8.0) / 2.0, limn::tokens().motion.move_ms).glass_selection(LENS);
+        }
+        let tabs = strip.padding(4.0);
         vec![disc(tabs).size(None, Some(NAV_HEIGHT)).flex(1.0).animate_enter("mobile-bar-open"), search]
     };
     Element::row(row).gap(8.0).size(Some(span), Some(NAV_HEIGHT)).centered_x().block_pointer("mobile-nav-bar")
@@ -646,7 +652,7 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
 /// sides and no wider than `BAR_MAX`.
 fn floating_bar(content: Element, width: f32, height: f32) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
-    Element::panel(content).background(FROST).border(HAIRLINE, 0.5).round().clip_children()
+    Element::panel(content).glass(GLASS).round().clip_children()
         .size(Some(span), Some(height)).centered_x()
 }
 
@@ -938,7 +944,7 @@ mod tests {
         let size = Size::new(390.0, 844.0);
         let mut state = playing_state();
         let ids = |state: &State| {
-            let tree = dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size.width, SCHEME.palette(), true);
+            let tree = dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size, SCHEME.palette(), true);
             UiTree::new(tree).layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
         };
         state.update(&UiAction::Clicked { id: "account-handoff".into() });

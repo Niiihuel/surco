@@ -85,6 +85,10 @@ struct Host {
     session: Option<state::Session>,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
+    /// Paints the phone's glass over the page beneath it; none without wgpu.
+    glass: Option<limn_egui::GlassRenderer>,
+    /// What the last painted frame could be pressed at, for a scripted press to find.
+    painted: Vec<limn::HitRegion>,
     /// The notice already revealed; ordinary repaints preserve manual scrolling.
     notice: Option<String>,
     #[cfg(target_os = "ios")]
@@ -368,6 +372,7 @@ impl Host {
         }
         while self.script.actions.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
             let (_, action) = self.script.actions.remove(0);
+            note_menu_origin(&mut self.state, &action, &self.painted);
             let commands = self.state.update(&action);
             self.send(commands);
         }
@@ -794,6 +799,7 @@ impl eframe::App for Host {
                 actions.extend(back_target(&self.state).map(|id| UiAction::Clicked { id: id.into() }));
             }
             for action in actions {
+                note_menu_origin(&mut self.state, &action, &input_frame.regions);
                 let commands = self.state.update(&action);
                 self.send(commands);
             }
@@ -988,7 +994,10 @@ impl eframe::App for Host {
         if let Some(underlay) = self.motion.underlay(&self.state, window) {
             limn_egui::paint_at(ui, underlay, area.min);
         }
-        limn_egui::paint_at(ui, &frame, area.min);
+        match &mut self.glass {
+            Some(glass) => glass.paint_page(ui, &frame, area.min),
+            None => limn_egui::paint_at(ui, &frame, area.min),
+        }
         self.motion.remember(&frame, &self.state, window);
 
         if let Some(path) = self.script.screenshot.clone() {
@@ -1010,7 +1019,16 @@ impl eframe::App for Host {
             // A running animation asks for the very next frame: never throttle it.
             ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
+        self.painted = frame.regions;
     }
+}
+
+/// A song's menu grows out of the button, or the row held, that opened it.
+fn note_menu_origin(state: &mut state::State, action: &UiAction, regions: &[limn::HitRegion]) {
+    let UiAction::Clicked { id } = action else { return };
+    let Some(row) = id.strip_prefix("more:").filter(|_| state.mobile) else { return };
+    let found = |wanted: &str| regions.iter().find(|region| region.id == wanted).map(|region| region.rect);
+    if let Some(origin) = found(id).or_else(|| found(row)) { state.mobile_ui.menu_origin = Some(origin); }
 }
 
 /// The id of the field the search is typed in: the phone's own, or the desktop top bar's.
@@ -1221,6 +1239,8 @@ pub fn run() -> eframe::Result {
                 script,
                 touch: mobile_input::TouchInput::default(),
                 motion: mobile_motion::Motion::new(Instant::now()),
+                glass: creation.wgpu_render_state.as_ref().map(limn_egui::GlassRenderer::new),
+                painted: Vec::new(),
                 notice: None,
                 #[cfg(target_os = "ios")]
                 native_ui,
