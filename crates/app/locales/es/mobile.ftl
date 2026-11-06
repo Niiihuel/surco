@@ -262,3 +262,5 @@ mobile-listening-since = Escuchando desde
 mobile-top-song = Tu canción más escuchada
 mobile-top-artist = Tu artista más escuchado
 mobile-import-from-link = Desde un enlace
+mobile-top-songs = Canciones populares
+mobile-single = Sencillo

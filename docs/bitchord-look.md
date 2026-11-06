@@ -90,9 +90,13 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   (at most half the height), corners 12, a shadow of 18. Title 22/700 centred, credit 19 in
   the secondary colour. Actions: a 50 shuffle circle, a white Play pill, a 50 add circle; the
   circles white at 7% with a rim at 10%.
-- Artist: the photo full width (ratio 0.95, at most 60% of the height) fading into the page's
-  colour; the name 34/800 with its followers 14 under it, one group at the photo's foot; a 70
-  Play circle between 52 shuffle and follow circles.
+- Artist: the photo across the whole screen from its top edge (ratio 0.95), under a clear
+  header until the name has gone up under it, dissolving over its lower half into the page's
+  colour; the name centred over its foot in Display, 44 down to 28 to stay on one line (where
+  BitChord has the artist's logo, which Surco does not have); a 70 Play circle between 52
+  shuffle and follow circles. Then the newest release on a card (96 cover, corners 12, what
+  it is and its year over its name in 20 bold, on white at 6%, corners 20), "Top songs" 24
+  bold, and the albums and singles shelves.
 - A photo picked for the profile or a playlist is cropped before it is kept, on the desktop,
   the phone and the TV alike: the whole photo with the square over it (round for a face),
   the rest dimmed, moved by a press, a drag or the arrows, its size by a slider; the square

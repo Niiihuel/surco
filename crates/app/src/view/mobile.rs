@@ -221,13 +221,19 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // The large title is the page's first row, scrolling up under the bar; over Search it
     // stays in the header, above the field.
     let scroll_top = top_height + if large_title(state) && !field_on_top { MOBILE_LARGE_TITLE } else { 0.0 };
+    // An artist's photo runs to the screen's top under a clear header, as BitChord's, until
+    // their name has gone up under it.
+    let bleed = matches!(state.page, Page::Artist(_)) && !native_chrome;
+    let clear_head = bleed && !state.mobile_ui.compact_header;
+    let scroll_top = if bleed { 0.0 } else { scroll_top };
+    let header_edge = if clear_head { Color::TRANSPARENT } else { header_edge };
     // limn fades an edge into a colour, which the blurred cover has none of: over it the lines
     // are cut between the bars instead of passing under them.
     let content = if ground.is_some() && (state.page == Page::Lyrics || queue) {
         Element::column(vec![Element::spacer().size(None, Some(scroll_top)), content.flex(1.0), Element::spacer().size(None, Some(bottom_height))])
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
-    let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    let top = if native_chrome || clear_head { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
     let footer = Element::column(bottom);
     // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
     let footer = if player { footer }

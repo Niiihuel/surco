@@ -262,3 +262,5 @@ mobile-listening-since = Listening since
 mobile-top-song = Your top song
 mobile-top-artist = Your top artist
 mobile-import-from-link = From a playlist link
+mobile-top-songs = Top songs
+mobile-single = Single
