@@ -1454,62 +1454,8 @@ fn media_card(state: &State, id: &str, track: &Track, palette: ComponentPalette)
 
 /// Sharing a track: its card, as whoever opens the link will see it, over the link itself.
 fn share_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
-    if state.mobile {
-        let Some(track) = &state.sharing else {
-            return window_tree;
-        };
-        let playing = state.player.playing
-            && state
-                .current()
-                .is_some_and(|current| current.id == track.id);
-        let picture = Element::clickable(
-            "share-card",
-            cover(state, &track.artwork_url, 160.0, palette),
-        )
-        .accessible(limn::Access::new(limn::Role::Button).name(format!(
-            "{} {}",
-            if playing { t!("common-pause") } else { t!("common-play") },
-            track.title
-        )))
-        .centered_x();
-        let copy = Button::new(
-            "share-copy",
-            if state.copied {
-                t!("common-link-copied")
-            } else {
-                t!("desktop-copy-link")
-            },
-            palette,
-        )
-        .icon(if state.copied {
-            Icon::Check
-        } else {
-            Icon::Copy
-        })
-        .render()
-        .size(None, Some(44.0));
-        let body = Element::column(vec![
-            picture,
-            Text::new(&track.title, palette).font_size(20.0).render(),
-            Text::new(&track.artist, palette).muted().render(),
-            Text::new(share_link(track), palette)
-                .muted()
-                .truncate()
-                .render(),
-        ])
-        .gap(12.0);
-        return mobile::phone_sheet(state, limn::BottomSheet::new(
-            window_tree,
-            true,
-            t!("common-share-song"),
-            t!("desktop-share-detail"),
-            "share-close",
-            palette,
-        )
-        .max_height(640.0)
-        .body(body)
-        .footer(copy));
-    }
+    // A phone's is iOS's share sheet, in aurora's glass.
+    if state.mobile { return mobile::share_sheet(state, window_tree, palette); }
     let Some(track) = &state.sharing else { return window_tree };
     let palette = Card::palette(GREY_CARD);
     let body = Element::column(vec![media_card(state, "share-card", track, palette).centered_x(), Text::new(share_link(track), palette).muted().truncate().render()]).gap(12.0);

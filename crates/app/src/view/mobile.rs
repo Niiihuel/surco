@@ -74,6 +74,41 @@ pub(in crate::view) fn popped(state: &State, sheet: Element) -> Element {
     }
 }
 
+/// iOS's share sheet, in aurora's glass and popping out of the button that opened it: what is
+/// shared beside a cross, the apps it can go to, and copying or opening its link. Each app
+/// takes the link by its own address, so it works from any device; on Android the system's
+/// own sheet is its "More".
+pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
+    let (title, artwork) = match (&state.sharing, &state.sharing_page) {
+        (Some(track), _) => (track.title.clone(), track.artwork_url.clone()),
+        (None, Some(page)) => (page.title.clone(), page.artwork_url.clone()),
+        (None, None) => return base,
+    };
+    let mark = |color: Color, glyph: Element| Element::panel(glyph.foreground(Color::WHITE).centered()).background(color);
+    let glyph = |icon: Icon| Element::icon(icon).large_icon(28.0);
+    let mut targets = vec![
+        limn::ShareTarget::new("share-to:messages", t!("mobile-share-messages"), mark(Color::rgb(52, 199, 89), glyph(Icon::Chat))),
+        limn::ShareTarget::new("share-to:mail", t!("mobile-share-mail"), mark(Color::rgb(30, 136, 245), glyph(Icon::Custom(MAIL)))),
+        limn::ShareTarget::new("share-to:whatsapp", "WhatsApp", mark(Color::rgb(37, 211, 102), glyph(Icon::Chat))),
+        limn::ShareTarget::new("share-to:telegram", "Telegram", mark(Color::rgb(42, 171, 238), glyph(Icon::Send))),
+        limn::ShareTarget::new("share-to:x", "X", mark(Color::rgb(24, 24, 24), Text::new("X", palette).font_size(28.0).render().font_family(FontFamily::SansBold))),
+    ];
+    if cfg!(target_os = "android") {
+        targets.push(limn::ShareTarget::new("share-to:system", t!("mobile-share-more"), mark(Color::rgb(72, 72, 74), glyph(Icon::More))));
+    }
+    let copied = state.copied;
+    let actions = vec![
+        limn::ShareAction::new("share-copy", if copied { t!("common-link-copied") } else { t!("desktop-copy-link") }, if copied { Icon::Check } else { Icon::Copy }),
+        limn::ShareAction::new("share-open", t!("mobile-share-open"), Icon::ExternalLink),
+    ];
+    let sheet = limn::ShareSheet::new(base, true, title, "music.youtube.com", "share-close", palette)
+        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(GLASS).render();
+    popped(state, sheet)
+}
+
+/// iOS's Mail glyph, an envelope.
+const MAIL: &str = include_str!("../../assets/icons/mail.svg");
+
 /// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
 pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
     popped(state, sheet.glass(GLASS).render())

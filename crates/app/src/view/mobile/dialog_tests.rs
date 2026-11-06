@@ -106,7 +106,7 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
         artwork_url: None,
         duration_ms: 180_000,
     });
-    for id in ["share-copy", "share-close:close"] {
+    for id in ["share-copy", "share-close"] {
         target(&tree(&state, size).layout(size), id, size);
     }
     state.sharing = None;

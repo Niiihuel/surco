@@ -264,3 +264,7 @@ mobile-top-artist = Your top artist
 mobile-import-from-link = From a playlist link
 mobile-top-songs = Top songs
 mobile-single = Single
+mobile-share-messages = Messages
+mobile-share-mail = Mail
+mobile-share-more = More
+mobile-share-open = Open in YouTube Music

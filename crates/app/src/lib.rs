@@ -541,10 +541,10 @@ impl eframe::App for Host {
             };
             self.send(commands);
         }
-        // Android's own share sheet takes a song's link to any app, as iOS's does.
+        // Android's own share sheet, picked from Surco's as its "More": the link to any app.
         #[cfg(target_os = "android")]
-        if let Some(track) = self.state.sharing.take() {
-            android_system::share(&track.title, &state::share_link(&track));
+        if let Some((title, link)) = self.state.share_system.take() {
+            android_system::share(&title, &link);
         }
         // The lyrics follow the sound as the route plays it, an Apple TV's over AirPlay late.
         #[cfg(target_os = "ios")]
@@ -1063,7 +1063,7 @@ impl eframe::App for Host {
 /// Which of the phone's sheets is up, the one over the others first.
 fn sheet_up(state: &state::State) -> Option<&'static str> {
     let ui = &state.mobile_ui;
-    [(state.confirm.is_some(), "confirm"), (state.cropping.is_some(), "crop"), (state.sharing.is_some(), "share"),
+    [(state.confirm.is_some(), "confirm"), (state.cropping.is_some(), "crop"), (state.sharing.is_some() || state.sharing_page.is_some(), "share"),
         (state.creating.is_some(), "playlist"), (state.profile_draft.is_some(), "profile"), (state.handoff.is_some(), "handoff"),
         (state.missed_open, "missed"), (state.import_run.is_some() && !state.import_hidden, "import-run"), (state.importing.is_some(), "import"),
         (ui.pipeline, "pipeline"), (ui.picking.is_some(), "picking"), (ui.info.is_some(), "info"), (ui.offset_open, "offset"),

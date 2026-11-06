@@ -1075,6 +1075,10 @@ pub struct State {
     pub picture_sizes: HashMap<String, (u32, u32)>,
     /// The track whose share card is open, and whether its link was just copied.
     pub sharing: Option<Track>,
+    /// A page shared rather than a track, as an artist's: its name, link and picture.
+    pub sharing_page: Option<SharedPage>,
+    /// What the system's own share sheet is to take, its title and link: the host's, once.
+    pub share_system: Option<(String, String)>,
     pub copied: bool,
     /// The playlist whose link was just copied, while its page says so, and the one whose
     /// songs were, as text for another app.
@@ -1317,6 +1321,22 @@ pub fn blend(a: limn::Color, b: limn::Color, share: f32) -> limn::Color {
 
 fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
     tracks.iter().map(|track| &track.artwork_url)
+}
+
+/// A page shared rather than a track: what it is called, its link and its picture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedPage {
+    pub title: String,
+    pub link: String,
+    pub artwork_url: Option<String>,
+}
+
+impl State {
+    /// What the share sheet holds, by its name and link: the track's or the page's.
+    pub fn shared(&self) -> Option<(String, String)> {
+        self.sharing.as_ref().map(|track| (track.title.clone(), share_link(track)))
+            .or_else(|| self.sharing_page.as_ref().map(|page| (page.title.clone(), page.link.clone())))
+    }
 }
 
 /// The link that shares a track: the catalog's own address for it, which opens for
@@ -1563,6 +1583,8 @@ impl Default for State {
             heard: (0.0, Instant::now()),
             picture_sizes: HashMap::new(),
             sharing: None,
+            sharing_page: None,
+            share_system: None,
             copied: false,
             list_copied: None,
             list_exported: None,
@@ -2906,8 +2928,9 @@ impl State {
             // An artist's link, BitChord's share at the top of their page: copied, and said so.
             "artist-share" => {
                 if let Page::Artist(artist) = &self.page {
-                    self.copy = Some(format!("https://music.youtube.com/channel/{}", artist.id));
-                    self.mobile_ui.notice = Some(t!("common-link-copied").into_owned());
+                    self.sharing_page = Some(SharedPage { title: artist.name.clone(),
+                        link: format!("https://music.youtube.com/channel/{}", artist.id), artwork_url: artist.artwork_url.clone() });
+                    self.copied = false;
                 }
                 Vec::new()
             }
@@ -2960,12 +2983,32 @@ impl State {
                 }
             }
             "share-copy" => {
-                self.copy = self.sharing.as_ref().map(share_link);
+                self.copy = self.shared().map(|(_, link)| link);
                 self.copied = self.copy.is_some();
                 Vec::new()
             }
             "share-close" => {
                 self.sharing = None;
+                self.sharing_page = None;
+                Vec::new()
+            }
+            // The share sheet's apps, as iOS's: each takes the link by its own address, which
+            // works from any device; the system's own sheet where there is one.
+            share if share.starts_with("share-to:") || share == "share-open" => {
+                if let Some((title, link)) = self.shared() {
+                    let text = |value: &str| percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string();
+                    match share.strip_prefix("share-to:").unwrap_or("open") {
+                        "whatsapp" => self.open_url = Some(format!("https://wa.me/?text={}", text(&link))),
+                        "telegram" => self.open_url = Some(format!("https://t.me/share/url?url={}&text={}", text(&link), text(&title))),
+                        "x" => self.open_url = Some(format!("https://x.com/intent/post?url={}&text={}", text(&link), text(&title))),
+                        "mail" => self.open_url = Some(format!("mailto:?subject={}&body={}", text(&title), text(&link))),
+                        "messages" => self.open_url = Some(format!("sms:?&body={}", text(&link))),
+                        "system" => self.share_system = Some((title, link)),
+                        _ => self.open_url = Some(link),
+                    }
+                }
+                self.sharing = None;
+                self.sharing_page = None;
                 Vec::new()
             }
             part if part.starts_with("settings-part:") => {
