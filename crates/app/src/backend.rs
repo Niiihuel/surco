@@ -96,6 +96,9 @@ pub enum Command {
     Inbox,
     /// Send the account, or this part of it, to a television's inbox at `to`.
     Push { to: String, bundle: Bundle },
+    /// Read the list a link names, for its name and how many songs it has, before it is
+    /// brought in.
+    PeekImport(String),
     /// Look for artists for the first run's picker: what these searches find, a turn each.
     /// `key` comes back with them.
     FindArtists { key: String, queries: Vec<String> },
@@ -338,6 +341,8 @@ pub enum Event {
     UpdateProgress(f32),
     /// How many of the songs of a list being brought in have been looked for, out of how many.
     Importing { done: usize, of: usize },
+    /// The name and the number of songs of the list `link` names, or why it could not be read.
+    ImportPeeked { link: String, result: Result<(String, usize), String> },
     /// The later version is in place: the next start is it. Or why it is not.
     UpdateInstalled,
     UpdateFailed(String),
@@ -860,6 +865,14 @@ fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: 
             });
         }
         (Command::FindArtists { key, .. }, Err(_)) => reply(Event::ArtistsFound { key, artists: Vec::new() }),
+        (Command::PeekImport(link), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let result = crate::import::peek(&shared.youtube, &link).await;
+                (shared.reply)(Event::ImportPeeked { link, result });
+            });
+        }
+        (Command::PeekImport(link), Err(error)) => reply(Event::ImportPeeked { link, result: Err(error.clone()) }),
         (Command::StopServing, Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move { shared.serving.lock().await.take(); });

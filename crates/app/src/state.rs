@@ -497,6 +497,8 @@ pub struct Handoff {
     pub push_to: Option<String>,
     pub pushing: bool,
     pub pushed: Option<Result<(), String>>,
+    /// Whether what goes is unfolded, a switch a part, on a phone's sheet.
+    pub parts_open: bool,
 }
 
 /// A picture picked to be cropped square before it is kept: its centre's share across and down
@@ -542,6 +544,9 @@ pub fn shaped_code(typed: &str, most: usize) -> String {
     code.chunks(4).map(|chunk| chunk.iter().collect::<String>()).collect::<Vec<_>>().join("-")
 }
 
+/// A list read before it is brought in: its name and how many songs it has, or why not.
+pub type Peeked = Result<(String, usize), String>;
+
 /// An app a list is brought in from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImportSource {
@@ -564,7 +569,7 @@ impl ImportSource {
     }
 
     /// The app a link is of.
-    fn of(link: &str) -> Option<Self> {
+    pub(crate) fn of(link: &str) -> Option<Self> {
         Some(match transfer::source(link.trim())? {
             transfer::Source::Spotify(..) => Self::Spotify,
             transfer::Source::Apple(_) => Self::Apple,
@@ -1019,6 +1024,11 @@ pub struct State {
     pub import_unknown: bool,
     /// The app the list being brought in comes from, whose way of copying its link is shown.
     pub import_source: ImportSource,
+    /// The list a link pasted names, read before it is brought in: its name and how many
+    /// songs it has, none while it is read, or why it could not be.
+    pub import_peek: Option<(String, Option<Peeked>)>,
+    /// Whether the way of copying a link in each app is open, under the field.
+    pub import_help: bool,
     /// The playlist just brought in and the songs of it that were not found, while its page
     /// says so, and whether the list of them is open.
     pub imported: Option<(u64, Vec<String>)>,
@@ -1560,6 +1570,8 @@ impl Default for State {
             importing: None,
             import_unknown: false,
             import_source: ImportSource::default(),
+            import_peek: None,
+            import_help: false,
             imported: None,
             play_when: None,
             missed_open: false,
@@ -2425,9 +2437,16 @@ impl State {
             UiAction::InputChanged { id, value } if id == "import-link" => {
                 self.importing = Some(value.clone());
                 self.import_unknown = false;
-                // A link pasted says which app it is of.
-                if let Some(source) = ImportSource::of(value) { self.import_source = source; }
-                Vec::new()
+                // A link pasted says which app it is of, and the list it names is read at once.
+                let link = value.trim();
+                let Some(source) = ImportSource::of(link) else {
+                    self.import_peek = None;
+                    return Vec::new();
+                };
+                self.import_source = source;
+                if self.import_peek.as_ref().is_some_and(|(read, _)| read == link) { return Vec::new(); }
+                self.import_peek = Some((link.to_owned(), None));
+                vec![Command::PeekImport(link.to_owned())]
             }
             UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
@@ -3124,6 +3143,10 @@ impl State {
                 let parts = handoff.parts;
                 vec![Command::Serve(self.bundle(parts))]
             }
+            "handoff-parts" => {
+                if let Some(handoff) = self.handoff.as_mut() { handoff.parts_open = !handoff.parts_open; }
+                Vec::new()
+            }
             "handoff-scan" => vec![Command::ScanCode],
             // A phone sends what was chosen to the television whose code it read.
             "handoff-push" => {
@@ -3583,10 +3606,17 @@ impl State {
             "import-open" => {
                 self.importing = Some(String::new());
                 self.import_unknown = false;
+                self.import_peek = None;
+                self.import_help = false;
                 Vec::new()
             }
             "import-cancel" => {
                 self.importing = None;
+                self.import_peek = None;
+                Vec::new()
+            }
+            "import-help" => {
+                self.import_help = !self.import_help;
                 Vec::new()
             }
             _ if id.starts_with("import-source:") => {
@@ -3604,6 +3634,7 @@ impl State {
                     return Vec::new();
                 }
                 self.importing = None;
+                self.import_peek = None;
                 // Used once, the offer has done its work.
                 self.settings.import_dismissed = true;
                 self.bring_in(link)
@@ -3747,6 +3778,13 @@ impl State {
             // meanwhile; where they waited for it, that is the page shown.
             Event::Importing { done, of } => {
                 self.import_progress = Some((done, of));
+                Vec::new()
+            }
+            // Only for the link still in the field: one replaced meanwhile is forgotten.
+            Event::ImportPeeked { link, result } => {
+                if let Some((_, peeked)) = self.import_peek.as_mut().filter(|(read, _)| *read == link) {
+                    *peeked = Some(result);
+                }
                 Vec::new()
             }
             Event::Opened { target, result: Ok(Content::List { name, tracks, missed }) } => {

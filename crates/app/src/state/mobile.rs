@@ -600,9 +600,14 @@ mod tests {
         assert!(state.open_url.is_none());
         state.importing = Some(String::new());
         let link = "https://open.spotify.com/playlist/example";
-        assert!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: link.into() }).is_empty());
-        assert_eq!(state.importing.as_deref(), Some(link));
-        assert!(state.import_progress.is_none());
+        // The list a link names is read at once, to be shown; it is brought in only on Import.
+        assert_eq!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: link.into() }), vec![Command::PeekImport(link.into())]);
+        assert!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: format!("{link} ") }).is_empty(), "read once");
+        assert!(state.import_progress.is_none() && state.import_run.is_none());
+        state.apply(crate::backend::Event::ImportPeeked { link: "https://open.spotify.com/playlist/other".into(), result: Ok(("Otra".into(), 3)) });
+        assert_eq!(state.import_peek, Some((link.into(), None)), "a link replaced meanwhile is forgotten");
+        state.apply(crate::backend::Event::ImportPeeked { link: link.into(), result: Ok(("Lista".into(), 12)) });
+        assert_eq!(state.import_peek, Some((link.into(), Some(Ok(("Lista".into(), 12))))));
     }
 
     #[test]

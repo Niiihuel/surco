@@ -607,10 +607,13 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let form = if state.mobile { Modal::fitted_body_width(Modal::fit_width(width, 560.0).max(280.0)) } else { Card::inner(width, HANDOFF_WIDEST) };
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
-    let mut body = vec![tabs];
+    // A phone opens on what the other device reads; receiving is a step aside, at the foot.
+    let mut body = if state.mobile { Vec::new() } else { vec![tabs] };
     let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
     let mut confirm = None;
-    if !handoff.receiving {
+    if !handoff.receiving && state.mobile {
+        body.extend(handoff_offer(state, handoff, palette));
+    } else if !handoff.receiving {
         match &handoff.offer {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
@@ -684,7 +687,10 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         None => ButtonGroup::new(vec![cancel]).align_end().render(),
     };
     if state.mobile {
-        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
+        let (aside, words) = if handoff.receiving { ("handoff-tab:send", t!("mobile-handoff-send-instead")) } else { ("handoff-tab:receive", t!("mobile-handoff-receive-instead")) };
+        body.push(card_button(aside, words, false).render().centered_x());
+        let about = if handoff.receiving { t!("desktop-handoff-detail") } else { t!("mobile-handoff-detail") };
+        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), about, "handoff-close", palette)
             .max_height(820.0)
             .body(Element::column(body).gap(16.0))
             .footer(footer));
@@ -693,6 +699,44 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     Card { body: Some(Element::column(body).gap(10.0)), go: take.then(|| ("handoff-take", t!("desktop-handoff-take"), true)), widest: HANDOFF_WIDEST, returns: Some("account"),
         ..Card::new("handoff", t!("desktop-handoff"), t!("desktop-handoff-detail"), ("handoff-close", t!("common-close"))) }
         .render(window_tree, width)
+}
+
+/// A phone's offer: the QR the other device's camera reads, the code to type under it, how,
+/// and what goes, folded into one line until it is opened.
+fn handoff_offer(state: &State, handoff: &crate::state::Handoff, palette: ComponentPalette) -> Vec<Element> {
+    let mut body = Vec::new();
+    match &handoff.offer {
+        None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
+        Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
+        Some(Ok((offer, qr))) => {
+            if let Some(qr) = qr {
+                body.push(Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)).centered())
+                    .background(Color::WHITE).radius(HANDOFF_TILE_RADIUS).size(Some(HANDOFF_CODE + 16.0), Some(HANDOFF_CODE + 16.0)).centered_x());
+            }
+            // The code as it is typed, large, with the way to copy it at its end.
+            let code = Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(24.0).foreground(palette.text).centered();
+            let copy = Element::clickable("handoff-copy", Element::icon(Icon::Copy).foreground(palette.text).size(Some(18.0), Some(18.0)).centered())
+                .size(Some(44.0), Some(44.0)).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-handoff-copy")));
+            body.push(Element::panel(Element::row(vec![Element::spacer().size(Some(44.0), None), code.flex(1.0), copy]))
+                .background(palette.selected).radius(HANDOFF_TILE_RADIUS).padding(4.0));
+            body.push(Text::new(t!("mobile-handoff-how"), palette).font_size(14.0).line_height(20.0).muted().render().center_content());
+        }
+    }
+    // What goes, said in a line; opened, a switch a part.
+    let parts = handoff.parts;
+    let going_now: Vec<_> = [(parts.profile, t!("desktop-handoff-profile")), (parts.playlists, t!("desktop-playlists")), (parts.liked, t!("common-liked-songs")),
+        (parts.library, t!("desktop-handoff-library")), (parts.settings, t!("common-settings")), (parts.equalizer, t!("common-equalizer")), (parts.history, t!("desktop-handoff-history"))]
+        .into_iter().filter(|(on, _)| *on).map(|(_, name)| name.into_owned()).collect();
+    let said = if going_now.is_empty() { t!("mobile-handoff-nothing").into_owned() } else { going_now.join(" · ") };
+    let fold = if handoff.parts_open { Icon::ChevronUp } else { Icon::ChevronDown };
+    let line = Element::row(vec![
+        Element::column(vec![Text::new(t!("desktop-handoff-what"), palette).font_size(15.0).render(), Text::new(&said, palette).font_size(13.0).muted().render()]).gap(2.0).flex(1.0).centered_y(),
+        Element::icon(fold).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+    ]).gap(12.0);
+    body.push(Element::clickable("handoff-parts", line).min_size(0.0, 52.0)
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-handoff-what")).description(said.clone()).expanded(handoff.parts_open)));
+    if handoff.parts_open { body.extend(going(state, parts)); }
+    body
 }
 
 /// The widest the card to move an account stands: room for its QR beside its code.
@@ -762,29 +806,7 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
 /// Bringing a list in from another app: its link there.
 fn import_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(link) = &state.importing else { return window_tree };
-    if state.mobile {
-        let field = TextField::new("import-link", link, t!("desktop-import-link-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render();
-        let mut fields = import_guide(state, width - 32.0, palette);
-        fields.push(field);
-        // A phone's link comes from another app; its own clipboard is a tap away here.
-        if cfg!(any(target_os = "ios", target_os = "android", test)) {
-            fields.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
-        }
-        let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
-        let go = card_button("import-go", t!("common-import"), true).render();
-        return mobile::phone_sheet(state, limn::BottomSheet::new(
-            window_tree,
-            true,
-            t!("desktop-import-music"),
-            if state.import_unknown { t!("desktop-import-unknown") } else { "Spotify · Apple Music · YouTube Music".into() },
-            "import-cancel",
-            palette,
-        )
-        .max_height(560.0)
-        .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, go))
-        .initial_focus("import-link"));
-    }
+    if state.mobile { return import_phone(state, link, window_tree, width, palette); }
     let palette = Card::palette(GREY_CARD);
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).label(t!("desktop-import-list-link")).render();
     let about = if state.import_unknown {
@@ -799,6 +821,71 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     Card { art: import_art(width), inset_art: false, inline: true, body: Some(Element::column(fields).gap(10.0)), go: Some(("import-go", t!("common-import"), true)), widest: IMPORT_WIDEST, focus: Some("import-link"),
         ..Card::new("import", t!("desktop-import-title"), t!("desktop-import-detail"), ("import-cancel", t!("common-cancel"))) }
         .render(window_tree, width)
+}
+
+/// A phone's: one field. The app a link pasted is of lights up among the three, and the list
+/// it names is read at once: its name and how many songs it has show before it is brought in.
+/// How to copy a link in each app waits folded under the field.
+fn import_phone(state: &State, link: &str, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    use crate::state::ImportSource;
+    let source = ImportSource::of(link);
+    let typed = !link.trim().is_empty();
+    let mut body = vec![TextField::new("import-link", link, t!("mobile-import-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render()];
+    // A phone's link comes from another app; its own clipboard is a tap away here.
+    if cfg!(any(target_os = "ios", target_os = "android", test)) {
+        body.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
+    }
+    let apps = ImportSource::ALL.into_iter().map(|app| {
+        let lit = source == Some(app);
+        let ink = if lit { palette.text } else { Color { a: 110, ..palette.text } };
+        let mut name = vec![Text::new(app.name(), palette).font_size(13.0).ink(ink).render()
+            .font_family(if lit { FontFamily::SansSemibold } else { FontFamily::Sans }).centered_y()];
+        if lit { name.insert(0, Element::icon(Icon::Check).foreground(ink).size(Some(14.0), Some(14.0)).centered_y()); }
+        Element::row(name).gap(4.0)
+    }).collect();
+    body.push(Element::row(apps).gap(14.0).accessible(limn::Access::new(limn::Role::Group).name(t!("mobile-import-apps"))));
+    match (source, state.import_peek.as_ref().map(|(_, peeked)| peeked)) {
+        (None, _) if typed || state.import_unknown => body.push(Text::new(t!("desktop-import-unknown-detail"), palette).font_size(13.0).muted().render()),
+        (Some(app), Some(peeked)) => body.push(import_preview(app, peeked.as_ref(), palette)),
+        _ => {}
+    }
+    let fold = if state.import_help { Icon::ChevronUp } else { Icon::ChevronDown };
+    let help = Element::row(vec![
+        Text::new(t!("mobile-import-help"), palette).font_size(15.0).render().flex(1.0).centered_y(),
+        Element::icon(fold).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+    ]);
+    body.push(Element::clickable("import-help", help).size(None, Some(44.0))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-import-help")).expanded(state.import_help)));
+    if state.import_help { body.extend(import_guide(state, width - 32.0, palette)); }
+    let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
+    let go = card_button("import-go", t!("common-import"), true).enabled(source.is_some()).render();
+    mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("mobile-settings-import"), t!("mobile-import-detail"), "import-cancel", palette)
+        .max_height(640.0)
+        .body(Element::column(body).gap(12.0))
+        .footer(dialog_footer(cancel, go))
+        .initial_focus("import-link"))
+}
+
+/// The list a link names, as it was read: its name over how many songs and from where; or
+/// that it is being read, or why it could not be.
+fn import_preview(app: crate::state::ImportSource, peeked: Option<&crate::state::Peeked>, palette: ComponentPalette) -> Element {
+    let row = match peeked {
+        None => Element::row(vec![Spinner::new("import-peeking", palette.muted).size(16.0).render().centered_y(),
+            Text::new(t!("desktop-import-reading"), palette).font_size(14.0).muted().render().centered_y()]).gap(10.0),
+        Some(Ok((name, count))) => Element::row(vec![
+            Element::icon(Icon::Playlist).large_icon(22.0).foreground(palette.text).size(Some(22.0), Some(22.0)).centered_y(),
+            Element::column(vec![
+                Text::new(name, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansSemibold),
+                Text::new(format!("{} · {}", songs(*count), app.name()), palette).font_size(13.0).muted().truncate().render(),
+            ]).gap(2.0).flex(1.0).centered_y(),
+        ]).gap(12.0),
+        Some(Err(why)) => Element::row(vec![
+            Element::icon(Icon::WarningTriangle).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+            Text::new(why, palette).font_size(13.0).muted().render().flex(1.0).centered_y(),
+        ]).gap(10.0),
+    };
+    Element::panel(row).background(Color::rgba(255, 255, 255, 18)).radius(14.0).padding(12.0).min_size(0.0, 56.0)
+        .accessible(limn::Access::new(limn::Role::Group).id("import-preview").name(t!("mobile-import-preview")))
 }
 
 /// How wide the import's card stands, the same from its link to its last song.

@@ -79,10 +79,11 @@ fn importing_has_a_touch_field_and_fixed_actions_in_a_short_viewport() {
         for id in ["import-cancel", "import-go", "import-cancel:close"] {
             target(&frame, id, size);
         }
+        // The field leads the sheet: scrolled to its end, the actions stay and the field comes back.
         tree.scroll_to_end("modal_body:import-cancel");
         let frame = tree.layout(size);
-        if size.height == 240.0 {
-            assert!(crate::mobile_input::can_paste(&tree, &frame, "import-link"), "the shorter form keeps its editor visible even at the end");
+        for id in ["import-cancel", "import-go"] {
+            target(&frame, id, size);
         }
         assert!(tree.focus("import-link"));
         tree.reveal("import-link");
