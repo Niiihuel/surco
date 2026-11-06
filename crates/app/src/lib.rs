@@ -1041,7 +1041,10 @@ impl eframe::App for Host {
 /// Which of the phone's sheets is up, the one over the others first.
 fn sheet_up(state: &state::State) -> Option<&'static str> {
     let ui = &state.mobile_ui;
-    [(ui.pipeline, "pipeline"), (ui.picking.is_some(), "picking"), (ui.info.is_some(), "info"), (ui.offset_open, "offset"),
+    [(state.confirm.is_some(), "confirm"), (state.cropping.is_some(), "crop"), (state.sharing.is_some(), "share"),
+        (state.creating.is_some(), "playlist"), (state.profile_draft.is_some(), "profile"), (state.handoff.is_some(), "handoff"),
+        (state.missed_open, "missed"), (state.import_run.is_some() && !state.import_hidden, "import-run"), (state.importing.is_some(), "import"),
+        (ui.pipeline, "pipeline"), (ui.picking.is_some(), "picking"), (ui.info.is_some(), "info"), (ui.offset_open, "offset"),
         (state.sleep_open, "sleep"), (ui.library.is_some(), "library"), (ui.connections, "connections")]
         .into_iter().find(|(up, _)| *up).map(|(_, sheet)| sheet)
 }

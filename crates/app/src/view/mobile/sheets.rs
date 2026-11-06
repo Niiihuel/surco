@@ -60,16 +60,6 @@ fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, 
     Element::stack(vec![base, placed])
 }
 
-/// A sheet in aurora's glass that pops out of what opened it as aurora's panels do, a drop
-/// swelling into it, and melts back into it on closing. Without that place it rises as before.
-fn popped(state: &State, sheet: Element) -> Element {
-    match state.mobile_ui.sheet_from {
-        Some(from) => sheet.popover_morph(from, from.width.min(from.height) / 2.0)
-            .popover_animation_ms(limn::GLASS_POP_OPEN_MS).popover_close_animation_ms(limn::GLASS_POP_CLOSE_MS),
-        None => sheet,
-    }
-}
-
 /// What can be done with a song, grouped as BitChord's menu: liking it, not wanting it and
 /// sharing it across the top; then putting it in a list; playing it; going to where it comes
 /// from; and, for what plays, the timer and the lyrics' step.

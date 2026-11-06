@@ -532,7 +532,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         }
         let cancel = card_button("playlist-cancel", t!("common-cancel"), false).render();
         let create = card_button("playlist-create", t!("desktop-create"), true).render();
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("desktop-new-playlist"),
@@ -544,8 +544,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, create))
         .initial_focus("playlist-name")
-        .return_focus("playlist-new")
-        .render();
+        .return_focus("playlist-new"));
     }
     let palette = Card::palette(GREY_CARD);
     let form = Card::inner(width, 440.0);
@@ -598,8 +597,8 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         let footer = if done { ButtonGroup::new(vec![close]).align_end().render() }
             else { dialog_footer(close, card_button("handoff-push", t!("desktop-handoff-push"), true).enabled(!handoff.pushing).render()) };
         if state.mobile {
-            return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
-                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer).render();
+            return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
+                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer));
         }
         return Card { body: Some(Element::column(body).gap(10.0)), go: (!done).then(|| ("handoff-push", t!("desktop-handoff-push"), !handoff.pushing)), widest: HANDOFF_WIDEST, returns: Some("account"),
             ..Card::new("handoff", t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), ("handoff-close", t!("common-close"))) }
@@ -685,11 +684,10 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         None => ButtonGroup::new(vec![cancel]).align_end().render(),
     };
     if state.mobile {
-        return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
+        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
             .max_height(820.0)
             .body(Element::column(body).gap(16.0))
-            .footer(footer)
-            .render();
+            .footer(footer));
     }
     let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
     Card { body: Some(Element::column(body).gap(10.0)), go: take.then(|| ("handoff-take", t!("desktop-handoff-take"), true)), widest: HANDOFF_WIDEST, returns: Some("account"),
@@ -750,12 +748,11 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let face = Element::column(vec![profile_face(state, DIALOG_FACE, palette).centered_x(), Element::column(choices).gap(4.0)]).gap(8.0);
     let fields = Element::column(vec![name]).flex(1.0);
     if state.mobile {
-        return limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
+        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
             .max_height(560.0)
             .body(Element::column(vec![face.centered_x(), fields]).gap(16.0))
             .footer(dialog_footer(cancel, save))
-            .initial_focus("profile-name")
-            .render();
+            .initial_focus("profile-name"));
     }
     Card { body: Some(Element::row(vec![face, fields]).gap(16.0)), go: Some(("profile-save", t!("desktop-save"), true)), widest: 480.0, focus: Some("profile-name"), returns: Some("profile-edit"),
         ..Card::new("profile", t!("desktop-profile-details"), t!("desktop-profile-details-detail"), ("profile-cancel", t!("common-cancel"))) }
@@ -775,7 +772,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         }
         let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
         let go = card_button("import-go", t!("common-import"), true).render();
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("desktop-import-music"),
@@ -786,8 +783,7 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         .max_height(560.0)
         .body(Element::column(fields).gap(8.0))
         .footer(dialog_footer(cancel, go))
-        .initial_focus("import-link")
-        .render();
+        .initial_focus("import-link"));
     }
     let palette = Card::palette(GREY_CARD);
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).label(t!("desktop-import-list-link")).render();
@@ -839,7 +835,12 @@ fn import_guide(state: &State, width: f32, palette: ComponentPalette) -> Vec<Ele
         step(2, copy),
         step(3, t!("desktop-import-step-paste")),
     ]).gap(18.0).padding(4.0);
-    vec![segments("import-source", width, tabs), steps]
+    // A phone's is aurora's knob, as its other segmented controls.
+    let kinds = if state.mobile {
+        let cells: Vec<(String, &str, bool)> = ImportSource::ALL.into_iter().map(|source| (format!("import-source:{}", source.slug()), source.name(), source == chosen)).collect();
+        mobile::segments(cells.iter().map(|(id, name, on)| (id.as_str(), *name, *on)), limn::Role::Button, "import-source", palette)
+    } else { segments("import-source", width, tabs) };
+    vec![kinds, steps]
 }
 
 /// The songs of a list brought in that the catalog does not have, to be looked for by hand.
@@ -852,7 +853,7 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .collect();
         let copy = card_button("import-missed-copy", t!("desktop-copy-list"), false).icon(Icon::Copy).render();
         let close = card_button("import-missed-close", t!("common-close"), true).render();
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("desktop-missed-title-short"),
@@ -862,8 +863,7 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         )
         .max_height(600.0)
         .body(Element::column(rows).gap(12.0))
-        .footer(dialog_footer(copy, close))
-        .render();
+        .footer(dialog_footer(copy, close)));
     }
     let palette = Card::palette(GREY_CARD);
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
@@ -890,7 +890,7 @@ pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32,
         buttons.extend(failed.as_ref().map(|_| card_button("import-retry", t!("common-retry"), true).render()));
         let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0)
             .footer(ButtonGroup::new(buttons).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render());
-        return match body { Some(body) => sheet.body(body), None => sheet }.render();
+        return mobile::phone_sheet(state, match body { Some(body) => sheet.body(body), None => sheet });
     }
     Card { art: import_art(width), inset_art: false, inline: true, widest: IMPORT_WIDEST, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
         ..Card::new("import-run", title, about, ("import-hide", way_out)) }
@@ -1228,7 +1228,7 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
     if state.mobile {
         let cancel = card_button("confirm-cancel", t!("common-cancel"), false).render();
         let confirm = card_button("confirm-yes", yes, true).render();
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             state.confirm.is_some(),
             t!("desktop-confirm"),
@@ -1239,8 +1239,7 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
         .max_height(480.0)
         .footer(dialog_footer(cancel, confirm))
         .initial_focus("confirm-cancel")
-        .backdrop_dismiss(false)
-        .render();
+        .backdrop_dismiss(false));
     }
     if state.confirm.is_none() { return window_tree; }
     Card { go: Some(("confirm-yes", yes, true)), focus: Some("confirm-cancel"),
@@ -1499,7 +1498,7 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
                 .render(),
         ])
         .gap(12.0);
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("common-share-song"),
@@ -1509,8 +1508,7 @@ fn share_dialog(state: &State, window_tree: Element, width: f32, palette: Compon
         )
         .max_height(640.0)
         .body(body)
-        .footer(copy)
-        .render();
+        .footer(copy));
     }
     let Some(track) = &state.sharing else { return window_tree };
     let palette = Card::palette(GREY_CARD);
@@ -1718,12 +1716,24 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     } else {
         choosable("profile-picture", profile_face(state, side, palette), side, true, palette)
     };
-    let header = Element::row(vec![face, about]).gap(24.0);
+    // A phone's stands centred, as BitChord's pages lead: the face, the name and what it holds.
+    let header = if state.mobile {
+        Element::column(vec![
+            face.centered_x(),
+            Text::new(state.profile.shown(), palette).font_size(28.0).truncate().render().font_family(FontFamily::SansBold).center_content(),
+            Text::new(counts.join(" · "), palette).font_size(14.0).muted().truncate().render().center_content(),
+        ]).gap(8.0)
+    } else { Element::row(vec![face, about]).gap(24.0) };
     let mut sections = vec![header];
-    // A phone has no account menu: what it offers is here.
+    // A phone has no account menu: what it offers is here, as BitChord's rows of places.
     if state.mobile {
-        let action = |id: &str, label: std::borrow::Cow<'static, str>| card_button(id, label, false).render();
-        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see")), action("together", t!("common-together"))]).gap(8.0).wrap().line_gap(8.0));
+        let row = |id: &str, glyph: Icon, label: std::borrow::Cow<'static, str>| mobile::collection::row(id, glyph, &label, palette);
+        sections.push(Element::column(vec![
+            row("profile-edit", Icon::Edit, t!("desktop-profile-edit")),
+            row("replay", Icon::Custom(glyph::REPLAY), t!("common-replay-see")),
+            row("together", Icon::Users, t!("common-together")),
+            row("account-handoff", Icon::Phone, t!("desktop-handoff")),
+        ]));
     } else {
         sections.push(Element::row(vec![card_button("profile-replay", t!("common-replay-see"), false).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).render()]));
     }
@@ -2462,7 +2472,8 @@ fn coming_tiles(state: &State, round: bool, palette: ComponentPalette) -> Vec<El
 
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
     let row = id.clone();
-    let tile = MediaTile::new(id, title, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
+    let tile = MediaTile::new(id, title, if state.mobile { mobile::still(palette) } else { palette })
+        .width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
     // On a desktop a tile is a card whose play button rises under the pointer.
     let tile = if state.mobile { tile } else {
         let sounding = state.player.playing && state.track_at(&row).zip(state.current()).is_some_and(|(track, current)| track.id == current.id);

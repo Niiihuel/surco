@@ -104,25 +104,27 @@ fn spaced(text: &str) -> String {
 /// BitChord's rows under the cards. Surco keeps no local folders or cache to list: its
 /// downloads alone.
 fn rows(palette: ComponentPalette) -> Element {
-    let row = |id: &str, glyph: Icon, label: &str| {
-        let copy = Element::column(vec![
-            Element::row(vec![
-                Text::new(label, palette).font_size(17.0).truncate().render().flex(1.0).centered_y(),
-                Element::icon(Icon::ChevronRight).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
-            ]).gap(8.0).flex(1.0),
-            Element::panel(Element::spacer()).background(ROW_RULE).size(None, Some(0.5)),
-        ]);
-        let glyph = Element::icon(glyph).large_icon(24.0).foreground(palette.text).centered().size(Some(ROW_GLYPH), Some(ROW_HEIGHT));
-        Element::clickable(id, Element::row(vec![glyph, copy.flex(1.0)]).gap(8.0)).accessible(limn::Access::new(limn::Role::Button).name(label))
-            .size(None, Some(ROW_HEIGHT))
-    };
-    Element::column(vec![row("downloads", Icon::Custom(DOWNLOAD), &t!("common-downloads"))])
+    Element::column(vec![row("downloads", Icon::Custom(DOWNLOAD), &t!("common-downloads"), palette)])
+}
+
+/// One of BitChord's rows of places: its glyph, its name and a chevron, over a hairline.
+pub(in crate::view) fn row(id: &str, glyph: Icon, label: &str, palette: ComponentPalette) -> Element {
+    let copy = Element::column(vec![
+        Element::row(vec![
+            Text::new(label, palette).font_size(17.0).truncate().render().flex(1.0).centered_y(),
+            Element::icon(Icon::ChevronRight).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+        ]).gap(8.0).flex(1.0),
+        Element::panel(Element::spacer()).background(ROW_RULE).size(None, Some(0.5)),
+    ]);
+    let glyph = Element::icon(glyph).large_icon(24.0).foreground(palette.text).centered().size(Some(ROW_GLYPH), Some(ROW_HEIGHT));
+    Element::clickable(id, Element::row(vec![glyph, copy.flex(1.0)]).gap(8.0)).accessible(limn::Access::new(limn::Role::Button).name(label))
+        .size(None, Some(ROW_HEIGHT))
 }
 
 /// The lists kept, after a new one, an import and the liked songs, as BitChord's first three.
 fn playlists(state: &State, palette: ComponentPalette) -> Element {
     let made = |id: &str, title: &str, about: Option<String>, face: Element| {
-        let tile = MediaTile::new(id, title, palette).width(TILE_WIDTH).artwork(face);
+        let tile = MediaTile::new(id, title, still(palette)).width(TILE_WIDTH).artwork(face);
         match about { Some(about) => tile.subtitle(about), None => tile }.render()
     };
     let glyph = |glyph: Icon| Element::panel(Element::icon(glyph).large_icon(40.0).foreground(palette.text).centered()).background(SCHEME.raised);

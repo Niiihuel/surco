@@ -43,8 +43,8 @@ pub(crate) fn dialog(state: &State, window_tree: Element, width: f32) -> Element
     if state.mobile {
         let room = (width - 48.0).clamp(200.0, 420.0);
         let footer = dialog_footer(card_button("crop-cancel", t!("common-cancel"), false).render(), card_button("crop-done", t!("common-crop-done"), true).render());
-        return limn::BottomSheet::new(window_tree, true, t!("common-crop-title"), t!("common-crop-detail"), "crop-cancel", palette)
-            .max_height(820.0).body(surface(crop, room, palette)).footer(footer).render();
+        return super::mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("common-crop-title"), t!("common-crop-detail"), "crop-cancel", palette)
+            .max_height(820.0).body(surface(crop, room, palette)).footer(footer));
     }
     Card { body: Some(surface(crop, 360.0, palette)), go: Some(("crop-done", t!("common-crop-done"), true)), widest: 440.0, focus: Some("crop-area"),
         ..Card::new("crop", t!("common-crop-title"), t!("common-crop-detail"), ("crop-cancel", t!("common-cancel"))) }

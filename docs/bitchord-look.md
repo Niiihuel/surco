@@ -194,8 +194,13 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   as aurora's menus do: a small drop for 60 ms, then a spring for each edge (0.26 s, bounce
   0.30) into the menu, its corners and veil forming after a faint bloom, the rows focusing in
   through it from 0.233 to 0.40 s; closing, it shrinks into the drop and melts into the
-  button. The sheets (output, timer, lists, song info, lyrics' step, Audio Pipeline) pop the
-  same way out of whatever opened them. Its right
+  button. Every sheet of the phone (output, timer, lists, song info, lyrics' step, Audio
+  Pipeline, importing, sharing, a new list, the profile's details, moving to another device,
+  cropping a photo, confirmations) is aurora's glass and pops the same way out of whatever
+  opened it. Tiles light no box under a pointer or a press.
+- Profile: the face, the name 28 bold and what the account holds centred over the page's wash,
+  then its actions as the Library's rows: the name, Replay, listening together and moving to
+  another device. Its right
   edge is the button's; it runs down from the button, or ends at the foot and covers it when
   that leaves too little room, as BitChord's does.
 - Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's

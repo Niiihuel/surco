@@ -51,6 +51,26 @@ const GLASS_SMALL: limn::GlassMaterial = limn::GlassMaterial { refraction: 14.0,
 /// aurora's glass shadow: 0 10 40, black at 20%.
 const GLASS_SHADOW: Color = Color::rgba(0, 0, 0, 51);
 
+/// `palette` for a phone's tiles, as BitChord's: no box lights under a pointer or a press.
+pub(in crate::view) fn still(palette: ComponentPalette) -> ComponentPalette {
+    ComponentPalette { hover: Color::TRANSPARENT, selected: Color::TRANSPARENT, ..palette }
+}
+
+/// A sheet in aurora's glass that pops out of what opened it as aurora's panels do, a drop
+/// swelling into it, and melts back into it on closing. Without that place it rises as before.
+pub(in crate::view) fn popped(state: &State, sheet: Element) -> Element {
+    match state.mobile_ui.sheet_from {
+        Some(from) => sheet.popover_morph(from, from.width.min(from.height) / 2.0)
+            .popover_animation_ms(limn::GLASS_POP_OPEN_MS).popover_close_animation_ms(limn::GLASS_POP_CLOSE_MS),
+        None => sheet,
+    }
+}
+
+/// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
+pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
+    popped(state, sheet.glass(GLASS).render())
+}
+
 /// `element` as a pane of aurora's glass with its shadow; `small` for a circle.
 pub(in crate::view) fn pane_of_glass(element: Element, small: bool) -> Element {
     element.glass(if small { GLASS_SMALL } else { GLASS }).shadow(GLASS_SHADOW, limn::Point::new(0.0, 10.0), 40.0, 0.0)
