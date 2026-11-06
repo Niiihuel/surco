@@ -102,7 +102,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if ((state.can_go_back() && !tab) || state.page == Page::Playing) && !banner_head {
         header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
     }
-    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
+    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_)) || artist_coming(state);
     // Put away over a bare video, the controls take the handle with them.
     let bare = state.mobile_ui.controls_away && canvas_ready(state).is_some();
     let copy = if banner_head && bare {
@@ -128,7 +128,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if matches!(state.page, Page::Album(_) | Page::Playlist(_) | Page::Mix(_)) && !state.page_tracks().is_empty() {
         header.push(details::bar_tools(state, palette));
     }
-    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
+    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !artist_coming(state) {
         header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette)));
     }
     let editing = searching && state.mobile_ui.search_editing;
@@ -223,7 +223,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let scroll_top = top_height + if large_title(state) && !field_on_top { MOBILE_LARGE_TITLE } else { 0.0 };
     // An artist's photo runs to the screen's top under a clear header, as BitChord's, until
     // their name has gone up under it.
-    let bleed = matches!(state.page, Page::Artist(_)) && !native_chrome;
+    let bleed = (matches!(state.page, Page::Artist(_)) || artist_coming(state)) && !native_chrome;
     let clear_head = bleed && !state.mobile_ui.compact_header;
     let scroll_top = if bleed { 0.0 } else { scroll_top };
     let header_edge = if clear_head { Color::TRANSPARENT } else { header_edge };
@@ -257,6 +257,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
     super::wrapped::story(state, dialogs(state, tree, window, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
+}
+
+/// Whether an artist's page is on its way, drawn as theirs is.
+fn artist_coming(state: &State) -> bool {
+    matches!(state.page, Page::Loading(crate::backend::Target::Artist(_)))
 }
 
 /// BitChord's Explore: the catalog's moods and genres two to a row, each a card of its colour

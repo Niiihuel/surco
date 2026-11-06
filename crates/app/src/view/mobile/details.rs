@@ -204,20 +204,7 @@ pub(in crate::view) fn artist(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
-    // BitChord's: the photo across the whole screen from its top edge, under the header, a
-    // little taller than wide, dissolving into the page's colour with the name centred over
-    // its foot in Display.
-    let tall = (width / 0.95).round();
-    let tone = artist.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
-    // On one line where it can be, as BitChord's logo stands: Display's letters run about
-    // 0.72 of their size wide. A name too long for even the smallest wraps.
-    let size = ((width - 2.0 * GUTTER) / (artist.name.chars().count().max(1) as f32 * DISPLAY_ADVANCE)).clamp(ARTIST_NAME_LEAST, ARTIST_NAME);
-    let name = Text::new(&artist.name, palette).font_size(size).line_height(size * 1.15).render()
-        .font_family(FontFamily::Display).center_content().anchor("mobile-detail-title");
-    let fade = Element::column(vec![Element::spacer().flex(1.0), name]).padding(GUTTER)
-        .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.5).round()));
-    let hero = Element::stack(vec![sole_cover(state, &artist.artwork_url, tall, palette).size(Some(width), Some(tall)),
-        Element::column(vec![Element::spacer().flex(1.0), fade])]).size(Some(width), Some(tall)).clip_children();
+    let hero = artist_hero(state, &artist.name, &artist.artwork_url, width, palette);
     let mut sections = Vec::new();
     let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
     sections.push(if artist.songs.is_empty() {
@@ -250,6 +237,44 @@ pub(in crate::view) fn artist(
     }
     // The photo is outside the gutters, and the page starts at the screen's top under it.
     ScrollArea::new("mobile-artist", Element::column(vec![hero, Element::column(sections).gap(24.0).padding(GUTTER)])).render().flex(1.0)
+}
+
+/// BitChord's: the photo across the whole screen from its top edge, under the header, a
+/// little taller than wide, dissolving into the page's colour with the name centred over its
+/// foot in Display.
+fn artist_hero(state: &State, name: &str, artwork: &Option<String>, width: f32, palette: ComponentPalette) -> Element {
+    let tall = (width / 0.95).round();
+    let tone = artwork.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
+    // On one line where it can be, as BitChord's logo stands: Display's letters run about
+    // 0.72 of their size wide. A name too long for even the smallest wraps.
+    let size = ((width - 2.0 * GUTTER) / (name.chars().count().max(1) as f32 * DISPLAY_ADVANCE)).clamp(ARTIST_NAME_LEAST, ARTIST_NAME);
+    let name = Text::new(name, palette).font_size(size).line_height(size * 1.15).render()
+        .font_family(FontFamily::Display).center_content().anchor("mobile-detail-title");
+    let fade = Element::column(vec![Element::spacer().flex(1.0), name]).padding(GUTTER)
+        .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.5).round()));
+    let photo = match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
+        Some(_) => sole_cover(state, artwork, tall, palette),
+        None => limn::Skeleton::new("artist-coming", palette).render(),
+    };
+    Element::stack(vec![photo.size(Some(width), Some(tall)), Element::column(vec![Element::spacer().flex(1.0), fade])])
+        .size(Some(width), Some(tall)).clip_children()
+}
+
+/// An artist's page while it comes, as BitChord's: their photo and name where they are known
+/// from where they were chosen, and the buttons, the newest release and the songs pulsing in
+/// their places.
+pub(in crate::view) fn artist_coming(state: &State, id: &str, width: f32, palette: ComponentPalette) -> Element {
+    let known = state.found.artists.iter().chain(state.collection.artists().map(|(_, artist)| artist)).find(|artist| artist.id == id);
+    let (name, artwork) = known.map_or((String::new(), None), |artist| (artist.name.clone(), artist.artwork_url.clone()));
+    let pulse = |across: Option<f32>, tall: f32, radius: f32| limn::Skeleton::new("artist-coming", palette).render().radius(radius).size(across, Some(tall));
+    let circles = Element::row(vec![pulse(Some(ARTIST_DISC), ARTIST_DISC, ARTIST_DISC / 2.0), pulse(Some(70.0), 70.0, 35.0),
+        pulse(Some(ARTIST_DISC), ARTIST_DISC, ARTIST_DISC / 2.0)]).gap(24.0).centered_x();
+    let row = || Element::row(vec![pulse(Some(48.0), 48.0, 8.0), Element::column(vec![pulse(Some(180.0), 14.0, 7.0), pulse(Some(110.0), 12.0, 6.0)])
+        .gap(8.0).centered_y()]).gap(12.0);
+    let mut sections = vec![circles, pulse(None, RELEASE_ART + 24.0, 20.0), pulse(Some(160.0), 24.0, 12.0)];
+    sections.extend((0..4).map(|_| row()));
+    ScrollArea::new("mobile-artist", Element::column(vec![artist_hero(state, &name, &artwork, width, palette),
+        Element::column(sections).gap(24.0).padding(GUTTER)])).render().flex(1.0)
 }
 
 /// BitChord's newest release card under an artist's buttons: the cover, what it is and its
@@ -465,6 +490,17 @@ mod tests {
                 "{text:?} fits {width}px: {position:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_artist_on_their_way_shows_their_name_from_where_they_were_chosen() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.found.artists.push(surco_core::ArtistRef { id: "chosen".into(), name: "Coldplay".into(), subscribers: None, artwork_url: None });
+        let mut tree = UiTree::new(artist_coming(&state, "chosen", 390.0, SCHEME.palette()));
+        tree.set_text_measurer(|text, font_size, _| text.chars().count() as f32 * font_size * 0.5);
+        let frame = tree.layout(Size::new(390.0, 2400.0));
+        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::Text { text, .. } if text.contains("Coldplay"))));
     }
 
     #[test]

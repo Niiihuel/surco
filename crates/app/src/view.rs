@@ -3078,6 +3078,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, width, palette),
+        Page::Loading(crate::backend::Target::Artist(id)) if state.mobile => mobile::details::artist_coming(state, id, width, palette),
         Page::Loading(_) => loading("opening", palette),
         Page::Mood(params) => mobile::mood_page(state, params, width, palette),
         Page::Failed(_, message) => centered(blank(Icon::WarningTriangle, t!("desktop-open-failed"), message, Some(("retry", t!("common-retry"))), palette)),

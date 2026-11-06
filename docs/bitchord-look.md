@@ -96,7 +96,8 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   BitChord has the artist's logo, which Surco does not have); a 70 Play circle between 52
   shuffle and follow circles. Then the newest release on a card (96 cover, corners 12, what
   it is and its year over its name in 20 bold, on white at 6%, corners 20), "Top songs" 24
-  bold, and the albums and singles shelves.
+  bold, and the albums and singles shelves. While it comes, its photo and name stand where
+  they are known from where the artist was chosen, and the rest pulses in its places.
 - A photo picked for the profile or a playlist is cropped before it is kept, on the desktop,
   the phone and the TV alike: the whole photo with the square over it (round for a face),
   the rest dimmed, moved by a press, a drag or the arrows, its size by a slider; the square
