@@ -696,6 +696,8 @@ impl eframe::App for Host {
         match self.state.screening().map(|(name, footage, showing)| (name, footage.clone(), showing)) {
             Some((name, footage, showing)) => {
                 let fit = match showing {
+                    // A phone's player stands on it across the whole screen.
+                    _ if self.state.mobile => clip::Fit::Canvas { width: window.width, height: window.height },
                     clip::Showing::Large => {
                         let room = view::cinema_room(window);
                         clip::Fit::Whole { width: view::cinema_picture(&footage.large.0, window).width, room: (room.width, room.height) }
@@ -752,7 +754,7 @@ impl eframe::App for Host {
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
             let input = self.touch.translate(&raw, input, area.min, &input_frame,
-                state::mobile::is_sheet_handle);
+                |id| state::mobile::is_sheet_handle(id) || id.starts_with(state::mobile::QUEUE_GRIP));
             self.motion.filter(&raw, input, &self.state, mobile_motion::DragArea {
                 frame: &input_frame, origin: area.min, size: window,
                 scroll: self.tree.scroll_offset("mobile-playing"),
@@ -871,7 +873,7 @@ impl eframe::App for Host {
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); acted = true; }
         let now = Instant::now();
-        let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient();
+        let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient() || self.state.cover_moving();
         let commands = self.motion.advance(&mut self.state, window, now);
         acted |= !commands.is_empty();
         self.send(commands);
@@ -994,9 +996,10 @@ impl eframe::App for Host {
         } else if !on_screen() {
             // Behind the lock screen nothing animates; the next frame waits for the return.
         // The lyrics' fill moves every frame, as BitChord's does on each of the display's.
-        } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) || self.state.lyrics_fill() {
+        // So does the cover on its way into the lyrics' head, from the press that sends it.
+        } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) || self.state.lyrics_fill() || self.state.cover_moving() {
             ctx.request_repaint();
-        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves()).then_some(AMBIENT_FRAME)) {
+        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves() || self.state.signal_runs()).then_some(AMBIENT_FRAME)) {
             (Some(own), Some(ambient)) => Some(own.min(ambient)),
             (own, ambient) => own.or(ambient),
         } {
@@ -1374,7 +1377,7 @@ mod press_tests {
         state.show(crate::player::PlayerView { current: Some(track), playing: true, position: 12.0, duration: 200.0, ..Default::default() });
         state.lyrics = Some(("a".into(), state::Lyrics::Lines((0..20).map(|i| Line { words: Vec::new(), at_ms: i * 3_000, text: format!("line {i}") }).collect())));
         let window = Size::new(390.0, 844.0);
-        for id in ["play-pause", "repeat", "shuffle", "next"] {
+        for id in ["play-pause", "previous", "next", "lyrics"] {
             let mut tree = UiTree::new(Element::spacer());
             let mut seen = None;
             let frame = layout_with_notice(&mut state, &mut tree, window, &mut seen);

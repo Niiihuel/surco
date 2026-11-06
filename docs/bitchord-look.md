@@ -78,25 +78,69 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 
 ## Phone player
 
-- Background: the cover blurred over the whole screen under BitChord's black scrim of 0.34 →
-  0.48 → 0.64, which gives its screens' greys over the same cover (measured within 3 of 255).
-  The lyrics, and a near-white cover's player, keep a deeper 0.47 → 0.80 for white words.
-  limn has no blur: the cover is drawn tiny and stretched, which blurs it the same way.
+- The song's video behind the player, as BitChord's over a Spotify Canvas: the whole of it
+  where it lasts what the song does (720 lines, in time with it), else an 8-second stretch
+  turning over, cut to fill the screen. From its first frame it fades in over the cover, under
+  a black of 50% (measured: white reads 128); its lower 56% is drawn again blurred, fading in
+  over the first 28% of that, for the controls to stand on (BitChord's 48-point haze; here the
+  frame's foot 24 pixels across, stretched). A tap on the bare video puts the controls, the
+  black and the blur away, leaving the song at its foot over a shade; another tap, or the next
+  song, brings them back. Videos follow the setting that turns them off on the desktop.
+- Background without a video: the cover blurred over the whole screen under BitChord's black
+  scrim of 0.34 → 0.48 → 0.64, which gives its screens' greys over the same cover (measured
+  within 3 of 255). The lyrics, the queue and a near-white cover's player keep a deeper
+  0.47 → 0.80 for white words. limn has no blur: the cover is drawn tiny and stretched.
 - The cover runs edge to edge across the top, under the status bar, as BitChord's full-bleed
   banner: square, taller where the controls would only spread more than 24 each side of the
   transport (its sides then cut), shorter where they need the room. Its bottom 42% dissolves
   into the blurred ground along smootherstep (limn's `RasterImage::dissolve_bottom`). A shade
-  over its top keeps the handle (a 36 × 5 grip over "Now playing") and the system's bar legible.
+  over its top keeps the handle (a 36 × 5 grip over "Playing from …": where it was started, or
+  else its album) and the system's bar legible.
+- The player comes down from anywhere on it but a list that has scrolled.
 - 30 gutters, at most 560 wide. Under the banner, the stream as the backend picked it
-  (`Opus · 141 kbps · 48 kHz`) 12 at 55%; title 20 white over artist 18/500 at 55%, with a like
-  and a ⋯ circle of 34; the line being sung, 15 at 80% with a chevron, opening the lyrics.
-- Scrubber: a capsule without a thumb, 7 tall (12 while dragged), played white at 92%, the
-  rest at 26%. Times 12/600 at 55%.
-- Transport: two-triangle skips 42 in 52 targets, play 56 in 72, shuffle and repeat at the sides.
-  Surco's volume under it, a capsule as the scrubber between its quiet and loud glyphs. Lyrics
-  and queue glyphs at the foot, around the output button and the timer, and the device's name
-  under them where it is known.
-- Lyrics and queue open in place: the artwork shrinks into a 54 thumbnail in a 60 header.
+  (`Opus · 141 kbps · 48 kHz`) 12 at 65%; title 20 white over artist 18/500 at 55%, with a like
+  and a ⋯ circle of 34 (the like lit at 70% once liked); the line being sung, 15 at 80% with a
+  chevron, opening the lyrics. No quality badge between the times: BitChord shows none under
+  320 kbps, and Surco's streams are lossy.
+- Scrubber: a capsule 7 tall (12 while dragged), round at both ends and where it is filled to,
+  played white at 92%, the rest at 26%. Times 12/600 at 55%, 16 under the bar's middle.
+- Transport: two-triangle skips flattened to 47 × 26 in 53 targets, play 37 tall in 84, over
+  the foot's outer glyphs. Volume under it, a capsule 6 tall (10 dragged) between quiet and
+  loud glyphs of 20 at 50%. The foot: lyrics, output (a pair of earbuds) and queue, 26 at 75%,
+  at a fifth, the middle and four fifths across; the one open lit Apple's way, a 35 tile white
+  at 62% (corners 7) with the glyph dark on it. The device's name under them where it is known.
+  The sleep timer is in what plays's ⋯, named.
+- Lyrics and queue open in the player on one shell: the grip over the song as the player names
+  it beside its 54 cover, and the player's controls below (the queue's line being sung, or the
+  lyrics' translation button, over the scrubber, the transport, the volume and the foot). A
+  screen under 500 tall keeps a way back beside a 40 cover, and the scrubber and transport.
+- The queue: its name 22 bold, "Now playing" (17, secondary) over what plays with its sound and
+  a cross that skips it, then what was queued by hand and what follows under "AutoPlay" (when
+  the catalog picked it) or "Next up"; 58 rows of a 44 cover, a grip that moves the row where
+  it is let go and a cross that takes it out. While it is open the foot's middle is a capsule
+  of shuffle, repeat and autoplay, 64 a segment, the ones on lit; the foot's outer glyphs open
+  to 13 from the sides around it.
+- Motion: opening the lyrics or the queue shrinks the player's cover from its banner into the
+  head's 54 thumbnail in 330 ms (out-cubic), its corners rounding to 8, while the song's row
+  glides up; closing grows it back. Coming down, the player takes its cover into the mini
+  player's 40 thumbnail at the pace it moves, a finger's too; rising, it grows from there.
+  The video gives way to the still cover while it travels.
+- The output sheet, as BitChord's: cards 64 tall, 16 round, white at 6% (10% for where it
+  plays, ticked): this phone, the route iOS names when it is elsewhere, AirPlay and Bluetooth
+  where the system has routes, listening together, the volume (a 6 capsule), and "Audio
+  Pipeline", the device's format under it.
+- Audio Pipeline: a grey (#2C2C2E) card 340 at most, its name and what it is centred, then
+  stations on a line a light runs down every 2.4 s (still in a screenshot or with movement
+  reduced): the track (where it comes from, the stream), the decoder (libopus or symphonia,
+  its rate and channels), the resampler (rodio, or passthrough where the rates agree), DSP
+  (equaliser, normalisation, mono, crossfade, volume) and the output (the device as the
+  system names it, the audio API, its format, and iOS's route), all as the engine reports
+  them. "Done" under a hairline.
+- The song's menu, grouped as BitChord's: like, dislike and share across the top; add to a
+  playlist (which offers the lists); radio, play next, add to queue, download; album, artist,
+  song info; and for what plays, the timer and the lyrics' step (half a second each way,
+  back to 0 with the next song). A song disliked is skipped when it comes and kept out of
+  the picks. Still a sheet: the glass that opens from its button waits for limn's.
 - Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's
   website demo: `bitchord.kushagrasingh.in`). Lines away from it fade to 0.8, 0.7, 0.58,
   0.46, blur and step back to 0.98; what was sung stays lit, what is to come is at 45%.

@@ -97,6 +97,8 @@ pub enum Command {
     FindArtists { key: String, queries: Vec<String> },
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
+    /// Play a track and what its radio brings after it, as a station of its own.
+    StartRadio(Track),
     /// What played when the app was last closed: the list from its current track on, held
     /// paused so many seconds in until it is played. Nothing is fetched before then.
     Session { tracks: Vec<Track>, position: f64 },
@@ -719,6 +721,16 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
 /// Answers what needs no player and hands the rest to it.
 fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: &mut Player, command: Command) -> Vec<Effect> {
     match (command, shared) {
+        (Command::StartRadio(track), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                // Without an answer the song plays alone, as a radio of one.
+                let radio = shared.youtube.radio(&track.id).await.unwrap_or_default();
+                let tracks = std::iter::once(track.clone()).chain(radio.into_iter().filter(|other| other.id != track.id)).collect();
+                let _ = shared.inputs.send(Input::Command(Box::new(Command::PlayList { tracks, index: 0 })));
+            });
+        }
+        (Command::StartRadio(track), Err(_)) => return handle(shared, reply, player, Command::PlayList { tracks: vec![track], index: 0 }),
         (Command::Search(query), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {

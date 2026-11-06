@@ -64,7 +64,7 @@ fn library_sheet_actions_fit_and_the_shared_drag_closes_it() {
     click(&mut state, "library-more:artist:held");
     for width in [320.0, 390.0, 430.0] {
         let size = Size::new(width, 360.0);
-        let mut tree = UiTree::new(render(&state, Element::spacer(), SCHEME.palette()));
+        let mut tree = UiTree::new(render(&state, Element::spacer(), 390.0, SCHEME.palette()));
         tree.set_reduced_motion(true);
         tree.layout(size);
         for id in ["library-action:open", "library-action:pin", "library-action:remove", "mobile-library-close:close"] {

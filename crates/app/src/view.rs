@@ -2717,6 +2717,12 @@ pub(crate) fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Opti
         actions.push(item("album", t!("desktop-go-to-album"), include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
     }
     actions.push(item("artist", t!("desktop-go-to-artist"), include_str!("../assets/icons/user-round.svg"), Some(track.artist.clone())));
+    // A phone's player has no timer of its own: BitChord's is in what plays's ⋯, named.
+    if state.mobile && row == "current" {
+        actions.push(None);
+        let left = state.player.sleep.is_some().then(|| sleep_hint(state));
+        actions.push(item("sleep", t!("desktop-sleep"), glyph::SLEEP, left));
+    }
     actions.push(None);
     actions.push(if state.is_saved(&track.id) {
         item("unsave", t!("desktop-remove-download"), include_str!("../assets/icons/trash-2.svg"), None)
@@ -4176,10 +4182,6 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
         .iter()
         .enumerate()
         .map(|(index, track)| {
-            if state.mobile {
-                let subtitle = if state.player.picks.contains(&track.id) { format!("{} · {}", track.artist, t!("desktop-recommended")) } else { track.artist.clone() };
-                return mobile::track_row(state, format!("upcoming:{index}"), track, &subtitle, palette);
-            }
             let row = ListRow::new(format!("upcoming:{index}"), &track.title, palette)
                 .sizing(TRACK_ROW)
                 .leading(middle(cover(state, &track.artwork_url, COVER, palette)))
@@ -4188,8 +4190,8 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
                 .title_fade(true)
                 .radius(RadiusRole::Card)
                 .render();
-            // A finger pans the queue; desktop pointers can reorder its rows.
-            let row = if state.mobile { row } else { row.draggable().drop_target() };
+            // A phone's queue is its own, in the player; here pointers reorder its rows.
+            let row = row.draggable().drop_target();
             let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), t!("desktop-remove-from-queue")).icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
             let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], menu_palette()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.

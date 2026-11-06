@@ -29,6 +29,9 @@ pub enum Fit {
     /// Filling a box of this width and height: the frame's middle at its proportions.
     Cover { width: f32, height: f32 },
     Whole { width: f32, room: (f32, f32) },
+    /// Filling a phone's screen of this width and height, as Spotify's Canvas in BitChord's
+    /// player, with the foot of it also given blurred for the controls to stand on.
+    Canvas { width: f32, height: f32 },
 }
 
 /// Where the song is, as the window last knew it.
@@ -76,6 +79,10 @@ impl Shared {
         let fit = *self.fit.lock().unwrap();
         let laid = match fit {
             Fit::Cover { width, height } => covered(frame, width, height),
+            Fit::Canvas { width, height } => {
+                *self.backdrop.lock().unwrap() = deck(frame, width, height);
+                covered(frame, width, height)
+            }
             Fit::Whole { width, room } => {
                 *self.backdrop.lock().unwrap() = glow(frame, room);
                 SurfaceFrame::from_rgba([frame.width, frame.height], &frame.rgba, frame.width as f32 / width.max(1.0))
@@ -121,7 +128,7 @@ impl Screen {
         self.shared.frame.lock().unwrap().take()
     }
 
-    /// The newest glow for behind the frame, once.
+    /// The newest glow for behind the frame, or the blurred foot for over a canvas, once.
     pub fn take_backdrop(&self) -> Option<SurfaceFrame> {
         self.shared.backdrop.lock().unwrap().take()
     }
@@ -249,6 +256,12 @@ fn keep_time(film: &Film, url: &str, shared: &Shared, repaint: &impl Fn()) {
 /// How many pixels across the glow is, and how much of the frame's light it keeps.
 const GLOW_ACROSS: usize = 32;
 const GLOW_LIGHT: f32 = 0.45;
+/// The foot of a canvas the controls stand on, as BitChord's deck: its share of the screen,
+/// the share of it the blur fades in over from its top, and how many pixels across it is,
+/// each running into the next as BitChord's 48-point blur does.
+pub const DECK: f32 = 0.56;
+const DECK_FADE: f32 = 0.28;
+const DECK_ACROSS: usize = 24;
 
 /// The frame as a glow to stand behind it where it does not fill its room: its middle at
 /// the room's proportions, a few pixels across and dimmed. Drawn as large as the room,
@@ -260,32 +273,67 @@ fn glow(frame: &Frame, room: (f32, f32)) -> Option<SurfaceFrame> {
     }
     // Rounded up: it is drawn at the room's width, and must not end short of its floor.
     let down = ((GLOW_ACROSS as f32 * tall / across).ceil() as usize).max(1);
-    // The part of the frame that has the room's proportions.
-    let wide = frame.width as f32 / frame.height as f32 > across / tall;
-    let (taken_across, taken_down) = if wide { ((frame.height as f32 * across / tall) as usize, frame.height) } else { (frame.width, (frame.width as f32 * tall / across) as usize) };
-    let (left, top) = ((frame.width - taken_across.min(frame.width)) / 2, (frame.height - taken_down.min(frame.height)) / 2);
-    // Where sample `nth` of five around glow pixel `at` falls among `taken` frame pixels:
-    // the five reach into the pixels beside it, so that neighbours share what they show.
+    // Its last rows thin out, down to the bar under the room.
+    let shown = |row: usize| ((down - row) as f32 / (down as f32 * 0.12)).min(1.0);
+    let rgba = soften(frame, middle(frame, across / tall), (GLOW_ACROSS, down), GLOW_LIGHT, shown)?;
+    SurfaceFrame::from_rgba([GLOW_ACROSS, down], &rgba, GLOW_ACROSS as f32 / across)
+}
+
+/// The foot of the frame as it covers a screen `width` by `height`, blurred, its top
+/// fading in: drawn across the screen's lower `DECK`, under the player's controls.
+fn deck(frame: &Frame, width: f32, height: f32) -> Option<SurfaceFrame> {
+    let (size, rgba) = deck_pixels(frame, width, height)?;
+    SurfaceFrame::from_rgba(size, &rgba, size[0] as f32 / width)
+}
+
+/// The deck's size and its straight-alpha pixels.
+fn deck_pixels(frame: &Frame, width: f32, height: f32) -> Option<([usize; 2], Vec<u8>)> {
+    if width < 1.0 || height < 1.0 || frame.width == 0 || frame.height == 0 {
+        return None;
+    }
+    let tall = height * DECK;
+    let down = ((DECK_ACROSS as f32 * tall / width).ceil() as usize).max(1);
+    let (left, top, across, taken) = middle(frame, width / height);
+    let foot = (taken as f32 * DECK) as usize;
+    let shown = |row: usize| (row as f32 + 0.5) / (down as f32 * DECK_FADE);
+    Some(([DECK_ACROSS, down], soften(frame, (left, top + taken - foot, across, foot), (DECK_ACROSS, down), 1.0, shown)?))
+}
+
+/// The part of a frame at the proportions `aspect` (width over height), from its middle:
+/// its left and top, and how many pixels across and down.
+fn middle(frame: &Frame, aspect: f32) -> (usize, usize, usize, usize) {
+    let wide = frame.width as f32 / frame.height as f32 > aspect;
+    let (across, down) = if wide { ((frame.height as f32 * aspect) as usize, frame.height) } else { (frame.width, (frame.width as f32 / aspect) as usize) };
+    let (across, down) = (across.clamp(1, frame.width), down.clamp(1, frame.height));
+    ((frame.width - across) / 2, (frame.height - down) / 2, across, down)
+}
+
+/// `columns` by `rows` pixels of the frame's part `taken` (its left, top, and pixels across
+/// and down), each the mean of 25 around it, its light times `light` and row `nth` as opaque
+/// as `shown(nth)`, from 0 to 1.
+fn soften(frame: &Frame, taken: (usize, usize, usize, usize), (columns, rows): (usize, usize), light: f32, shown: impl Fn(usize) -> f32) -> Option<Vec<u8>> {
+    let (left, top, taken_across, taken_down) = taken;
+    // Where sample `nth` of five around pixel `at` falls among `taken` frame pixels: the five
+    // reach into the pixels beside it, so that neighbours share what they show.
     let place = |at: usize, nth: usize, of: usize, taken: usize| (((at as f32 + 0.5 + (nth as f32 - 2.0) * 0.6) / of as f32).clamp(0.0, 1.0) * taken.saturating_sub(1) as f32) as usize;
-    let mut rgba = Vec::with_capacity(GLOW_ACROSS * down * 4);
-    for row in 0..down {
-        // Its last rows thin out, down to the bar under the room.
-        let shown = ((down - row) as f32 / (down as f32 * 0.12)).min(1.0);
-        for column in 0..GLOW_ACROSS {
-            let mut light = [0.0f32; 3];
+    let mut rgba = Vec::with_capacity(columns * rows * 4);
+    for row in 0..rows {
+        let opacity = (shown(row).clamp(0.0, 1.0) * 255.0) as u8;
+        for column in 0..columns {
+            let mut sum = [0.0f32; 3];
             for sample in 0..25 {
-                let x = (left + place(column, sample % 5, GLOW_ACROSS, taken_across)).min(frame.width - 1);
-                let y = (top + place(row, sample / 5, down, taken_down)).min(frame.height - 1);
+                let x = (left + place(column, sample % 5, columns, taken_across)).min(frame.width - 1);
+                let y = (top + place(row, sample / 5, rows, taken_down)).min(frame.height - 1);
                 let pixel = frame.rgba.get((y * frame.width + x) * 4..)?;
-                for (sum, value) in light.iter_mut().zip(pixel) {
-                    *sum += f32::from(*value);
+                for (total, value) in sum.iter_mut().zip(pixel) {
+                    *total += f32::from(*value);
                 }
             }
-            rgba.extend(light.map(|sum| (sum / 25.0 * GLOW_LIGHT) as u8));
-            rgba.push((shown * 255.0) as u8);
+            rgba.extend(sum.map(|total| (total / 25.0 * light) as u8));
+            rgba.push(opacity);
         }
     }
-    SurfaceFrame::from_rgba([GLOW_ACROSS, down], &rgba, GLOW_ACROSS as f32 / across)
+    Some(rgba)
 }
 
 /// The middle square of a frame, said to be as dense as it takes to fill `side`: the
@@ -326,5 +374,22 @@ mod tests {
         let glow = glow(&frame, (1600.0, 800.0)).unwrap();
         assert_eq!(glow.size(), [GLOW_ACROSS, GLOW_ACROSS / 2]);
         assert!(super::glow(&frame, (0.0, 800.0)).is_none() && super::glow(&Frame { width: 0, height: 0, rgba: Vec::new() }, (16.0, 9.0)).is_none());
+    }
+
+    #[test]
+    fn a_canvas_deck_is_the_foot_of_the_picture_blurred_fading_in_from_its_top() {
+        // A wide frame, red over its top 70 rows and blue under them.
+        let (width, height) = (160, 100);
+        let rgba: Vec<u8> = (0..height).flat_map(|row| [if row < 70 { [255, 0, 0, 255] } else { [0, 0, 255, 255] }].repeat(width)).flatten().collect();
+        let frame = Frame { width, height, rgba };
+        let (size, rgba) = deck_pixels(&frame, 390.0, 844.0).unwrap();
+        let rows = (DECK_ACROSS as f32 * 844.0 * DECK / 390.0).ceil() as usize;
+        assert_eq!(size, [DECK_ACROSS, rows], "the screen's foot at its proportions");
+        let pixel = |row: usize| { let at = (row * DECK_ACROSS + DECK_ACROSS / 2) * 4; &rgba[at..at + 4] };
+        assert!(pixel(0)[3] < 20, "its top fades in: {:?}", pixel(0));
+        assert_eq!(pixel(rows / 2)[3], 255, "opaque past the fade");
+        let foot = pixel(rows - 1);
+        assert!(foot[2] > 200 && foot[0] < 20, "the picture's foot, not its top: {foot:?}");
+        assert!(deck(&frame, 0.0, 844.0).is_none());
     }
 }

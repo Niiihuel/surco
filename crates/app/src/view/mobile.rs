@@ -10,6 +10,7 @@ pub(super) mod lyrics;
 mod chrome;
 pub(super) mod controls;
 mod sheets;
+mod queue;
 pub(super) mod details;
 pub(super) mod settings;
 #[cfg(test)]
@@ -38,6 +39,10 @@ const FROST: Color = Color::rgb(24, 24, 26);
 const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
 /// The hairline every thumbnail keeps, so a dark cover does not sink into the page.
 pub(in crate::view) const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
+/// The black over a phone's video while its controls stand on it, as BitChord's 50%, and
+/// the shade at its foot under the song's name once they are put away.
+const CANVAS_DIM: Color = Color::rgba(0, 0, 0, 128);
+const CANVAS_FOOT: Color = Color::rgba(0, 0, 0, 115);
 /// The chosen tab's platter.
 const TAB_LIT: Color = Color::rgba(255, 255, 255, 36);
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
@@ -76,6 +81,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let width = (window.width - insets.left - insets.right).max(TAP);
     let surface = page_surface(state);
     let searching = state.page == Page::Search && state.mobile_search;
+    // BitChord's queue opens in the player, on the lyrics' shell: the song above, its controls below.
+    let queue = state.page == Page::Playing && state.queue_open;
     let title = title(state);
     let mut header = Vec::new();
     // Where a tab starts there is no way back, as Spotify's on a phone: the account's face is
@@ -95,7 +102,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
     }
     let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
-    let copy = if banner_head {
+    // Put away over a bare video, the controls take the handle with them.
+    let bare = state.mobile_ui.controls_away && canvas_ready(state).is_some();
+    let copy = if banner_head && bare {
+        Element::spacer()
+    } else if banner_head {
         player_handle(&title, palette)
     } else if detail && !state.mobile_ui.compact_header {
         // The page's own heading names it under its cover; the bar does once that has scrolled away.
@@ -108,9 +119,6 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Text::new(title.as_ref(), palette).font_size(size).truncate().render().font_family(FontFamily::SansBold)
     };
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
-    if state.page == Page::Playing && state.queue_open {
-        header.push(icon("queue", Icon::Playlist, &if state.queue_open { t!("mobile-back-to-song") } else { t!("mobile-show-queue") }, palette));
-    }
     if state.page == Page::Library {
         header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
     }
@@ -126,12 +134,12 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     // Under Liquid Glass the field floats at the foot, as Apple Music's, below a plain header.
     let field_on_top = search_in_header(state);
-    let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
+    let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else if state.page == Page::Lyrics || queue { lyrics::head_height(window.height) } else { HEADER_HEIGHT };
     // UIKit draws the header and tabs over these slots outside the song pages.
     let native_chrome = state.mobile_ui.native_bars && state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
         Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title.as_ref()))
-    } else if state.page == Page::Lyrics { lyrics::header(state, palette) }
+    } else if state.page == Page::Lyrics || queue { lyrics::header(state, window.height, palette) }
         else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
     let mut top = vec![Element::spacer().size(None, Some(insets.top)), header];
@@ -140,15 +148,17 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         top.push(search::field(state, palette));
         top_height += search::FIELD_HEIGHT;
     }
-    let mut content = if state.page == Page::Playing && state.queue_open {
-        upcoming(state, palette)
+    let mut content = if queue {
+        queue::content(state, palette)
     } else if searching {
         search::content(state, width, palette)
     } else if state.page == Page::Search {
         home::content(state, width, palette)
     } else if state.page == Page::Lyrics {
         // What the lines are seen through, between the header and the transport.
-        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(window.height), palette)
+        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(state, window.height), palette)
+    } else if state.page == Page::Playing && bare {
+        player::bare(state, width, palette)
     } else if state.page == Page::Playing {
         player::screen(state, width, window, top_height, palette)
     } else {
@@ -163,9 +173,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let mut bottom_height = insets.bottom;
     // The tab bar floats off the foot, by at least 15 where the system leaves no inset.
     let mut lift = insets.bottom;
-    if state.page == Page::Lyrics {
+    if state.page == Page::Lyrics || queue {
         bottom.push(lyrics::footer(state, window.height, palette));
-        bottom_height += lyrics::footer_height(window.height);
+        bottom_height += lyrics::footer_height(state, window.height);
     } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
             bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, width, palette) });
@@ -207,7 +217,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let scroll_top = top_height + if large_title(state) && !field_on_top { MOBILE_LARGE_TITLE } else { 0.0 };
     // limn fades an edge into a colour, which the blurred cover has none of: over it the lines
     // are cut between the bars instead of passing under them.
-    let content = if ground.is_some() && state.page == Page::Lyrics {
+    let content = if ground.is_some() && (state.page == Page::Lyrics || queue) {
         Element::column(vec![Element::spacer().size(None, Some(scroll_top)), content.flex(1.0), Element::spacer().size(None, Some(bottom_height))])
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
@@ -222,11 +232,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
     let content = Element::stack(vec![content, bars]);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
+    let content = match flying_cover(state, window) { Some(cover) => Element::stack(vec![cover, content]), None => content };
+    let content = match player_canvas(state, window) { Some(canvas) => Element::stack(vec![canvas, content]), None => content };
     let content = match player_banner(state, window) { Some(banner) => Element::stack(vec![banner, content]), None => content };
     let content = match ground { Some(ground) => Element::stack(vec![ground, content]), None => content };
     let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
         .size(Some(window.width), Some(window.height));
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
+    // The cover goes its own way as the player comes down, into the mini player's thumbnail.
+    let tree = match docking_cover(state, window) { Some(cover) => Element::stack(vec![tree, cover]), None => tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
     super::wrapped::story(state, dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
@@ -242,7 +256,7 @@ fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, 
     // limn's on the iPhone too: it stands over everything, as moving an account does.
     let tree = super::crop::dialog(state, tree, width);
     if uikit { return tree; }
-    let tree = sheets::render(state, tree, palette);
+    let tree = sheets::render(state, tree, width, palette);
     let tree = share_dialog(state, tree, width, palette);
     let tree = playlist_dialog(state, tree, width, palette);
     let tree = missed_dialog(state, super::import_run_dialog(state, import_dialog(state, tree, width, palette), width, palette), width, palette);
@@ -268,7 +282,8 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Settings => t!("common-settings"),
         Page::SettingsPart(part) => settings::part_title(*part),
         Page::Equalizer => t!("common-equalizer"),
-        Page::Playing => if state.queue_open { t!("mobile-queue") } else { t!("mobile-now-playing") },
+        Page::Playing if state.queue_open => t!("mobile-queue"),
+        Page::Playing => playing_from(state),
         Page::Lyrics => t!("mobile-lyrics"),
         Page::Search if searching => t!("common-search"),
         Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())).into(),
@@ -285,6 +300,16 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),
         Page::Mix(mix) if state.mobile_ui.compact_header => Cow::Owned(super::mix_name(mix)),
         _ => t!("mobile-your-music"),
+    }
+}
+
+/// What the player says it plays from, as BitChord's: the place it was started, or else the
+/// song's album.
+fn playing_from(state: &State) -> Cow<'_, str> {
+    let album = state.current().and_then(|track| track.album.as_deref());
+    match state.playing_from.as_deref().or(album) {
+        Some(name) => Cow::Owned(t!("mobile-playing-from", name = name).into_owned()),
+        None => t!("mobile-now-playing"),
     }
 }
 
@@ -346,14 +371,14 @@ fn cover_tone(tint: Color, amount: f32) -> Color {
 /// screen under a black scrim, darker toward the controls. Until the blur has come they keep
 /// the cover's colour.
 fn song_ground(state: &State, window: Size) -> Option<Element> {
-    if !matches!(state.page, Page::Playing | Page::Lyrics) || state.queue_open { return None; }
+    if !matches!(state.page, Page::Playing | Page::Lyrics) { return None; }
     let url = state.current()?.artwork_url.as_deref()?;
     let blurred = state.artwork.get(&crate::state::backdrop_key(url))?;
     // The player's is BitChord's own shade, 34 → 48% → 64%, which gives its screens' greys over
     // the same cover. A near-white cover, and the lyrics, keep the deeper one white words stay
     // legible on over any cover.
     let light = state.tints.get(url).is_some_and(|tint| luminance(*tint) > 0.6);
-    let shade = if state.page == Page::Playing && !light { [87, 122, 163] } else { [120, 160, 205] };
+    let shade = if state.page == Page::Playing && !state.queue_open && !light { [87, 122, 163] } else { [120, 160, 205] };
     let scrim = Element::panel(Element::spacer()).vertical_gradient(shade.map(|alpha| Color::rgba(0, 0, 0, alpha)).to_vec());
     let whole = |element: Element| element.size(Some(window.width), Some(window.height));
     Some(Element::stack(vec![whole(Element::raster_image(blurred.clone().cover())), whole(scrim)]))
@@ -362,12 +387,92 @@ fn song_ground(state: &State, window: Size) -> Option<Element> {
 /// The player's cover, edge to edge across the top over its ground, which it dissolves into;
 /// a shade over its top keeps the system's bar and the handle legible on a light cover.
 fn player_banner(state: &State, window: Size) -> Option<Element> {
-    if state.page != Page::Playing || state.queue_open { return None; }
+    if state.page != Page::Playing || state.queue_open || cover_flight(state, window.height).is_some() || docking(state, window).is_some() { return None; }
     let insets = state.mobile_ui.content_insets;
     let banner = player::banner(state, window.width, player::banner_height(window, insets.bottom))?;
     let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::TRANSPARENT]).size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
     let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
     Some(Element::stack(vec![at_top(banner), at_top(shade)]))
+}
+
+/// How far the player's cover has gone toward the lyrics' or the queue's head while it is on
+/// its way there or back, on a screen `height` tall enough for the head to take it; none at rest.
+fn cover_flight(state: &State, height: f32) -> Option<f32> {
+    (height >= lyrics::SHORT && state.cover_moving()).then_some(state.mobile_ui.collapse)
+}
+
+/// The cover on its way between the player's banner and the lyrics' or the queue's head, as
+/// BitChord's: it shrinks from the banner into the head's 54 thumbnail, its corners rounding,
+/// and grows back the same way.
+fn flying_cover(state: &State, window: Size) -> Option<Element> {
+    let at = cover_flight(state, window.height)?;
+    let insets = state.mobile_ui.content_insets;
+    let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), lyrics::thumb(insets));
+    let mix = |a: f32, b: f32| a + (b - a) * at;
+    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height))?
+        .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y)));
+    Some(Element::column(vec![Element::row(vec![picture, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
+        .size(Some(window.width), Some(window.height)))
+}
+
+/// How far the player has come down toward the mini player, while it is on its way down or up.
+fn docking(state: &State, window: Size) -> Option<f32> {
+    let offset = state.mobile_ui.player_offset;
+    (state.page == Page::Playing && !state.queue_open && offset > 0.5 && state.current().is_some()).then(|| (offset / window.height.max(1.0)).clamp(0.0, 1.0))
+}
+
+/// Where the mini player's thumbnail stands over the tabs, on a screen `window` whose safe
+/// edges the state knows: where the player's cover goes as the player comes down.
+fn mini_thumb(state: &State, window: Size) -> limn::Rect {
+    let insets = state.mobile_ui.content_insets;
+    let width = (window.width - insets.left - insets.right).max(TAP);
+    let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
+    let pill = window.height - (insets.bottom.max(15.0) + 6.0) - NAV_HEIGHT - MINI_HEIGHT;
+    limn::Rect::new(insets.left + (width - span) / 2.0 + 8.0, pill + (MINI_PILL - 40.0) / 2.0, 40.0, 40.0)
+}
+
+/// The player's cover leaving with it, as BitChord's: while the player comes down it shrinks
+/// from the banner into the mini player's thumbnail, and grows back from it as the player
+/// rises, at the pace the player moves, a finger's too.
+fn docking_cover(state: &State, window: Size) -> Option<Element> {
+    let at = docking(state, window)?;
+    let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, state.mobile_ui.content_insets.bottom)), mini_thumb(state, window));
+    let mix = |a: f32, b: f32| a + (b - a) * at;
+    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height))?
+        .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y)));
+    Some(Element::column(vec![Element::row(vec![picture, Element::spacer().flex(1.0)]), Element::spacer().flex(1.0)])
+        .size(Some(window.width), Some(window.height)))
+}
+
+/// The video's showing, once its first frame is on the screen behind a phone's player.
+fn canvas_ready(state: &State) -> Option<String> {
+    let (name, ..) = state.screening().filter(|_| state.canvas())?;
+    (state.clip_ready.as_ref() == Some(&name)).then_some(name)
+}
+
+/// The song's video across the whole screen behind the player, as BitChord's over a Spotify
+/// Canvas: from its first frame it fades in over the cover, under a black of 50% and, at its
+/// foot, the picture blurred for the controls to stand on. A tap on the bare video puts the
+/// controls, the black and the blur away, and another brings them back. A shade at its foot
+/// keeps the song's name legible over a light picture meanwhile.
+fn player_canvas(state: &State, window: Size) -> Option<Element> {
+    // The cover travels alone: the video gives way to it, as BitChord's still frame does.
+    if cover_flight(state, window.height).is_some() || docking(state, window).is_some() { return None; }
+    let name = canvas_ready(state)?;
+    let whole = |element: Element| element.size(Some(window.width), Some(window.height));
+    let at_foot = |element: Element, share: f32| whole(Element::column(vec![Element::spacer().flex(1.0), element.size(Some(window.width), Some(window.height * share))]));
+    let mut layers = vec![whole(Element::surface(CLIP_SURFACE, t!("desktop-song-video"))).animate_enter(format!("clip:{name}"))];
+    let away = state.mobile_ui.controls_away;
+    if away {
+        let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::TRANSPARENT, CANVAS_FOOT]);
+        layers.push(at_foot(shade, 0.3).animate_presence("mobile-canvas-foot"));
+    } else {
+        layers.push(at_foot(Element::surface(CLIP_BACKDROP, ""), crate::clip::DECK).animate_presence("mobile-canvas-deck"));
+        layers.push(whole(Element::panel(Element::spacer()).background(CANVAS_DIM)).animate_presence("mobile-canvas-dim"));
+    }
+    let label = if away { t!("mobile-show-controls") } else { t!("mobile-hide-controls") };
+    layers.push(whole(Element::clickable("mobile-canvas", Element::spacer()).accessible(limn::Access::new(limn::Role::Button).name(label))));
+    Some(Element::stack(layers))
 }
 
 /// BitChord's handle over the player's banner, what plays named under it; pressed, it puts

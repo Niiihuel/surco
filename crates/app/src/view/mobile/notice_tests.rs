@@ -88,7 +88,8 @@ fn long_notices_keep_all_their_words_and_scroll_in_loading_missing_and_loaded_ly
             tree.scroll_to_end(&scroll);
             tree.layout(size);
             assert!(tree.scroll_offset(&scroll) > 0.0, "all of a long notice remains reachable");
-            tree.reveal_at_start("mobile-notice-close", insets.top + HEADER_HEIGHT + 20.0);
+            // Under the lyrics' own head, as tall as it stands.
+            tree.reveal_at_start("mobile-notice-close", header_bottom(&frame) + 20.0);
             tree.layout(size);
             let frame = tree.layout(size);
             assert_close_inside_body(&frame, size, insets);

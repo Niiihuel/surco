@@ -19,6 +19,7 @@
  *     Event::Failed { track_id, message } => { /* load it again */ }
  *     Event::StreamFailed { message } => { /* the output device died */ }
  *     Event::Rerouted => { /* load the track again where it was */ }
+ *     Event::Pipeline(pipeline) => { /* what the sound goes through, decoder to device */ }
  * })?;
  *
  * let buffer = MediaBuffer::new(Some(3_400_000));
@@ -73,7 +74,7 @@ pub mod meter;
 mod opus_source;
 pub mod silence;
 
-pub use audio::{list_output_devices, AudioOutputDevice, Event, Load, NativeAudio, TICK};
+pub use audio::{list_output_devices, AudioOutputDevice, Event, Load, NativeAudio, Pipeline, TICK};
 pub use media_buffer::MediaBuffer;
 
 fn warn(message: impl std::fmt::Display) {

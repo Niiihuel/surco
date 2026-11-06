@@ -101,6 +101,33 @@ pub enum Event {
     /// The output moved to another device — the system's default changed, or the one playing
     /// went away — and both decks went with it. Loading the track again where it was resumes it.
     Rerouted,
+    /// What a track just put on a deck goes through, from its decoder to the device.
+    Pipeline(Pipeline),
+}
+
+/// What a track's sound goes through, from its decoder to the output, as the engine set it up.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Pipeline {
+    pub track_id: String,
+    /// libopus for Opus, symphonia for everything else.
+    pub decoder: &'static str,
+    /// The decoded sound's rate in hertz, and its channels.
+    pub source_rate: u32,
+    pub source_channels: u16,
+    /// The output device as the system names it, when it says, and the audio API under it.
+    pub device: Option<String>,
+    pub host: &'static str,
+    /// What the device is fed: its rate in hertz, its channels and its samples' format.
+    pub output_rate: u32,
+    pub output_channels: u16,
+    pub sample_format: String,
+}
+
+/// A source's decoder, rate and channels, read before it is wrapped.
+type Decoding = (&'static str, u32, u16);
+
+fn decoding<S: Source>(decoder: &'static str, source: &S) -> Decoding {
+    (decoder, source.sample_rate().get(), source.channels().get())
 }
 
 /// A track to decode onto a deck.
@@ -329,6 +356,7 @@ enum Command {
         standby: bool,
         buffer: MediaBuffer,
         heard: Arc<Heard>,
+        decoding: Decoding,
         reply: Sender<Result<(), String>>,
     },
     Play(Sender<Result<(), String>>),
@@ -439,7 +467,7 @@ impl NativeAudio {
         // over, as a song's own video taking its place, goes on exactly where it was.
         let trim = silence::enabled() && load.start_sec.is_none_or(|start| start <= 0.0);
         let decoded = if opus_source::is_opus(mime_type) {
-            OpusSource::new(Box::new(reader), mime_type).map(|source| equalized(source, load.gain, trim))
+            OpusSource::new(Box::new(reader), mime_type).map(|source| (decoding("libopus", &source), equalized(source, load.gain, trim)))
         } else {
             let total = load.buffer.total();
             let builder = rodio::Decoder::builder().with_data(reader);
@@ -454,10 +482,10 @@ impl NativeAudio {
                 None => builder,
             }
             .build()
-            .map(|source| equalized(source, load.gain, trim))
+            .map(|source| (decoding("symphonia", &source), equalized(source, load.gain, trim)))
             .map_err(|error| format!("audio decode failed: {error}"))
         };
-        let (source, decoded_duration, heard) = decoded?;
+        let (decoding, (source, decoded_duration, heard)) = decoded?;
 
         let known = |value: &f64| *value > 0.0;
         let duration_sec = decoded_duration.filter(known).or(load.duration_sec.filter(known));
@@ -470,6 +498,7 @@ impl NativeAudio {
             standby: load.standby,
             buffer: load.buffer,
             heard,
+            decoding,
             reply,
         })??;
         Ok(duration_sec)
@@ -979,7 +1008,7 @@ impl Engine {
     /// Returns true when the thread should stop.
     fn handle(&mut self, command: Command) -> bool {
         match command {
-            Command::Load { output_epoch, track_id, source, duration_sec, start_sec, standby, buffer, heard, reply } => {
+            Command::Load { output_epoch, track_id, source, duration_sec, start_sec, standby, buffer, heard, decoding, reply } => {
                 if !self.output.accepts(output_epoch) {
                     let _ = reply.send(Err("audio load was cancelled when its output was released".to_owned()));
                     return false;
@@ -1017,7 +1046,7 @@ impl Engine {
                 if let Some(start_sec) = start_sec {
                     deck.seek(start_sec);
                 }
-                deck.track_id = Some(track_id);
+                deck.track_id = Some(track_id.clone());
                 deck.duration_sec = duration_sec;
                 deck.buffer = Some(buffer);
                 deck.heard = Some(heard);
@@ -1027,6 +1056,9 @@ impl Engine {
                     self.playing = false;
                 }
                 let _ = reply.send(Ok(()));
+                if let Some(pipeline) = self.pipeline(track_id, decoding) {
+                    (self.emit)(Event::Pipeline(pipeline));
+                }
             }
             Command::Play(reply) => {
                 // Paused when its stream died: reported now, so the caller reloads it.
@@ -1206,6 +1238,29 @@ impl Engine {
         Ok(())
     }
 
+    /// What `track_id`, decoded as `decoding` says, goes through to the open output.
+    fn pipeline(&self, track_id: String, (decoder, source_rate, source_channels): Decoding) -> Option<Pipeline> {
+        use rodio::cpal::traits::{DeviceTrait, HostTrait};
+
+        let config = self.stream.as_ref()?.config();
+        let host = rodio::cpal::default_host();
+        let device = match &self.device_id {
+            Some(id) => find_output_device(id),
+            None => host.default_output_device(),
+        };
+        Some(Pipeline {
+            track_id,
+            decoder,
+            source_rate,
+            source_channels,
+            device: device.and_then(|device| device.description().ok()).map(|description| description.name().to_string()),
+            host: host.id().name(),
+            output_rate: config.sample_rate().get(),
+            output_channels: config.channel_count().get(),
+            sample_format: config.sample_format().to_string(),
+        })
+    }
+
     /// Reopens the output on the device to use now, for the caller to load its track again.
     fn reroute(&mut self) -> bool {
         match self.reopen(self.device_id.clone()) {
@@ -1363,7 +1418,7 @@ mod tests {
         let (reply, result) = mpsc::channel();
         engine.handle(Command::Load {
             output_epoch: token, track_id: "late".into(), source: Box::new(rodio::source::Empty::new()),
-            duration_sec: None, start_sec: None, standby: false, buffer: MediaBuffer::new(None), heard: Default::default(), reply,
+            duration_sec: None, start_sec: None, standby: false, buffer: MediaBuffer::new(None), heard: Default::default(), decoding: ("symphonia", 44_100, 2), reply,
         });
         assert!(result.recv().unwrap().is_err());
         assert!(engine.stream.is_none(), "a stale load must not touch the sound card");

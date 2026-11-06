@@ -278,6 +278,10 @@ pub struct Collection {
     /// What the library lists first, in the order it was pinned, by what each row is.
     #[serde(default)]
     pub pinned: Vec<String>,
+    /// The songs the user does not want to hear, by id: skipped when they come and kept out of
+    /// what is picked for them.
+    #[serde(default)]
+    pub disliked: Vec<String>,
 }
 
 /// Songs that go with the playlist on screen, to add to it or to play.
@@ -720,7 +724,23 @@ impl Collection {
         self.liked.retain(|liked| liked.id != track.id);
         if self.liked.len() == before {
             self.liked.insert(0, track.clone());
+            self.disliked.retain(|id| *id != track.id);
         }
+    }
+
+    /// Marks a song as not wanted, or takes the mark away; a song not wanted is not liked.
+    fn dislike(&mut self, track: &Track) {
+        let before = self.disliked.len();
+        self.disliked.retain(|id| *id != track.id);
+        if self.disliked.len() == before {
+            self.disliked.push(track.id.clone());
+            self.liked.retain(|liked| liked.id != track.id);
+        }
+    }
+
+    /// Whether the user said they do not want to hear this song.
+    pub fn is_disliked(&self, id: &str) -> bool {
+        self.disliked.iter().any(|disliked| disliked == id)
     }
 
     /// Takes in what an artist followed has out. The first time, all of it is known and
@@ -950,6 +970,11 @@ pub struct State {
     pub page_more_open: bool,
     /// The footage whose frames are on screen already, by the name `screening` gives it.
     pub clip_ready: Option<String>,
+    /// The name of where what plays was started, as BitChord's player says it plays from.
+    pub playing_from: Option<String>,
+    /// How many seconds the lyrics are moved ahead of what sounds (behind when negative), for
+    /// the song that plays: set by hand where they are out of step, and back to 0 with the next.
+    pub lyrics_offset: f64,
     /// How far the name of the song in the right panel reaches past its room, by the song's
     /// id, and since when it shows: a long one slides along it.
     pub title_reach: Option<(String, f32, Instant)>,
@@ -1460,6 +1485,8 @@ impl Default for State {
             account_open: false,
             page_more_open: false,
             clip_ready: None,
+            playing_from: None,
+            lyrics_offset: 0.0,
             title_reach: None,
             handoff: None,
             cropping: None,
@@ -1798,6 +1825,12 @@ impl State {
         self.motion && !self.settings.reduce_motion && self.at_home() && !self.mix.is_empty()
     }
 
+    /// Whether the Audio Pipeline's light runs down its line: while it is open, never in a
+    /// screenshot or under reduced motion.
+    pub fn signal_runs(&self) -> bool {
+        self.motion && !self.settings.reduce_motion && self.mobile_ui.pipeline
+    }
+
     /// Follows the pointer over the home's quick access: the page's wash takes the colour of
     /// the entry under it, over a second as Spotify's, and gives it back when it leaves. Says
     /// whether that changed.
@@ -2112,6 +2145,29 @@ impl State {
             }
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
+            "sleep" => {
+                self.sleep_open = true;
+                Vec::new()
+            }
+            "radio" => vec![Command::StartRadio(track)],
+            // Not wanted: what plays gives way to what comes next.
+            "dislike" => {
+                self.collection.dislike(&track);
+                let now = self.current().is_some_and(|current| current.id == track.id);
+                if now && self.collection.is_disliked(&track.id) { vec![Command::Next] } else { Vec::new() }
+            }
+            "playlists" => {
+                self.mobile_ui.picking = Some(row.to_owned());
+                Vec::new()
+            }
+            "info" => {
+                self.mobile_ui.info = Some(track);
+                Vec::new()
+            }
+            "offset" => {
+                self.mobile_ui.offset_open = true;
+                Vec::new()
+            }
             // A track goes into a list that exists, or into one made for it.
             "add-new" => {
                 self.creating = Some(Draft { first: Some(track), ..Draft::default() });
@@ -2191,7 +2247,12 @@ impl State {
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
+        // Named before the press, which may leave the page.
+        let from = match action { UiAction::Clicked { id } => self.origin(id), _ => None };
         let mut commands = self.handle(action);
+        if commands.iter().any(|command| matches!(command, Command::PlayList { .. })) {
+            self.playing_from = from;
+        }
         // A guest's choices go to the room's host: a song chosen is suggested, or played for
         // everyone where the host lets guests play; skipping and seeking are asked for, or left
         // to the room. Pausing is the guest's own.
@@ -2388,7 +2449,8 @@ impl State {
             UiAction::Dropped { id, target, .. } => {
                 (self.resizing, self.column_drag) = (None, None);
                 // A row of the queue let go over another takes its place.
-                let place = |row: &str| row.strip_prefix("upcoming:").and_then(|index| index.parse::<usize>().ok());
+                // On a phone, a row is held by its grip.
+                let place = |row: &str| row.strip_prefix("upcoming:").or_else(|| row.strip_prefix(mobile::QUEUE_GRIP)).and_then(|index| index.parse::<usize>().ok());
                 match (place(id), target.as_deref().and_then(place)) {
                     (Some(from), Some(to)) if from != to => vec![Command::MoveQueue(from, to)],
                     _ => Vec::new(),
@@ -2597,6 +2659,12 @@ impl State {
                 Vec::new()
             }
             // Its button in the bar, and the link under what comes next in the panel.
+            // On a phone's lyrics the queue's button opens it in the player, as BitChord's.
+            "queue" if self.mobile && self.page == Page::Lyrics => {
+                self.page = Page::Playing;
+                self.queue_open = true;
+                self.upcoming_covers()
+            }
             "queue" | "next-queue" => {
                 self.queue_open = !self.queue_open;
                 self.open_side(Side::Right, self.queue_open);
@@ -2799,10 +2867,18 @@ impl State {
             "mobile-playing" => {
                 if self.current().is_some() && self.page != Page::Playing {
                     self.go(Page::Playing);
+                    self.mobile_ui.controls_away = false;
                 }
                 let mut commands = self.ask_lyrics();
                 commands.extend(self.ask_about());
+                commands.extend(self.ask_clip());
                 commands
+            }
+            // A tap on the bare video puts the controls away, as BitChord's over a Canvas, and
+            // another brings them back.
+            "mobile-canvas" => {
+                self.mobile_ui.controls_away = !self.mobile_ui.controls_away;
+                Vec::new()
             }
             // A phone gives it a page; a window, a popover.
             "equalizer" if self.mobile => {
@@ -3904,10 +3980,15 @@ impl State {
         }
         let before = self.player.current.as_ref().map(|track| track.id.as_str());
         let now = player.current.as_ref().map(|track| track.id.as_str());
+        // A song the user does not want is passed over as it comes.
+        let unwanted = before != now && now.is_some_and(|id| self.collection.is_disliked(id));
         if before != now {
             self.lyrics_scroll_reset = true;
             self.lyric_shown = None;
             self.lyric_glide.snap_to(0.0, Instant::now());
+            // Another song's video comes with the controls over it, and its lyrics in step.
+            self.mobile_ui.controls_away = false;
+            self.lyrics_offset = 0.0;
         }
         // The video's sound in a song's place is that song still: until the song is back
         // with the window, or something else plays.
@@ -3939,6 +4020,7 @@ impl State {
         commands.extend(self.ask_clip());
         commands.extend(self.ask_about());
         commands.extend(scrobbles);
+        if unwanted { commands.push(Command::Next); }
         commands
     }
 
@@ -4052,9 +4134,37 @@ impl State {
         !self.mobile && self.wide && !self.panel_open
     }
 
+    /// The name of the place a press on `id` plays from: the list, album or artist whose page
+    /// it is on, or the home's recents. None where a song is played from no place of its own.
+    fn origin(&self, id: &str) -> Option<String> {
+        Some(match &self.page {
+            Page::Album(album) => album.title.clone(),
+            Page::Artist(artist) => artist.name.clone(),
+            Page::Playlist(id) => self.collection.playlist(*id)?.name.clone(),
+            Page::Liked => t!("common-liked-songs").into_owned(),
+            Page::Downloads => t!("common-downloads").into_owned(),
+            Page::Search if self.mobile_search => t!("common-search").into_owned(),
+            Page::Search if id.starts_with("heard:") => t!("mobile-home-recent").into_owned(),
+            _ => return None,
+        })
+    }
+
+    /// Whether a phone's player's cover is on its way into the lyrics' or the queue's head, or
+    /// back: each frame is drawn until it is there.
+    pub fn cover_moving(&self) -> bool {
+        let gone = self.page == Page::Lyrics || (self.page == Page::Playing && self.queue_open);
+        self.mobile && matches!(self.page, Page::Playing | Page::Lyrics) && (self.mobile_ui.collapse - if gone { 1.0 } else { 0.0 }).abs() > 0.001
+    }
+
+    /// Whether a phone's player is open over its song, where the video fills the screen behind
+    /// it as BitChord's Canvas does; its lyrics and queue stand on the blurred cover instead.
+    pub fn canvas(&self) -> bool {
+        self.mobile && self.page == Page::Playing && !self.queue_open
+    }
+
     /// Whether what plays is somewhere its video is seen, and the user wants videos.
     fn wants_footage(&self) -> bool {
-        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing() || self.peeks())
+        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing() || self.peeks() || self.canvas())
     }
 
     /// A song's footage is looked for once, while it would be seen and the user wants it.
@@ -4084,11 +4194,12 @@ impl State {
 
     /// What to show of the song's footage now, named so that another showing is another
     /// name: the whole video where it keeps time, and a stretch of it in the panel where
-    /// it does not.
+    /// it does not. A phone's screen is as tall as a window, and takes the large one.
     pub fn screening(&self) -> Option<(String, &Arc<Footage>, Showing)> {
         let footage = self.footage().filter(|_| self.wants_footage())?;
         let showing = match (self.follows(footage), self.cinema) {
             (true, true) => Showing::Large,
+            (true, false) if self.mobile => Showing::Large,
             (true, false) => Showing::Small,
             (false, false) => Showing::Loop,
             (false, true) => return None,
@@ -4111,7 +4222,7 @@ impl State {
     }
 
     /// What the user plays and already has, for the catalog to pick from.
-    fn taste(&self) -> Taste {
+    pub(crate) fn taste(&self) -> Taste {
         let collection = &self.collection;
         let seeds = discover::seeds(&collection.heard, &collection.liked, SEEDS);
         let own = || collection.heard.iter().chain(&collection.liked).chain(&self.saved).chain(collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
@@ -4129,7 +4240,8 @@ impl State {
             }
         }
         Taste {
-            tracks: own().map(|track| track.id.clone()).collect(),
+            // Not wanted is as good as known: the picks leave it out.
+            tracks: own().map(|track| track.id.clone()).chain(collection.disliked.iter().cloned()).collect(),
             artists: credited.chain(followed).map(discover::plain).collect(),
             artist_ids,
             albums: collection.albums().map(|(_, album)| album.id.clone()).collect(),
@@ -4344,7 +4456,7 @@ impl State {
     pub fn playhead_ms(&self, now: Instant) -> u64 {
         let (position, since) = self.heard;
         let carried = if self.player.playing { now.saturating_duration_since(since).min(Duration::from_millis(300)).as_secs_f64() } else { 0.0 };
-        ((position + carried - self.output_latency).max(0.0) * 1000.0) as u64
+        ((position + carried - self.output_latency + self.lyrics_offset).max(0.0) * 1000.0) as u64
     }
 
     /// Whether a phone's lyrics are filling as their words are sung, or the words just sung
@@ -4361,7 +4473,7 @@ impl State {
     /// The line being sung.
     pub fn active_line(&self) -> Option<usize> {
         // What is heard, which an AirPlay speaker or TV plays a while after the player's clock.
-        active(self.lines(), ((self.player.position - self.output_latency).max(0.0) * 1000.0) as u64)
+        active(self.lines(), ((self.player.position - self.output_latency + self.lyrics_offset).max(0.0) * 1000.0) as u64)
     }
 
     pub fn lyrics_open(&self) -> bool {
@@ -5514,6 +5626,36 @@ mod tests {
         state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 0)) });
         assert!(click(&mut state, "cinema").is_empty());
         assert_eq!(shown(&state), Some(Showing::Large));
+    }
+
+    #[test]
+    fn a_phones_player_stands_on_the_songs_video_and_a_tap_puts_its_controls_away() {
+        let playing = |track: &Track| PlayerView { current: Some(track.clone()), playing: true, ..PlayerView::default() };
+        let asks = |commands: &[Command]| commands.iter().any(|command| matches!(command, Command::Clip(_)));
+        let shown = |state: &State| state.screening().map(|(_, _, showing)| showing);
+        let song = track("a");
+        let mut state = State { mobile: true, ..State::default() };
+        assert!(!asks(&state.show(playing(&song))), "nowhere to be seen outside the player");
+        assert!(asks(&click(&mut state, "mobile-playing")), "opened, its video is looked for");
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 0)) });
+        assert_eq!(shown(&state), Some(Showing::Large), "as long as the song: all of it, as large as a window's");
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 30_000)) });
+        assert_eq!(shown(&state), Some(Showing::Loop), "longer, a stretch of it turns over");
+
+        click(&mut state, "mobile-canvas");
+        assert!(state.mobile_ui.controls_away);
+        click(&mut state, "mobile-canvas");
+        assert!(!state.mobile_ui.controls_away, "and back");
+        click(&mut state, "mobile-canvas");
+        state.show(playing(&track("b")));
+        assert!(!state.mobile_ui.controls_away, "the next song comes with them");
+
+        click(&mut state, "queue");
+        assert_eq!(shown(&state), None, "the queue stands on the blurred cover");
+        click(&mut state, "queue");
+        click(&mut state, "lyrics");
+        assert_eq!(state.page, Page::Lyrics);
+        assert!(!state.canvas(), "and so do the lyrics");
     }
 
     #[test]

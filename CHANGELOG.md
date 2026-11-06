@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- The phone's player stands on the song's video, as BitChord's: across the whole screen behind
+  it, dimmed, and blurred under the controls. A tap on the video puts the controls away and
+  another brings them back.
+- The phone's player is laid out and sized as BitChord's: the skips and play alone in the
+  transport, round sliders, a foot of lyrics, output (earbuds) and queue, and "Playing from"
+  where the song was started. The sleep timer moves into the song's ⋯.
+- The lyrics and the queue open in the player under the song beside its cover, with the
+  player's controls below. The queue lists what plays, then what follows, each row moved by
+  its grip and taken out by its cross; shuffle, repeat and autoplay are in a capsule at its foot.
+- The player comes down from anywhere on it, not only its top.
+- The cover moves as BitChord's: it shrinks into the head of the lyrics and the queue and
+  grows back, and goes down into the mini player as the player is put away.
+- The phone's output sheet is a set of cards, and its "Audio Pipeline" shows what the sound
+  goes through, from the decoder to the device, as the engine reports it.
+- The song's menu is grouped as BitChord's and adds a radio of the song, "Dislike" (the
+  song is skipped and kept out of the picks), the song's details, and the lyrics' step
+  for when they run ahead of or behind the song.
+
 ## 0.17.2
 
 ### Changed

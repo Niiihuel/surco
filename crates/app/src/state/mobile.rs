@@ -8,10 +8,15 @@ const SEARCH_DELAY: Duration = Duration::from_millis(200);
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
     matches!(id, "mobile-context-close" | "mobile-connections-close" | "playlist-cancel"
-        | "import-cancel" | "import-hide" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close").then_some(id)
+        | "import-cancel" | "import-hide" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close"
+        | "mobile-picking-close" | "mobile-info-close" | "lyrics-offset-close" | "sleep-dismiss").then_some(id)
 }
 
 pub(crate) fn is_sheet_handle(id: &str) -> bool { sheet_dismiss_id(id).is_some() }
+
+/// What a phone's queue row's grip is named before its place: a finger on it moves the row
+/// rather than scrolling the list.
+pub(crate) const QUEUE_GRIP: &str = "upcoming-grip:";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SearchFilter {
@@ -67,6 +72,11 @@ pub(crate) struct MobileUi {
     pub player_offset: f32,
     /// An explicit dismissal requests animation before the Host navigates back.
     pub player_close: bool,
+    /// Whether the player's controls are put away, its video bare under the song's name.
+    pub controls_away: bool,
+    /// How far the player's cover has gone into the lyrics' or the queue's head: 0 at rest on
+    /// the player, 1 at rest there; the host moves it.
+    pub collapse: f32,
     /// Animated Search header height; None outside the Search tab.
     pub search_header: Option<f32>,
     /// The shared chrome condenses only after the current title scrolls above it.
@@ -83,6 +93,14 @@ pub(crate) struct MobileUi {
     pub context: Option<TrackContext>,
     pub library: Option<LibraryContext>,
     pub connections: bool,
+    /// Whether the Audio Pipeline stands over the output sheet.
+    pub pipeline: bool,
+    /// The row whose song is being put into a playlist, while the playlists are offered.
+    pub picking: Option<String>,
+    /// The song whose details are shown.
+    pub info: Option<Track>,
+    /// Whether the sheet that moves the lyrics ahead or behind is open.
+    pub offset_open: bool,
     pub route: Option<(String, String)>,
     pub native_routes: bool,
     /// UIKit context menus, sheets and paste controls are attached to the live canvas.
@@ -315,6 +333,8 @@ impl State {
                     return Some(Vec::new());
                 }
                 if let Some((action, row)) = id.strip_prefix("do:").and_then(|rest| rest.split_once(':')) {
+                    // A list chosen for the song closes the lists offered with the menu.
+                    if action != "playlists" { self.mobile_ui.picking = None; }
                     let commands = self.act(action, row);
                     self.mobile_ui.context = None;
                     self.menu = None;
@@ -368,7 +388,19 @@ impl State {
                     "search-submit" => return Some(self.mobile_submit()),
                     "mobile-context-close" => self.mobile_ui.context = None,
                     "mobile-library-close" => self.mobile_ui.library = None,
-                    "mobile-connections-close" => self.mobile_ui.connections = false,
+                    "mobile-connections-close" => {
+                        self.mobile_ui.connections = false;
+                        self.mobile_ui.pipeline = false;
+                    }
+                    "audio-pipeline" => self.mobile_ui.pipeline = true,
+                    "audio-pipeline-close" => self.mobile_ui.pipeline = false,
+                    "mobile-picking-close" => self.mobile_ui.picking = None,
+                    "mobile-info-close" => self.mobile_ui.info = None,
+                    "lyrics-offset-close" => self.mobile_ui.offset_open = false,
+                    // Half a second each way, as BitChord's; back to where it was found.
+                    "lyrics-offset:earlier" => self.lyrics_offset += 0.5,
+                    "lyrics-offset:later" => self.lyrics_offset -= 0.5,
+                    "lyrics-offset:reset" => self.lyrics_offset = 0.0,
                     "mobile-notice-close" => {
                         self.mobile_ui.notice = None;
                         if self.page == Page::Lyrics { self.lyric_shown = None; }
