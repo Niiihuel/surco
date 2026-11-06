@@ -55,6 +55,9 @@ const EDGE_TAIL: f32 = 28.0;
 /// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
 /// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
 pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial::new(Color::rgba(38, 38, 40, 122));
+/// A sheet's: thicker than a bar's, as iOS's sheets are, so a bright switch or button behind
+/// it does not show through the words on it; the page still shows, blurred, as a tint.
+const SHEET_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 28.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 32, 214)) };
 /// aurora's regularSmall, for circles: the rim bends over 14.
 const GLASS_SMALL: limn::GlassMaterial = limn::GlassMaterial { refraction: 14.0, ..GLASS };
 /// aurora's glass shadow: 0 10 40, black at 20%.
@@ -103,7 +106,7 @@ pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: Compon
         limn::ShareAction::new("share-open", t!("mobile-share-open"), Icon::ExternalLink),
     ];
     let sheet = limn::ShareSheet::new(base, true, title, "music.youtube.com", "share-close", palette)
-        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(GLASS).render();
+        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(SHEET_GLASS).render();
     popped(state, sheet)
 }
 
@@ -112,7 +115,7 @@ const MAIL: &str = include_str!("../../assets/icons/mail.svg");
 
 /// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
 pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
-    popped(state, sheet.glass(GLASS).render())
+    popped(state, sheet.glass(SHEET_GLASS).render())
 }
 
 /// `element` as a pane of aurora's glass with its shadow; `small` for a circle.
