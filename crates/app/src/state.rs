@@ -34,6 +34,8 @@ use crate::player::PlayerView;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
     Search,
+    /// One of the catalog's moods or genres, by its params: the lists it opens on.
+    Mood(String),
     Loading(Target),
     Failed(Target, String),
     Artist(Artist),
@@ -90,6 +92,8 @@ pub enum MixKind {
     Artist(Track),
     /// What was played again and again lately.
     Repeat,
+    /// A list of the catalog's, by its name, opened from Explore.
+    Catalog(String),
 }
 
 impl Mix {
@@ -99,6 +103,7 @@ impl Mix {
             MixKind::Moment => "moment".to_owned(),
             MixKind::Artist(seed) => format!("artist-{}", seed.id),
             MixKind::Repeat => "repeat".to_owned(),
+            MixKind::Catalog(name) => format!("catalog-{name}"),
         }
     }
 
@@ -972,6 +977,11 @@ pub struct State {
     pub clip_ready: Option<String>,
     /// The name of where what plays was started, as BitChord's player says it plays from.
     pub playing_from: Option<String>,
+    /// The catalog's moods and genres once asked for, as Explore shows them, and the lists
+    /// each opens on, by its params, as they come.
+    pub moods: Option<Result<Vec<surco_youtube::Mood>, String>>,
+    pub mood_lists: HashMap<String, Vec<surco_youtube::CatalogList>>,
+    moods_asked: bool,
     /// How many seconds the lyrics are moved ahead of what sounds (behind when negative), for
     /// the song that plays: set by hand where they are out of step, and back to 0 with the next.
     pub lyrics_offset: f64,
@@ -1369,6 +1379,27 @@ pub fn backdrop_of_key(url: &str) -> Option<&str> {
 
 const BACKDROP: &str = "#backdrop";
 
+/// The address the cover at `url` is drawn under as a duotone of `color`, from its colour
+/// darkened to it lightened, as BitChord's Explore cards draw theirs.
+pub fn duotone_key(url: &str, color: u32) -> String {
+    format!("{url}{DUOTONE}{color:06x}")
+}
+
+/// The cover and the colour a duotone's address names, if it is one.
+pub fn duotone_of_key(url: &str) -> Option<(&str, u32)> {
+    let (cover, color) = url.rsplit_once(DUOTONE)?;
+    Some((cover, u32::from_str_radix(color, 16).ok()?))
+}
+
+const DUOTONE: &str = "#duotone:";
+
+/// A mood's colour: the catalog's own, or for one that came without, a muted one of eight
+/// picked by its name, as BitChord's.
+pub fn mood_color(mood: &surco_youtube::Mood) -> u32 {
+    const MUTED: [u32; 8] = [0xCC6A55, 0xC07A92, 0x9C8AC0, 0x8090C8, 0xD0A060, 0x6A88B0, 0x7AAED0, 0x86B890];
+    mood.color.unwrap_or_else(|| MUTED[mood.title.bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(usize::from(byte))) % MUTED.len()])
+}
+
 pub fn large_cover(url: &str) -> String {
     cover_at(url, 1200)
 }
@@ -1486,6 +1517,9 @@ impl Default for State {
             page_more_open: false,
             clip_ready: None,
             playing_from: None,
+            moods: None,
+            mood_lists: HashMap::new(),
+            moods_asked: false,
             lyrics_offset: 0.0,
             title_reach: None,
             handoff: None,
@@ -3441,7 +3475,21 @@ impl State {
                 if self.page != Page::Browse {
                     self.go(Page::Browse);
                 }
-                Vec::new()
+                // A phone's Explore is the catalog's moods and genres, asked for once.
+                if self.mobile && !std::mem::replace(&mut self.moods_asked, true) { vec![Command::Moods] } else { self.mood_covers() }
+            }
+            _ if id.starts_with("mood:") => {
+                let Some(mood) = id["mood:".len()..].parse::<usize>().ok().and_then(|index| self.moods.as_ref()?.as_ref().ok()?.get(index)).cloned() else { return Vec::new() };
+                self.go(Page::Mood(mood.params.clone()));
+                match self.mood_lists.get(&mood.params) {
+                    Some(lists) => cover_requests(&mut self.covers, lists.iter().map(|list| &list.cover)),
+                    None => vec![Command::MoodLists(mood.params)],
+                }
+            }
+            _ if id.starts_with("catalog:") => {
+                let Page::Mood(params) = &self.page else { return Vec::new() };
+                let list = id["catalog:".len()..].parse::<usize>().ok().and_then(|index| self.mood_lists.get(params)?.get(index)).cloned();
+                list.map(|list| self.open(Target::Catalog(list.id))).unwrap_or_default()
             }
             "recent-search-clear" => {
                 self.collection.searches.clear();
@@ -3652,6 +3700,17 @@ impl State {
                 self.page_covers()
             }
             // Its card says why, and offers to try again, come back if it was hidden.
+            Event::Moods(moods) => {
+                self.moods = Some(moods);
+                Vec::new()
+            }
+            Event::MoodLists { params, lists } => {
+                let shown = self.page == Page::Mood(params.clone());
+                self.mood_lists.insert(params.clone(), lists);
+                let mut commands = self.mood_covers();
+                if shown { commands.extend(cover_requests(&mut self.covers, self.mood_lists[&params].iter().map(|list| &list.cover))); }
+                commands
+            }
             Event::Opened { target: Target::Import(link), result: Err(message) } if self.import_run.as_ref().is_some_and(|(run, _)| *run == link) => {
                 self.import_progress = None;
                 self.import_hidden = false;
@@ -3664,6 +3723,7 @@ impl State {
                     Ok(Content::Artist(artist)) => artist.songs,
                     Ok(Content::Album(album)) => album.tracks,
                     Ok(Content::Song(track)) => vec![track],
+                    Ok(Content::Catalog { tracks, .. }) => tracks,
                     Ok(Content::List { .. }) | Err(_) => Vec::new(),
                 };
                 if tracks.is_empty() { Vec::new() } else { vec![Command::PlayList { tracks, index: 0 }] }
@@ -3673,6 +3733,8 @@ impl State {
                     Ok(Content::Artist(artist)) => Page::Artist(artist),
                     Ok(Content::Album(album)) => Page::Album(album),
                     Ok(Content::Song(track)) => Page::Song(track),
+                    // Looked at, not kept: a list of the catalog's opens as the home's mixes do.
+                    Ok(Content::Catalog { name, tracks }) => Page::Mix(Mix { kind: MixKind::Catalog(name), tracks }),
                     Ok(Content::List { .. }) => unreachable!("a list brought in was taken above"),
                     Err(message) => Page::Failed(target, message),
                 };
@@ -4148,6 +4210,17 @@ impl State {
             Page::Search if id.starts_with("heard:") => t!("mobile-home-recent").into_owned(),
             _ => return None,
         })
+    }
+
+    /// The covers Explore's cards stand on, each its mood's first list's cover redrawn in the
+    /// mood's colour, for those whose lists have come.
+    fn mood_covers(&mut self) -> Vec<Command> {
+        let Some(Ok(moods)) = &self.moods else { return Vec::new() };
+        let keys: Vec<Option<String>> = moods.iter().map(|mood| {
+            let cover = self.mood_lists.get(&mood.params)?.iter().find_map(|list| list.cover.as_deref())?;
+            Some(duotone_key(cover, mood_color(mood)))
+        }).collect();
+        cover_requests(&mut self.covers, keys.iter())
     }
 
     /// Whether a phone's player's cover is on its way into the lyrics' or the queue's head, or
@@ -5657,6 +5730,27 @@ mod tests {
         click(&mut state, "lyrics");
         assert_eq!(state.page, Page::Lyrics);
         assert!(!state.canvas(), "and so do the lyrics");
+    }
+
+    #[test]
+    fn explore_asks_the_catalogs_moods_once_and_a_list_opens_to_be_looked_at_not_kept() {
+        let mut state = State { mobile: true, ..State::default() };
+        assert_eq!(click(&mut state, "browse"), vec![Command::Moods]);
+        click(&mut state, "home");
+        assert!(!click(&mut state, "browse").contains(&Command::Moods), "asked once");
+        let mood = surco_youtube::Mood { title: "Chill".into(), params: "p".into(), color: Some(0xA4C5FF) };
+        state.apply(Event::Moods(Ok(vec![mood])));
+        let list = surco_youtube::CatalogList { id: "PL1".into(), title: "Coffee Shop Blend".into(), author: "YouTube Music".into(), cover: Some("https://c/1".into()) };
+        let asked = state.apply(Event::MoodLists { params: "p".into(), lists: vec![list] });
+        assert!(asked.contains(&Command::FetchArtwork(duotone_key("https://c/1", 0xA4C5FF))), "its card's cover, in its colour: {asked:?}");
+        click(&mut state, "mood:0");
+        assert_eq!(state.page, Page::Mood("p".into()));
+        let opened = click(&mut state, "catalog:0");
+        assert!(opened.contains(&Command::Open(Target::Catalog("PL1".into()))), "{opened:?}");
+        state.apply(Event::Opened { target: Target::Catalog("PL1".into()), result: Ok(Content::Catalog { name: "Coffee Shop Blend".into(), tracks: vec![track("a")] }) });
+        assert!(matches!(&state.page, Page::Mix(mix) if mix.kind == MixKind::Catalog("Coffee Shop Blend".into())));
+        assert!(state.collection.playlists.is_empty(), "looked at, not kept");
+        assert_eq!(duotone_of_key(&duotone_key("https://c/1#x", 0x0A0B0C)), Some(("https://c/1#x", 0x0A0B0C)));
     }
 
     #[test]

@@ -49,6 +49,8 @@ pub enum Target {
     List { name: String, ids: Vec<String> },
     /// A list of another app's, by its link there.
     Import(String),
+    /// A list of the catalog's, by its id, to look at without keeping it.
+    Catalog(String),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -59,6 +61,8 @@ pub enum Content {
     /// A list brought in, and the songs of it the catalog does not have, each as it is
     /// to be read.
     List { name: String, tracks: Vec<Track>, missed: Vec<String> },
+    /// A list of the catalog's: its name and what it lists.
+    Catalog { name: String, tracks: Vec<Track> },
 }
 
 /// What the window asks for.
@@ -97,6 +101,10 @@ pub enum Command {
     FindArtists { key: String, queries: Vec<String> },
     /// Replace the queue with these tracks and play the one at `index`.
     PlayList { tracks: Vec<Track>, index: usize },
+    /// The catalog's moods and genres, then each one's lists in their order.
+    Moods,
+    /// The lists of one mood or genre, by its params, ahead of the rest.
+    MoodLists(String),
     /// Play a track and what its radio brings after it, as a station of its own.
     StartRadio(Track),
     /// What played when the app was last closed: the list from its current track on, held
@@ -285,6 +293,10 @@ pub enum Event {
     /// The artists found for the picker, under the key they were asked for with.
     ArtistsFound { key: String, artists: Vec<ArtistRef> },
     SearchResults { query: String, found: Found },
+    /// The catalog's moods and genres, or why they could not be had.
+    Moods(Result<Vec<surco_youtube::Mood>, String>),
+    /// The lists a mood or genre opens on, by its params.
+    MoodLists { params: String, lists: Vec<surco_youtube::CatalogList> },
     SearchFailed { query: String, message: String },
     Opened { target: Target, result: Result<Content, String> },
     /// What is kept on disk, newest first, the ids on their way there, and the room it takes.
@@ -721,6 +733,30 @@ fn start(reply: impl Fn(Event) + Send + Sync + 'static, inputs: UnboundedSender<
 /// Answers what needs no player and hands the rest to it.
 fn handle(shared: &Result<Arc<Shared>, String>, reply: &impl Fn(Event), player: &mut Player, command: Command) -> Vec<Effect> {
     match (command, shared) {
+        (Command::Moods, Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                let moods = shared.youtube.moods().await.map_err(|error| error.to_string());
+                let params: Vec<String> = moods.iter().flatten().map(|mood| mood.params.clone()).collect();
+                (shared.reply)(Event::Moods(moods));
+                // One after another, in the page's order: each card's cover comes from its first list.
+                for params in params {
+                    if let Ok(lists) = shared.youtube.mood_lists(&params).await {
+                        (shared.reply)(Event::MoodLists { params, lists });
+                    }
+                }
+            });
+        }
+        (Command::Moods, Err(message)) => reply(Event::Moods(Err(message.clone()))),
+        (Command::MoodLists(params), Ok(shared)) => {
+            let shared = shared.clone();
+            tokio::spawn(async move {
+                if let Ok(lists) = shared.youtube.mood_lists(&params).await {
+                    (shared.reply)(Event::MoodLists { params, lists });
+                }
+            });
+        }
+        (Command::MoodLists(_), Err(_)) => {}
         (Command::StartRadio(track), Ok(shared)) => {
             let shared = shared.clone();
             tokio::spawn(async move {
@@ -1156,6 +1192,7 @@ async fn open(shared: &Shared, target: &Target) -> Result<Content, String> {
             let missed = ids.iter().filter(|id| tracks.iter().all(|track| track.id != **id)).cloned().collect();
             Ok(Content::List { name: name.clone(), tracks, missed })
         }
+        Target::Catalog(id) => youtube.playlist_named(id).await.map(|(name, tracks)| Content::Catalog { name, tracks }),
         Target::Import(link) => {
             let told = |done, of| (shared.reply)(Event::Importing { done, of });
             return crate::import::list(youtube, link, &told).await.map(|(name, tracks, missed)| Content::List { name, tracks, missed });
@@ -2091,6 +2128,24 @@ fn tint_of(bytes: &[u8]) -> Option<[u8; 3]> {
 
 /// What the phone's player stands on, as BitChord's: the cover shrunk to a few pixels and
 /// blurred, which drawn across the whole screen stays a wash of its colours.
+/// A cover redrawn as a duotone of `color`, as BitChord's Explore cards: each pixel's
+/// lightness taken from the colour darkened by 68% to it lightened by 32%.
+fn duotone_of(bytes: &[u8], color: u32) -> Option<RasterImage> {
+    let mut picture = image::load_from_memory(bytes).ok()?.thumbnail(320, 320).to_rgb8();
+    let base = [(color >> 16) as u8, (color >> 8) as u8, color as u8].map(f32::from);
+    let (shadow, light) = (base.map(|channel| channel * 0.32), base.map(|channel| channel + (255.0 - channel) * 0.32));
+    for pixel in picture.pixels_mut() {
+        let [r, g, b] = pixel.0.map(f32::from);
+        let lightness = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0;
+        pixel.0 = std::array::from_fn(|channel| (shadow[channel] + (light[channel] - shadow[channel]) * lightness).round() as u8);
+    }
+    let mut png = Vec::new();
+    picture.write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).ok()?;
+    let digest: String = Sha256::digest(&png).iter().map(|byte| format!("{byte:02x}")).collect();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    RasterImage::new(digest, RasterImageFormat::Png, u32::try_from(png.len()).ok()?, encoded.into(), t!("backend-cover"))
+}
+
 fn backdrop_of(bytes: &[u8]) -> Option<RasterImage> {
     let small = image::load_from_memory(bytes).ok()?.thumbnail(64, 64).blur(5.0).to_rgb8();
     let mut png = Vec::new();
@@ -2104,6 +2159,10 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
     if let Some(cover) = crate::state::backdrop_of_key(url) {
         let bytes = cover_bytes(shared, cover).await?;
         return tokio::task::block_in_place(|| backdrop_of(&bytes)).map(|image| (image, None, None));
+    }
+    if let Some((cover, color)) = crate::state::duotone_of_key(url) {
+        let bytes = cover_bytes(shared, cover).await?;
+        return tokio::task::block_in_place(|| duotone_of(&bytes, color)).map(|image| (image, None, None));
     }
     let bytes = cover_bytes(shared, url).await?;
     let format = match bytes.get(..12)? {
@@ -2128,6 +2187,19 @@ async fn artwork(shared: &Shared, url: &str) -> Option<(RasterImage, Option<[u8;
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_duotone_runs_from_the_colour_darkened_to_it_lightened() {
+        // A black pixel beside a white one.
+        let mut png = Vec::new();
+        image::RgbImage::from_fn(2, 1, |x, _| image::Rgb(if x == 0 { [0, 0, 0] } else { [255, 255, 255] }))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png).unwrap();
+        let drawn = super::duotone_of(&png, 0x6496C8).unwrap();
+        let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, drawn.data_base64()).unwrap();
+        let pixels = image::load_from_memory(&bytes).unwrap().to_rgb8();
+        assert_eq!(pixels.get_pixel(0, 0).0, [32, 48, 64], "black: the colour at 32%");
+        assert_eq!(pixels.get_pixel(pixels.width() - 1, 0).0, [150, 184, 218], "white: the colour 32% of the way to white");
+    }
 
     #[test]
     fn a_picked_picture_is_kept_as_the_square_chosen() {

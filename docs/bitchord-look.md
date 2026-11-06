@@ -42,7 +42,15 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Once the page has gone 50 down the bar folds into one row: the chosen tab's circle, the mini
   player as a pill between, and Search, gliding to their places; 50 back up, or near the top,
   it opens again. The mini player's room under the page stays, so nothing jumps.
-- Explore is a tab of its own: the genres two to a row, cards of their colour.
+- Explore is a tab of its own: YouTube Music's moods and genres, read from its own browse so
+  each keeps the stripe colour the service gives it (a muted one of eight by its name when it
+  has none), two to a row, 16 from the sides and 12 apart, width over height 1.72, corners 18.
+  Each card is its colour's stripe (darkened 8%) down the first 28%, then its first list's cover
+  redrawn as a duotone from the colour darkened 68% to it lightened 32%, its name 17 bold
+  white over a shade of black 24% fading out by 62%. The lists come one mood after another,
+  so the covers fill in from the top. Pressed, a card opens its lists two to a row; a list
+  opens as the home's mixes do, to be played, not kept. Without the service, Surco's own
+  genres, each a search.
 - Mini player: a pill 56 tall floating 8 above the tab bar. 40 art (corners 8), title over
   artist, play/pause and next. Swipe sideways to skip, drag up or tap to open the player.
 - Both bars are frosted. limn has no backdrop blur, so they are a dark tint at high opacity

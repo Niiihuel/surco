@@ -155,7 +155,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else if state.page == Page::Search {
         home::content(state, width, palette)
     } else if state.page == Page::Browse {
-        explore(width, palette)
+        explore(state, width, palette)
     } else if state.page == Page::Lyrics {
         // What the lines are seen through, between the header and the transport.
         lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(state, window.height), palette)
@@ -251,12 +251,80 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     super::wrapped::story(state, dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
 }
 
-/// BitChord's Explore: the moods and genres two to a row, as cards of their colour.
-// shortcut: the genres Surco names itself, each a search; YouTube Music's own moods and genres come with Explore's own phase.
-fn explore(width: f32, palette: ComponentPalette) -> Element {
-    let inner = width - 32.0;
-    let grid = search::browse(usize::MAX, inner, 2, ((inner - 12.0) / 2.0 * 0.58).round(), palette);
-    page_scroll("mobile-explore", Element::column(vec![grid]).padding(16.0))
+/// BitChord's Explore: the catalog's moods and genres two to a row, each a card of its colour
+/// with its first list's cover redrawn in it. While they come their places pulse; without
+/// them, the genres Surco names itself, each a search.
+fn explore(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let inner = width - 2.0 * MOOD_GUTTER;
+    let (card, height) = ((inner - MOOD_GAP) / 2.0, ((inner - MOOD_GAP) / 2.0 / MOOD_ASPECT).round());
+    let grid = match &state.moods {
+        Some(Ok(moods)) if !moods.is_empty() => {
+            let cards: Vec<Element> = moods.iter().enumerate().map(|(index, mood)| mood_card(state, index, mood, card, height, palette)).collect();
+            pairs(cards)
+        }
+        Some(_) => search::browse(usize::MAX, inner, 2, height, palette),
+        None => pairs((0..12).map(|_| limn::Skeleton::new("mood-coming", palette).render().radius(MOOD_RADIUS).size(Some(card), Some(height))).collect()),
+    };
+    page_scroll("mobile-explore", Element::column(vec![grid]).padding(MOOD_GUTTER))
+}
+
+/// Cards two to a row, `MOOD_GAP` apart both ways.
+fn pairs(cards: Vec<Element>) -> Element {
+    let mut cards = cards.into_iter();
+    let mut rows = Vec::new();
+    while let Some(first) = cards.next() {
+        rows.push(Element::row(vec![first, cards.next().unwrap_or_else(Element::spacer).flex(1.0)]).gap(MOOD_GAP));
+    }
+    Element::column(rows).gap(MOOD_GAP)
+}
+
+/// BitChord's mood card: corners of 18, width over height 1.72, 16 from the sides, 12 apart.
+const MOOD_GUTTER: f32 = 16.0;
+const MOOD_GAP: f32 = 12.0;
+const MOOD_ASPECT: f32 = 1.72;
+const MOOD_RADIUS: f32 = 18.0;
+/// How much of the card its colour's stripe takes before the cover starts.
+const MOOD_STRIPE: f32 = 0.28;
+
+/// A mood as BitChord's Explore draws it: a stripe of its colour down the left, its first list's
+/// cover filling the rest as a duotone of that colour, and its name over a soft shade.
+fn mood_card(state: &State, index: usize, mood: &surco_youtube::Mood, width: f32, height: f32, palette: ComponentPalette) -> Element {
+    let color = crate::state::mood_color(mood);
+    let base = Color::rgb((color >> 16) as u8, (color >> 8) as u8, color as u8);
+    let (stripe, shadow, light) = (mix(base, Color::rgb(0, 0, 0), 0.08), mix(base, Color::rgb(0, 0, 0), 0.68), mix(base, Color::rgb(255, 255, 255), 0.32));
+    let cover = state.mood_lists.get(&mood.params).and_then(|lists| lists.iter().find_map(|list| list.cover.as_deref()))
+        .and_then(|cover| state.artwork.get(&crate::state::duotone_key(cover, color)));
+    let side = width * (1.0 - MOOD_STRIPE);
+    let art = match cover {
+        Some(image) => Element::raster_image(image.clone().cover()).size(Some(side), Some(height)),
+        None => Element::panel(Element::spacer()).background(mix(shadow, light, 0.45)).size(Some(side), Some(height)),
+    };
+    // Pale stripes, as Energize's cream, would swallow white words: a shade under the name.
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 61), Color::TRANSPARENT, Color::TRANSPARENT]);
+    let name = Text::new(&mood.title, palette).font_size(17.0).render().max_lines(2).font_family(FontFamily::SansBold).foreground(Color::rgb(255, 255, 255));
+    let card = Element::stack(vec![
+        Element::panel(Element::spacer()).background(stripe),
+        Element::row(vec![Element::spacer().flex(1.0), art]),
+        shade,
+        Element::column(vec![name, Element::spacer().flex(1.0)]).padding(12.0),
+    ]).size(Some(width), Some(height)).radius(MOOD_RADIUS).clip_children();
+    Element::clickable(format!("mood:{index}"), card).accessible(limn::Access::new(limn::Role::Button).name(&mood.title)).radius(MOOD_RADIUS).flex(1.0)
+}
+
+/// A mood's or genre's page: its lists two to a row, each its cover over its name and maker;
+/// pressed, one opens to be looked at and played, not kept.
+pub(in crate::view) fn mood_page(state: &State, params: &str, width: f32, palette: ComponentPalette) -> Element {
+    let Some(lists) = state.mood_lists.get(params) else { return super::loading("mood-lists", palette) };
+    let side = (width - 2.0 * MOOD_GUTTER - MOOD_GAP) / 2.0;
+    let tiles = lists.iter().enumerate().map(|(index, list)| {
+        let body = Element::column(vec![
+            cover(state, &list.cover, side, palette).radius(12.0).border(THUMB_RIM, 0.5),
+            Text::new(&list.title, palette).font_size(15.0).truncate().render().font_family(FontFamily::SansBold),
+            Text::new(&list.author, palette).font_size(13.0).muted().truncate().render(),
+        ]).gap(4.0);
+        Element::clickable(format!("catalog:{index}"), body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {}", list.title, list.author))).flex(1.0)
+    }).collect();
+    page_scroll("mobile-mood", Element::column(vec![pairs(tiles)]).padding(MOOD_GUTTER))
 }
 
 /// The phone's dialogs over `tree`. UIKit owns its sheets when its bridge is ready, `uikit`;
@@ -293,6 +361,8 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
     match &state.page {
         Page::Library => t!("mobile-tab-library"),
         Page::Browse => t!("mobile-tab-explore"),
+        Page::Mood(params) => state.moods.as_ref().and_then(|moods| moods.as_ref().ok()?.iter().find(|mood| mood.params == *params))
+            .map_or_else(|| t!("mobile-tab-explore"), |mood| Cow::Borrowed(mood.title.as_str())),
         Page::Settings => t!("common-settings"),
         Page::SettingsPart(part) => settings::part_title(*part),
         Page::Equalizer => t!("common-equalizer"),

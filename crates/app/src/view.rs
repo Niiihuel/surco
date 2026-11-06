@@ -2513,6 +2513,7 @@ fn mix_name(mix: &Mix) -> String {
         MixKind::Moment => moment_title(chrono::Local::now()),
         MixKind::Artist(seed) => t!("desktop-mix-of", artist = seed.artist.as_str()).into_owned(),
         MixKind::Repeat => t!("desktop-mix-repeat").into_owned(),
+        MixKind::Catalog(name) => name.clone(),
     }
 }
 
@@ -2523,7 +2524,7 @@ fn mix_detail(mix: &Mix) -> String {
         MixKind::Repeat => t!("desktop-mix-repeat-detail").into_owned(),
         _ if artists.is_empty() => songs(mix.tracks.len()),
         MixKind::Moment => t!("desktop-moment-detail", artists = artists.as_str()).into_owned(),
-        MixKind::Artist(_) => t!("desktop-mix-with", artists = artists.as_str()).into_owned(),
+        MixKind::Artist(_) | MixKind::Catalog(_) => t!("desktop-mix-with", artists = artists.as_str()).into_owned(),
     }
 }
 
@@ -2558,6 +2559,7 @@ fn mix_cover(state: &State, mix: &Mix, side: f32, named: bool, palette: Componen
         MixKind::Moment => (t!("desktop-moment").into_owned(), mix_name(mix)),
         MixKind::Artist(seed) => (t!("desktop-mix").into_owned(), seed.artist.clone()),
         MixKind::Repeat => (t!("desktop-mix").into_owned(), t!("desktop-mix-repeat").into_owned()),
+        MixKind::Catalog(name) => (t!("common-playlist").into_owned(), name.clone()),
     };
     let words = Element::column(vec![
         Text::new(label.to_uppercase(), palette).font_size((side * 0.07).round().max(9.0)).truncate().render().font_family(FontFamily::SansBold),
@@ -2996,6 +2998,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Search if state.at_home() => "page:home".to_owned(),
         Page::Search => "page:search".to_owned(),
         Page::Loading(_) => "page:loading".to_owned(),
+        Page::Mood(params) => format!("page:mood:{params}"),
         Page::Failed(..) => "page:failed".to_owned(),
         Page::Artist(artist) => format!("page:artist:{}", artist.id),
         Page::Album(album) => format!("page:album:{}", album.id),
@@ -3070,6 +3073,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, width, palette),
         Page::Loading(_) => loading("opening", palette),
+        Page::Mood(params) => mobile::mood_page(state, params, width, palette),
         Page::Failed(_, message) => centered(blank(Icon::WarningTriangle, t!("desktop-open-failed"), message, Some(("retry", t!("common-retry"))), palette)),
         Page::Artist(artist) => artist_page(state, artist, width, palette),
         Page::Album(album) => album_page(state, album, width, palette),
