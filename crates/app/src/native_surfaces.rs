@@ -998,7 +998,7 @@ mod tests {
         assert!(controller.apply(&mut state, Event::Chrome { id: "next".into() }).is_empty());
         assert_eq!(state.page, state::Page::Search);
         controller.apply(&mut state, Event::Chrome { id: "mobile-library".into() });
-        assert_eq!(state.page, state::Page::Library);
+        assert_eq!(state.page, state::Page::Collection);
         assert_eq!(serde_json::from_str::<Event>(r#"{"kind":"chrome","id":"home"}"#).unwrap(), Event::Chrome { id: "home".into() });
 
         state.page = state::Page::Playing;

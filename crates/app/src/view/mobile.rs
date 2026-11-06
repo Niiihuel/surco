@@ -5,6 +5,7 @@ use std::borrow::Cow;
 
 pub(super) mod search;
 pub(super) mod home;
+pub(super) mod collection;
 mod player;
 pub(super) mod lyrics;
 mod chrome;
@@ -87,7 +88,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let mut header = Vec::new();
     // Where a tab starts there is no way back, as Spotify's on a phone: the account's face is
     // there instead, and opens the profile.
-    let tab = matches!(state.page, Page::Search | Page::Library | Page::Browse) && !state.mobile_search;
+    let tab = matches!(state.page, Page::Search | Page::Collection | Page::Browse) && !state.mobile_search;
     // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
     // bare on the song.
     let disc = |button: Element| if state.page == Page::Playing { button } else { button.glass(GLASS) };
@@ -349,7 +350,7 @@ fn dialogs(state: &State, tree: Element, window: Size, palette: ComponentPalette
 /// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.
 pub(crate) fn large_title(state: &State) -> bool {
     state.mobile_ui.native_bars && state.mobile_ui.native_surfaces
-        && matches!(state.page, Page::Search | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
+        && matches!(state.page, Page::Search | Page::Collection | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
 }
 
 /// Search's whole header: its bar and, natively, the large title over the field.
@@ -361,7 +362,14 @@ pub(crate) fn search_header_height(state: &State) -> f32 {
 pub(crate) fn title(state: &State) -> Cow<'_, str> {
     let searching = state.page == Page::Search && state.mobile_search;
     match &state.page {
-        Page::Library => t!("mobile-tab-library"),
+        Page::Collection => t!("mobile-tab-library"),
+        // A shelf's "See all" is named for what it lists.
+        Page::Library => match state.filter {
+            crate::state::Filter::Lists => t!("desktop-playlists"),
+            crate::state::Filter::Artists => t!("common-artists"),
+            crate::state::Filter::Albums => t!("common-albums"),
+            crate::state::Filter::All => t!("mobile-tab-library"),
+        },
         Page::Browse => t!("mobile-tab-explore"),
         Page::Mood(params) => state.moods.as_ref().and_then(|moods| moods.as_ref().ok()?.iter().find(|mood| mood.params == *params))
             .map_or_else(|| t!("mobile-tab-explore"), |mood| Cow::Borrowed(mood.title.as_str())),
@@ -662,7 +670,7 @@ fn floating_bar(content: Element, width: f32, height: f32) -> Element {
 /// BitChord's Home, Explore and Library. Search is the circle beside them.
 pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'static str, bool); 3] {
     let home = state.page == Page::Search && !state.mobile_search;
-    let library = matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
+    let library = matches!(state.page, Page::Collection | Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
     [
         ("home", Icon::Home, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
         ("browse", Icon::Grid, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), state.page == Page::Browse),
@@ -1096,13 +1104,13 @@ mod tests {
         state.update(&UiAction::InputChanged { id: "search".into(), value: "De música ligera".into() });
         assert_eq!(click(&mut state, "search-submit"), vec![Command::Search("De música ligera".into())]);
         click(&mut state, "mobile-library");
-        assert_eq!(state.page, Page::Library);
+        assert_eq!(state.page, Page::Collection);
         click(&mut state, "mobile-playing");
         assert_eq!(state.page, Page::Playing);
         assert_eq!(click(&mut state, "play-pause"), vec![Command::PlayPause]);
         assert_eq!(click(&mut state, "next"), vec![Command::Next]);
         click(&mut state, "back");
-        assert_eq!(state.page, Page::Library);
+        assert_eq!(state.page, Page::Collection);
         assert_eq!(state.current().unwrap().id, "song", "navigation keeps the same player");
         click(&mut state, "home");
         assert!(state.page == Page::Search && !state.mobile_search);

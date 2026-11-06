@@ -77,8 +77,15 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   other shelves of 150 square cards, corners 12, 10 apart.
 - Search: a 46 field, a capsule as the tabs and the segments, on surface variant; a segmented control (track #767680 at 24%,
   chosen #636366); results grouped under titles; artists with round art.
-- Library: "Library" as a display heading, then folder rows 54 tall with a chevron, then
-  shelves; the grid at least 140 a column.
+- Library: the tab opens BitChord's overview. "Your listening experience" across the top:
+  cards 78% of the width (at most 340), three tall to five wide, corners 22, on a plum shade
+  (62, 48, 56 down to 30, 24, 28): the year's minutes in Display 32, then its song and its
+  artist, the account's name and the year's plays at the foot, and "Listening since" with
+  the first play kept, flush right (Surco has no account to have joined). Each opens Replay.
+  Then a row 55 tall with a chevron for the downloads (Surco keeps no local folders or cache
+  to list), then shelves with "See all": Playlists, after New, Import and Liked (pink into
+  violet), and the artists kept, round. "See all" is the whole list of that kind, the grid
+  at least 140 a column.
 - Album and playlist: the page in the cover's colour, the sleeve centred at 76% of the width
   (at most half the height), corners 12, a shadow of 18. Title 22/700 centred, credit 19 in
   the secondary colour. Actions: a 50 shuffle circle, a white Play pill, a 50 add circle; the

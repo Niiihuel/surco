@@ -252,3 +252,13 @@ mobile-info-stream = Stream
 mobile-info-id = ID
 mobile-top-picks = Top picks for you
 mobile-find-mood = Find your mood
+mobile-listening-experience = Your listening experience
+mobile-minutes-listened = Minutes listened
+mobile-plays-year = { $count ->
+    [one] 1 play
+   *[other] { $plays } plays
+} · { $year }
+mobile-listening-since = Listening since
+mobile-top-song = Your top song
+mobile-top-artist = Your top artist
+mobile-import-from-link = From a playlist link

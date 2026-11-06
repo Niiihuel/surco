@@ -69,12 +69,17 @@ pub(in crate::view) fn moods(state: &State, palette: ComponentPalette) -> Option
         Element::clickable(format!("mood:{index}"), body).accessible(limn::Access::new(limn::Role::Button).name(&mood.title)).size(Some(MOOD_TILE), None)
     }).collect();
     // Its "Show all" is Explore.
-    let all = Element::clickable("browse", Text::new(t!("mobile-see-all"), palette).font_size(15.0).muted().render().centered_y())
-        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-see-all"))).size(None, Some(TAP));
-    let heading = Element::row(vec![shelf_heading(&t!("mobile-find-mood"), None, palette).flex(1.0).centered_y(), all]).gap(12.0);
-    let strip = Element::horizontal_scroll_2d("home-moods", Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]))
+    Some(see_all_shelf("home-moods", &t!("mobile-find-mood"), "browse", tiles, palette).animate_enter("home-moods"))
+}
+
+/// A shelf whose heading has BitChord's "Show all" at its end, which reports `all`.
+pub(in crate::view) fn see_all_shelf(id: &str, title: &str, all: &str, tiles: Vec<Element>, palette: ComponentPalette) -> Element {
+    let more = Element::clickable(all, Text::new(t!("mobile-see-all"), palette).font_size(15.0).muted().render().centered_y())
+        .accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {title}", t!("mobile-see-all")))).size(None, Some(TAP));
+    let heading = Element::row(vec![shelf_heading(title, None, palette).flex(1.0).centered_y(), more]).gap(12.0);
+    let strip = Element::horizontal_scroll_2d(id, Element::column(vec![Element::row(tiles).gap(TILE_GAP), Element::spacer().size(None, Some(SHELF_BAR_ROOM))]))
         .drag_to_pan().foreground(palette.muted).scrollbar_visibility(SCROLL_INDICATOR);
-    Some(Element::column(vec![heading, strip]).gap(8.0).animate_enter("home-moods"))
+    Element::column(vec![heading, strip]).gap(8.0)
 }
 
 /// A mood's square on the home, as BitChord's: 150 across.

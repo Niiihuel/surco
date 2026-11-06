@@ -25,6 +25,8 @@
 - Explore shows YouTube Music's moods and genres as BitChord's cards, each in the service's
   own colour with its first list's cover drawn in it; a card opens its lists, and a list
   opens to be played without being added to the library.
+- The phone's Library is BitChord's: what was listened to this year on cards across the
+  top, the downloads, then shelves of the lists and the artists kept, each with "See all".
 - The phone's bars, header circles and song menu are glass, as BitChord's: the page passes
   beneath them blurred, sharp and bent at their rims. The menu grows out of the ⋯ or the row
   held and goes back into it.

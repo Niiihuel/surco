@@ -175,7 +175,7 @@ fn landing(at: f32, seconds: f32) -> f32 {
 }
 
 /// A count with its thousands apart, as the language writes them.
-fn grouped(value: u64) -> String {
+pub(in crate::view) fn grouped(value: u64) -> String {
     let separator = if crate::i18n::current() == Language::Spanish { '.' } else { ',' };
     let digits = value.to_string();
     let mut out = String::new();

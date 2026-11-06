@@ -50,6 +50,9 @@ pub enum Page {
     Playlist(u64),
     /// The saved collection as a full page on a phone.
     Library,
+    /// A phone's library as BitChord's: what was listened to, then the lists and the artists
+    /// kept, each shelf with a way to all of them in `Library`.
+    Collection,
     /// The phone's full player, backed by the same playback state.
     Playing,
     Settings,
@@ -2893,9 +2896,17 @@ impl State {
             "search-submit" => self.search(),
             "mobile-library" => {
                 self.mobile_search = false;
-                if self.page != Page::Library {
-                    self.go(Page::Library);
+                // A phone's tab is BitChord's library; a television's is the whole list.
+                let page = if self.mobile && !self.tv { Page::Collection } else { Page::Library };
+                if self.page != page {
+                    self.go(page);
                 }
+                Vec::new()
+            }
+            // A shelf's "See all": the whole list of that kind.
+            "library-all:lists" | "library-all:artists" => {
+                self.filter = if id == "library-all:lists" { Filter::Lists } else { Filter::Artists };
+                self.go(Page::Library);
                 Vec::new()
             }
             "mobile-playing" => {

@@ -252,3 +252,13 @@ mobile-info-stream = Flujo
 mobile-info-id = ID
 mobile-top-picks = Para vos
 mobile-find-mood = Tu estado de ánimo
+mobile-listening-experience = Tu experiencia de escucha
+mobile-minutes-listened = Minutos escuchados
+mobile-plays-year = { $count ->
+    [one] 1 reproducción
+   *[other] { $plays } reproducciones
+} · { $year }
+mobile-listening-since = Escuchando desde
+mobile-top-song = Tu canción más escuchada
+mobile-top-artist = Tu artista más escuchado
+mobile-import-from-link = Desde un enlace
