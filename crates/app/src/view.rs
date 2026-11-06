@@ -2358,7 +2358,8 @@ fn blank(icon: Icon, title: impl Into<String>, about: impl Into<String>, action:
     if let Some((id, words)) = action {
         parts.extend([Element::spacer().size(None, Some(8.0)), card_button(id, words, true).render().centered_x()]);
     }
-    Element::panel(Element::column(parts).gap(8.0)).padding(24.0)
+    // Narrower than its lines on a phone: wrapped there rather than past the screen's edge.
+    Element::panel(Element::column(parts).gap(8.0)).padding(24.0).shrink_to_fit()
 }
 
 /// The widest a blank page's lines run before they wrap, and its icon's side.

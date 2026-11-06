@@ -786,8 +786,10 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .foreground(fade(ink, 1.0 - fold)).centered_x();
         // The tab's colour moves with a choice, not with a fold.
         let (icon, name) = if still { (icon.animate_foreground(format!("mobile-tab:{id}:icon")), name.animate_foreground(format!("mobile-tab:{id}:label"))) } else { (icon, name) };
-        let copy = Element::column(vec![icon, Element::panel(name).size(None, Some(lerp(13.0, 0.0))).clip_children()]).gap(lerp(3.0, 0.0)).centered();
         let across = lerp(rest, if selected { INLINE - 8.0 } else { 0.0 });
+        // As wide as its cell: a label wider than the folded circle ("Biblioteca") would push the icon aside.
+        let copy = Element::column(vec![icon, Element::panel(name).size(None, Some(lerp(13.0, 0.0))).clip_children()]).gap(lerp(3.0, 0.0))
+            .size(Some(across), None).centered_y();
         // Folded, the chosen tab's circle opens the bar again, as BitChord's inline tab does.
         let action = if fold >= 0.5 && selected { "mobile-bar-open" } else { id };
         let cell = if selected || fold < 0.5 {
@@ -1103,6 +1105,33 @@ mod tests {
     }
 
     #[test]
+    fn a_folded_tab_and_an_empty_page_stand_in_the_middle_of_a_phone() {
+        let size = Size::new(390.0, 844.0);
+        let icon_at = |state: &State, side: f32, low: f32| {
+            let mut tree = UiTree::new(super::view(state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            frame.commands.iter().find_map(|command| match command {
+                limn::DrawCommand::Icon { rect, .. } if rect.width == side && rect.y > low => Some(*rect),
+                _ => None,
+            }).unwrap()
+        };
+        // "Biblioteca" is wider than the folded circle: its icon stays in the circle's middle.
+        let mut state = playing_state();
+        state.page = Page::Collection;
+        state.mobile_ui.bar_fold = 1.0;
+        let circle = UiTree::new(super::view(&state, size)).layout(size).access.iter().find(|node| node.id == "mobile-bar-open").unwrap().rect;
+        let icon = icon_at(&state, 24.0, 700.0);
+        assert!((icon.x + 12.0 - (circle.x + circle.width / 2.0)).abs() < 0.5, "{icon:?} in {circle:?}");
+        // An empty page's lines are wider than a phone: they wrap, and the whole stays centred.
+        state.page = Page::Downloads;
+        state.mobile_ui.bar_fold = 0.0;
+        state.saved.clear();
+        let icon = icon_at(&state, 48.0, 0.0);
+        assert!((icon.x + 24.0 - size.width / 2.0).abs() < 0.5, "{icon:?}");
+    }
+
+    #[test]
     fn navigation_labels_are_visible_and_tabs_do_not_overlap() {
         let mut state = playing_state();
         state.player.current = None;
@@ -1367,3 +1396,4 @@ mod tests {
         assert!(state.player.playing);
     }
 }
+
