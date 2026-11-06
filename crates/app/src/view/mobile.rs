@@ -101,7 +101,8 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tab = matches!(state.page, Page::Search | Page::Collection | Page::Browse) && !state.mobile_search;
     // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
     // bare on the song.
-    let disc = |button: Element| if state.page == Page::Playing { button } else { pane_of_glass(button, true) };
+    // Each a button of aurora's interactive glass, its press kept under `key`.
+    let disc = |button: Element, key: &str| if state.page == Page::Playing { button } else { pane_of_glass(button, true).glass_press(key) };
     if tab {
         let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
@@ -110,7 +111,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // Over the player's banner its handle stands alone, as BitChord's, with what plays under it.
     let banner_head = state.page == Page::Playing && !state.queue_open;
     if ((state.can_go_back() && !tab) || state.page == Page::Playing) && !banner_head {
-        header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
+        header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette), "header-lead"));
     }
     let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_)) || artist_coming(state);
     // Put away over a bare video, the controls take the handle with them.
@@ -131,7 +132,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     };
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
     if state.page == Page::Library {
-        header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
+        header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette), "header-new"));
     }
     // A list's search and order, as BitChord's: together in a floating pill of the bar. An
     // artist's page has neither, as BitChord's has not.
@@ -139,7 +140,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         header.push(details::bar_tools(state, palette));
     }
     if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !artist_coming(state) {
-        header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette)));
+        header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette), "header-settings"));
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
@@ -640,7 +641,7 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let circle = |id: &str, glyph: Icon, label: &str, lit: bool| {
         let face = Element::icon(glyph).large_icon(24.0).foreground(if lit { palette.text } else { palette.muted }).centered();
         disc(Element::clickable(id, face).accessible(limn::Access::new(limn::Role::Button).name(label).selected(lit)).round(), true)
-            .size(Some(NAV_HEIGHT), Some(NAV_HEIGHT))
+            .glass_press(format!("bar:{id}")).size(Some(NAV_HEIGHT), Some(NAV_HEIGHT))
     };
     let search = circle("mobile-search", Icon::Search, &t!("common-search"), state.page == Page::Search && state.mobile_search).animate_move("mobile-bar-search");
     let row = if state.mobile_ui.bar_inline {

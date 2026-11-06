@@ -53,9 +53,12 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   genres, each a search.
 - Mini player: a pill 56 tall floating 8 above the tab bar. 40 art (corners 8), title over
   artist, play/pause and next. Swipe sideways to skip, drag up or tap to open the player.
-- Both bars, the header's circles and a list's tools are limn's glass, after aurora's: the page
-  is rendered again beneath them, blurred in the middle (36) and sharp and bent at the rim,
-  under a dark veil (26, 26, 28 at 185) that keeps the labels legible over a bright cover.
+- Both bars, the header's circles, a list's tools, the song's menu and the sheets are aurora's
+  regular glass, dark, as the user's shell draws it: a 48% veil of (38, 38, 40) over the page
+  rendered again beneath them, blurred σ 8 in the middle and bent 32 sharp at the rim (14 for
+  circles), saturated 2.2, with aurora's shadow 0 10 40 at 20%. The circles are aurora's
+  interactive glass: pressed, they grow to 1.075 on a spring of 0.30 s with a bounce of 0.35
+  and light up around the press.
   The chosen tab's lit platter slides to the next, a clear lens while it travels, standing as
   tall as the whole bar and 9 past it, then deflating where it lands, as the video shows.
 - Top bar: status inset + 52, no pane. Floating 44 circles for back and actions, a 28 face.
@@ -172,9 +175,12 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   playlist (which offers the lists); radio, play next, add to queue, download; album, artist,
   song info; and for what plays, the timer and the lyrics' step (half a second each way,
   back to 0 with the next song). A song disliked is skipped when it comes and kept out of
-  the picks. A pane of glass 262 wide, corners 32, that grows whole, rows and all, from a
-  tenth of its size at its corner nearest the ⋯ (or the row held) in 200 ms, and goes back
-  into it in 170 ms: in the video it is nearly full four frames after the press. Its right
+  the picks. A pane of glass 262 wide, corners 32, that pops out of the ⋯ (or the row held)
+  as aurora's menus do: a small drop for 60 ms, then a spring for each edge (0.26 s, bounce
+  0.30) into the menu, its corners and veil forming after a faint bloom, the rows focusing in
+  through it from 0.233 to 0.40 s; closing, it shrinks into the drop and melts into the
+  button. The sheets (output, timer, lists, song info, lyrics' step, Audio Pipeline) pop the
+  same way out of whatever opened them. Its right
   edge is the button's; it runs down from the button, or ends at the foot and covers it when
   that leaves too little room, as BitChord's does.
 - Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's

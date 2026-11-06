@@ -118,7 +118,7 @@ pub(in crate::view) fn bar_tools(state: &State, palette: ComponentPalette) -> El
     let open = state.page_searching;
     let search = icon("page-search", if open { Icon::Close } else { Icon::Search }, &if open { t!("desktop-close-search") } else { t!("mobile-search-list") }, palette);
     let order = crate::view::page_order(state, icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette));
-    super::pane_of_glass(Element::panel(Element::row(vec![search, order])), true).round().centered_y()
+    super::pane_of_glass(Element::panel(Element::row(vec![search, order])), true).glass_press("page-tools").round().centered_y()
 }
 
 /// The field a list is searched in, as BitChord's: under the bar, on the page's colour, the

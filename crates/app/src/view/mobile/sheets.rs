@@ -60,6 +60,16 @@ fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, 
     Element::stack(vec![base, placed])
 }
 
+/// A sheet in aurora's glass that pops out of what opened it as aurora's panels do, a drop
+/// swelling into it, and melts back into it on closing. Without that place it rises as before.
+fn popped(state: &State, sheet: Element) -> Element {
+    match state.mobile_ui.sheet_from {
+        Some(from) => sheet.popover_morph(from, from.width.min(from.height) / 2.0)
+            .popover_animation_ms(limn::GLASS_POP_OPEN_MS).popover_close_animation_ms(limn::GLASS_POP_CLOSE_MS),
+        None => sheet,
+    }
+}
+
 /// What can be done with a song, grouped as BitChord's menu: liking it, not wanting it and
 /// sharing it across the top; then putting it in a list; playing it; going to where it comes
 /// from; and, for what plays, the timer and the lyrics' step.
@@ -132,8 +142,8 @@ fn picker(state: &State, base: Element, palette: ComponentPalette) -> Element {
     let mut rows = vec![entry(format!("do:add-new:{row}"), &t!("desktop-add-to-new-playlist"), Icon::Add)];
     rows.extend(state.collection.playlists.iter().filter(|playlist| !held(playlist))
         .map(|playlist| entry(format!("do:add-{}:{row}", playlist.id), &playlist.name, Icon::Playlist)));
-    BottomSheet::new(base, true, t!("mobile-add-to-playlist"), "", "mobile-picking-close", SCHEME.menu())
-        .max_height(560.0).body(Element::column(rows).gap(2.0)).render()
+    popped(state, BottomSheet::new(base, true, t!("mobile-add-to-playlist"), "", "mobile-picking-close", SCHEME.menu())
+        .max_height(560.0).body(Element::column(rows).gap(2.0)).glass(super::GLASS).render())
 }
 
 /// A song's details, after the menu's "Song info".
@@ -148,8 +158,8 @@ fn info_sheet(state: &State, base: Element, palette: ComponentPalette) -> Elemen
     lines.push(line(&t!("mobile-info-length"), crate::view::clock(track.duration_ms as f64 / 1000.0)));
     lines.extend(state.format_of(&track.id).map(|format| line(&t!("mobile-info-stream"), format.to_owned())));
     lines.push(line(&t!("mobile-info-id"), track.id.clone()));
-    BottomSheet::new(base, true, t!("mobile-song-info"), "", "mobile-info-close", SCHEME.menu())
-        .max_height(480.0).body(Element::column(lines).gap(10.0).padding(8.0)).render()
+    popped(state, BottomSheet::new(base, true, t!("mobile-song-info"), "", "mobile-info-close", SCHEME.menu())
+        .max_height(480.0).body(Element::column(lines).gap(10.0).padding(8.0)).glass(super::GLASS).render())
 }
 
 /// How far ahead of the song its lyrics run, moved half a second at a time.
@@ -160,8 +170,8 @@ fn offset_sheet(state: &State, base: Element, palette: ComponentPalette) -> Elem
         .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().flex(1.0);
     let steps = Element::row(vec![step("lyrics-offset:earlier", &t!("mobile-lyrics-earlier")), step("lyrics-offset:later", &t!("mobile-lyrics-later"))]).gap(12.0);
     let reset = Button::new("lyrics-offset:reset", t!("mobile-lyrics-reset"), palette).variant(ButtonVariant::Ghost).render().centered_x();
-    BottomSheet::new(base, true, t!("mobile-lyrics-offset"), t!("mobile-lyrics-offset-detail"), "lyrics-offset-close", SCHEME.menu())
-        .max_height(360.0).body(Element::column(vec![value, steps, reset]).gap(16.0).padding(8.0)).render()
+    popped(state, BottomSheet::new(base, true, t!("mobile-lyrics-offset"), t!("mobile-lyrics-offset-detail"), "lyrics-offset-close", SCHEME.menu())
+        .max_height(360.0).body(Element::column(vec![value, steps, reset]).gap(16.0).padding(8.0)).glass(super::GLASS).render())
 }
 
 /// The sleep timer's choices, as the desktop's menu has them.
@@ -174,8 +184,8 @@ fn sleep_sheet(state: &State, base: Element, palette: ComponentPalette) -> Eleme
         }
         _ => None,
     }).collect();
-    BottomSheet::new(base, true, t!("desktop-sleep"), crate::view::sleep_hint(state), "sleep-dismiss", SCHEME.menu())
-        .max_height(560.0).body(Element::column(rows).gap(4.0)).return_focus("sleep").render()
+    popped(state, BottomSheet::new(base, true, t!("desktop-sleep"), crate::view::sleep_hint(state), "sleep-dismiss", SCHEME.menu())
+        .max_height(560.0).body(Element::column(rows).gap(4.0)).return_focus("sleep").glass(super::GLASS).render())
 }
 
 fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
@@ -195,9 +205,9 @@ fn library_sheet(state: &State, base: Element, palette: ComponentPalette) -> Ele
     } else if context.key.starts_with("album:") || context.key.starts_with("artist:") {
         body.push(row("remove", &if context.key.starts_with("artist:") { t!("mobile-unfollow") } else { t!("mobile-remove-from-library") }, Icon::Minus));
     }
-    BottomSheet::new(base, true, t!("mobile-library-options"), "", "mobile-library-close", SCHEME.menu())
+    popped(state, BottomSheet::new(base, true, t!("mobile-library-options"), "", "mobile-library-close", SCHEME.menu())
         .max_height(480.0).body(Element::column(body).gap(8.0))
-        .return_focus(format!("library-more:{}", context.key)).render()
+        .return_focus(format!("library-more:{}", context.key)).glass(super::GLASS).render())
 }
 
 /// A choice's card in the output sheet, as BitChord's: its own panel, 16 round, a lighter one
@@ -250,8 +260,8 @@ fn connections(state: &State, base: Element, palette: ComponentPalette) -> Eleme
     let summary = state.player.pipeline.as_ref().map(|pipeline| format!("{} · {}", sample_format(&pipeline.sample_format), hertz(pipeline.output_rate)));
     let path = card(Icon::Audio, &t!("mobile-pipeline"), summary.as_deref(), false, Some(chevron()), palette);
     cards.push(Element::clickable("audio-pipeline", path).accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-pipeline"))));
-    BottomSheet::new(base, state.mobile_ui.connections, t!("mobile-audio-output"), "", "mobile-connections-close", SCHEME.menu())
-        .max_height(640.0).body(Element::column(cards).gap(8.0)).return_focus("mobile-connections").render()
+    popped(state, BottomSheet::new(base, state.mobile_ui.connections, t!("mobile-audio-output"), "", "mobile-connections-close", SCHEME.menu())
+        .max_height(640.0).body(Element::column(cards).gap(8.0)).return_focus("mobile-connections").glass(super::GLASS).render())
 }
 
 /// A rate in hertz as kilohertz, as a player prints it: `44.1 kHz`, `48 kHz`.
@@ -363,8 +373,9 @@ fn pipeline(state: &State, base: Element, width: f32, palette: ComponentPalette)
         .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-done"))).size(None, Some(TAP + 8.0));
     let body = Element::column(vec![head, hairline(), scroll, hairline(), done]);
     let card = ComponentPalette { surface: DIALOG, ..palette };
-    limn::Modal::new(base, true, t!("mobile-pipeline"), t!("mobile-pipeline-detail"), "audio-pipeline-close", card)
-        .width(limn::Modal::fit_width(width, 340.0)).height(550.0).headless(true).body(body).outline(Color::TRANSPARENT).backdrop_dismiss(true).render()
+    popped(state, limn::Modal::new(base, true, t!("mobile-pipeline"), t!("mobile-pipeline-detail"), "audio-pipeline-close", card)
+        .width(limn::Modal::fit_width(width, 340.0)).height(550.0).headless(true).body(body).outline(Color::TRANSPARENT).backdrop_dismiss(true)
+        .glass(super::GLASS).render())
 }
 
 /// The Audio Pipeline's card, as BitChord's: a grey lifted off the sheet, its lines white at 10%.

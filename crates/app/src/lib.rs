@@ -373,7 +373,9 @@ impl Host {
         while self.script.actions.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
             let (_, action) = self.script.actions.remove(0);
             note_menu_origin(&mut self.state, &action, &self.painted);
+            let up = sheet_up(&self.state);
             let commands = self.state.update(&action);
+            note_sheet_origin(&mut self.state, &action, up, &self.painted);
             self.send(commands);
         }
     }
@@ -800,7 +802,9 @@ impl eframe::App for Host {
             }
             for action in actions {
                 note_menu_origin(&mut self.state, &action, &input_frame.regions);
+                let up = sheet_up(&self.state);
                 let commands = self.state.update(&action);
+                note_sheet_origin(&mut self.state, &action, up, &input_frame.regions);
                 self.send(commands);
             }
         }
@@ -1025,6 +1029,23 @@ impl eframe::App for Host {
             ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
         self.painted = frame.regions;
+    }
+}
+
+/// Which of the phone's sheets is up, the one over the others first.
+fn sheet_up(state: &state::State) -> Option<&'static str> {
+    let ui = &state.mobile_ui;
+    [(ui.pipeline, "pipeline"), (ui.picking.is_some(), "picking"), (ui.info.is_some(), "info"), (ui.offset_open, "offset"),
+        (state.sleep_open, "sleep"), (ui.library.is_some(), "library"), (ui.connections, "connections")]
+        .into_iter().find(|(up, _)| *up).map(|(_, sheet)| sheet)
+}
+
+/// A sheet that a press has just brought up pops out of what was pressed, as aurora's panels do.
+fn note_sheet_origin(state: &mut state::State, action: &UiAction, before: Option<&'static str>, regions: &[limn::HitRegion]) {
+    let UiAction::Clicked { id } = action else { return };
+    let now = sheet_up(state);
+    if state.mobile && now.is_some() && now != before {
+        state.mobile_ui.sheet_from = regions.iter().find(|region| region.id == *id).map(|region| region.rect);
     }
 }
 

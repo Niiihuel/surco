@@ -101,6 +101,8 @@ pub(crate) struct MobileUi {
     /// Where the song's menu grows from and goes back into: the button or row that opened it,
     /// in the window's points, as the host found it. Without it the menu is a sheet.
     pub menu_origin: Option<limn::Rect>,
+    /// Where the sheet up now came out of, and goes back into: what was pressed to open it.
+    pub sheet_from: Option<limn::Rect>,
     pub library: Option<LibraryContext>,
     pub connections: bool,
     /// Whether the Audio Pipeline stands over the output sheet.
