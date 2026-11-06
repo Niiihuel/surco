@@ -17,8 +17,6 @@ const BANNER_OVERLAP: f32 = 40.0;
 pub(super) const CONTROLS: f32 = 400.0;
 /// The artist and the clock, white at 55% over the blurred cover.
 const SOFT: Color = Color::rgba(255, 255, 255, 140);
-/// The stream's line over the song, as BitChord's at 65%.
-const STREAM: Color = Color::rgba(255, 255, 255, 166);
 /// The foot's glyphs, as BitChord's at 75% until one is lit.
 const FOOT: Color = Color::rgba(255, 255, 255, 191);
 /// The transport's glyphs, as BitChord's: skips 47 across, flattened, and play 37 tall.
@@ -108,9 +106,9 @@ pub(super) fn screen(state: &State, width: f32, window: Size, top: f32, palette:
     let gap = |height: f32| Element::spacer().size(None, Some(height));
     // The stream's line starts where the banner dissolves; the padding below takes its 12.
     let above = (banner_height(window, bottom) - top - BANNER_OVERLAP - 12.0).max(0.0);
-    let stream = state.format_of(&track.id).map_or_else(Element::spacer, |format| {
-        Text::new(format, palette).font_size(12.0).ink(STREAM).truncate().render().font_family(FontFamily::SansMedium).centered_x()
-    }).size(None, Some(16.0));
+    // The stream's own line is gone from over the song, as the user wants it; its room stays,
+    // so the song keeps its place. The output sheet and the Audio Pipeline still tell it.
+    let stream = Element::spacer().size(None, Some(16.0));
     let details = song(state, track, palette);
     let sung = match &state.player.error {
         Some(error) => Alert::new(t!("mobile-play-failed"), error, palette).id("mobile-player-error").render(),
@@ -358,11 +356,11 @@ mod tests {
     }
 
     #[test]
-    fn under_the_banner_stand_the_stream_and_a_sung_line_that_opens_the_lyrics() {
+    fn under_the_banner_stands_a_sung_line_that_opens_the_lyrics_and_no_stream_line() {
         let mut state = state();
         state.apply(crate::backend::Event::Format { track_id: "song".into(), format: "Opus · 141 kbps · 48 kHz".into() });
         let texts = |frame: &Frame| frame.commands.iter().filter_map(|command| match command { DrawCommand::Text { text, .. } => Some(text.clone()), _ => None }).collect::<Vec<_>>();
-        assert!(texts(&frame(&state)).iter().any(|text| text == "Opus · 141 kbps · 48 kHz"));
+        assert!(!texts(&frame(&state)).iter().any(|text| text.starts_with("Opus")), "the stream is told in the output sheet, not over the song");
         assert!(!frame(&state).regions.iter().any(|region| region.id == "sung-line"), "no line, nothing to press");
         state.update(&UiAction::Clicked { id: "sung-line".into() });
         assert_eq!(state.page, Page::Lyrics, "pressed, it opens the lyrics as their button does");

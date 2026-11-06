@@ -159,7 +159,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let copy = if banner_head && bare {
         Element::spacer()
     } else if banner_head {
-        player_handle(&title, palette)
+        player_handle()
     } else if detail && !state.mobile_ui.compact_header {
         // The page's own heading names it under its cover; the bar does once that has scrolled away.
         Element::spacer()
@@ -659,10 +659,10 @@ fn player_canvas(state: &State, window: Size) -> Option<Element> {
 
 /// BitChord's handle over the player's banner, what plays named under it; pressed, it puts
 /// the player away, as dragging it down does.
-fn player_handle(title: &str, palette: ComponentPalette) -> Element {
+fn player_handle() -> Element {
+    // The grip alone: where the song was started from is not said over it.
     let grip = Element::panel(Element::spacer()).background(Color::rgba(255, 255, 255, 150)).round().size(Some(36.0), Some(5.0)).centered_x();
-    let words = Text::new(title, palette).font_size(13.0).ink(Color::rgba(255, 255, 255, 225)).truncate().render().font_family(FontFamily::SansMedium).centered_x();
-    Element::clickable("mobile-player-dismiss", Element::column(vec![grip, words]).gap(6.0).centered())
+    Element::clickable("mobile-player-dismiss", grip.centered())
         .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close")))
         .size(Some(200.0), Some(TAP))
 }
@@ -916,7 +916,9 @@ pub(in crate::view) fn segments<'a>(cells: impl Iterator<Item = (&'a str, &'a st
     let knob = SEGMENT_HEIGHT - 6.0;
     let children = cells.iter().map(|&(id, label, on)| {
         let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
+        // The knob says which: nothing lights under a pointer or a press.
         Element::clickable(id, copy).accessible(limn::Access::new(role).name(label).selected(on)).radius(knob / 2.0)
+            .hover_background(Color::TRANSPARENT).pressed_background(Color::TRANSPARENT)
             .size(None, Some(TAP)).flex(1.0).indicator_slot(id)
     }).collect();
     // aurora's segmented control: the knob slides on to the one chosen, lifting into a clear

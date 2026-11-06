@@ -92,8 +92,10 @@ pub(super) fn content(state: &State, width: f32, palette: ComponentPalette) -> E
                 rows.push(Element::row(vec![section(&t!("common-songs-heading"), palette).centered_y().flex(1.0), play_all()]).padding(8.0));
                 rows.extend(found.tracks.iter().take(SONGS).enumerate().map(|(index, track)| track_row(state, format!("track:{index}"), track, &track.artist, palette)));
                 if found.tracks.len() > SONGS {
-                    rows.push(Button::new("search-filter:tracks", t!("mobile-see-all"), palette).variant(ButtonVariant::Ghost)
-                        .sizing(limn::ButtonSizing { height: TAP, ..ControlSize::Spacious.button_sizing() }).round().render().padding(4.0));
+                    // A link, as the shelves' "See all": no button lights under a pointer or holds the focus.
+                    let all = Text::new(t!("mobile-see-all"), palette).font_size(15.0).muted().render().centered();
+                    rows.push(Element::clickable("search-filter:tracks", all).accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-see-all")))
+                        .size(None, Some(TAP)));
                 }
             }
             // The other kinds are shelves to swipe, as on the home.
