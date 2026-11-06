@@ -643,7 +643,9 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
             strip = strip.tab_selection("mobile-tab-platter", chosen.0, TAB_LIT, (NAV_HEIGHT - 8.0) / 2.0, limn::tokens().motion.move_ms).glass_selection(LENS);
         }
         let tabs = strip.padding(4.0);
-        vec![disc(tabs).size(None, Some(NAV_HEIGHT)).flex(1.0).animate_enter("mobile-bar-open"), search]
+        // Unclipped, unlike the other discs: the lens stands past the capsule while it travels.
+        let capsule = Element::panel(tabs).glass(GLASS).round();
+        vec![capsule.size(None, Some(NAV_HEIGHT)).flex(1.0).animate_enter("mobile-bar-open"), search]
     };
     Element::row(row).gap(8.0).size(Some(span), Some(NAV_HEIGHT)).centered_x().block_pointer("mobile-nav-bar")
 }

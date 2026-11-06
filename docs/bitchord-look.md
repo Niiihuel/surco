@@ -56,7 +56,8 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - Both bars, the header's circles and a list's tools are limn's glass, after aurora's: the page
   is rendered again beneath them, blurred in the middle (36) and sharp and bent at the rim,
   under a dark veil (26, 26, 28 at 185) that keeps the labels legible over a bright cover.
-  The chosen tab's lit platter slides to the next, a clear lens while it travels.
+  The chosen tab's lit platter slides to the next, a clear lens while it travels, standing as
+  tall as the whole bar and 9 past it, then deflating where it lands, as the video shows.
 - Top bar: status inset + 52, no pane. Floating 44 circles for back and actions, a 28 face.
   Page titles are large headings at the top of the list, not in the bar.
 - Edges: rows pass seen beneath the glass, as BitChord's, deepening only by the home
