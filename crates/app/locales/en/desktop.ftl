@@ -51,7 +51,6 @@ desktop-playlist-gone = This playlist no longer exists
 desktop-playlist-gone-detail = It was deleted from your library.
 
 ## Importing
-desktop-import-link-placeholder = Link to a public playlist or album
 desktop-import-link = Link
 desktop-paste-link = Paste link
 desktop-paste-playlist-link = Paste playlist link
@@ -138,7 +137,6 @@ desktop-listen-again = Listen again
 desktop-made-for-you = Made for you
 desktop-artists-to-discover = Artists to discover
 desktop-albums-for-you = Albums for you
-desktop-because-you-played = Because you listened to “{ $title }”
 desktop-your-albums = Your albums
 desktop-your-artists = Your artists
 desktop-now-playing-view = Now Playing view
@@ -360,7 +358,6 @@ desktop-handoff-settings-detail = Playback, quality, display and language
 desktop-handoff-history = What you played
 desktop-handoff-history-detail = What Home uses to recommend
 desktop-handoff-receive-detail = Type the code the other device shows under Send.
-desktop-handoff-receive-code = Code
 desktop-handoff-look = Look
 desktop-handoff-or-type = or type the code
 desktop-handoff-fetching = Bringing the account…

@@ -40,18 +40,11 @@ mobile-save-to-library = Save to Your Library
 mobile-unfollow = Unfollow
 mobile-remove-from-library = Remove from Your Library
 mobile-library-options = Library options
-mobile-system-output = System output
-mobile-listening-on = LISTENING ON
 mobile-route-picker = Audio destination picker
 mobile-airplay-bluetooth = AirPlay or Bluetooth
 mobile-open-route-picker = Open the audio picker
 mobile-on-iphone = Available on iPhone
-mobile-new-device = A new device?
-mobile-new-device-detail = Pair your headphones or speakers in the iPhone's Settings > Bluetooth. Then choose them from the audio picker.
-mobile-surco-volume = Surco volume
 mobile-done = Done
-mobile-listen-on = Listen on
-mobile-listen-on-detail = Choose where the music plays.
 
 ## Player and lyrics
 
@@ -63,16 +56,9 @@ mobile-play-failed = Couldn't play
 mobile-playback-position = Playback position
 mobile-repeat = Repeat
 mobile-volume = Volume
-mobile-unsynced-lyrics = Unsynced lyrics · { $source }
-mobile-lyrics-loading = Looking for lyrics…
-mobile-lyrics-missing = No lyrics available.
-mobile-lyrics-open = Open the lyrics to look for them.
 mobile-show-lyrics = Show lyrics
 mobile-show-controls = Show controls
 mobile-hide-controls = Hide controls
-mobile-view-artist = View artist: { $name }
-mobile-about-artist = About the artist
-mobile-subscribers = { $subscribers } subscribers
 
 ## Album, artist and playlist pages
 
@@ -90,12 +76,9 @@ mobile-songs-not-found = { $count ->
     [one] 1 song wasn't found
    *[other] { $count } songs weren't found
 }
-mobile-delete-playlist = Delete playlist
 mobile-playlist-empty = No songs yet
 mobile-playlist-empty-detail = Find a song and choose “Add to” in its menu.
-mobile-share-playlist = Share playlist
 mobile-songs-copied = Songs copied: paste them in the other app
-mobile-copy-songs = Copy songs for another app
 
 ## Search
 
@@ -182,7 +165,6 @@ mobile-view = View
 mobile-view-compact = Compact
 mobile-view-list = List
 mobile-view-grid = Grid
-mobile-import-music = Import music from other apps
 mobile-about = About
 mobile-version = Version
 mobile-licenses = Third-party licenses
@@ -219,7 +201,6 @@ mobile-pipeline-stream = Stream
 mobile-pipeline-name = Name
 mobile-pipeline-format = Format
 mobile-pipeline-rate = I/O rate
-mobile-pipeline-channels = Channels
 mobile-pipeline-passthrough = None, passthrough
 mobile-pipeline-type = Type
 mobile-pipeline-equalizer = Equalizer

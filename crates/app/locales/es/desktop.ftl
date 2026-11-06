@@ -51,7 +51,6 @@ desktop-playlist-gone = Esta playlist ya no existe
 desktop-playlist-gone-detail = Fue eliminada de tu biblioteca.
 
 ## Importing
-desktop-import-link-placeholder = Enlace de playlist o álbum público
 desktop-import-link = Enlace
 desktop-paste-link = Pegar enlace
 desktop-paste-playlist-link = Pegar enlace de playlist
@@ -138,7 +137,6 @@ desktop-listen-again = Volver a escuchar
 desktop-made-for-you = Hecho para vos
 desktop-artists-to-discover = Artistas para descubrir
 desktop-albums-for-you = Discos para vos
-desktop-because-you-played = Porque escuchaste «{ $title }»
 desktop-your-albums = Tus álbumes
 desktop-your-artists = Tus artistas
 desktop-now-playing-view = Vista Reproduciendo
@@ -360,7 +358,6 @@ desktop-handoff-settings-detail = Reproducción, calidad, pantalla e idioma
 desktop-handoff-history = Lo que escuchaste
 desktop-handoff-history-detail = Lo que el inicio usa para recomendarte
 desktop-handoff-receive-detail = Escribí el código que muestra el otro dispositivo en Enviar.
-desktop-handoff-receive-code = Código
 desktop-handoff-look = Buscar
 desktop-handoff-or-type = o escribí el código
 desktop-handoff-fetching = Trayendo la cuenta…

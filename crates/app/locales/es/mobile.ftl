@@ -40,18 +40,11 @@ mobile-save-to-library = Guardar en tu biblioteca
 mobile-unfollow = Dejar de seguir
 mobile-remove-from-library = Quitar de tu biblioteca
 mobile-library-options = Opciones de biblioteca
-mobile-system-output = Salida del sistema
-mobile-listening-on = ESCUCHANDO EN
 mobile-route-picker = Selector de destinos de audio
 mobile-airplay-bluetooth = AirPlay o Bluetooth
 mobile-open-route-picker = Abrí el selector de audio
 mobile-on-iphone = Disponible en el iPhone
-mobile-new-device = ¿Un dispositivo nuevo?
-mobile-new-device-detail = Vinculá tus auriculares o parlantes en Ajustes > Bluetooth del iPhone. Después elegilos desde el selector de audio.
-mobile-surco-volume = Volumen de Surco
 mobile-done = Listo
-mobile-listen-on = Escuchar en
-mobile-listen-on-detail = Elegí dónde sigue la música.
 
 ## Player and lyrics
 
@@ -63,16 +56,9 @@ mobile-play-failed = No se pudo reproducir
 mobile-playback-position = Posición de reproducción
 mobile-repeat = Repetir
 mobile-volume = Volumen
-mobile-unsynced-lyrics = Letra sin sincronización · { $source }
-mobile-lyrics-loading = Buscando la letra…
-mobile-lyrics-missing = No hay letra disponible.
-mobile-lyrics-open = Abrí la letra para buscarla.
 mobile-show-lyrics = Mostrar la letra
 mobile-show-controls = Mostrar los controles
 mobile-hide-controls = Ocultar los controles
-mobile-view-artist = Ver artista: { $name }
-mobile-about-artist = Acerca del artista
-mobile-subscribers = { $subscribers } suscriptores
 
 ## Album, artist and playlist pages
 
@@ -90,12 +76,9 @@ mobile-songs-not-found = { $count ->
     [one] 1 canción no se encontró
    *[other] { $count } canciones no se encontraron
 }
-mobile-delete-playlist = Eliminar playlist
 mobile-playlist-empty = Todavía no tiene canciones
 mobile-playlist-empty-detail = Buscá una canción y elegí «Agregar a» en su menú.
-mobile-share-playlist = Compartir playlist
 mobile-songs-copied = Canciones copiadas: pegalas en la otra app
-mobile-copy-songs = Copiar canciones para otra app
 
 ## Search
 
@@ -182,7 +165,6 @@ mobile-view = Vista
 mobile-view-compact = Compacta
 mobile-view-list = Lista
 mobile-view-grid = Cuadrícula
-mobile-import-music = Importar música de otras apps
 mobile-about = Acerca de
 mobile-version = Versión
 mobile-licenses = Licencias de terceros
@@ -219,7 +201,6 @@ mobile-pipeline-stream = Flujo
 mobile-pipeline-name = Nombre
 mobile-pipeline-format = Formato
 mobile-pipeline-rate = Entrada → salida
-mobile-pipeline-channels = Canales
 mobile-pipeline-passthrough = Ninguno, pasa directo
 mobile-pipeline-type = Tipo
 mobile-pipeline-equalizer = Ecualizador
