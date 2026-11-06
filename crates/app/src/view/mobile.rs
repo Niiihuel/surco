@@ -43,6 +43,14 @@ const INLINE_SPACING: f32 = 14.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
+/// iOS 26's soft scroll edge under the bar: the page blurred (σ 8, as the bars' glass, which
+/// shares its blur) and a little darkened, no rim nor bend, giving way to the sharp page over
+/// the lower 60% of the bar.
+const SCROLL_EDGE: limn::GlassMaterial = limn::GlassMaterial {
+    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.6,
+    ..limn::GlassMaterial::new(Color::rgba(0, 0, 0, 70))
+};
+
 /// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
 /// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
 pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial::new(Color::rgba(38, 38, 40, 122));
@@ -278,6 +286,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let ground = song_ground(state, window);
     // Over the blurred cover the bars are clear, as the cover runs beneath them.
     let (header_edge, footer_edge) = if native_chrome || ground.is_some() { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
+    // iOS 26's scroll edge, as BitChord's: a page going up under the bar blurs, the more the
+    // nearer the top, rather than fading into a colour. The song's pages keep their ground.
+    let soft_edge = !native_chrome && !song_surface && !queue;
+    let header_edge = if soft_edge { Color::TRANSPARENT } else { header_edge };
     let surface = if ground.is_some() { (Color::TRANSPARENT, Color::TRANSPARENT) } else { surface };
     // The large title is the page's first row, scrolling up under the bar; over Search it
     // stays in the header, above the field.
@@ -294,7 +306,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Element::column(vec![Element::spacer().size(None, Some(scroll_top)), content.flex(1.0), Element::spacer().size(None, Some(bottom_height))])
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
-    let top = if native_chrome || clear_head { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    let top = if native_chrome || clear_head { top }
+        else if soft_edge { Element::stack(vec![Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(top_height)), top]) }
+        else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
     let footer = Element::column(bottom);
     // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
     let footer = if player { footer }

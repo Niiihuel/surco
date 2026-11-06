@@ -69,7 +69,10 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   and light up around the press.
   The chosen tab's lit platter slides to the next, a clear lens while it travels, standing as
   tall as the whole bar and 9 past it, then deflating where it lands, as the video shows.
-- Top bar: status inset + 52, no pane. Floating 44 circles for back and actions, a 28 face.
+- Top bar: status inset + 52, no pane: iOS 26's soft scroll edge instead, as BitChord's, the page
+  going up under it blurred (σ 8) and a little darkened, the more the nearer the top, giving
+  way to the sharp page over its lower 60%; no fade into a colour. Floating 44 circles for back
+  and actions, a 28 face.
   On a tab (Home, Explore, Library) the bar holds its circles and the face at its end, as
   BitChord's, and the tab's name stands under it, 34 bold, as the page's first row, scrolling
   up with it. Page titles are large headings at the top of the list, not in the bar.
