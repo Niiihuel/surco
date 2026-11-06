@@ -29,7 +29,17 @@ const NAV_HEIGHT: f32 = 62.0;
 const HEADER_HEIGHT: f32 = MOBILE_HEADER_HEIGHT;
 /// The mini-player's pill and the gap that floats it above the tabs.
 const MINI_HEIGHT: f32 = MINI_PILL + 8.0;
-const MINI_PILL: f32 = 56.0;
+/// BitChord's mini player, measured off Apple's: 48 tall, its cover 30.4 with corners of 5.7,
+/// 16 in from its start; its title 13 over its artist 12 at 70%.
+const MINI_PILL: f32 = 48.0;
+const MINI_ART: f32 = 30.4;
+const MINI_ART_CORNER: f32 = 5.7;
+const MINI_INSET: f32 = 16.0;
+/// BitChord's folded bar: a row 48 tall, 28 in from the screen's sides, its parts 14 apart, on
+/// the open tabs' centre line.
+const INLINE: f32 = 48.0;
+const INLINE_GUTTER: f32 = 28.0;
+const INLINE_SPACING: f32 = 14.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
@@ -54,6 +64,8 @@ pub(in crate::view) const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
 /// the shade at its foot under the song's name once they are put away.
 const CANVAS_DIM: Color = Color::rgba(0, 0, 0, 128);
 const CANVAS_FOOT: Color = Color::rgba(0, 0, 0, 115);
+/// BitChord's library glyph, solid: a case with two more stacked behind it.
+const LIBRARY_FILL: &str = include_str!("../../assets/icons/library-fill.svg");
 /// The chosen tab's platter.
 const TAB_LIT: Color = Color::rgba(255, 255, 255, 36);
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
@@ -192,8 +204,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         bottom_height += lyrics::footer_height(state, window.height);
     } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
-            // Folded, the mini player rides in the tabs' row; its room stays, so the page does not jump.
-            if native_chrome || !state.mobile_ui.bar_inline {
+            // With the tabs, the mini player is one piece with them, which folds it into their
+            // row; its room stays, so the page does not jump.
+            let with_tabs = !native_chrome && !(searching && !field_on_top);
+            if !with_tabs {
                 bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, width, palette) });
             }
             bottom_height += MINI_HEIGHT;
@@ -544,7 +558,7 @@ fn mini_thumb(state: &State, window: Size) -> limn::Rect {
     let width = (window.width - insets.left - insets.right).max(TAP);
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
     let pill = window.height - (insets.bottom.max(15.0) + 6.0) - NAV_HEIGHT - MINI_HEIGHT;
-    limn::Rect::new(insets.left + (width - span) / 2.0 + 8.0, pill + (MINI_PILL - 40.0) / 2.0, 40.0, 40.0)
+    limn::Rect::new(insets.left + (width - span) / 2.0 + MINI_INSET, pill + (MINI_PILL - MINI_ART) / 2.0, MINI_ART, MINI_ART)
 }
 
 /// The player's cover leaving with it, as BitChord's: while the player comes down it shrinks
@@ -631,56 +645,83 @@ pub(crate) fn route_key(state: &State) -> String {
     }
 }
 
-/// BitChord's tab bar: a frosted pill floating clear of the edges, the chosen tab on a lit
-/// platter that slides over to the next one chosen, and Search a circle of its own beside it.
-/// While the page goes down it folds into one row: the chosen tab's circle, the mini player
-/// and Search, each gliding to its place.
+/// BitChord's floating bar: the tabs in a glass capsule, the chosen one on a lit platter that
+/// slides to the next one chosen, Search a circle beside them, and the mini player above. As
+/// the page goes down they fold into one row, `bar_fold` of the way: the capsule narrows into
+/// the chosen tab's circle as the other tabs and the names fade, and the mini player comes
+/// down between it and Search, each part moving between its places as BitChord's shared
+/// elements do. Pressed while folded, the circle opens the bar again.
 fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
+    let fold = state.mobile_ui.bar_fold.clamp(0.0, 1.0);
+    let lerp = |from: f32, to: f32| from + (to - from) * fold;
+    let fade = |color: Color, share: f32| Color { a: (f32::from(color.a) * share.clamp(0.0, 1.0)).round() as u8, ..color };
+    let track = state.current();
+    // The tabs' row: under the mini player's while the bar is open. Folded, the row is shorter,
+    // narrower and more spaced, on the open row's centre line.
+    let row = if track.is_some() { MINI_HEIGHT } else { 0.0 };
+    let left = ((width - span) / 2.0).max(0.0);
+    let (inline_left, inline_span) = (INLINE_GUTTER, (width - 2.0 * INLINE_GUTTER).max(3.0 * INLINE));
+    let inline_y = row + (NAV_HEIGHT - INLINE) / 2.0;
+    let tall = lerp(NAV_HEIGHT, INLINE);
+    let place = |surface: Element, x: f32, y: f32, across: f32, tall: f32| Element::column(vec![
+        Element::spacer().size(None, Some(y)),
+        Element::row(vec![Element::spacer().size(Some(x), None), surface.size(Some(across.max(0.0)), Some(tall.max(0.0)))]),
+    ]);
     let disc = |content: Element, small: bool| pane_of_glass(Element::panel(content), small).round().clip_children();
-    let circle = |id: &str, glyph: Icon, label: &str, lit: bool| {
-        let face = Element::icon(glyph).large_icon(24.0).foreground(if lit { palette.text } else { palette.muted }).centered();
-        disc(Element::clickable(id, face).accessible(limn::Access::new(limn::Role::Button).name(label).selected(lit)).round(), true)
-            .glass_press(format!("bar:{id}")).size(Some(NAV_HEIGHT), Some(NAV_HEIGHT))
-    };
-    let search = circle("mobile-search", Icon::Search, &t!("common-search"), state.page == Page::Search && state.mobile_search).animate_move("mobile-bar-search");
-    let row = if state.mobile_ui.bar_inline {
-        let tabs = tabs(state);
-        let (id, glyph, _, label, _) = tabs.iter().copied().find(|tab| tab.4).unwrap_or(tabs[0]);
-        // A row of the bar fades in when the page folds or opens it, never on coming back to it.
-        let entering = |row: Element, key: &str| if state.mobile_ui.bar_turned { row.animate_enter(key) } else { row };
-        let mut row = vec![entering(circle(id, glyph, label, true), "mobile-bar-folded")];
-        row.push(match state.current() {
-            Some(track) => disc(mini_controls(state, track, palette), false).size(None, Some(NAV_HEIGHT)).flex(1.0).animate_move("mobile-mini"),
-            None => Element::spacer().flex(1.0),
-        });
-        row.push(search);
-        row
-    } else {
-        let tab = |id: &str, glyph: Icon, label: &str, selected: bool| {
-            let ink = if selected { palette.text } else { palette.muted };
-            let copy = Element::column(vec![
-                Element::icon(glyph).large_icon(24.0).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
-                Text::new(label, palette).font_size(10.0).render().font_family(limn::FontFamily::SansMedium).foreground(ink).centered_x()
-                    .animate_foreground(format!("mobile-tab:{id}:label")),
-            ]).gap(3.0).centered();
-            Element::clickable(id, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
-                .size(None, Some(NAV_HEIGHT - 8.0)).flex(1.0).indicator_slot(id)
-        };
-        let tabs = tabs(state);
-        // The lit platter slides to the tab chosen, a lens while it travels, as BitChord's.
-        let mut strip = Element::tab_strip(tabs.iter().map(|&(id, glyph, _, label, selected)| tab(id, glyph, label, selected)).collect(),
-            tabs.iter().map(|tab| tab.0.to_owned()).collect());
-        if let Some(chosen) = tabs.iter().find(|tab| tab.4) {
-            strip = strip.tab_selection("mobile-tab-platter", chosen.0, TAB_LIT, (NAV_HEIGHT - 8.0) / 2.0, limn::tokens().motion.move_ms).glass_selection(LENS);
-        }
-        let tabs = strip.padding(4.0);
-        // Unclipped, unlike the other discs: the lens stands past the capsule while it travels.
-        let capsule = pane_of_glass(Element::panel(tabs), false).round();
-        let capsule = capsule.size(None, Some(NAV_HEIGHT)).flex(1.0);
-        vec![if state.mobile_ui.bar_turned { capsule.animate_enter("mobile-bar-open") } else { capsule }, search]
-    };
-    Element::row(row).gap(8.0).size(Some(span), Some(NAV_HEIGHT)).centered_x().block_pointer("mobile-nav-bar")
+    let face = Element::icon(Icon::Search).large_icon(24.0).foreground(palette.text).centered();
+    let searching = state.page == Page::Search && state.mobile_search;
+    let search = disc(Element::clickable("mobile-search", face.foreground(if searching { palette.text } else { Color { a: 166, ..palette.text } }))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-search")).selected(searching)).round(), true)
+        .glass_press("bar:mobile-search");
+    // The capsule's cells: the chosen one becomes the circle, the others narrow away.
+    let tabs = tabs(state);
+    let open = span - NAV_HEIGHT - 8.0;
+    let rest = (open - 8.0) / tabs.len() as f32;
+    let still = fold == 0.0;
+    let cells: Vec<Element> = tabs.iter().filter(|tab| tab.4 || fold < 0.99).map(|&(id, glyph, _, label, selected)| {
+        // BitChord's: the others in the chosen one's ink at 65%.
+        let ink = if selected { palette.text } else { fade(Color { a: 166, ..palette.text }, 1.0 - fold) };
+        let icon = Element::icon(glyph).large_icon(24.0).foreground(ink).centered_x();
+        let name = Text::new(label, palette).font_size(10.0).render().font_family(limn::FontFamily::SansMedium)
+            .foreground(fade(ink, 1.0 - fold)).centered_x();
+        // The tab's colour moves with a choice, not with a fold.
+        let (icon, name) = if still { (icon.animate_foreground(format!("mobile-tab:{id}:icon")), name.animate_foreground(format!("mobile-tab:{id}:label"))) } else { (icon, name) };
+        let copy = Element::column(vec![icon, Element::panel(name).size(None, Some(lerp(13.0, 0.0))).clip_children()]).gap(lerp(3.0, 0.0)).centered();
+        let across = lerp(rest, if selected { INLINE - 8.0 } else { 0.0 });
+        // Folded, the chosen tab's circle opens the bar again, as BitChord's inline tab does.
+        let action = if fold >= 0.5 && selected { "mobile-bar-open" } else { id };
+        let cell = if selected || fold < 0.5 {
+            Element::clickable(action, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
+        } else { Element::panel(copy) };
+        cell.size(Some(across), Some(tall - 8.0)).clip_children().indicator_slot(id)
+    }).collect();
+    let actions = tabs.iter().filter(|tab| tab.4 || fold < 0.5).map(|tab| if fold >= 0.5 { "mobile-bar-open" } else { tab.0 }.to_owned()).collect();
+    let mut strip = Element::tab_strip(cells, actions);
+    if let Some(chosen) = tabs.iter().find(|tab| tab.4) {
+        strip = strip.tab_selection("mobile-tab-platter", chosen.0, fade(TAB_LIT, 1.0 - fold), (tall - 8.0) / 2.0, limn::tokens().motion.move_ms)
+            .glass_selection(LENS);
+    }
+    // Unclipped, unlike the circles: the lens stands past the capsule while it travels.
+    let capsule = pane_of_glass(Element::panel(strip.padding(4.0)), false).round();
+    // Folded, the capsule is a button of glass of its own.
+    let capsule = if fold > 0.0 { capsule.glass_press("bar:tabs") } else { capsule };
+    let mut layers = Vec::new();
+    // What the bars stand on takes no press for the page under them: the mini player's row
+    // while it is there, and the tabs' row.
+    if track.is_some() && fold < 0.5 {
+        layers.push(place(Element::spacer().block_pointer("mobile-mini-bar"), 0.0, 0.0, width, MINI_HEIGHT));
+    }
+    layers.push(place(Element::spacer().block_pointer("mobile-nav-bar"), left, row, span, NAV_HEIGHT));
+    let y = lerp(row, inline_y);
+    layers.push(place(capsule, lerp(left, inline_left), y, lerp(open, INLINE), tall));
+    layers.push(place(search, lerp(left + span - NAV_HEIGHT, inline_left + inline_span - INLINE), y, tall, tall));
+    if let Some(track) = track {
+        let mini = disc(mini_controls(state, track, fold >= 0.5, palette), false);
+        let side = INLINE + INLINE_SPACING;
+        layers.push(place(mini, lerp(left, inline_left + side), lerp(0.0, inline_y), lerp(span, inline_span - 2.0 * side), MINI_PILL));
+    }
+    Element::stack(layers).size(Some(width), Some(row + NAV_HEIGHT))
 }
 
 /// A floating bar's pill: frosted, rimmed with a hairline, centred `BAR_SIDE` clear of the
@@ -697,9 +738,10 @@ pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'stati
     let home = state.page == Page::Search && !state.mobile_search;
     let library = matches!(state.page, Page::Collection | Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
     [
-        ("home", Icon::Home, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
-        ("browse", Icon::Grid, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), state.page == Page::Browse),
-        ("mobile-library", Icon::Library, if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("mobile-tab-library")), library),
+        // limn's glyphs solid, chosen or not, as BitChord's tabs are.
+        ("home", Icon::HomeFill, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
+        ("browse", Icon::GridFill, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), state.page == Page::Browse),
+        ("mobile-library", Icon::Custom(LIBRARY_FILL), if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("mobile-tab-library")), library),
     ]
 }
 
@@ -769,30 +811,35 @@ pub(crate) fn mini_buttons(state: &State) -> [HeaderButton; 3] {
 /// BitChord's mini-player: a frosted pill floating over the tabs, the song beside its cover,
 /// then play and next.
 fn mini_player(state: &State, track: &Track, width: f32, palette: ComponentPalette) -> Element {
-    Element::column(vec![floating_bar(mini_controls(state, track, palette), width, MINI_PILL).animate_move("mobile-mini"), Element::spacer().size(None, Some(MINI_HEIGHT - MINI_PILL))])
+    Element::column(vec![floating_bar(mini_controls(state, track, false, palette), width, MINI_PILL).animate_move("mobile-mini"), Element::spacer().size(None, Some(MINI_HEIGHT - MINI_PILL))])
         .size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
 }
 
 /// What the mini player holds, over the tabs or folded among them: the song by its cover,
 /// which opens the player, play and next.
-fn mini_controls(state: &State, track: &Track, palette: ComponentPalette) -> Element {
+fn mini_controls(state: &State, track: &Track, inline: bool, palette: ComponentPalette) -> Element {
     let label = Element::row(vec![
-        cover(state, &track.artwork_url, 40.0, palette).radius(8.0).border(THUMB_RIM, 1.0).centered_y(),
+        cover(state, &track.artwork_url, MINI_ART, palette).radius(MINI_ART_CORNER).border(THUMB_RIM, 1.0).centered_y(),
         Element::column(vec![
-            Text::new(&track.title, palette).font_size(15.0).truncate().render().font_family(limn::FontFamily::SansBold),
-            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).font_size(13.0).muted().truncate().render(),
-        ]).gap(2.0).centered_y().flex(1.0),
-    ]).gap(10.0).size(None, Some(TAP));
+            Text::new(&track.title, palette).font_size(13.0).truncate().render().font_family(limn::FontFamily::SansBold),
+            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).font_size(12.0)
+                .ink(Color { a: 179, ..palette.text }).truncate().render(),
+        ]).gap(1.0).centered_y().flex(1.0),
+    ]).gap(if inline { 8.0 } else { 9.0 }).size(None, Some(TAP));
     let open = Element::clickable("mobile-playing", label)
         .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-open-player", title = track.title.as_str()))).flex(1.0);
     let playing = state.player.playing;
-    Element::row(vec![
-        Element::spacer().size(Some(8.0), None),
+    let mut row = vec![
+        Element::spacer().size(Some(MINI_INSET), None),
         open,
-        controls::action("play-pause", if playing { Icon::PauseFill } else { Icon::PlayFill }, &if playing { t!("common-pause") } else { t!("common-play") }, 26.0, palette),
-        controls::action("mobile-mini-next", Icon::SkipForward, &t!("common-next-song"), 22.0, palette).dispatch_as("next"),
-        Element::spacer().size(Some(4.0), None),
-    ]).centered_y()
+        controls::action("play-pause", if playing { Icon::PauseFill } else { Icon::PlayFill }, &if playing { t!("common-pause") } else { t!("common-play") }, if inline { 22.0 } else { 26.0 }, palette),
+    ];
+    // Folded, BitChord's keeps play alone.
+    if !inline {
+        row.push(controls::action("mobile-mini-next", Icon::SkipForward, &t!("common-next-song"), 22.0, palette).dispatch_as("next"));
+    }
+    row.push(Element::spacer().size(Some(if inline { 2.0 } else { 4.0 }), None));
+    Element::row(row).centered_y()
 }
 
 /// A song row's cover, as BitChord's: 52 across, its corners 8, rimmed with a hairline.
@@ -928,12 +975,13 @@ mod tests {
         let mut state = playing_state();
         state.page = Page::Library;
         state.mobile_ui.bar_inline = true;
+        state.mobile_ui.bar_fold = 1.0;
         let size = Size::new(390.0, 844.0);
         let mut tree = UiTree::new(super::view(&state, size));
         tree.set_reduced_motion(true);
         let frame = tree.layout(size);
         let rect = |id: &str| frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id}")).rect;
-        let (tab, mini, search) = (rect("mobile-library"), rect("mobile-playing"), rect("mobile-search"));
+        let (tab, mini, search) = (rect("mobile-bar-open"), rect("mobile-playing"), rect("mobile-search"));
         assert!(!frame.access.iter().any(|node| node.id == "home"), "the other tabs fold away");
         assert!(tab.x + tab.width <= mini.x && mini.x + mini.width <= search.x, "{tab:?} {mini:?} {search:?}");
         let middle = |rect: limn::Rect| rect.y + rect.height / 2.0;

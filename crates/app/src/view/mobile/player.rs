@@ -473,8 +473,9 @@ mod flight_tests {
         state.page = Page::Playing;
         state.mobile_ui.collapse = 0.0;
         state.mobile_ui.player_offset = 422.0;
-        let mini = limn::Rect::new(19.0 + 8.0, 844.0 - 21.0 - 62.0 - 64.0 + 8.0, 40.0, 40.0);
-        let halfway = limn::Rect::new(mini.x / 2.0, mini.y / 2.0, (390.0 + 40.0) / 2.0, (436.0 + 40.0) / 2.0);
+        // BitChord's mini player: 48 tall, its 30.4 cover 16 in from its start.
+        let mini = limn::Rect::new(19.0 + 16.0, 844.0 - 21.0 - 62.0 - 56.0 + (48.0 - 30.4) / 2.0, 30.4, 30.4);
+        let halfway = limn::Rect::new(mini.x / 2.0, mini.y / 2.0, (390.0 + 30.4) / 2.0, (436.0 + 30.4) / 2.0);
         assert_eq!(images(&state), [halfway], "half of the way down, half of the way there");
     }
 }

@@ -32,6 +32,8 @@ pub struct Motion {
     /// From the player's cover at rest (0) to its thumbnail over the lyrics or the queue (1).
     collapse: ScalarTransition,
     search: ScalarTransition,
+    /// From the bar open (0) to folded into one row (1).
+    bar: ScalarSpring,
     /// The search header's height as last drawn, and when.
     search_drawn: Option<(f32, Instant)>,
     showing: bool,
@@ -67,6 +69,7 @@ impl Motion {
     pub fn new(now: Instant) -> Self {
         Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), collapse: ScalarTransition::new(0.0, now),
             search: ScalarTransition::new(HEADER, now), search_drawn: None,
+            bar: ScalarSpring::new(0.0, now).motion(SpringMotion { stiffness: 400.0, damping_ratio: 1.0 }),
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
             primary: None, underlay: None }
     }
@@ -111,7 +114,11 @@ impl Motion {
         // The lyrics and the queue take the cover into their head; a player opened on either
         // starts there.
         let collapsed = state.mobile && (state.page == Page::Lyrics || (state.page == Page::Playing && state.queue_open));
-        if !matches!(state.page, Page::Playing | Page::Lyrics) { self.collapse.snap_to(0.0, now); } else { state.mobile_ui.bar_turned = false; }
+        if !matches!(state.page, Page::Playing | Page::Lyrics) { self.collapse.snap_to(0.0, now); }
+        // The bar folds and opens on Compose's spring for shared elements, as BitChord's does:
+        // stiffness 400, no bounce.
+        self.bar.retarget_with_motion(if state.mobile_ui.bar_inline { 1.0 } else { 0.0 }, now, reduced);
+        state.mobile_ui.bar_fold = self.bar.value(now).clamp(0.0, 1.0);
         self.collapse.retarget_with_motion(if collapsed { 1.0 } else { 0.0 }, now, COLLAPSE, reduced);
         state.mobile_ui.collapse = self.collapse.value(now);
         let search = state.mobile && crate::view::search_in_header(state);
@@ -241,7 +248,9 @@ impl Motion {
         output
     }
 
-    pub fn active(&self, now: Instant) -> bool { self.player.is_active(now) || self.collapse.is_active(now) || self.search.is_active(now) }
+    pub fn active(&self, now: Instant) -> bool {
+        self.player.is_active(now) || self.collapse.is_active(now) || self.search.is_active(now) || self.bar.is_active(now)
+    }
 
     /// An upward release can carry the spring past the top; the sheet stops at the screen's edge.
     fn offset(&self, now: Instant) -> f32 { self.player.value(now).max(0.0) }
@@ -278,8 +287,9 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
     let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
     let scrolled = scroll > 0.5;
-    let scroll = if searching { 0.0 } else { scroll };
+    // The bar folds on every page that goes down, the search's results too, as BitChord's.
     let folded = fold(&mut state.mobile_ui, scroll);
+    let scroll = if searching { 0.0 } else { scroll };
     // Followed every frame by the native title, without laying the page out again.
     state.mobile_ui.page_scroll = scroll;
     let moved = std::mem::replace(&mut state.mobile_ui.scrolled, scrolled) != scrolled;
@@ -292,13 +302,11 @@ const FOLD: f32 = 50.0;
 
 /// Folds or opens the tabs as the page went from where it was to `scroll`; says whether it did.
 fn fold(ui: &mut crate::state::mobile::MobileUi, scroll: f32) -> bool {
-    let step = scroll - ui.page_scroll;
+    let step = scroll - std::mem::replace(&mut ui.bar_scroll, scroll);
     // A turn starts the count again.
     ui.bar_travel = if step * ui.bar_travel < 0.0 { step } else { ui.bar_travel + step };
     let inline = if scroll < FOLD { false } else if ui.bar_travel >= FOLD { true } else if ui.bar_travel <= -FOLD { false } else { ui.bar_inline };
-    let turned = std::mem::replace(&mut ui.bar_inline, inline) != inline;
-    ui.bar_turned |= turned;
-    turned
+    std::mem::replace(&mut ui.bar_inline, inline) != inline
 }
 
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
@@ -650,25 +658,32 @@ mod tests {
     #[test]
     fn the_tabs_fold_as_the_page_goes_down_fifty_and_open_as_it_comes_back_up() {
         let mut ui = crate::state::mobile::MobileUi::default();
-        let mut at = |scroll: f32| { fold(&mut ui, scroll); ui.page_scroll = scroll; ui.bar_inline };
+        let mut at = |scroll: f32| { fold(&mut ui, scroll); ui.bar_inline };
         assert!(!at(40.0), "near the top it stays open");
         assert!(at(80.0), "past fifty, gone fifty down: folded");
         assert!(at(300.0) && at(290.0), "a little back up keeps it folded");
         assert!(!at(230.0), "fifty back up: open");
         assert!(at(400.0) && !at(20.0), "and the top always opens it");
-        assert!(ui.bar_turned, "a fold fades the new row in");
     }
 
     #[test]
-    fn coming_back_from_the_player_the_bar_stands_as_it_was_drawn_under_it() {
+    fn the_bar_folds_on_a_spring_without_bounce_and_opens_back() {
         let mut state = State::default();
         state.mobile = true;
-        state.mobile_ui.bar_turned = true;
-        state.page = Page::Playing;
+        state.page = Page::Search;
         let now = Instant::now();
         let mut motion = Motion::new(now);
-        motion.advance(&mut state, Size::new(390.0, 844.0), now);
-        assert!(!state.mobile_ui.bar_turned, "no entrance replayed over the page shown beneath the player");
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, size, now);
+        state.mobile_ui.bar_inline = true;
+        motion.advance(&mut state, size, now);
+        let mut last = state.mobile_ui.bar_fold;
+        for ms in [40, 80, 120, 200, 400] {
+            motion.advance(&mut state, size, now + Duration::from_millis(ms));
+            assert!(state.mobile_ui.bar_fold >= last && state.mobile_ui.bar_fold <= 1.0, "it only goes one way: {}", state.mobile_ui.bar_fold);
+            last = state.mobile_ui.bar_fold;
+        }
+        assert!(last > 0.97, "folded by 0.4 s: {last}");
     }
 
     #[test]

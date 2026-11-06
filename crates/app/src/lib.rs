@@ -117,6 +117,8 @@ struct Script {
     actions: Vec<(Duration, UiAction)>,
     /// Where to put the keyboard's focus, and when, as a television's remote would.
     focus: Vec<(Duration, String)>,
+    /// Which scroll to move, how far down, and when.
+    scrolls: Vec<(Duration, String, f32)>,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -369,6 +371,10 @@ impl Host {
         if let Some(seconds) = self.script.seek.filter(|_| self.state.player.position > 0.0) {
             self.script.seek = None;
             self.send(vec![Command::Seek(seconds)]);
+        }
+        while self.script.scrolls.first().is_some_and(|(at, _, _)| *at <= self.opened.elapsed()) {
+            let (_, id, offset) = self.script.scrolls.remove(0);
+            self.tree.set_scroll_offset(&id, offset);
         }
         while self.script.actions.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
             let (_, action) = self.script.actions.remove(0);
@@ -1138,6 +1144,13 @@ pub fn run() -> eframe::Result {
                     _ => UiAction::Clicked { id: what.to_owned() },
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
+            }
+            "--scroll" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                if let Some((id, offset)) = what.split_once('=') {
+                    script.scrolls.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned(), offset.parse().unwrap_or(0.0)));
+                }
             }
             "--focus" => {
                 let value = value();

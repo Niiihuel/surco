@@ -2903,6 +2903,12 @@ impl State {
                 }
                 Vec::new()
             }
+            // The folded bar's tab circle opens it again; it folds once the page goes down again.
+            "mobile-bar-open" => {
+                self.mobile_ui.bar_inline = false;
+                self.mobile_ui.bar_travel = 0.0;
+                Vec::new()
+            }
             // A shelf's "See all": the whole list of that kind.
             "library-all:lists" | "library-all:artists" => {
                 self.filter = if id == "library-all:lists" { Filter::Lists } else { Filter::Artists };

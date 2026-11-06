@@ -51,8 +51,16 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   so the covers fill in from the top. Pressed, a card opens its lists two to a row; a list
   opens as the home's mixes do, to be played, not kept. Without the service, Surco's own
   genres, each a search.
-- Mini player: a pill 56 tall floating 8 above the tab bar. 40 art (corners 8), title over
-  artist, play/pause and next. Swipe sideways to skip, drag up or tap to open the player.
+- Mini player: a pill 48 tall floating 8 above the tab bar, as BitChord's measured off Apple's:
+  a 30.4 cover (corners 5.7) 16 in, title 13 bold over artist 12 at 70%, play/pause and next.
+  Swipe sideways to skip, drag up or tap to open the player.
+- The bar folds as any page, the search's results too, goes 50 down, and opens as it comes
+  50 back up or reaches the top, on Compose's spring for shared elements (stiffness 400, no
+  bounce): the tab capsule narrows into the chosen tab's circle as the other tabs and the
+  names fade, and the mini player comes down between it and Search, losing its next button.
+  Folded it is one row 48 tall, 28 in from the screen's sides, its parts 14 apart, on the
+  open tabs' centre line; the tab circle opens it again. The tabs' glyphs are solid, the
+  chosen one white and the others white at 65%.
 - Both bars, the header's circles, a list's tools, the song's menu and the sheets are aurora's
   regular glass, dark, as the user's shell draws it: a 48% veil of (38, 38, 40) over the page
   rendered again beneath them, blurred σ 8 in the middle and bent 32 sharp at the rim (14 for
