@@ -991,8 +991,13 @@ impl eframe::App for Host {
             }
         }
         limn_egui::set_cursor(&ctx, self.tree.cursor());
+        // The page under a player on the move is glass as it is when shown: painted without
+        // the glass its bars were opaque until the player had gone, a flash.
         if let Some(underlay) = self.motion.underlay(&self.state, window) {
-            limn_egui::paint_at(ui, underlay, area.min);
+            match &mut self.glass {
+                Some(glass) => glass.paint_page(ui, underlay, area.min),
+                None => limn_egui::paint_at(ui, underlay, area.min),
+            }
         }
         match &mut self.glass {
             Some(glass) => glass.paint_page(ui, &frame, area.min),

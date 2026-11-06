@@ -33,8 +33,18 @@ const MINI_PILL: f32 = 56.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
-/// BitChord's glass, dark: the page passes beneath blurred, and sharp and bent at the rim.
-pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 36.0, ..limn::GlassMaterial::new(Color::rgba(26, 26, 28, 185)) };
+/// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
+/// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
+pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial::new(Color::rgba(38, 38, 40, 122));
+/// aurora's regularSmall, for circles: the rim bends over 14.
+const GLASS_SMALL: limn::GlassMaterial = limn::GlassMaterial { refraction: 14.0, ..GLASS };
+/// aurora's glass shadow: 0 10 40, black at 20%.
+const GLASS_SHADOW: Color = Color::rgba(0, 0, 0, 51);
+
+/// `element` as a pane of aurora's glass with its shadow; `small` for a circle.
+pub(in crate::view) fn pane_of_glass(element: Element, small: bool) -> Element {
+    element.glass(if small { GLASS_SMALL } else { GLASS }).shadow(GLASS_SHADOW, limn::Point::new(0.0, 10.0), 40.0, 0.0)
+}
 /// The chosen tab's lens while it travels: clear, magnifying what it passes over.
 const LENS: limn::GlassMaterial = limn::GlassMaterial { blur: 0.0, magnify: 1.1, bezel: 6.0, ..limn::GlassMaterial::new(Color::rgba(255, 255, 255, 0)) };
 const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
@@ -91,7 +101,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tab = matches!(state.page, Page::Search | Page::Collection | Page::Browse) && !state.mobile_search;
     // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
     // bare on the song.
-    let disc = |button: Element| if state.page == Page::Playing { button } else { button.glass(GLASS) };
+    let disc = |button: Element| if state.page == Page::Playing { button } else { pane_of_glass(button, true) };
     if tab {
         let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
             .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
@@ -626,19 +636,21 @@ pub(crate) fn route_key(state: &State) -> String {
 /// and Search, each gliding to its place.
 fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
-    let disc = |content: Element| Element::panel(content).glass(GLASS).round().clip_children();
+    let disc = |content: Element, small: bool| pane_of_glass(Element::panel(content), small).round().clip_children();
     let circle = |id: &str, glyph: Icon, label: &str, lit: bool| {
         let face = Element::icon(glyph).large_icon(24.0).foreground(if lit { palette.text } else { palette.muted }).centered();
-        disc(Element::clickable(id, face).accessible(limn::Access::new(limn::Role::Button).name(label).selected(lit)).round())
+        disc(Element::clickable(id, face).accessible(limn::Access::new(limn::Role::Button).name(label).selected(lit)).round(), true)
             .size(Some(NAV_HEIGHT), Some(NAV_HEIGHT))
     };
     let search = circle("mobile-search", Icon::Search, &t!("common-search"), state.page == Page::Search && state.mobile_search).animate_move("mobile-bar-search");
     let row = if state.mobile_ui.bar_inline {
         let tabs = tabs(state);
         let (id, glyph, _, label, _) = tabs.iter().copied().find(|tab| tab.4).unwrap_or(tabs[0]);
-        let mut row = vec![circle(id, glyph, label, true).animate_enter("mobile-bar-folded")];
+        // A row of the bar fades in when the page folds or opens it, never on coming back to it.
+        let entering = |row: Element, key: &str| if state.mobile_ui.bar_turned { row.animate_enter(key) } else { row };
+        let mut row = vec![entering(circle(id, glyph, label, true), "mobile-bar-folded")];
         row.push(match state.current() {
-            Some(track) => disc(mini_controls(state, track, palette)).size(None, Some(NAV_HEIGHT)).flex(1.0).animate_move("mobile-mini"),
+            Some(track) => disc(mini_controls(state, track, palette), false).size(None, Some(NAV_HEIGHT)).flex(1.0).animate_move("mobile-mini"),
             None => Element::spacer().flex(1.0),
         });
         row.push(search);
@@ -663,8 +675,9 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
         }
         let tabs = strip.padding(4.0);
         // Unclipped, unlike the other discs: the lens stands past the capsule while it travels.
-        let capsule = Element::panel(tabs).glass(GLASS).round();
-        vec![capsule.size(None, Some(NAV_HEIGHT)).flex(1.0).animate_enter("mobile-bar-open"), search]
+        let capsule = pane_of_glass(Element::panel(tabs), false).round();
+        let capsule = capsule.size(None, Some(NAV_HEIGHT)).flex(1.0);
+        vec![if state.mobile_ui.bar_turned { capsule.animate_enter("mobile-bar-open") } else { capsule }, search]
     };
     Element::row(row).gap(8.0).size(Some(span), Some(NAV_HEIGHT)).centered_x().block_pointer("mobile-nav-bar")
 }
@@ -673,7 +686,7 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
 /// sides and no wider than `BAR_MAX`.
 fn floating_bar(content: Element, width: f32, height: f32) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
-    Element::panel(content).glass(GLASS).round().clip_children()
+    pane_of_glass(Element::panel(content), false).round().clip_children()
         .size(Some(span), Some(height)).centered_x()
 }
 

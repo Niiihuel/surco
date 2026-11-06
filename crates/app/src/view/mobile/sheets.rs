@@ -31,14 +31,10 @@ const TRASH: &str = include_str!("../../../assets/icons/trash-2.svg");
 const CIRCLE_MINUS: &str = include_str!("../../../assets/icons/circle-minus.svg");
 const SLIDERS: &str = include_str!("../../../assets/icons/sliders.svg");
 
-/// BitChord's menu: a tall pane of glass, as wide as its rows want, that grows out of the
-/// button or row that opened it and goes back into it.
+/// BitChord's menu, in aurora's glass: a tall pane, as wide as its rows want, that pops out of
+/// the button or row that opened it as aurora's menus do and melts back into it.
 const BUBBLE_WIDTH: f32 = 262.0;
 const BUBBLE_RADIUS: f32 = 32.0;
-const BUBBLE_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 40.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 33, 215)) };
-/// BitChord's menu opens on a stiff spring, nearly whole in four frames, and closes in 170 ms.
-const BUBBLE_OPEN_MS: u16 = 200;
-const BUBBLE_CLOSE_MS: u16 = 170;
 /// How far it keeps from the screen's safe edges.
 const BUBBLE_MARGIN: f32 = 8.0;
 
@@ -47,8 +43,8 @@ fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, 
     let Some(menu) = menu else { return base };
     let (top, foot) = (safe.0 + BUBBLE_MARGIN, safe.1 - BUBBLE_MARGIN);
     // A long menu scrolls within the screen's safe edges rather than running off it.
-    let surface = Element::panel(Element::scroll("mobile-context-menu", menu.padding(10.0)))
-        .glass(BUBBLE_GLASS).radius(BUBBLE_RADIUS).clip_children()
+    let surface = super::pane_of_glass(Element::panel(Element::scroll("mobile-context-menu", menu.padding(10.0))), false)
+        .radius(BUBBLE_RADIUS).clip_children()
         .size(Some(BUBBLE_WIDTH), None).max_height((foot - top).max(TAP));
     // Its right edge is the trigger's: it runs down from the trigger's top, or, where that
     // leaves too little room, ends at the foot and covers the trigger, as BitChord's does.
@@ -56,9 +52,9 @@ fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, 
     let edge = Element::spacer().size(Some(0.0), Some(foot - from));
     let trigger = Element::popover(edge, surface, "mobile-context-close", limn::PopoverPlacement::LeftStart)
         .popover_gap(0.0)
-        // All of it, rows too, grows out of its corner nearest the button, as BitChord's.
-        .popover_grow_toward(limn::Point::new(origin.x + origin.width / 2.0, origin.y + origin.height / 2.0))
-        .popover_animation_ms(BUBBLE_OPEN_MS).popover_close_animation_ms(BUBBLE_CLOSE_MS);
+        // aurora's pop: a drop leaves the button and swells into the menu; closing, back into it.
+        .popover_morph(origin, origin.width.min(origin.height) / 2.0)
+        .popover_animation_ms(limn::GLASS_POP_OPEN_MS).popover_close_animation_ms(limn::GLASS_POP_CLOSE_MS);
     let placed = Element::column(vec![Element::spacer().size(None, Some(from)),
         Element::row(vec![Element::spacer().size(Some(origin.x + origin.width), None), trigger])]);
     Element::stack(vec![base, placed])

@@ -89,6 +89,9 @@ pub(crate) struct MobileUi {
     /// while the page goes down, and how far it has gone one way since it last turned.
     pub bar_inline: bool,
     pub bar_travel: f32,
+    /// Whether the bar has folded or opened since the player last covered it: only then does
+    /// its new row fade in. Coming back from the player it stands as it was drawn under it.
+    pub bar_turned: bool,
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,

@@ -111,7 +111,7 @@ impl Motion {
         // The lyrics and the queue take the cover into their head; a player opened on either
         // starts there.
         let collapsed = state.mobile && (state.page == Page::Lyrics || (state.page == Page::Playing && state.queue_open));
-        if !matches!(state.page, Page::Playing | Page::Lyrics) { self.collapse.snap_to(0.0, now); }
+        if !matches!(state.page, Page::Playing | Page::Lyrics) { self.collapse.snap_to(0.0, now); } else { state.mobile_ui.bar_turned = false; }
         self.collapse.retarget_with_motion(if collapsed { 1.0 } else { 0.0 }, now, COLLAPSE, reduced);
         state.mobile_ui.collapse = self.collapse.value(now);
         let search = state.mobile && crate::view::search_in_header(state);
@@ -296,7 +296,9 @@ fn fold(ui: &mut crate::state::mobile::MobileUi, scroll: f32) -> bool {
     // A turn starts the count again.
     ui.bar_travel = if step * ui.bar_travel < 0.0 { step } else { ui.bar_travel + step };
     let inline = if scroll < FOLD { false } else if ui.bar_travel >= FOLD { true } else if ui.bar_travel <= -FOLD { false } else { ui.bar_inline };
-    std::mem::replace(&mut ui.bar_inline, inline) != inline
+    let turned = std::mem::replace(&mut ui.bar_inline, inline) != inline;
+    ui.bar_turned |= turned;
+    turned
 }
 
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
@@ -654,6 +656,19 @@ mod tests {
         assert!(at(300.0) && at(290.0), "a little back up keeps it folded");
         assert!(!at(230.0), "fifty back up: open");
         assert!(at(400.0) && !at(20.0), "and the top always opens it");
+        assert!(ui.bar_turned, "a fold fades the new row in");
+    }
+
+    #[test]
+    fn coming_back_from_the_player_the_bar_stands_as_it_was_drawn_under_it() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.mobile_ui.bar_turned = true;
+        state.page = Page::Playing;
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        motion.advance(&mut state, Size::new(390.0, 844.0), now);
+        assert!(!state.mobile_ui.bar_turned, "no entrance replayed over the page shown beneath the player");
     }
 
     #[test]
