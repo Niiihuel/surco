@@ -127,8 +127,12 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   cover's; without a photo, in its name's.
 - A home with no picks to show nor on their way ends by saying how it fills, with the way to
   choose artists (the TV's goes to the search: the first run's picker is not a TV's).
-- Settings: inset groups on surface variant, corners 14, 16 from the sides, uppercase 11/600
-  headers; rows at least 52 with a 22 icon and a chevron.
+- Settings: one list, as iOS's, under a 34 large title that goes up into the bar: the
+  account's row (a 52 face, the name 20 semibold, what it keeps), then Tu música (import,
+  move to another device, choose artists again), listening elsewhere, and every setting in
+  its group; only the apps connected and About are a page away. Inset groups on surface
+  variant, corners 14, 16 from the sides, uppercase 12 bold headers; rows at least 52, a bare
+  white 22 glyph (no tile) 14 from the words and a chevron on what opens something.
 
 ## Phone player
 
@@ -201,7 +205,11 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   button. Every sheet of the phone (output, timer, lists, song info, lyrics' step, Audio
   Pipeline, importing, sharing, a new list, the profile's details, moving to another device,
   cropping a photo, confirmations) is aurora's glass and pops the same way out of whatever
-  opened it. Tiles light no box under a pointer or a press.
+  opened it. Held by its grabber, a sheet follows the finger down (up only as a rubber band
+  of 48), springs back (0.38 s, bounce 0.18) when let go short, and leaves from where it is
+  past a third of its height (60 to 180) or flicked at 700 a second; a sheet whose content
+  changes its height moves to it on the same spring. Tiles light no box under a pointer or
+  a press.
 - Profile: the face, the name 28 bold and what the account holds centred over the page's wash,
   which starts at the screen's top, under the bar,
   then its actions as the Library's rows: the name, Replay, listening together and moving to
