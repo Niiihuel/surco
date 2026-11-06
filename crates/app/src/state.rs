@@ -3437,6 +3437,7 @@ impl State {
                 Vec::new()
             }
             "browse" => {
+                self.mobile_search = false;
                 if self.page != Page::Browse {
                     self.go(Page::Browse);
                 }

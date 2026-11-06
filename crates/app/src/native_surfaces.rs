@@ -994,7 +994,7 @@ mod tests {
         let tabs = chrome.tabs.unwrap();
         assert!(tabs[1] + tabs[3] <= 854.0 && tabs[3] >= 44.0);
         assert_eq!(chrome.items.iter().map(|item| (item.id.as_str(), item.selected)).collect::<Vec<_>>(),
-            [("home", true), ("mobile-search", false), ("mobile-library", false)]);
+            [("home", true), ("browse", false), ("mobile-library", false)]);
         assert!(controller.apply(&mut state, Event::Chrome { id: "next".into() }).is_empty());
         assert_eq!(state.page, state::Page::Search);
         controller.apply(&mut state, Event::Chrome { id: "mobile-library".into() });

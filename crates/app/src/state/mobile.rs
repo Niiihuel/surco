@@ -85,6 +85,10 @@ pub(crate) struct MobileUi {
     pub scrolled: bool,
     /// How far the page has scrolled, which carries the native large title up with it.
     pub page_scroll: f32,
+    /// Whether the tabs are folded into one row with the mini player, as BitChord's bar is
+    /// while the page goes down, and how far it has gone one way since it last turned.
+    pub bar_inline: bool,
+    pub bar_travel: f32,
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,
@@ -424,7 +428,7 @@ impl State {
                         self.mobile_ui.blur = true;
                     }
                     // Navigation must cancel delayed requests from the search tab.
-                    "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
+                    "home" | "browse" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
                         self.mobile_ui.library = None;
                         self.search_due = None;
                         self.mobile_ui.search_editing = false;

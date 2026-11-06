@@ -35,9 +35,14 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 
 ## Phone shell
 
-- Floating tab bar: a full pill 19 from each side, 6 above the bottom inset (at least 15),
-  at most 440 wide, 4 inside. Tabs about 62 tall, 28 icon, 10 label. The chosen tab sits on
-  white at 14%, which slides on a spring; its icon grows to 1.08.
+- Floating tab bar: Home, Explore and Library in a full pill, and Search a 62 circle of its
+  own 8 beside it; the row 19 from each side, 6 above the bottom inset (at least 15), at most
+  440 wide, the pill 4 inside. Tabs about 62 tall, 24 icon, 10 label. The chosen tab sits on
+  white at 14%, which slides on a spring.
+- Once the page has gone 50 down the bar folds into one row: the chosen tab's circle, the mini
+  player as a pill between, and Search, gliding to their places; 50 back up, or near the top,
+  it opens again. The mini player's room under the page stays, so nothing jumps.
+- Explore is a tab of its own: the genres two to a row, cards of their colour.
 - Mini player: a pill 56 tall floating 8 above the tab bar. 40 art (corners 8), title over
   artist, play/pause and next. Swipe sideways to skip, drag up or tap to open the player.
 - Both bars are frosted. limn has no backdrop blur, so they are a dark tint at high opacity

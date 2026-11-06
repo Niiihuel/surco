@@ -278,10 +278,25 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
     let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
     let scrolled = scroll > 0.5;
+    let scroll = if searching { 0.0 } else { scroll };
+    let folded = fold(&mut state.mobile_ui, scroll);
     // Followed every frame by the native title, without laying the page out again.
-    state.mobile_ui.page_scroll = if searching { 0.0 } else { scroll };
+    state.mobile_ui.page_scroll = scroll;
     let moved = std::mem::replace(&mut state.mobile_ui.scrolled, scrolled) != scrolled;
-    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved
+    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved || folded
+}
+
+/// How far a page goes one way before BitChord's bar folds into one row, going down, or opens
+/// again, coming back up; near its top the bar is always open.
+const FOLD: f32 = 50.0;
+
+/// Folds or opens the tabs as the page went from where it was to `scroll`; says whether it did.
+fn fold(ui: &mut crate::state::mobile::MobileUi, scroll: f32) -> bool {
+    let step = scroll - ui.page_scroll;
+    // A turn starts the count again.
+    ui.bar_travel = if step * ui.bar_travel < 0.0 { step } else { ui.bar_travel + step };
+    let inline = if scroll < FOLD { false } else if ui.bar_travel >= FOLD { true } else if ui.bar_travel <= -FOLD { false } else { ui.bar_inline };
+    std::mem::replace(&mut ui.bar_inline, inline) != inline
 }
 
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
@@ -628,6 +643,17 @@ mod tests {
         let slider = Slider::new("seek", 0.5, ComponentPalette::neutral_dark()).render().size(None, Some(44.0));
         let frame = UiTree::new(slider).layout(Size::new(390.0, 44.0));
         assert!(!eligible(&state, &frame, Point::new(20.0, 20.0), size, 0.0, 0.0));
+    }
+
+    #[test]
+    fn the_tabs_fold_as_the_page_goes_down_fifty_and_open_as_it_comes_back_up() {
+        let mut ui = crate::state::mobile::MobileUi::default();
+        let mut at = |scroll: f32| { fold(&mut ui, scroll); ui.page_scroll = scroll; ui.bar_inline };
+        assert!(!at(40.0), "near the top it stays open");
+        assert!(at(80.0), "past fifty, gone fifty down: folded");
+        assert!(at(300.0) && at(290.0), "a little back up keeps it folded");
+        assert!(!at(230.0), "fifty back up: open");
+        assert!(at(400.0) && !at(20.0), "and the top always opens it");
     }
 
     #[test]

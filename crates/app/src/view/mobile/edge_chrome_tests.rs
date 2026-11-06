@@ -186,7 +186,7 @@ fn safe_edges_keep_header_tabs_and_mini_controls_touchable_in_both_orientations(
                 assert_eq!(hit.id, id, "another control must not steal {id}'s tap");
             }
             if page != Page::Playing {
-                let tabs: Vec<_> = ["home", "mobile-search", "mobile-library"]
+                let tabs: Vec<_> = ["home", "browse", "mobile-library"]
                     .into_iter()
                     .map(|id| target(&frame, id))
                     .collect();

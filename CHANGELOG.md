@@ -18,6 +18,8 @@
   grows back, and goes down into the mini player as the player is put away.
 - The phone's output sheet is a set of cards, and its "Audio Pipeline" shows what the sound
   goes through, from the decoder to the device, as the engine reports it.
+- The phone's tabs are Home, Explore and Library, with Search a circle beside them, as
+  BitChord's; going down a page folds them into one row with the mini player.
 - The song's menu is grouped as BitChord's and adds a radio of the song, "Dislike" (the
   song is skipped and kept out of the picks), the song's details, and the lyrics' step
   for when they run ahead of or behind the song.
