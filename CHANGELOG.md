@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.18.0
 
 ### Changed
 
@@ -35,6 +35,27 @@
 - The song's menu is grouped as BitChord's and adds a radio of the song, "Dislike" (the
   song is skipped and kept out of the picks), the song's details, and the lyrics' step
   for when they run ahead of or behind the song.
+- Settings on a phone are one list, as iOS's: the account first, then importing a playlist,
+  moving to another device and listening elsewhere, then every setting in sight in its
+  group. Only the apps connected and About are a page away.
+- Importing a playlist on a phone is one field: a link pasted lights up the app it is from,
+  and the playlist it names shows with how many songs it has before it is imported. How to
+  copy a link in each app is folded under the field.
+- Moving to another device on a phone opens on its QR and its code. What goes folds into one
+  line, and receiving is a button at the sheet's foot.
+- The phone's sheets follow the finger down from their handle and spring back when let go
+  short; let go further, or flicked down, they leave from where they were. A sheet whose
+  content grows or shrinks moves to its new height on a spring rather than jumping.
+- Sharing on a phone is a sheet as iOS's: what is shared at its top, the apps to send it to
+  in a row, and copying or opening the link below.
+- Pages go up under the phone's bars blurred, as iOS 26's, and Home, Explore, Library and
+  Settings have their names large at their top.
+
+### Fixed
+
+- The Library icon stood off the middle of the folded tab bar's circle.
+- An empty page, as Downloads with nothing in it, ran its lines past a phone's edge.
+- Nothing bright behind a phone's sheet shows through its words: sheets are a thicker glass.
 
 ## 0.17.2
 
