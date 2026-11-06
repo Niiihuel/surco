@@ -159,8 +159,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   playlist (which offers the lists); radio, play next, add to queue, download; album, artist,
   song info; and for what plays, the timer and the lyrics' step (half a second each way,
   back to 0 with the next song). A song disliked is skipped when it comes and kept out of
-  the picks. A pane of glass 262 wide, corners 32, that grows out of the ⋯ (or the row held)
-  over 320 ms with a small rebound, its rows last, and goes back into it in 170 ms. Its right
+  the picks. A pane of glass 262 wide, corners 32, that grows whole, rows and all, from a
+  tenth of its size at its corner nearest the ⋯ (or the row held) in 200 ms, and goes back
+  into it in 170 ms: in the video it is nearly full four frames after the press. Its right
   edge is the button's; it runs down from the button, or ends at the foot and covers it when
   that leaves too little room, as BitChord's does.
 - Lyrics: 34/41 bold, left aligned, the line being sung 36 under the lyrics' top (BitChord's

@@ -32,12 +32,12 @@ const CIRCLE_MINUS: &str = include_str!("../../../assets/icons/circle-minus.svg"
 const SLIDERS: &str = include_str!("../../../assets/icons/sliders.svg");
 
 /// BitChord's menu: a tall pane of glass, as wide as its rows want, that grows out of the
-/// button or row that opened it and goes back into it, its rows arriving last.
+/// button or row that opened it and goes back into it.
 const BUBBLE_WIDTH: f32 = 262.0;
 const BUBBLE_RADIUS: f32 = 32.0;
 const BUBBLE_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 40.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 33, 215)) };
-/// BitChord's menu opens on a stiff spring and closes in 170 ms.
-const BUBBLE_OPEN_MS: u16 = 320;
+/// BitChord's menu opens on a stiff spring, nearly whole in four frames, and closes in 170 ms.
+const BUBBLE_OPEN_MS: u16 = 200;
 const BUBBLE_CLOSE_MS: u16 = 170;
 /// How far it keeps from the screen's safe edges.
 const BUBBLE_MARGIN: f32 = 8.0;
@@ -56,7 +56,8 @@ fn bubble(base: Element, menu: Option<Element>, origin: limn::Rect, safe: (f32, 
     let edge = Element::spacer().size(Some(0.0), Some(foot - from));
     let trigger = Element::popover(edge, surface, "mobile-context-close", limn::PopoverPlacement::LeftStart)
         .popover_gap(0.0)
-        .popover_morph(origin, origin.width.min(origin.height) / 2.0)
+        // All of it, rows too, grows out of its corner nearest the button, as BitChord's.
+        .popover_grow_toward(limn::Point::new(origin.x + origin.width / 2.0, origin.y + origin.height / 2.0))
         .popover_animation_ms(BUBBLE_OPEN_MS).popover_close_animation_ms(BUBBLE_CLOSE_MS);
     let placed = Element::column(vec![Element::spacer().size(None, Some(from)),
         Element::row(vec![Element::spacer().size(Some(origin.x + origin.width), None), trigger])]);
