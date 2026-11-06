@@ -44,12 +44,13 @@ const INLINE_SPACING: f32 = 14.0;
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
 /// iOS 26's soft scroll edge under the bar: the page blurred (σ 8, as the bars' glass, which
-/// shares its blur) and a little darkened, no rim nor bend, giving way to the sharp page over
-/// the lower 60% of the bar.
+/// shares its blur) and a little darkened, no rim nor bend, over the bar's whole room, giving
+/// way to the sharp page over `EDGE_TAIL` below it.
 const SCROLL_EDGE: limn::GlassMaterial = limn::GlassMaterial {
-    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.6,
+    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.3,
     ..limn::GlassMaterial::new(Color::rgba(0, 0, 0, 70))
 };
+const EDGE_TAIL: f32 = 28.0;
 
 /// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
 /// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
@@ -341,9 +342,13 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Element::column(vec![Element::spacer().size(None, Some(scroll_top)), content.flex(1.0), Element::spacer().size(None, Some(bottom_height))])
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
-    let top = if native_chrome || clear_head { top }
-        else if soft_edge { Element::stack(vec![Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(top_height)), top]) }
-        else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    let top = if native_chrome || clear_head || soft_edge { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    // iOS's edge takes the bar's whole room, the status bar and the row of its buttons, at its
+    // full blur, and gives way to the page only below it; it takes no press.
+    let edge = soft_edge.then(|| Element::column(vec![
+        Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(top_height + EDGE_TAIL)),
+        Element::spacer().flex(1.0),
+    ]));
     let footer = Element::column(bottom);
     // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
     let footer = if player { footer }
@@ -353,7 +358,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         // Rows pass seen beneath the glass, as BitChord's, deepening only by the home indicator.
         else { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }.block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
-    let content = Element::stack(vec![content, bars]);
+    // The page, iOS's soft edge over it, and the bars over both.
+    let mut layers = vec![content];
+    layers.extend(edge);
+    layers.push(bars);
+    let content = Element::stack(layers);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
     let content = match flying_cover(state, window) { Some(cover) => Element::stack(vec![cover, content]), None => content };
     let content = match player_canvas(state, window) { Some(canvas) => Element::stack(vec![canvas, content]), None => content };
@@ -710,6 +719,9 @@ fn page_surface(state: &State) -> (Color, Color) {
         Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.cover()).map(String::as_str),
         _ => None,
     };
+    // The profile is washed in its photo's or its name's colour from the screen's top, under
+    // the bar too: no black band over it.
+    if state.page == Page::Profile { return (cover_tone(super::profile_colour(state), 0.5), SCHEME.canvas); }
     let Some(tint) = artwork.and_then(|url| state.tints.get(url)).copied() else { return (SCHEME.canvas, SCHEME.canvas); };
     // A song list's page is BitChord's: one dark colour of its cover, all the way down.
     if !matches!(state.page, Page::Playing | Page::Lyrics) { let tone = page_tone(tint); return (tone, tone); }

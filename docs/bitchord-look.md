@@ -70,8 +70,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   The chosen tab's lit platter slides to the next, a clear lens while it travels, standing as
   tall as the whole bar and 9 past it, then deflating where it lands, as the video shows.
 - Top bar: status inset + 52, no pane: iOS 26's soft scroll edge instead, as BitChord's, the page
-  going up under it blurred (σ 8) and a little darkened, the more the nearer the top, giving
-  way to the sharp page over its lower 60%; no fade into a colour. Floating 44 circles for back
+  going up under it blurred (σ 8) and a little darkened over the bar's whole room, the status
+  bar and the row of its buttons, giving way to the sharp page over 28 below it; it takes no
+  press, and no fade into a colour. Floating 44 circles for back
   and actions, a 28 face.
   On a tab (Home, Explore, Library) the bar holds its circles and the face at its end, as
   BitChord's, and the tab's name stands under it, 34 bold, as the page's first row, scrolling
@@ -202,6 +203,7 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   cropping a photo, confirmations) is aurora's glass and pops the same way out of whatever
   opened it. Tiles light no box under a pointer or a press.
 - Profile: the face, the name 28 bold and what the account holds centred over the page's wash,
+  which starts at the screen's top, under the bar,
   then its actions as the Library's rows: the name, Replay, listening together and moving to
   another device. Its right
   edge is the button's; it runs down from the button, or ends at the foot and covers it when

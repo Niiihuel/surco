@@ -1723,7 +1723,8 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
         sections.push(shelf(state, "profile-playlists", &t!("desktop-your-playlists"), playlists, palette));
     }
     let content = Element::column(sections).gap(24.0).padding(if state.mobile { 16.0 } else { 24.0 });
-    page_scroll("profile", content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH))
+    // A phone's page is washed from the screen's top, under its bar, by the page itself.
+    page_scroll("profile", if state.mobile { content } else { content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH) })
 }
 
 /// The face in the dialog of the profile's details.
