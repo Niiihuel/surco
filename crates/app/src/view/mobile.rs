@@ -66,6 +66,8 @@ const CANVAS_DIM: Color = Color::rgba(0, 0, 0, 128);
 const CANVAS_FOOT: Color = Color::rgba(0, 0, 0, 115);
 /// BitChord's library glyph, solid: a case with two more stacked behind it.
 const LIBRARY_FILL: &str = include_str!("../../assets/icons/library-fill.svg");
+/// A tab's name over its page, as BitChord's "Library".
+const TAB_TITLE: f32 = 34.0;
 /// The chosen tab's platter.
 const TAB_LIT: Color = Color::rgba(255, 255, 255, 36);
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
@@ -115,11 +117,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     // bare on the song.
     // Each a button of aurora's interactive glass, its press kept under `key`.
     let disc = |button: Element, key: &str| if state.page == Page::Playing { button } else { pane_of_glass(button, true).glass_press(key) };
-    if tab {
-        let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
-            .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
-        header.push(face.centered_y());
-    }
+    // At the bar's end, as BitChord's, after its circles.
+    let face = tab.then(|| Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile"))).centered_y());
     // Over the player's banner its handle stands alone, as BitChord's, with what plays under it.
     let banner_head = state.page == Page::Playing && !state.queue_open;
     if ((state.can_go_back() && !tab) || state.page == Page::Playing) && !banner_head {
@@ -137,6 +137,9 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         Element::spacer()
     } else if state.page == Page::Playing {
         Text::new(title.as_ref(), palette).font_size(14.0).truncate().render()
+    } else if tab {
+        // A tab's name stands large under the bar, the page's first row, as BitChord's.
+        Element::spacer()
     } else {
         // A tab's name stands large, as BitChord's headings; a page pushed on it a step smaller.
         let size = if state.mobile_ui.compact_header { 18.0 } else if tab { 30.0 } else { 24.0 };
@@ -154,6 +157,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !artist_coming(state) {
         header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette), "header-settings"));
     }
+    header.extend(face);
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     // Under Liquid Glass the field floats at the foot, as Apple Music's, below a plain header.
@@ -193,6 +197,11 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     if state.page == Page::Lyrics {
         // The mobile shell owns the full-height song color, including plain/error states.
         content.style.bottom_background_fade = None;
+    }
+    // A tab's name, large, as the first row of its page: UIKit draws its own over native bars.
+    if tab && !large_title(state) {
+        let name = Text::new(title.as_ref(), palette).font_size(TAB_TITLE).truncate().render().font_family(FontFamily::SansBold).centered_y();
+        prepend_notice(&mut content, &mut Some(horizontal_inset(name, 16.0, 16.0).size(None, Some(MOBILE_LARGE_TITLE))));
     }
     let content = with_notice(content, state, palette);
     let mut bottom = Vec::new();

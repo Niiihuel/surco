@@ -70,7 +70,9 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   The chosen tab's lit platter slides to the next, a clear lens while it travels, standing as
   tall as the whole bar and 9 past it, then deflating where it lands, as the video shows.
 - Top bar: status inset + 52, no pane. Floating 44 circles for back and actions, a 28 face.
-  Page titles are large headings at the top of the list, not in the bar.
+  On a tab (Home, Explore, Library) the bar holds its circles and the face at its end, as
+  BitChord's, and the tab's name stands under it, 34 bold, as the page's first row, scrolling
+  up with it. Page titles are large headings at the top of the list, not in the bar.
 - Edges: rows pass seen beneath the glass, as BitChord's, deepening only by the home
   indicator.
 - Pushed pages cross-fade over 180 ms; tabs switch without a transition.
