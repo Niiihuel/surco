@@ -214,6 +214,11 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
 - **Moving:** it follows its bar 1:1, and past its largest height as a rubber band. Its content, at its top, takes the drag down; short of its largest height, it takes the drag up and grows the sheet before scrolling.
 - **Let go:** it rests at the height UIKit's projection (0.998) carries it nearest to, on a spring of 0.45 s with a bounce of 0.12; past its smallest height it leaves, sliding on down.
 - **Grabber tap:** it steps through the heights.
+- **Keyboard:** over the keyboard it grows by the keyboard's height, up to its large one, its
+  sides' inset kept. Its content ends above the keyboard, and its glass reaches down behind it.
+  Taken by its bar, it puts the keyboard away first.
+- **Corners:** its glass corners are round arcs (power 2), not a pane's squircle, and its rim
+  bends what is behind only 12 deep.
 
 Tiles light no box under a pointer or
   a press.

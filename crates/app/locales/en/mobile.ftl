@@ -271,3 +271,5 @@ mobile-handoff-how = On the other device, open Settings › Move to another devi
 mobile-handoff-nothing = Nothing: choose at least one part
 mobile-handoff-receive-instead = Receive on this phone
 mobile-handoff-send-instead = Send from this phone
+mobile-clips = Songs' videos
+mobile-clips-detail = In the player, the song's video behind the controls; off, its cover.

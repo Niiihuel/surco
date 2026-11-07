@@ -271,3 +271,5 @@ mobile-handoff-how = En el otro dispositivo, abrí Configuración › Pasar a ot
 mobile-handoff-nothing = Nada: elegí al menos una parte
 mobile-handoff-receive-instead = Recibir en este teléfono
 mobile-handoff-send-instead = Enviar desde este teléfono
+mobile-clips = Videos de las canciones
+mobile-clips-detail = En el reproductor, el video de la canción detrás de los controles; apagado, su portada.

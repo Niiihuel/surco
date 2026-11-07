@@ -914,7 +914,7 @@ pub struct State {
     pub search_error: Option<String>,
     pub page: Page,
     /// The pages behind the current one, the search first.
-    history: Vec<Page>,
+    pub(crate) history: Vec<Page>,
     /// The pages gone back from, the latest last: where forward leads, until a page is opened.
     ahead: Vec<Page>,
     /// The player as the backend last described it.

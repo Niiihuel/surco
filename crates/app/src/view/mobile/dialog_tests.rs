@@ -148,3 +148,19 @@ fn the_equalizer_page_reveals_its_controls_and_each_band_takes_its_column() {
     }
     assert!(tree.layout(size).access.iter().any(|node| node.id == "back"), "back leaves it");
 }
+
+
+
+#[test]
+fn over_the_keyboard_the_import_sheet_grows_and_keeps_its_field_and_bar_above_it() {
+    let size = Size::new(390.0, 844.0);
+    let mut state = State::default();
+    state.mobile = true;
+    state.importing = Some(String::new());
+    state.mobile_ui.keyboard = 336.0;
+    let frame = tree(&state, size).layout(size);
+    for id in ["import-link", "import-go", "import-cancel:close"] {
+        let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id}"));
+        assert!(node.rect.y >= 0.0 && node.rect.y + node.rect.height <= size.height - 336.0 + 0.5, "{id} above the keyboard: {:?}", node.rect);
+    }
+}

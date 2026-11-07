@@ -130,6 +130,8 @@ pub(crate) struct MobileUi {
     // SurcoSurfaces.m's chrome once the iPhone is settled on limn's bars.
     pub native_bars: bool,
     pub keyboard_visible: bool,
+    /// How much of the screen's foot the keyboard covers, as it slides: a sheet grows by it.
+    pub keyboard: f32,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
     /// The route uncovered by closing the player. It is already on screen

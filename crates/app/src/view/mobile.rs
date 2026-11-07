@@ -122,7 +122,8 @@ pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> E
 /// area's top, floating inset at partial heights with corners concentric with the display's.
 pub(in crate::view) fn ios_sheet(state: &State) -> limn::SheetSpec {
     let top = state.mobile_ui.content_insets.top;
-    limn::SheetSpec { safe_top: top, screen_corner: display_corner(top), ..limn::SheetSpec::default() }
+    // Over the keyboard it grows by its height, its field kept above it, as UIKit's.
+    limn::SheetSpec { safe_top: top, screen_corner: display_corner(top), keyboard: state.mobile_ui.keyboard, ..limn::SheetSpec::default() }
 }
 
 /// The display's corner radius, told by where its safe area starts: the iPhones with the
@@ -235,7 +236,15 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         let size = if state.mobile_ui.compact_header { 18.0 } else if tab { 30.0 } else { 24.0 };
         Text::new(title.as_ref(), palette).font_size(size).truncate().render().font_family(FontFamily::SansBold)
     };
+    // The song's video or its cover, as the listener wants it: at the banner's end, the same
+    // room at its start keeping the handle in the middle. Put away with the controls.
+    let footage = banner_head && !bare && state.current().is_some();
+    if footage { header.push(Element::spacer().size(Some(TAP), Some(TAP))); }
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
+    if footage {
+        let (glyph, hint) = if state.settings.clips { (Icon::Image, t!("desktop-show-cover")) } else { (Icon::Video, t!("desktop-show-video")) };
+        header.push(disc(icon("cover-clips", glyph, &hint, palette), "header-clips"));
+    }
     if state.page == Page::Library {
         header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette), "header-new"));
     }
@@ -802,7 +811,10 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let open = span - NAV_HEIGHT - 8.0;
     let rest = (open - 8.0) / tabs.len() as f32;
     let still = fold == 0.0;
-    let cells: Vec<Element> = tabs.iter().filter(|tab| tab.4 || fold < 0.99).map(|&(id, glyph, _, label, selected)| {
+    // Folded, the circle shows the tab the page is of, or was reached from, even while
+    // Search's circle is the chosen one.
+    let kept = chosen_tab(state);
+    let cells: Vec<Element> = tabs.iter().filter(|tab| tab.0 == kept || fold < 0.99).map(|&(id, glyph, _, label, selected)| {
         // BitChord's: the others in the chosen one's ink at 65%.
         let ink = if selected { palette.text } else { fade(Color { a: 166, ..palette.text }, 1.0 - fold) };
         let icon = Element::icon(glyph).large_icon(24.0).foreground(ink).centered_x();
@@ -810,18 +822,18 @@ fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
             .foreground(fade(ink, 1.0 - fold)).centered_x();
         // The tab's colour moves with a choice, not with a fold.
         let (icon, name) = if still { (icon.animate_foreground(format!("mobile-tab:{id}:icon")), name.animate_foreground(format!("mobile-tab:{id}:label"))) } else { (icon, name) };
-        let across = lerp(rest, if selected { INLINE - 8.0 } else { 0.0 });
+        let across = lerp(rest, if id == kept { INLINE - 8.0 } else { 0.0 });
         // As wide as its cell: a label wider than the folded circle ("Biblioteca") would push the icon aside.
         let copy = Element::column(vec![icon, Element::panel(name).size(None, Some(lerp(13.0, 0.0))).clip_children()]).gap(lerp(3.0, 0.0))
             .size(Some(across), None).centered_y();
         // Folded, the chosen tab's circle opens the bar again, as BitChord's inline tab does.
-        let action = if fold >= 0.5 && selected { "mobile-bar-open" } else { id };
-        let cell = if selected || fold < 0.5 {
+        let action = if fold >= 0.5 && id == kept { "mobile-bar-open" } else { id };
+        let cell = if id == kept || fold < 0.5 {
             Element::clickable(action, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
         } else { Element::panel(copy) };
         cell.size(Some(across), Some(tall - 8.0)).clip_children().indicator_slot(id)
     }).collect();
-    let actions = tabs.iter().filter(|tab| tab.4 || fold < 0.5).map(|tab| if fold >= 0.5 { "mobile-bar-open" } else { tab.0 }.to_owned()).collect();
+    let actions = tabs.iter().filter(|tab| tab.0 == kept || fold < 0.5).map(|tab| if fold >= 0.5 { "mobile-bar-open" } else { tab.0 }.to_owned()).collect();
     let mut strip = Element::tab_strip(cells, actions);
     if let Some(chosen) = tabs.iter().find(|tab| tab.4) {
         strip = strip.tab_selection("mobile-tab-platter", chosen.0, fade(TAB_LIT, 1.0 - fold), (tall - 8.0) / 2.0, limn::tokens().motion.move_ms)
@@ -857,15 +869,33 @@ fn floating_bar(content: Element, width: f32, height: f32) -> Element {
         .size(Some(span), Some(height)).centered_x()
 }
 
+/// The tab a page is of, as BitChord's stacks: Home's, Explore's or the Library's.
+fn tab_of(page: &Page) -> Option<&'static str> {
+    match page {
+        Page::Search => Some("home"),
+        Page::Browse | Page::Mood(_) => Some("browse"),
+        Page::Collection | Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_) => Some("mobile-library"),
+        _ => None,
+    }
+}
+
+/// The tab of the page shown or, for one of none (Settings, an artist, an album, Search's
+/// results), the one it was reached from: a tab bar keeps its tab while its stack goes deeper.
+fn chosen_tab(state: &State) -> &'static str {
+    let own = if state.page == Page::Search && state.mobile_search { None } else { tab_of(&state.page) };
+    own.or_else(|| state.history.iter().rev().find_map(tab_of)).unwrap_or("home")
+}
+
 /// Each tab's id, limn glyph, SF Symbol, label and selection, shared with the native tab bar:
 /// BitChord's Home, Explore and Library. Search is the circle beside them.
 pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'static str, bool); 3] {
-    let home = state.page == Page::Search && !state.mobile_search;
-    let library = matches!(state.page, Page::Collection | Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
+    // While Search's circle is chosen, no tab is.
+    let chosen = (!(state.page == Page::Search && state.mobile_search)).then(|| chosen_tab(state));
+    let (home, browse, library) = (chosen == Some("home"), chosen == Some("browse"), chosen == Some("mobile-library"));
     [
         // limn's glyphs solid, chosen or not, as BitChord's tabs are.
         ("home", Icon::HomeFill, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
-        ("browse", Icon::GridFill, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), state.page == Page::Browse),
+        ("browse", Icon::GridFill, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), browse),
         ("mobile-library", Icon::Custom(LIBRARY_FILL), if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("mobile-tab-library")), library),
     ]
 }

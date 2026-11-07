@@ -663,6 +663,7 @@ impl eframe::App for Host {
         self.state.mobile_ui.content_insets = if self.state.mobile {
             mobile_content_insets(area, safe_content, keyboard_inset)
         } else { Default::default() };
+        self.state.mobile_ui.keyboard = if self.state.mobile && keyboard_inset.is_finite() { keyboard_inset.max(0.0) } else { 0.0 };
         let window = Size::new(area.width(), area.height());
         self.state.wide = window.width >= view::PANEL_FROM;
 

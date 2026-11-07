@@ -13,6 +13,12 @@
   - **Dragging:** it follows the finger from its bar, or from its list once that is at its
     top. Let go, it settles where its speed carries it. Flicked down, it leaves. A tap on
     its grabber makes it taller.
+- A sheet over the keyboard grows by its height, as iOS's, its field and its bar kept above
+  it and its sides' inset kept; taken by its bar, it puts the keyboard away first.
+- The player has a button at its top to show the song's cover instead of its video, and
+  Settings › Display and language a switch for it; the choice is kept.
+- The tab bar keeps the tab a page was reached from: Settings, an artist or an album opened
+  from Home or the Library shows that tab, chosen.
 - On the iPhone the forms, confirmations, the timer, the device sheet and the menus' sheets
   are no longer UIKit's. They are the same sheets as Android's, with the song's info, the
   lyrics' step and the Audio Pipeline. Only a share's "More" opens the system's share sheet.
@@ -21,6 +27,10 @@
 
 - On the iPhone, the song's info, the lyrics' step, the Audio Pipeline, adding to a
   playlist and sharing an artist opened nothing.
+- The sheets' corners looked square: their glass is now rounded as the screen's corners
+  are, and a seam no longer crosses the cross of their bar.
+- Folded, the tab bar showed an empty circle on pages outside the tabs, Settings among
+  them, and while searching.
 
 ## 0.18.0
 

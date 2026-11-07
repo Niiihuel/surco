@@ -382,6 +382,7 @@ fn list(state: &State, width: f32) -> Vec<Element> {
     ], "");
 
     let display = group(&t!("common-settings-display"), vec![
+        switch(&t!("mobile-clips"), Some(&t!("mobile-clips-detail")), "setting:clips", state.settings.clips),
         switch(&t!("mobile-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
         stacked(line(&t!("common-language"), None, None, white), segmented("setting-language", inner, Language::ALL.into_iter()
             .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
