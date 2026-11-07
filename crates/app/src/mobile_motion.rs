@@ -23,10 +23,20 @@ const COAST: f32 = 0.03;
 /// A closing sheet aims this far past the bottom edge and is gone on reaching it,
 /// so it leaves at a gentle speed instead of creeping over the last pixels.
 const PAST: f32 = 20.0;
+/// How long the player's cover takes to shrink into the lyrics' or the queue's head and to
+/// grow back, as BitChord's: about ten frames.
+const COLLAPSE: Duration = Duration::from_millis(330);
 
 pub struct Motion {
     player: ScalarSpring,
+    /// From the player's cover at rest (0) to its thumbnail over the lyrics or the queue (1).
+    collapse: ScalarTransition,
     search: ScalarTransition,
+    /// From the bar open (0) to folded into one row (1).
+    bar: ScalarSpring,
+    /// The player has just gone down off the page it covered: the page, drawn beneath it all
+    /// along, is to stand as it was, none of its parts entering anew.
+    uncovered: bool,
     /// The search header's height as last drawn, and when.
     search_drawn: Option<(f32, Instant)>,
     showing: bool,
@@ -60,12 +70,17 @@ pub struct DragArea<'a> {
 
 impl Motion {
     pub fn new(now: Instant) -> Self {
-        Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), search: ScalarTransition::new(HEADER, now), search_drawn: None,
+        Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), collapse: ScalarTransition::new(0.0, now),
+            search: ScalarTransition::new(HEADER, now), search_drawn: None,
+            bar: ScalarSpring::new(0.0, now).motion(SpringMotion { stiffness: 400.0, damping_ratio: 1.0 }), uncovered: false,
             showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
             primary: None, underlay: None }
     }
 
     pub fn set_reduced_motion(&mut self, reduced: bool) { self.reduced = reduced; }
+
+    /// Whether the player has just uncovered the page under it, once.
+    pub fn take_uncovered(&mut self) -> bool { std::mem::take(&mut self.uncovered) }
 
     pub fn advance(&mut self, state: &mut State, size: Size, now: Instant) -> Vec<Command> {
         let reduced = self.reduced || state.settings.reduce_motion;
@@ -99,9 +114,20 @@ impl Motion {
             let id = if state.can_go_back() { "back" } else { "home" };
             let commands = state.update(&UiAction::Clicked { id: id.into() });
             state.mobile_ui.revealed = Some(crate::view::mobile_route_key(state));
+            self.uncovered = true;
             return commands;
         }
         state.mobile_ui.player_offset = self.offset(now);
+        // The lyrics and the queue take the cover into their head; a player opened on either
+        // starts there.
+        let collapsed = state.mobile && (state.page == Page::Lyrics || (state.page == Page::Playing && state.queue_open));
+        if !matches!(state.page, Page::Playing | Page::Lyrics) { self.collapse.snap_to(0.0, now); }
+        // The bar folds and opens on Compose's spring for shared elements, as BitChord's does:
+        // stiffness 400, no bounce.
+        self.bar.retarget_with_motion(if state.mobile_ui.bar_inline { 1.0 } else { 0.0 }, now, reduced);
+        state.mobile_ui.bar_fold = self.bar.value(now).clamp(0.0, 1.0);
+        self.collapse.retarget_with_motion(if collapsed { 1.0 } else { 0.0 }, now, COLLAPSE, reduced);
+        state.mobile_ui.collapse = self.collapse.value(now);
         let search = state.mobile && crate::view::search_in_header(state);
         if search {
             // A collapse the stall would have run unseen picks up again from where it was drawn.
@@ -229,7 +255,9 @@ impl Motion {
         output
     }
 
-    pub fn active(&self, now: Instant) -> bool { self.player.is_active(now) || self.search.is_active(now) }
+    pub fn active(&self, now: Instant) -> bool {
+        self.player.is_active(now) || self.collapse.is_active(now) || self.search.is_active(now) || self.bar.is_active(now)
+    }
 
     /// An upward release can carry the spring past the top; the sheet stops at the screen's edge.
     fn offset(&self, now: Instant) -> f32 { self.player.value(now).max(0.0) }
@@ -263,13 +291,31 @@ pub fn update_header(state: &mut State, tree: &UiTree) -> bool {
     let scroll = if state.mobile { tree.anchor_offset(crate::view::PAGE_TOP).map_or(0.0, |top| (-top).max(0.0)) } else { 0.0 };
     let searching = crate::view::search_in_header(state);
     // A large title gives the bar its name once it has scrolled up under it, as UIKit's does.
-    let compact = if crate::view::mobile_large_title(state) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
+    let compact = if (crate::view::mobile_large_title(state) || state.page == Page::Settings) && !searching { scroll > crate::view::MOBILE_LARGE_TITLE - 8.0 }
         else { state.mobile && anchor.and_then(|id| tree.anchor_offset(id)).is_some_and(|top| top < state.mobile_ui.content_insets.top + HEADER) };
     let scrolled = scroll > 0.5;
+    // The bar folds on every page that goes down, the search's results too, as BitChord's.
+    // Under the player or the lyrics there is no bar and no page of its: coming back, the page
+    // is where it was, not a jump to fold on.
+    let folded = !matches!(state.page, Page::Playing | Page::Lyrics) && fold(&mut state.mobile_ui, scroll);
+    let scroll = if searching { 0.0 } else { scroll };
     // Followed every frame by the native title, without laying the page out again.
-    state.mobile_ui.page_scroll = if searching { 0.0 } else { scroll };
+    state.mobile_ui.page_scroll = scroll;
     let moved = std::mem::replace(&mut state.mobile_ui.scrolled, scrolled) != scrolled;
-    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved
+    std::mem::replace(&mut state.mobile_ui.compact_header, compact) != compact || moved || folded
+}
+
+/// How far a page goes one way before BitChord's bar folds into one row, going down, or opens
+/// again, coming back up; near its top the bar is always open.
+const FOLD: f32 = 50.0;
+
+/// Folds or opens the tabs as the page went from where it was to `scroll`; says whether it did.
+fn fold(ui: &mut crate::state::mobile::MobileUi, scroll: f32) -> bool {
+    let step = scroll - std::mem::replace(&mut ui.bar_scroll, scroll);
+    // A turn starts the count again.
+    ui.bar_travel = if step * ui.bar_travel < 0.0 { step } else { ui.bar_travel + step };
+    let inline = if scroll < FOLD { false } else if ui.bar_travel >= FOLD { true } else if ui.bar_travel <= -FOLD { false } else { ui.bar_inline };
+    std::mem::replace(&mut ui.bar_inline, inline) != inline
 }
 
 fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32, offset: f32) -> bool {
@@ -279,7 +325,7 @@ fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32,
         || state.creating.is_some() || state.importing.is_some() || state.missed_open || state.confirm.is_some()
         || state.sort_open || state.menu.is_some() || state.equalizer_open || state.sharing.is_some()
         || state.output_open || state.mobile_ui.context.is_some() || state.mobile_ui.library.is_some()
-        || state.mobile_ui.connections {
+        || state.mobile_ui.connections || state.mobile_ui.pipeline {
         return false;
     }
     if frame.press_region(point).is_some_and(|hit| matches!(hit.kind,
@@ -287,8 +333,10 @@ fn eligible(state: &State, frame: &Frame, point: Point, size: Size, scroll: f32,
         || frame.access.iter().any(|node| node.id == hit.id && node.role == Role::Slider)) {
         return false;
     }
-    point.y < offset + state.mobile_ui.content_insets.top + HEADER || (scroll <= 0.01 && frame.regions.iter().any(|region|
-        region.id == "mobile-playing" && region.kind == HitKind::Scroll && region.rect.contains(point)))
+    // As BitChord's, the player comes down from anywhere on it but a list that has scrolled.
+    let scrolls = |region: &limn::HitRegion| region.kind == HitKind::Scroll && region.rect.contains(point);
+    point.y < offset + state.mobile_ui.content_insets.top + HEADER || !frame.regions.iter().any(scrolls)
+        || (scroll <= 0.01 && frame.regions.iter().any(|region| region.id == "mobile-playing" && scrolls(region)))
 }
 
 #[cfg(test)]
@@ -596,6 +644,10 @@ mod tests {
         assert!(eligible(&state, &surface(), Point::new(20.0, 20.0), size, 100.0, 0.0));
         assert!(eligible(&state, &surface(), Point::new(20.0, 200.0), size, 0.0, 0.0));
         assert!(!eligible(&state, &surface(), Point::new(20.0, 200.0), size, 1.0, 0.0));
+        assert!(eligible(&state, &Frame::default(), Point::new(20.0, 600.0), size, 1.0, 0.0), "the bare player, its cover or its controls");
+        let mut list = Frame::default();
+        list.regions.push(HitRegion { id: "list".into(), rect: Rect::new(0.0, HEADER, 390.0, 700.0), kind: HitKind::Scroll });
+        assert!(!eligible(&state, &list, Point::new(20.0, 600.0), size, 0.0, 0.0), "another list keeps its own drag");
         for kind in [HitKind::TextInput, HitKind::TextArea, HitKind::CodeEditor, HitKind::CodeDiff, HitKind::Scrollbar] {
             let mut frame = surface();
             frame.regions.push(HitRegion { id: "control".into(), rect: Rect::new(0.0, 0.0, 390.0, 844.0), kind });
@@ -610,6 +662,63 @@ mod tests {
         let slider = Slider::new("seek", 0.5, ComponentPalette::neutral_dark()).render().size(None, Some(44.0));
         let frame = UiTree::new(slider).layout(Size::new(390.0, 44.0));
         assert!(!eligible(&state, &frame, Point::new(20.0, 20.0), size, 0.0, 0.0));
+    }
+
+    #[test]
+    fn the_tabs_fold_as_the_page_goes_down_fifty_and_open_as_it_comes_back_up() {
+        let mut ui = crate::state::mobile::MobileUi::default();
+        let mut at = |scroll: f32| { fold(&mut ui, scroll); ui.bar_inline };
+        assert!(!at(40.0), "near the top it stays open");
+        assert!(at(80.0), "past fifty, gone fifty down: folded");
+        assert!(at(300.0) && at(290.0), "a little back up keeps it folded");
+        assert!(!at(230.0), "fifty back up: open");
+        assert!(at(400.0) && !at(20.0), "and the top always opens it");
+    }
+
+    #[test]
+    fn the_bar_folds_on_a_spring_without_bounce_and_opens_back() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = Page::Search;
+        let now = Instant::now();
+        let mut motion = Motion::new(now);
+        let size = Size::new(390.0, 844.0);
+        motion.advance(&mut state, size, now);
+        state.mobile_ui.bar_inline = true;
+        motion.advance(&mut state, size, now);
+        let mut last = state.mobile_ui.bar_fold;
+        for ms in [40, 80, 120, 200, 400] {
+            motion.advance(&mut state, size, now + Duration::from_millis(ms));
+            assert!(state.mobile_ui.bar_fold >= last && state.mobile_ui.bar_fold <= 1.0, "it only goes one way: {}", state.mobile_ui.bar_fold);
+            last = state.mobile_ui.bar_fold;
+        }
+        assert!(last > 0.97, "folded by 0.4 s: {last}");
+    }
+
+    #[test]
+    fn the_cover_shrinks_into_the_lyrics_head_in_a_third_of_a_second_and_grows_back() {
+        let now = Instant::now();
+        let (mut motion, mut state) = settled(now);
+        let size = Size::new(390.0, 844.0);
+        let at = |ms: u64| now + Duration::from_secs(1) + Duration::from_millis(ms);
+        state.update(&limn::UiAction::Clicked { id: "lyrics".into() });
+        assert!(state.cover_moving(), "from the press on, before the host has moved it, so a frame follows");
+        motion.advance(&mut state, size, at(0));
+        motion.advance(&mut state, size, at(165));
+        let halfway = state.mobile_ui.collapse;
+        assert!(halfway > 0.6 && halfway < 0.95, "past half of the way at half of the time: {halfway}");
+        assert!(motion.active(at(165)));
+        motion.advance(&mut state, size, at(340));
+        assert_eq!(state.mobile_ui.collapse, 1.0);
+        assert!(!state.cover_moving() && !motion.active(at(340)), "there, it rests");
+        state.update(&limn::UiAction::Clicked { id: "lyrics".into() });
+        motion.advance(&mut state, size, at(400));
+        motion.advance(&mut state, size, at(560));
+        assert!(state.mobile_ui.collapse < 0.4 && state.mobile_ui.collapse > 0.0, "and back to the banner: {}", state.mobile_ui.collapse);
+        state.settings.reduce_motion = true;
+        state.update(&limn::UiAction::Clicked { id: "queue".into() });
+        motion.advance(&mut state, size, at(600));
+        assert_eq!(state.mobile_ui.collapse, 1.0, "with movement reduced it is there at once");
     }
 
     #[test]

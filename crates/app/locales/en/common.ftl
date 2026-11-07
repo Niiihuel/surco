@@ -15,7 +15,6 @@ common-playlist = Playlist
 common-cancel = Cancel
 common-close = Close
 common-delete = Delete
-common-remove = Remove
 common-clear = Clear
 common-retry = Retry
 common-percent = { $percent }%
@@ -117,7 +116,6 @@ common-onboarding-skip = Skip
 common-onboarding-done = You're all set, { $name }!
 common-onboarding-done-detail = We made your Home from what you chose.
 common-onboarding-home = Go to Home
-common-onboarding-step = Go to step { $step }
 common-onboarding-taste = Choose artists again
 common-onboarding-taste-detail = The genres and artists your Home is made from.
 common-scan-code = Scan code
@@ -158,19 +156,10 @@ common-replay-plays = { $count ->
     [one] play
    *[other] plays
 }
-common-replay-songs = { $count ->
-    [one] song
-   *[other] songs
-}
-common-replay-artists = { $count ->
-    [one] artist
-   *[other] artists
-}
 common-replay-plays-of = { $count ->
     [one] 1 play
    *[other] { $count } plays
 }
-common-replay-song-heard = { $plays } × · { $minutes } min
 common-replay-minutes-title = Your minutes listened
 common-replay-minutes-days = { $count ->
     [one] That's { $count } day.
@@ -209,10 +198,6 @@ common-replay-streak = days in a row with music
 common-replay-days = { $count ->
     [one] { $count } day
    *[other] { $count } days
-}
-common-replay-hours = { $count ->
-    [one] Over an hour
-   *[other] Over { $count } hours
 }
 
 ## Scrobbling
@@ -288,8 +273,6 @@ common-together-open = Guests control it too
 common-together-open-detail = They can play, pause, seek and skip, not only suggest songs.
 common-together-close = Close the room
 common-together-leave = Leave the room
-common-together-members = In the room
-common-together-host-tag = host
 common-together-chat = Chat
 common-together-chat-empty = Nobody said anything yet.
 common-together-chat-placeholder = Say something

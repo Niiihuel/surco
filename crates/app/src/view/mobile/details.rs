@@ -3,16 +3,22 @@
 use super::*;
 
 const GUTTER: f32 = 16.0;
-/// BitChord's discs under a page's name: 50 across, white at 7% within a rim at 10%.
+/// BitChord's discs under a page's name: 50 across.
 const DISC: f32 = 50.0;
-const DISC_FILL: Color = Color::rgba(255, 255, 255, 18);
-const DISC_RIM: Color = Color::rgba(255, 255, 255, 26);
 const PLAY_PILL: f32 = 50.0;
 /// The widest the Play pill grows; narrower, it gives way to the discs beside it.
 const PLAY_PILL_MOST: f32 = 180.0;
 /// The artist's play, larger than the discs beside it.
 const ARTIST_PLAY: f32 = 70.0;
 const ARTIST_DISC: f32 = 52.0;
+/// An artist's name over their photo, in Display, as large as BitChord's logo stands, and
+/// as small as it gets to stay on one line.
+const ARTIST_NAME: f32 = 44.0;
+const ARTIST_NAME_LEAST: f32 = 28.0;
+const DISPLAY_ADVANCE: f32 = 0.72;
+/// The newest release's cover, and the pane under it: white at 6% over the page's colour.
+const RELEASE_ART: f32 = 96.0;
+const RELEASE_PANE: Color = Color::rgba(255, 255, 255, 15);
 /// The credit under a title, BitChord's secondary ink over the page's colour.
 const CREDIT: Color = Color::rgba(255, 255, 255, 185);
 
@@ -42,10 +48,16 @@ fn meta(value: String, palette: ComponentPalette) -> Element {
     Text::new(value, palette).font_size(12.0).muted().render().font_family(FontFamily::SansMedium).center_content()
 }
 
-/// A page's own action, as a disc of BitChord's.
-fn disc(action: Element, side: f32) -> Element {
-    Element::panel(action.centered()).background(DISC_FILL).border(DISC_RIM, 1.0).round().size(Some(side), Some(side)).centered_y()
+/// A page's own action, as a disc of BitChord's in aurora's interactive glass, its press kept
+/// under `key`.
+fn disc(action: Element, side: f32, key: &str) -> Element {
+    super::pane_of_glass(Element::panel(action.centered()), true).glass_press(format!("page-disc:{key}")).round()
+        .size(Some(side), Some(side)).centered_y()
 }
+
+/// An artist followed, as BitChord's: a star that fills.
+const STAR: &str = include_str!("../../../assets/icons/star.svg");
+const STAR_FILL: &str = include_str!("../../../assets/icons/star-fill.svg");
 
 /// The actions under a page's name, as BitChord's, centred: shuffle and the page's `own`
 /// (keep, download, its menu) as discs either side of a white Play pill; an artist's play a
@@ -55,7 +67,7 @@ pub(in crate::view) fn actions(state: &State, own: Vec<Element>, palette: Compon
     let side = if artist { ARTIST_DISC } else { DISC };
     let (glyph, hint) = shuffle_step(state);
     let shuffle = controls::action("page-shuffle", glyph, &hint, 22.0, palette);
-    let shuffle = disc(if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle }, side);
+    let shuffle = disc(if state.player.shuffle { shuffle.background(palette.selected) } else { shuffle }, side, "shuffle");
     let play = if artist {
         controls::playback("page-play", false, ARTIST_PLAY, 30.0, palette)
     } else {
@@ -69,7 +81,7 @@ pub(in crate::view) fn actions(state: &State, own: Vec<Element>, palette: Compon
     };
     // The pill takes the room first; once it is at its widest the rest centres the row.
     let mut row = vec![Element::spacer().flex(0.05), shuffle, play];
-    row.extend(own.into_iter().map(|action| disc(action, side)));
+    row.extend(own.into_iter().enumerate().map(|(index, action)| disc(action, side, &index.to_string())));
     row.push(Element::spacer().flex(0.05));
     Element::row(row).gap(if artist { 24.0 } else { 12.0 })
 }
@@ -110,7 +122,7 @@ pub(in crate::view) fn bar_tools(state: &State, palette: ComponentPalette) -> El
     let open = state.page_searching;
     let search = icon("page-search", if open { Icon::Close } else { Icon::Search }, &if open { t!("desktop-close-search") } else { t!("mobile-search-list") }, palette);
     let order = crate::view::page_order(state, icon("page-sort", Icon::Sort, &t!("desktop-sort-button"), palette));
-    Element::panel(Element::row(vec![search, order])).background(FROST).border(HAIRLINE, 0.5).round().centered_y()
+    super::pane_of_glass(Element::panel(Element::row(vec![search, order])), true).glass_press("page-tools").round().centered_y()
 }
 
 /// The field a list is searched in, as BitChord's: under the bar, on the page's colour, the
@@ -174,7 +186,7 @@ pub(in crate::view) fn album(
         palette,
     );
     let actions = if album.tracks.is_empty() {
-        Element::row(vec![disc(kept, DISC)]).centered_x()
+        Element::row(vec![disc(kept, DISC, "keep")]).centered_x()
     } else {
         page_actions(state, vec![kept], palette)
     };
@@ -196,34 +208,20 @@ pub(in crate::view) fn artist(
     width: f32,
     palette: ComponentPalette,
 ) -> Element {
-    // BitChord's: the photo the page's width, a little taller than wide, dissolving into the
-    // page's colour with the name over it.
-    let span = width - 2.0 * GUTTER;
-    let tall = (span / 0.95).round();
-    let tone = artist.artwork_url.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
-    let name = Text::new(&artist.name, palette).font_size(34.0).line_height(40.0).render().font_family(FontFamily::SansBold)
-        .anchor("mobile-detail-title");
-    // The name and how many follow them read as one, at the photo's foot.
-    let mut said = vec![Element::spacer().flex(1.0), name];
-    if let Some(subscribers) = artist.subscribers.as_deref().filter(|value| !value.is_empty()) {
-        said.push(Text::new(t!("mobile-subscribers", subscribers = subscribers), palette).font_size(14.0).render()
-            .font_family(FontFamily::SansMedium).foreground(Color::rgba(255, 255, 255, 190)));
-    }
-    let fade = Element::column(said).gap(2.0).padding(16.0)
-        .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.45).round()));
-    let photo = Element::stack(vec![sole_cover(state, &artist.artwork_url, tall, palette).size(Some(span), Some(tall)),
-        Element::column(vec![Element::spacer().flex(1.0), fade])]).size(Some(span), Some(tall)).radius(12.0).clip_children();
-    let mut sections = vec![photo];
-    let followed = keep(state, &t!("mobile-follow-artist"), &t!("mobile-unfollow-artist"), palette);
+    let hero = artist_hero(state, &artist.name, &artist.artwork_url, width, palette);
+    let mut sections = Vec::new();
+    let kept = state.keeps_page();
+    let followed = icon("keep", Icon::Custom(if kept { STAR_FILL } else { STAR }),
+        &if kept { t!("mobile-unfollow-artist") } else { t!("mobile-follow-artist") }, palette);
     sections.push(if artist.songs.is_empty() {
-        Element::row(vec![disc(followed, ARTIST_DISC)]).centered_x()
+        Element::row(vec![disc(followed, ARTIST_DISC, "keep")]).centered_x()
     } else {
         page_actions(state, vec![followed], palette)
     });
+    if let Some(latest) = latest_release(state, artist, palette) { sections.push(latest); }
     if !artist.songs.is_empty() {
-        sections.push(
-            Element::column(vec![heading(&t!("common-songs-heading"), palette), tracks(state, palette)]).gap(12.0),
-        );
+        let top = Text::new(t!("mobile-top-songs"), palette).font_size(24.0).render().font_family(FontFamily::SansBold);
+        sections.push(Element::column(vec![top, tracks(state, palette)]).gap(12.0));
     }
     if !artist.albums.is_empty() {
         sections.push(shelf(
@@ -243,7 +241,65 @@ pub(in crate::view) fn artist(
             palette,
         ));
     }
-    scroll(state, "mobile-artist", sections)
+    // The photo is outside the gutters, and the page starts at the screen's top under it.
+    ScrollArea::new("mobile-artist", Element::column(vec![hero, Element::column(sections).gap(24.0).padding(GUTTER)])).render().flex(1.0)
+}
+
+/// BitChord's: the photo across the whole screen from its top edge, under the header, a
+/// little taller than wide, dissolving into the page's colour with the name centred over its
+/// foot in Display.
+fn artist_hero(state: &State, name: &str, artwork: &Option<String>, width: f32, palette: ComponentPalette) -> Element {
+    let tall = (width / 0.95).round();
+    let tone = artwork.as_deref().and_then(|url| state.tints.get(url)).copied().map_or(SCHEME.canvas, super::page_tone);
+    // On one line where it can be, as BitChord's logo stands: Display's letters run about
+    // 0.72 of their size wide. A name too long for even the smallest wraps.
+    let size = ((width - 2.0 * GUTTER) / (name.chars().count().max(1) as f32 * DISPLAY_ADVANCE)).clamp(ARTIST_NAME_LEAST, ARTIST_NAME);
+    let name = Text::new(name, palette).font_size(size).line_height(size * 1.15).render()
+        .font_family(FontFamily::Display).center_content().anchor("mobile-detail-title");
+    let fade = Element::column(vec![Element::spacer().flex(1.0), name]).padding(GUTTER)
+        .vertical_gradient(vec![Color { a: 0, ..tone }, Color { a: 200, ..tone }, tone]).size(None, Some((tall * 0.5).round()));
+    let photo = match artwork.as_ref().and_then(|url| state.artwork.get(url)) {
+        Some(_) => sole_cover(state, artwork, tall, palette),
+        None => limn::Skeleton::new("artist-coming", palette).render(),
+    };
+    Element::stack(vec![photo.size(Some(width), Some(tall)), Element::column(vec![Element::spacer().flex(1.0), fade])])
+        .size(Some(width), Some(tall)).clip_children()
+}
+
+/// An artist's page while it comes, as BitChord's: their photo and name where they are known
+/// from where they were chosen, and the buttons, the newest release and the songs pulsing in
+/// their places.
+pub(in crate::view) fn artist_coming(state: &State, id: &str, width: f32, palette: ComponentPalette) -> Element {
+    let known = state.found.artists.iter().chain(state.collection.artists().map(|(_, artist)| artist)).find(|artist| artist.id == id);
+    let (name, artwork) = known.map_or((String::new(), None), |artist| (artist.name.clone(), artist.artwork_url.clone()));
+    let pulse = |across: Option<f32>, tall: f32, radius: f32| limn::Skeleton::new("artist-coming", palette).render().radius(radius).size(across, Some(tall));
+    let circles = Element::row(vec![pulse(Some(ARTIST_DISC), ARTIST_DISC, ARTIST_DISC / 2.0), pulse(Some(70.0), 70.0, 35.0),
+        pulse(Some(ARTIST_DISC), ARTIST_DISC, ARTIST_DISC / 2.0)]).gap(24.0).centered_x();
+    let row = || Element::row(vec![pulse(Some(48.0), 48.0, 8.0), Element::column(vec![pulse(Some(180.0), 14.0, 7.0), pulse(Some(110.0), 12.0, 6.0)])
+        .gap(8.0).centered_y()]).gap(12.0);
+    let mut sections = vec![circles, pulse(None, RELEASE_ART + 24.0, 20.0), pulse(Some(160.0), 24.0, 12.0)];
+    sections.extend((0..4).map(|_| row()));
+    ScrollArea::new("mobile-artist", Element::column(vec![artist_hero(state, &name, &artwork, width, palette),
+        Element::column(sections).gap(24.0).padding(GUTTER)])).render().flex(1.0)
+}
+
+/// BitChord's newest release card under an artist's buttons: the cover, what it is and its
+/// year over its name, on a pane a shade lighter than the page. The newest by year of the
+/// albums and the singles; the first of each when the catalog gives none.
+fn latest_release(state: &State, artist: &Artist, palette: ComponentPalette) -> Option<Element> {
+    let year = |release: &AlbumRef| release.year.parse::<u32>().unwrap_or(0);
+    let albums = artist.albums.iter().enumerate().map(|(index, release)| (format!("page-album:{index}"), t!("common-album"), release));
+    let singles = artist.singles.iter().enumerate().map(|(index, release)| (format!("page-single:{index}"), t!("mobile-single"), release));
+    let (id, kind, release) = singles.chain(albums).max_by_key(|(_, _, release)| year(release))?;
+    let about = if release.year.is_empty() { kind.into_owned() } else { format!("{kind} · {}", release.year) };
+    let copy = Element::column(vec![
+        Text::new(about, palette).font_size(15.0).muted().truncate().render(),
+        Text::new(&release.title, palette).font_size(20.0).truncate().render().font_family(FontFamily::SansBold),
+    ]).gap(2.0).centered_y().flex(1.0);
+    let cover = sole_cover(state, &release.artwork_url, RELEASE_ART, palette).size(Some(RELEASE_ART), Some(RELEASE_ART)).radius(12.0).border(THUMB_RIM, 0.5).clip_children();
+    let card = Element::panel(Element::row(vec![cover, copy]).gap(16.0).padding(12.0)).background(RELEASE_PANE).radius(20.0);
+    // Its own id: the same release is a tile on its shelf too.
+    Some(Element::clickable(format!("latest-{id}"), card).dispatch_as(id).accessible(limn::Access::new(limn::Role::Button).name(release.title.as_str())).radius(20.0))
 }
 
 /// A mix the home made, as a playlist reads: its picture, what it is and who it plays, and
@@ -314,7 +370,7 @@ pub(in crate::view) fn playlist(
     // As the desktop's: what else a list can do waits behind its dots.
     let more = crate::view::playlist_menu(state, playlist, palette);
     if playlist.tracks.is_empty() {
-        sections.push(Element::row(vec![disc(more, DISC)]).centered_x());
+        sections.push(Element::row(vec![disc(more, DISC, "more")]).centered_x());
         sections.push(blank(Icon::MusicNote, t!("mobile-playlist-empty"), t!("mobile-playlist-empty-detail"), None, palette));
     } else {
         sections.push(page_actions(state, vec![more], palette));
@@ -440,6 +496,30 @@ mod tests {
                 "{text:?} fits {width}px: {position:?}"
             );
         }
+    }
+
+    #[test]
+    fn an_artist_on_their_way_shows_their_name_from_where_they_were_chosen() {
+        let mut state = State::default();
+        state.mobile = true;
+        state.found.artists.push(surco_core::ArtistRef { id: "chosen".into(), name: "Coldplay".into(), subscribers: None, artwork_url: None });
+        let mut tree = UiTree::new(artist_coming(&state, "chosen", 390.0, SCHEME.palette()));
+        tree.set_text_measurer(|text, font_size, _| text.chars().count() as f32 * font_size * 0.5);
+        let frame = tree.layout(Size::new(390.0, 2400.0));
+        assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::Text { text, .. } if text.contains("Coldplay"))));
+    }
+
+    #[test]
+    fn an_artists_newest_release_is_carded_under_their_buttons() {
+        let (_, mut artist, _) = pages();
+        artist.albums[0].year = "2024".into();
+        artist.singles[0].year = "2026".into();
+        let mut state = State::default();
+        state.mobile = true;
+        state.page = Page::Artist(artist.clone());
+        let frame = frame(&state, 390.0);
+        assert!(frame.regions.iter().any(|region| region.id == "latest-page-single:0"), "the 2026 single, not the 2024 album");
+        assert!(!frame.regions.iter().any(|region| region.id == "latest-page-album:0"));
     }
 
     #[test]

@@ -73,6 +73,8 @@ pub struct PlayerView {
     pub sleep: Option<Sleep>,
     /// How many SponsorBlock segments were jumped over, and the category of the last.
     pub skipped: Option<(u32, String)>,
+    /// What the last track put on a deck goes through, decoder to device, as the engine told.
+    pub pipeline: Option<surco_audio::Pipeline>,
 }
 
 /// What the backend does for the player.
@@ -129,6 +131,7 @@ pub struct Player {
     jumped: Vec<String>,
     /// How many segments were jumped over, and the category of the last.
     skipped: Option<(u32, String)>,
+    pipeline: Option<surco_audio::Pipeline>,
 }
 
 impl Default for Player {
@@ -152,6 +155,7 @@ impl Default for Player {
             segments: None,
             jumped: Vec::new(),
             skipped: None,
+            pipeline: None,
         }
     }
 }
@@ -172,6 +176,7 @@ impl Player {
             error: self.error.clone(),
             sleep: self.sleep,
             skipped: self.skipped.clone(),
+            pipeline: self.pipeline.clone(),
         }
     }
 
@@ -456,6 +461,10 @@ impl Player {
             }
             // The music goes on where it was, on the device the engine moved to.
             Event::Rerouted => self.reload(),
+            Event::Pipeline(pipeline) => {
+                self.pipeline = Some(pipeline);
+                Vec::new()
+            }
             Event::Failed { track_id, message } if self.is_current(&track_id) => {
                 self.loaded = false;
                 self.playing = false;

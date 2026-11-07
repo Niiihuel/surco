@@ -34,6 +34,8 @@ use crate::player::PlayerView;
 #[derive(Clone, Debug, PartialEq)]
 pub enum Page {
     Search,
+    /// One of the catalog's moods or genres, by its params: the lists it opens on.
+    Mood(String),
     Loading(Target),
     Failed(Target, String),
     Artist(Artist),
@@ -48,6 +50,9 @@ pub enum Page {
     Playlist(u64),
     /// The saved collection as a full page on a phone.
     Library,
+    /// A phone's library as BitChord's: what was listened to, then the lists and the artists
+    /// kept, each shelf with a way to all of them in `Library`.
+    Collection,
     /// The phone's full player, backed by the same playback state.
     Playing,
     Settings,
@@ -90,6 +95,8 @@ pub enum MixKind {
     Artist(Track),
     /// What was played again and again lately.
     Repeat,
+    /// A list of the catalog's, by its name, opened from Explore.
+    Catalog(String),
 }
 
 impl Mix {
@@ -99,6 +106,7 @@ impl Mix {
             MixKind::Moment => "moment".to_owned(),
             MixKind::Artist(seed) => format!("artist-{}", seed.id),
             MixKind::Repeat => "repeat".to_owned(),
+            MixKind::Catalog(name) => format!("catalog-{name}"),
         }
     }
 
@@ -278,6 +286,10 @@ pub struct Collection {
     /// What the library lists first, in the order it was pinned, by what each row is.
     #[serde(default)]
     pub pinned: Vec<String>,
+    /// The songs the user does not want to hear, by id: skipped when they come and kept out of
+    /// what is picked for them.
+    #[serde(default)]
+    pub disliked: Vec<String>,
 }
 
 /// Songs that go with the playlist on screen, to add to it or to play.
@@ -485,6 +497,8 @@ pub struct Handoff {
     pub push_to: Option<String>,
     pub pushing: bool,
     pub pushed: Option<Result<(), String>>,
+    /// Whether what goes is unfolded, a switch a part, on a phone's sheet.
+    pub parts_open: bool,
 }
 
 /// A picture picked to be cropped square before it is kept: its centre's share across and down
@@ -530,6 +544,9 @@ pub fn shaped_code(typed: &str, most: usize) -> String {
     code.chunks(4).map(|chunk| chunk.iter().collect::<String>()).collect::<Vec<_>>().join("-")
 }
 
+/// A list read before it is brought in: its name and how many songs it has, or why not.
+pub type Peeked = Result<(String, usize), String>;
+
 /// An app a list is brought in from.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ImportSource {
@@ -552,7 +569,7 @@ impl ImportSource {
     }
 
     /// The app a link is of.
-    fn of(link: &str) -> Option<Self> {
+    pub(crate) fn of(link: &str) -> Option<Self> {
         Some(match transfer::source(link.trim())? {
             transfer::Source::Spotify(..) => Self::Spotify,
             transfer::Source::Apple(_) => Self::Apple,
@@ -720,7 +737,23 @@ impl Collection {
         self.liked.retain(|liked| liked.id != track.id);
         if self.liked.len() == before {
             self.liked.insert(0, track.clone());
+            self.disliked.retain(|id| *id != track.id);
         }
+    }
+
+    /// Marks a song as not wanted, or takes the mark away; a song not wanted is not liked.
+    fn dislike(&mut self, track: &Track) {
+        let before = self.disliked.len();
+        self.disliked.retain(|id| *id != track.id);
+        if self.disliked.len() == before {
+            self.disliked.push(track.id.clone());
+            self.liked.retain(|liked| liked.id != track.id);
+        }
+    }
+
+    /// Whether the user said they do not want to hear this song.
+    pub fn is_disliked(&self, id: &str) -> bool {
+        self.disliked.iter().any(|disliked| disliked == id)
     }
 
     /// Takes in what an artist followed has out. The first time, all of it is known and
@@ -881,7 +914,7 @@ pub struct State {
     pub search_error: Option<String>,
     pub page: Page,
     /// The pages behind the current one, the search first.
-    history: Vec<Page>,
+    pub(crate) history: Vec<Page>,
     /// The pages gone back from, the latest last: where forward leads, until a page is opened.
     ahead: Vec<Page>,
     /// The player as the backend last described it.
@@ -950,6 +983,16 @@ pub struct State {
     pub page_more_open: bool,
     /// The footage whose frames are on screen already, by the name `screening` gives it.
     pub clip_ready: Option<String>,
+    /// The name of where what plays was started, as BitChord's player says it plays from.
+    pub playing_from: Option<String>,
+    /// The catalog's moods and genres once asked for, as Explore shows them, and the lists
+    /// each opens on, by its params, as they come.
+    pub moods: Option<Result<Vec<surco_youtube::Mood>, String>>,
+    pub mood_lists: HashMap<String, Vec<surco_youtube::CatalogList>>,
+    moods_asked: bool,
+    /// How many seconds the lyrics are moved ahead of what sounds (behind when negative), for
+    /// the song that plays: set by hand where they are out of step, and back to 0 with the next.
+    pub lyrics_offset: f64,
     /// How far the name of the song in the right panel reaches past its room, by the song's
     /// id, and since when it shows: a long one slides along it.
     pub title_reach: Option<(String, f32, Instant)>,
@@ -981,6 +1024,11 @@ pub struct State {
     pub import_unknown: bool,
     /// The app the list being brought in comes from, whose way of copying its link is shown.
     pub import_source: ImportSource,
+    /// The list a link pasted names, read before it is brought in: its name and how many
+    /// songs it has, none while it is read, or why it could not be.
+    pub import_peek: Option<(String, Option<Peeked>)>,
+    /// Whether the way of copying a link in each app is open, under the field.
+    pub import_help: bool,
     /// The playlist just brought in and the songs of it that were not found, while its page
     /// says so, and whether the list of them is open.
     pub imported: Option<(u64, Vec<String>)>,
@@ -1037,6 +1085,10 @@ pub struct State {
     pub picture_sizes: HashMap<String, (u32, u32)>,
     /// The track whose share card is open, and whether its link was just copied.
     pub sharing: Option<Track>,
+    /// A page shared rather than a track, as an artist's: its name, link and picture.
+    pub sharing_page: Option<SharedPage>,
+    /// What the system's own share sheet is to take, its title and link: the host's, once.
+    pub share_system: Option<(String, String)>,
     pub copied: bool,
     /// The playlist whose link was just copied, while its page says so, and the one whose
     /// songs were, as text for another app.
@@ -1281,6 +1333,22 @@ fn covers_of(tracks: &[Track]) -> impl Iterator<Item = &Option<String>> {
     tracks.iter().map(|track| &track.artwork_url)
 }
 
+/// A page shared rather than a track: what it is called, its link and its picture.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedPage {
+    pub title: String,
+    pub link: String,
+    pub artwork_url: Option<String>,
+}
+
+impl State {
+    /// What the share sheet holds, by its name and link: the track's or the page's.
+    pub fn shared(&self) -> Option<(String, String)> {
+        self.sharing.as_ref().map(|track| (track.title.clone(), share_link(track)))
+            .or_else(|| self.sharing_page.as_ref().map(|page| (page.title.clone(), page.link.clone())))
+    }
+}
+
 /// The link that shares a track: the catalog's own address for it, which opens for
 /// anyone, and which the search box here takes for the track itself.
 pub fn share_link(track: &Track) -> String {
@@ -1343,6 +1411,27 @@ pub fn backdrop_of_key(url: &str) -> Option<&str> {
 }
 
 const BACKDROP: &str = "#backdrop";
+
+/// The address the cover at `url` is drawn under as a duotone of `color`, from its colour
+/// darkened to it lightened, as BitChord's Explore cards draw theirs.
+pub fn duotone_key(url: &str, color: u32) -> String {
+    format!("{url}{DUOTONE}{color:06x}")
+}
+
+/// The cover and the colour a duotone's address names, if it is one.
+pub fn duotone_of_key(url: &str) -> Option<(&str, u32)> {
+    let (cover, color) = url.rsplit_once(DUOTONE)?;
+    Some((cover, u32::from_str_radix(color, 16).ok()?))
+}
+
+const DUOTONE: &str = "#duotone:";
+
+/// A mood's colour: the catalog's own, or for one that came without, a muted one of eight
+/// picked by its name, as BitChord's.
+pub fn mood_color(mood: &surco_youtube::Mood) -> u32 {
+    const MUTED: [u32; 8] = [0xCC6A55, 0xC07A92, 0x9C8AC0, 0x8090C8, 0xD0A060, 0x6A88B0, 0x7AAED0, 0x86B890];
+    mood.color.unwrap_or_else(|| MUTED[mood.title.bytes().fold(0usize, |hash, byte| hash.wrapping_mul(31).wrapping_add(usize::from(byte))) % MUTED.len()])
+}
 
 pub fn large_cover(url: &str) -> String {
     cover_at(url, 1200)
@@ -1460,6 +1549,11 @@ impl Default for State {
             account_open: false,
             page_more_open: false,
             clip_ready: None,
+            playing_from: None,
+            moods: None,
+            mood_lists: HashMap::new(),
+            moods_asked: false,
+            lyrics_offset: 0.0,
             title_reach: None,
             handoff: None,
             cropping: None,
@@ -1476,6 +1570,8 @@ impl Default for State {
             importing: None,
             import_unknown: false,
             import_source: ImportSource::default(),
+            import_peek: None,
+            import_help: false,
             imported: None,
             play_when: None,
             missed_open: false,
@@ -1499,6 +1595,8 @@ impl Default for State {
             heard: (0.0, Instant::now()),
             picture_sizes: HashMap::new(),
             sharing: None,
+            sharing_page: None,
+            share_system: None,
             copied: false,
             list_copied: None,
             list_exported: None,
@@ -1796,6 +1894,12 @@ impl State {
     /// colours of the time of day's mix. Never in a screenshot or under reduced motion.
     pub fn ambient(&self) -> bool {
         self.motion && !self.settings.reduce_motion && self.at_home() && !self.mix.is_empty()
+    }
+
+    /// Whether the Audio Pipeline's light runs down its line: while it is open, never in a
+    /// screenshot or under reduced motion.
+    pub fn signal_runs(&self) -> bool {
+        self.motion && !self.settings.reduce_motion && self.mobile_ui.pipeline
     }
 
     /// Follows the pointer over the home's quick access: the page's wash takes the colour of
@@ -2112,6 +2216,29 @@ impl State {
             }
             "artist" => self.open(artist_of(&track)),
             "album" => track.album_id.map(Target::Album).map(|album| self.open(album)).unwrap_or_default(),
+            "sleep" => {
+                self.sleep_open = true;
+                Vec::new()
+            }
+            "radio" => vec![Command::StartRadio(track)],
+            // Not wanted: what plays gives way to what comes next.
+            "dislike" => {
+                self.collection.dislike(&track);
+                let now = self.current().is_some_and(|current| current.id == track.id);
+                if now && self.collection.is_disliked(&track.id) { vec![Command::Next] } else { Vec::new() }
+            }
+            "playlists" => {
+                self.mobile_ui.picking = Some(row.to_owned());
+                Vec::new()
+            }
+            "info" => {
+                self.mobile_ui.info = Some(track);
+                Vec::new()
+            }
+            "offset" => {
+                self.mobile_ui.offset_open = true;
+                Vec::new()
+            }
             // A track goes into a list that exists, or into one made for it.
             "add-new" => {
                 self.creating = Some(Draft { first: Some(track), ..Draft::default() });
@@ -2191,7 +2318,12 @@ impl State {
     }
 
     pub fn update(&mut self, action: &UiAction) -> Vec<Command> {
+        // Named before the press, which may leave the page.
+        let from = match action { UiAction::Clicked { id } => self.origin(id), _ => None };
         let mut commands = self.handle(action);
+        if commands.iter().any(|command| matches!(command, Command::PlayList { .. })) {
+            self.playing_from = from;
+        }
         // A guest's choices go to the room's host: a song chosen is suggested, or played for
         // everyone where the host lets guests play; skipping and seeking are asked for, or left
         // to the room. Pausing is the guest's own.
@@ -2305,9 +2437,16 @@ impl State {
             UiAction::InputChanged { id, value } if id == "import-link" => {
                 self.importing = Some(value.clone());
                 self.import_unknown = false;
-                // A link pasted says which app it is of.
-                if let Some(source) = ImportSource::of(value) { self.import_source = source; }
-                Vec::new()
+                // A link pasted says which app it is of, and the list it names is read at once.
+                let link = value.trim();
+                let Some(source) = ImportSource::of(link) else {
+                    self.import_peek = None;
+                    return Vec::new();
+                };
+                self.import_source = source;
+                if self.import_peek.as_ref().is_some_and(|(read, _)| read == link) { return Vec::new(); }
+                self.import_peek = Some((link.to_owned(), None));
+                vec![Command::PeekImport(link.to_owned())]
             }
             UiAction::Submitted { id, .. } if id == "import-link" => self.click("import-go"),
             UiAction::Submitted { id, .. } if id == "search" => self.search(),
@@ -2388,7 +2527,8 @@ impl State {
             UiAction::Dropped { id, target, .. } => {
                 (self.resizing, self.column_drag) = (None, None);
                 // A row of the queue let go over another takes its place.
-                let place = |row: &str| row.strip_prefix("upcoming:").and_then(|index| index.parse::<usize>().ok());
+                // On a phone, a row is held by its grip.
+                let place = |row: &str| row.strip_prefix("upcoming:").or_else(|| row.strip_prefix(mobile::QUEUE_GRIP)).and_then(|index| index.parse::<usize>().ok());
                 match (place(id), target.as_deref().and_then(place)) {
                     (Some(from), Some(to)) if from != to => vec![Command::MoveQueue(from, to)],
                     _ => Vec::new(),
@@ -2597,6 +2737,12 @@ impl State {
                 Vec::new()
             }
             // Its button in the bar, and the link under what comes next in the panel.
+            // On a phone's lyrics the queue's button opens it in the player, as BitChord's.
+            "queue" if self.mobile && self.page == Page::Lyrics => {
+                self.page = Page::Playing;
+                self.queue_open = true;
+                self.upcoming_covers()
+            }
             "queue" | "next-queue" => {
                 self.queue_open = !self.queue_open;
                 self.open_side(Side::Right, self.queue_open);
@@ -2791,18 +2937,49 @@ impl State {
             "search-submit" => self.search(),
             "mobile-library" => {
                 self.mobile_search = false;
-                if self.page != Page::Library {
-                    self.go(Page::Library);
+                // A phone's tab is BitChord's library; a television's is the whole list.
+                let page = if self.mobile && !self.tv { Page::Collection } else { Page::Library };
+                if self.page != page {
+                    self.go(page);
                 }
+                Vec::new()
+            }
+            // An artist's link, BitChord's share at the top of their page: copied, and said so.
+            "artist-share" => {
+                if let Page::Artist(artist) = &self.page {
+                    self.sharing_page = Some(SharedPage { title: artist.name.clone(),
+                        link: format!("https://music.youtube.com/channel/{}", artist.id), artwork_url: artist.artwork_url.clone() });
+                    self.copied = false;
+                }
+                Vec::new()
+            }
+            // The folded bar's tab circle opens it again; it folds once the page goes down again.
+            "mobile-bar-open" => {
+                self.mobile_ui.bar_inline = false;
+                self.mobile_ui.bar_travel = 0.0;
+                Vec::new()
+            }
+            // A shelf's "See all": the whole list of that kind.
+            "library-all:lists" | "library-all:artists" => {
+                self.filter = if id == "library-all:lists" { Filter::Lists } else { Filter::Artists };
+                self.go(Page::Library);
                 Vec::new()
             }
             "mobile-playing" => {
                 if self.current().is_some() && self.page != Page::Playing {
                     self.go(Page::Playing);
+                    self.mobile_ui.controls_away = false;
                 }
                 let mut commands = self.ask_lyrics();
                 commands.extend(self.ask_about());
+                commands.extend(self.ask_clip());
                 commands
+            }
+            // A tap on the bare video puts the controls away, as BitChord's over a Canvas, and
+            // another brings them back.
+            "mobile-canvas" => {
+                self.mobile_ui.controls_away = !self.mobile_ui.controls_away;
+                Vec::new()
             }
             // A phone gives it a page; a window, a popover.
             "equalizer" if self.mobile => {
@@ -2825,12 +3002,37 @@ impl State {
                 }
             }
             "share-copy" => {
-                self.copy = self.sharing.as_ref().map(share_link);
+                self.copy = self.shared().map(|(_, link)| link);
                 self.copied = self.copy.is_some();
                 Vec::new()
             }
             "share-close" => {
                 self.sharing = None;
+                self.sharing_page = None;
+                Vec::new()
+            }
+            // The system's share sheet, UIKit's, closed: Surco's stays as it was under it.
+            "share-system-close" => {
+                self.share_system = None;
+                Vec::new()
+            }
+            // The share sheet's apps, as iOS's: each takes the link by its own address, which
+            // works from any device; the system's own sheet where there is one.
+            share if share.starts_with("share-to:") || share == "share-open" => {
+                if let Some((title, link)) = self.shared() {
+                    let text = |value: &str| percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string();
+                    match share.strip_prefix("share-to:").unwrap_or("open") {
+                        "whatsapp" => self.open_url = Some(format!("https://wa.me/?text={}", text(&link))),
+                        "telegram" => self.open_url = Some(format!("https://t.me/share/url?url={}&text={}", text(&link), text(&title))),
+                        "x" => self.open_url = Some(format!("https://x.com/intent/post?url={}&text={}", text(&link), text(&title))),
+                        "mail" => self.open_url = Some(format!("mailto:?subject={}&body={}", text(&title), text(&link))),
+                        "messages" => self.open_url = Some(format!("sms:?&body={}", text(&link))),
+                        "system" => self.share_system = Some((title, link)),
+                        _ => self.open_url = Some(link),
+                    }
+                }
+                self.sharing = None;
+                self.sharing_page = None;
                 Vec::new()
             }
             part if part.starts_with("settings-part:") => {
@@ -2945,6 +3147,10 @@ impl State {
                 if handoff.receiving || handoff.push_to.is_some() { return Vec::new(); }
                 let parts = handoff.parts;
                 vec![Command::Serve(self.bundle(parts))]
+            }
+            "handoff-parts" => {
+                if let Some(handoff) = self.handoff.as_mut() { handoff.parts_open = !handoff.parts_open; }
+                Vec::new()
             }
             "handoff-scan" => vec![Command::ScanCode],
             // A phone sends what was chosen to the television whose code it read.
@@ -3361,10 +3567,25 @@ impl State {
                 Vec::new()
             }
             "browse" => {
+                self.mobile_search = false;
                 if self.page != Page::Browse {
                     self.go(Page::Browse);
                 }
-                Vec::new()
+                // A phone's Explore is the catalog's moods and genres, asked for once.
+                if self.mobile && !std::mem::replace(&mut self.moods_asked, true) { vec![Command::Moods] } else { self.mood_covers() }
+            }
+            _ if id.starts_with("mood:") => {
+                let Some(mood) = id["mood:".len()..].parse::<usize>().ok().and_then(|index| self.moods.as_ref()?.as_ref().ok()?.get(index)).cloned() else { return Vec::new() };
+                self.go(Page::Mood(mood.params.clone()));
+                match self.mood_lists.get(&mood.params) {
+                    Some(lists) => cover_requests(&mut self.covers, lists.iter().map(|list| &list.cover)),
+                    None => vec![Command::MoodLists(mood.params)],
+                }
+            }
+            _ if id.starts_with("catalog:") => {
+                let Page::Mood(params) = &self.page else { return Vec::new() };
+                let list = id["catalog:".len()..].parse::<usize>().ok().and_then(|index| self.mood_lists.get(params)?.get(index)).cloned();
+                list.map(|list| self.open(Target::Catalog(list.id))).unwrap_or_default()
             }
             "recent-search-clear" => {
                 self.collection.searches.clear();
@@ -3390,10 +3611,17 @@ impl State {
             "import-open" => {
                 self.importing = Some(String::new());
                 self.import_unknown = false;
+                self.import_peek = None;
+                self.import_help = false;
                 Vec::new()
             }
             "import-cancel" => {
                 self.importing = None;
+                self.import_peek = None;
+                Vec::new()
+            }
+            "import-help" => {
+                self.import_help = !self.import_help;
                 Vec::new()
             }
             _ if id.starts_with("import-source:") => {
@@ -3411,6 +3639,7 @@ impl State {
                     return Vec::new();
                 }
                 self.importing = None;
+                self.import_peek = None;
                 // Used once, the offer has done its work.
                 self.settings.import_dismissed = true;
                 self.bring_in(link)
@@ -3556,6 +3785,13 @@ impl State {
                 self.import_progress = Some((done, of));
                 Vec::new()
             }
+            // Only for the link still in the field: one replaced meanwhile is forgotten.
+            Event::ImportPeeked { link, result } => {
+                if let Some((_, peeked)) = self.import_peek.as_mut().filter(|(read, _)| *read == link) {
+                    *peeked = Some(result);
+                }
+                Vec::new()
+            }
             Event::Opened { target, result: Ok(Content::List { name, tracks, missed }) } => {
                 self.import_progress = None;
                 let id = self.collection.create(Draft { name, collaborative: false, first: None });
@@ -3575,6 +3811,17 @@ impl State {
                 self.page_covers()
             }
             // Its card says why, and offers to try again, come back if it was hidden.
+            Event::Moods(moods) => {
+                self.moods = Some(moods);
+                Vec::new()
+            }
+            Event::MoodLists { params, lists } => {
+                let shown = self.page == Page::Mood(params.clone());
+                self.mood_lists.insert(params.clone(), lists);
+                let mut commands = self.mood_covers();
+                if shown { commands.extend(cover_requests(&mut self.covers, self.mood_lists[&params].iter().map(|list| &list.cover))); }
+                commands
+            }
             Event::Opened { target: Target::Import(link), result: Err(message) } if self.import_run.as_ref().is_some_and(|(run, _)| *run == link) => {
                 self.import_progress = None;
                 self.import_hidden = false;
@@ -3587,6 +3834,7 @@ impl State {
                     Ok(Content::Artist(artist)) => artist.songs,
                     Ok(Content::Album(album)) => album.tracks,
                     Ok(Content::Song(track)) => vec![track],
+                    Ok(Content::Catalog { tracks, .. }) => tracks,
                     Ok(Content::List { .. }) | Err(_) => Vec::new(),
                 };
                 if tracks.is_empty() { Vec::new() } else { vec![Command::PlayList { tracks, index: 0 }] }
@@ -3596,6 +3844,8 @@ impl State {
                     Ok(Content::Artist(artist)) => Page::Artist(artist),
                     Ok(Content::Album(album)) => Page::Album(album),
                     Ok(Content::Song(track)) => Page::Song(track),
+                    // Looked at, not kept: a list of the catalog's opens as the home's mixes do.
+                    Ok(Content::Catalog { name, tracks }) => Page::Mix(Mix { kind: MixKind::Catalog(name), tracks }),
                     Ok(Content::List { .. }) => unreachable!("a list brought in was taken above"),
                     Err(message) => Page::Failed(target, message),
                 };
@@ -3904,10 +4154,16 @@ impl State {
         }
         let before = self.player.current.as_ref().map(|track| track.id.as_str());
         let now = player.current.as_ref().map(|track| track.id.as_str());
+        // A song the user does not want is passed over as it comes.
+        let unwanted = before != now && now.is_some_and(|id| self.collection.is_disliked(id));
         if before != now {
             self.lyrics_scroll_reset = true;
             self.lyric_shown = None;
             self.lyric_glide.snap_to(0.0, Instant::now());
+            // Another song's video comes with the controls over it, and its lyrics in step.
+            self.mobile_ui.controls_away = false;
+            self.lyrics_offset = 0.0;
+            self.mobile_ui.song_since = Some(Instant::now());
         }
         // The video's sound in a song's place is that song still: until the song is back
         // with the window, or something else plays.
@@ -3939,6 +4195,7 @@ impl State {
         commands.extend(self.ask_clip());
         commands.extend(self.ask_about());
         commands.extend(scrobbles);
+        if unwanted { commands.push(Command::Next); }
         commands
     }
 
@@ -4052,9 +4309,48 @@ impl State {
         !self.mobile && self.wide && !self.panel_open
     }
 
+    /// The name of the place a press on `id` plays from: the list, album or artist whose page
+    /// it is on, or the home's recents. None where a song is played from no place of its own.
+    fn origin(&self, id: &str) -> Option<String> {
+        Some(match &self.page {
+            Page::Album(album) => album.title.clone(),
+            Page::Artist(artist) => artist.name.clone(),
+            Page::Playlist(id) => self.collection.playlist(*id)?.name.clone(),
+            Page::Liked => t!("common-liked-songs").into_owned(),
+            Page::Downloads => t!("common-downloads").into_owned(),
+            Page::Search if self.mobile_search => t!("common-search").into_owned(),
+            Page::Search if id.starts_with("heard:") => t!("mobile-home-recent").into_owned(),
+            _ => return None,
+        })
+    }
+
+    /// The covers Explore's cards stand on, each its mood's first list's cover redrawn in the
+    /// mood's colour, for those whose lists have come.
+    fn mood_covers(&mut self) -> Vec<Command> {
+        let Some(Ok(moods)) = &self.moods else { return Vec::new() };
+        let keys: Vec<Option<String>> = moods.iter().map(|mood| {
+            let cover = self.mood_lists.get(&mood.params)?.iter().find_map(|list| list.cover.as_deref())?;
+            Some(duotone_key(cover, mood_color(mood)))
+        }).collect();
+        cover_requests(&mut self.covers, keys.iter())
+    }
+
+    /// Whether a phone's player's cover is on its way into the lyrics' or the queue's head, or
+    /// back: each frame is drawn until it is there.
+    pub fn cover_moving(&self) -> bool {
+        let gone = self.page == Page::Lyrics || (self.page == Page::Playing && self.queue_open);
+        self.mobile && matches!(self.page, Page::Playing | Page::Lyrics) && (self.mobile_ui.collapse - if gone { 1.0 } else { 0.0 }).abs() > 0.001
+    }
+
+    /// Whether a phone's player is open over its song, where the video fills the screen behind
+    /// it as BitChord's Canvas does; its lyrics and queue stand on the blurred cover instead.
+    pub fn canvas(&self) -> bool {
+        self.mobile && self.page == Page::Playing && !self.queue_open
+    }
+
     /// Whether what plays is somewhere its video is seen, and the user wants videos.
     fn wants_footage(&self) -> bool {
-        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing() || self.peeks())
+        self.settings.clips && !self.settings.reduce_motion && (self.cinema || self.shows_playing() || self.peeks() || self.canvas())
     }
 
     /// A song's footage is looked for once, while it would be seen and the user wants it.
@@ -4084,11 +4380,12 @@ impl State {
 
     /// What to show of the song's footage now, named so that another showing is another
     /// name: the whole video where it keeps time, and a stretch of it in the panel where
-    /// it does not.
+    /// it does not. A phone's screen is as tall as a window, and takes the large one.
     pub fn screening(&self) -> Option<(String, &Arc<Footage>, Showing)> {
         let footage = self.footage().filter(|_| self.wants_footage())?;
         let showing = match (self.follows(footage), self.cinema) {
             (true, true) => Showing::Large,
+            (true, false) if self.mobile => Showing::Large,
             (true, false) => Showing::Small,
             (false, false) => Showing::Loop,
             (false, true) => return None,
@@ -4111,7 +4408,7 @@ impl State {
     }
 
     /// What the user plays and already has, for the catalog to pick from.
-    fn taste(&self) -> Taste {
+    pub(crate) fn taste(&self) -> Taste {
         let collection = &self.collection;
         let seeds = discover::seeds(&collection.heard, &collection.liked, SEEDS);
         let own = || collection.heard.iter().chain(&collection.liked).chain(&self.saved).chain(collection.playlists.iter().flat_map(|playlist| &playlist.tracks));
@@ -4129,7 +4426,8 @@ impl State {
             }
         }
         Taste {
-            tracks: own().map(|track| track.id.clone()).collect(),
+            // Not wanted is as good as known: the picks leave it out.
+            tracks: own().map(|track| track.id.clone()).chain(collection.disliked.iter().cloned()).collect(),
             artists: credited.chain(followed).map(discover::plain).collect(),
             artist_ids,
             albums: collection.albums().map(|(_, album)| album.id.clone()).collect(),
@@ -4153,6 +4451,8 @@ impl State {
             self.picks_coming = [true; 3];
             commands.push(Command::Discover(taste));
         }
+        // A phone's home finds its mood in the catalog's moods, which Explore shows too.
+        if self.mobile && !std::mem::replace(&mut self.moods_asked, true) { commands.push(Command::Moods); }
         commands
     }
 
@@ -4344,7 +4644,7 @@ impl State {
     pub fn playhead_ms(&self, now: Instant) -> u64 {
         let (position, since) = self.heard;
         let carried = if self.player.playing { now.saturating_duration_since(since).min(Duration::from_millis(300)).as_secs_f64() } else { 0.0 };
-        ((position + carried - self.output_latency).max(0.0) * 1000.0) as u64
+        ((position + carried - self.output_latency + self.lyrics_offset).max(0.0) * 1000.0) as u64
     }
 
     /// Whether a phone's lyrics are filling as their words are sung, or the words just sung
@@ -4361,7 +4661,7 @@ impl State {
     /// The line being sung.
     pub fn active_line(&self) -> Option<usize> {
         // What is heard, which an AirPlay speaker or TV plays a while after the player's clock.
-        active(self.lines(), ((self.player.position - self.output_latency).max(0.0) * 1000.0) as u64)
+        active(self.lines(), ((self.player.position - self.output_latency + self.lyrics_offset).max(0.0) * 1000.0) as u64)
     }
 
     pub fn lyrics_open(&self) -> bool {
@@ -5514,6 +5814,66 @@ mod tests {
         state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 0)) });
         assert!(click(&mut state, "cinema").is_empty());
         assert_eq!(shown(&state), Some(Showing::Large));
+    }
+
+    #[test]
+    fn a_phones_player_stands_on_the_songs_video_and_a_tap_puts_its_controls_away() {
+        let playing = |track: &Track| PlayerView { current: Some(track.clone()), playing: true, ..PlayerView::default() };
+        let asks = |commands: &[Command]| commands.iter().any(|command| matches!(command, Command::Clip(_)));
+        let shown = |state: &State| state.screening().map(|(_, _, showing)| showing);
+        let song = track("a");
+        let mut state = State { mobile: true, ..State::default() };
+        assert!(!asks(&state.show(playing(&song))), "nowhere to be seen outside the player");
+        assert!(asks(&click(&mut state, "mobile-playing")), "opened, its video is looked for");
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 0)) });
+        assert_eq!(shown(&state), Some(Showing::Large), "as long as the song: all of it, as large as a window's");
+        state.apply(Event::Clip { track_id: "a".into(), footage: Some(footage_of(&song, 30_000)) });
+        assert_eq!(shown(&state), Some(Showing::Loop), "longer, a stretch of it turns over");
+
+        click(&mut state, "mobile-canvas");
+        assert!(state.mobile_ui.controls_away);
+        click(&mut state, "mobile-canvas");
+        assert!(!state.mobile_ui.controls_away, "and back");
+        click(&mut state, "mobile-canvas");
+        state.show(playing(&track("b")));
+        assert!(!state.mobile_ui.controls_away, "the next song comes with them");
+
+        click(&mut state, "queue");
+        assert_eq!(shown(&state), None, "the queue stands on the blurred cover");
+        click(&mut state, "queue");
+        click(&mut state, "lyrics");
+        assert_eq!(state.page, Page::Lyrics);
+        assert!(!state.canvas(), "and so do the lyrics");
+    }
+
+    #[test]
+    fn a_phones_home_asks_the_moods_once_for_its_moods_shelf() {
+        let mut state = State { mobile: true, ..State::default() };
+        assert!(state.ask_picks().contains(&Command::Moods));
+        assert!(!state.ask_picks().contains(&Command::Moods), "once");
+        assert!(!click(&mut state, "browse").contains(&Command::Moods), "Explore finds them asked");
+        assert!(!State::default().ask_picks().contains(&Command::Moods), "a window has no moods shelf");
+    }
+
+    #[test]
+    fn explore_asks_the_catalogs_moods_once_and_a_list_opens_to_be_looked_at_not_kept() {
+        let mut state = State { mobile: true, ..State::default() };
+        assert_eq!(click(&mut state, "browse"), vec![Command::Moods]);
+        click(&mut state, "home");
+        assert!(!click(&mut state, "browse").contains(&Command::Moods), "asked once");
+        let mood = surco_youtube::Mood { title: "Chill".into(), params: "p".into(), color: Some(0xA4C5FF) };
+        state.apply(Event::Moods(Ok(vec![mood])));
+        let list = surco_youtube::CatalogList { id: "PL1".into(), title: "Coffee Shop Blend".into(), author: "YouTube Music".into(), cover: Some("https://c/1".into()) };
+        let asked = state.apply(Event::MoodLists { params: "p".into(), lists: vec![list] });
+        assert!(asked.contains(&Command::FetchArtwork(duotone_key("https://c/1", 0xA4C5FF))), "its card's cover, in its colour: {asked:?}");
+        click(&mut state, "mood:0");
+        assert_eq!(state.page, Page::Mood("p".into()));
+        let opened = click(&mut state, "catalog:0");
+        assert!(opened.contains(&Command::Open(Target::Catalog("PL1".into()))), "{opened:?}");
+        state.apply(Event::Opened { target: Target::Catalog("PL1".into()), result: Ok(Content::Catalog { name: "Coffee Shop Blend".into(), tracks: vec![track("a")] }) });
+        assert!(matches!(&state.page, Page::Mix(mix) if mix.kind == MixKind::Catalog("Coffee Shop Blend".into())));
+        assert!(state.collection.playlists.is_empty(), "looked at, not kept");
+        assert_eq!(duotone_of_key(&duotone_key("https://c/1#x", 0x0A0B0C)), Some(("https://c/1#x", 0x0A0B0C)));
     }
 
     #[test]

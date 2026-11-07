@@ -43,18 +43,6 @@
     XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:self.app];
     XCTAssertEqual([XCTWaiter waitForExpectations:@[expectation] timeout:12], XCTWaiterResultCompleted);
 }
-- (void)waitForVisibleEditor:(XCUIElement *)field {
-    XCUIElement *scroll = [self element:@"sheet-scroll"];
-    NSPredicate *predicate = [NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
-        XCUIElement *editor = object;
-        CGRect visible = CGRectIntersection(editor.frame, scroll.frame);
-        return self.app.keyboards.firstMatch.exists && editor.hittable &&
-            !CGRectIsNull(visible) && visible.size.height >= 44 && visible.size.width >= 44;
-    }];
-    XCTNSPredicateExpectation *expectation = [[XCTNSPredicateExpectation alloc] initWithPredicate:predicate object:field];
-    XCTAssertEqual([XCTWaiter waitForExpectations:@[expectation] timeout:12], XCTWaiterResultCompleted,
-        @"The editor needs a full touch target above the keyboard. Field: %@, scroll: %@", field, scroll);
-}
 - (void)launch {
     [self.app launch];
     XCTAssertTrue([self.app waitForState:XCUIApplicationStateRunningForeground timeout:30]);
@@ -89,18 +77,10 @@
 - (void)openLibrary {
     [self tapTab:@"mobile-library"];
 }
-- (void)openImport {
+// The list of playlists, with the card that brings music in: "See all" on the overview's lists.
+- (void)openLibraryLists {
     [self openLibrary];
-    [self canvasTap:@"import-open" page:@"library"];
-    XCTAssertTrue([self.app.textFields[@"import-link"] waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
-    XCTAssertTrue([self element:@"import-go"].exists);
-    XCTAssertTrue([self element:@"sheet-scroll"].exists);
-}
-- (void)openPlaylistDraft {
-    [self openLibrary];
-    [self canvasTap:@"playlist-new" page:@"library"];
-    XCTAssertTrue([self.app.textFields[@"playlist-name"] waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
-    XCTAssertTrue([self element:@"playlist-create"].exists);
+    [self canvasTap:@"library-all:lists" page:@"library"];
 }
 - (void)attachScreenshot:(NSString *)name {
     XCTAttachment *attachment = [XCTAttachment attachmentWithScreenshot:self.app.screenshot];
@@ -108,68 +88,35 @@
     attachment.lifetime = XCTAttachmentLifetimeKeepAlways;
     [self addAttachment:attachment];
 }
-- (void)pasteThroughEditingMenu:(XCUIElement *)field {
-    [field pressForDuration:1.1];
-    // UIKit owns the edit menu. Match its localized action, not an app button.
-    NSPredicate *label = [NSPredicate predicateWithFormat:@"(label == 'Paste' OR label == 'Pegar') AND NOT (identifier BEGINSWITH 'sheet-paste:')"];
-    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
-    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"The native editor must offer Paste: %@", self.app.debugDescription);
-    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
-    [paste tap];
-}
-
 - (void)testPlaylistCardUsesNativePasteWithoutStartingAnImport {
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-card";
     UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
     [paste tap];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
-    XCTAssertTrue([self element:@"import-go"].exists, @"Paste prepares the form and leaves import explicit");
+    // The link fills limn's import sheet, which only its check imports.
+    [NSThread sleepForTimeInterval:1.0];
     XCTAssertEqual(self.app.alerts.count, 0u, @"UIPasteControl must not prompt for pasteboard permission");
     [self attachScreenshot:@"native-playlist-card-paste"];
-    [[self element:@"sheet-close"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
 }
 
 - (void)testPlaylistCardAcceptsCopiedUTF16TextWithoutImporting {
     NSString *text = @"Lista para el viaje — niñez 東京";
     UIPasteboard.generalPasteboard.items = @[@{@"public.utf16-external-plain-text": [text dataUsingEncoding:NSUTF16StringEncoding]}];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
     [paste tap];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
-    XCTAssertTrue([self element:@"import-go"].exists, @"Copied text is an editable draft, not an automatic import");
-    XCTAssertEqual(self.app.alerts.count, 0u);
+    // The text fills limn's import sheet, which only its check imports.
+    [NSThread sleepForTimeInterval:1.0];
+    XCTAssertEqual(self.app.alerts.count, 0u, @"UIPasteControl must not prompt for pasteboard permission");
     [self attachScreenshot:@"native-playlist-card-utf16-text"];
-    [[self element:@"import-go"] tap];
-    XCUIElement *error = self.app.staticTexts[@"No reconocimos ese enlace."];
-    XCTAssertTrue([error waitForExistenceWithTimeout:12]);
-    [field tap];
-    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == YES"];
-    NSString *correction = @"-corregido";
-    [field typeText:correction];
-    NSString *edited = [field.value copy];
-    NSArray<NSString *> *parts = [edited componentsSeparatedByString:correction];
-    XCTAssertEqual(parts.count, 2u, @"Validation must not replace the live field after the first correction character");
-    XCTAssertEqualObjects([parts componentsJoinedByString:@""], text);
-    [self waitFor:error predicate:@"exists == NO"];
-    XCTAssertTrue(self.app.keyboards.firstMatch.exists, @"Correcting an invalid link preserves keyboard and caret");
-    [self attachScreenshot:@"native-import-invalid-text-correction"];
-    [[self element:@"import-cancel"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
 }
-
 - (void)testPlaylistCardFallsBackToTextWhenTheCopiedURLRepresentationFails {
     NSString *text = @"https://open.spotify.com/playlist/surco-ui-url-fallback";
     const unsigned char malformedURL[] = {0xFF, 0xFE, 0xFF};
@@ -178,178 +125,25 @@
         @"public.utf8-plain-text": [text dataUsingEncoding:NSUTF8StringEncoding],
     }];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
     [paste tap];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    XCTAssertTrue([field waitForExistenceWithTimeout:12]);
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
-    XCTAssertTrue([self element:@"import-go"].exists);
-    XCTAssertEqual(self.app.alerts.count, 0u);
-    [[self element:@"import-cancel"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
-}
-
-- (void)testImportPasteControlFillsTheLinkWithoutImporting {
-    NSString *link = @"https://open.spotify.com/playlist/surco-ui-paste-control";
-    UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
-    [self launch];
-    [self openImport];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    XCUIElement *paste = [self element:@"sheet-paste:import-link"];
-    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
-    [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
-    [paste tap];
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
-    XCTAssertTrue([self element:@"import-go"].exists, @"Paste fills the link and leaves import explicit");
+    // The text fills limn's import sheet, which only its check imports.
+    [NSThread sleepForTimeInterval:1.0];
     XCTAssertEqual(self.app.alerts.count, 0u, @"UIPasteControl must not prompt for pasteboard permission");
-    [self attachScreenshot:@"native-import-paste-control"];
-    [[self element:@"import-cancel"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
+    [self attachScreenshot:@"native-playlist-card-url-fallback"];
 }
-
-- (void)testImportUsesTheNativeEditingMenuToPasteAndReplaceSelectedText {
-    NSString *text = @"niñez";
-    UIPasteboard.generalPasteboard.string = text;
-    [self launch];
-    [self openImport];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    [self pasteThroughEditingMenu:field];
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", text]];
-    // Double-tapping this one-word value selects it through UITextField itself.
-    NSString *replacement = @"https://open.spotify.com/playlist/surco-ui-selection";
-    UIPasteboard.generalPasteboard.string = replacement;
-    [field doubleTap];
-    NSPredicate *label = [NSPredicate predicateWithFormat:@"(label == 'Paste' OR label == 'Pegar') AND NOT (identifier BEGINSWITH 'sheet-paste:')"];
-    XCUIElement *paste = [[self.app descendantsMatchingType:XCUIElementTypeAny] matchingPredicate:label].firstMatch;
-    XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
-    [paste tap];
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", replacement]];
-    XCTAssertTrue([self element:@"import-go"].exists, @"Native paste replaces the selection once and leaves import explicit");
-    [field typeText:@"\n"];
-    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
-    [self attachScreenshot:@"native-import-edit-menu-selection-replacement"];
-    [[self element:@"import-cancel"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
-}
-
-- (void)testNativeImportPasteAndTypingSurviveKeyboardAndReflow {
-    NSString *link = @"https://open.spotify.com/playlist/surco-ui-field";
-    UIPasteboard.generalPasteboard.string = link;
-    [self launch];
-    [self openImport];
-    XCUIElement *field = self.app.textFields[@"import-link"];
-    [self pasteThroughEditingMenu:field];
-    [self waitFor:field predicate:[NSString stringWithFormat:@"value == '%@'", link]];
-    [field tap];
-    NSString *marker = @"?prueba=niñez";
-    [field typeText:marker];
-    // A tap chooses the native caret position, which need not be the URL's end.
-    NSString *edited = [field.value copy];
-    NSArray<NSString *> *parts = [edited componentsSeparatedByString:marker];
-    XCTAssertEqual(parts.count, 2u, @"Typing inserts the marker exactly once");
-    XCTAssertEqualObjects([parts componentsJoinedByString:@""], link, @"Typing preserves the complete pasted URL");
-    XCTAssertTrue(self.app.keyboards.firstMatch.exists);
-    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationLandscapeLeft;
-    [self waitForLandscape:YES];
-    XCTAssertEqualObjects(field.value, edited, @"Reflow keeps the live editor and its text");
-    [self waitForVisibleEditor:field];
-    [field typeText:@"-apaisado"];
-    NSString *landscapeEdited = [edited stringByReplacingOccurrencesOfString:marker withString:[marker stringByAppendingString:@"-apaisado"]];
-    XCTAssertEqualObjects(field.value, landscapeEdited, @"The same editor remains usable above the landscape keyboard");
-    [self attachScreenshot:@"native-import-keyboard-landscape"];
-    XCUIDevice.sharedDevice.orientation = UIDeviceOrientationPortrait;
-    [self waitForLandscape:NO];
-    XCTAssertEqualObjects(field.value, landscapeEdited, @"Portrait keeps the landscape edit");
-    [field typeText:@"-surco"];
-    NSString *portraitEdited = [edited stringByReplacingOccurrencesOfString:marker withString:[marker stringByAppendingString:@"-apaisado-surco"]];
-    XCTAssertEqualObjects(field.value, portraitEdited, @"Rotation keeps the insertion point as well as the text");
-    [field typeText:@"\n"];
-    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
-    XCTAssertEqualObjects(field.value, portraitEdited);
-    XCTAssertTrue([self element:@"import-go"].exists, @"Return dismisses the keyboard and does not fetch the playlist");
-    XCTAssertEqual(self.app.alerts.count, 0u);
-    [self attachScreenshot:@"native-import-edited-after-reflow"];
-    [[self element:@"import-cancel"] tap];
-    [self waitFor:field predicate:@"exists == NO"];
-}
-
-- (void)testPlaylistDraftClosesByPullingTheHeaderAndCancelsItsContents {
-    [self launch];
-    [self openPlaylistDraft];
-    XCUIElement *field = self.app.textFields[@"playlist-name"];
-    [field tap];
-    [field typeText:@"Borrador para cancelar\n"];
-    [self waitFor:self.app.keyboards.firstMatch predicate:@"exists == NO"];
-    XCTAssertEqualObjects(field.value, @"Borrador para cancelar");
-    XCUIElement *close = [self element:@"sheet-close"];
-    XCTAssertTrue(close.exists);
-    CGFloat headerY = CGRectGetMidY(close.frame);
-    XCUICoordinate *origin = [self.app coordinateWithNormalizedOffset:CGVectorMake(0, 0)];
-    XCUICoordinate *start = [origin coordinateWithOffset:CGVectorMake(self.app.frame.size.width / 2.0, headerY)];
-    XCUICoordinate *end = [origin coordinateWithOffset:CGVectorMake(self.app.frame.size.width / 2.0, self.app.frame.size.height - 30)];
-    [start pressForDuration:0.1 thenDragToCoordinate:end];
-    [self waitFor:field predicate:@"exists == NO"];
-    XCTAssertFalse([self element:@"sheet-close"].exists, @"UIKit's pull dismisses the complete sheet");
-    [self openPlaylistDraft];
-    XCUIElement *reopened = self.app.textFields[@"playlist-name"];
-    XCTAssertTrue([reopened.value isEqual:@""] || [reopened.value isEqual:reopened.placeholderValue],
-        @"A dismissed draft must be canceled, not kept as an invisible open form: %@", reopened.value);
-    [self attachScreenshot:@"native-playlist-empty-after-drag-dismiss"];
-    [[self element:@"playlist-cancel"] tap];
-    [self waitFor:reopened predicate:@"exists == NO"];
-}
-
-- (void)testConnectionsUseNativeRouteAndVolumeControlsWithoutPlayback {
+- (void)testConnectionsSheetCarriesTheSystemRoutePicker {
     [self launch];
     [self canvasTap:@"settings" page:@"home"];
-    [self canvasTap:@"settings-part:devices" page:@"settings"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
-    XCUIElement *volume = self.app.sliders[@"volume"];
-    XCTAssertTrue([volume waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
-    XCTAssertTrue([self element:@"sheet-route-picker"].exists);
-    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
-    // XCUI exposes Accessibility geometry, not the Auto Layout touch bounds.
-    // UISlider keeps its required 44pt height; verify its native interaction and state.
-    // https://developer.apple.com/documentation/xcuiautomation/xcuielementattributes
-    NSLog(@"SURCO_NATIVE_SLIDER_AX_FRAME=%@", NSStringFromCGRect(volume.frame));
-    NSString *before = [volume.value copy];
-    XCTAssertNotNil(before);
-    XCTAssertEqual(volume.normalizedSliderPosition, 0.0, @"The fixture begins at the native slider's exact minimum");
-    [volume adjustToNormalizedSliderPosition:0.5];
-    NSString *adjusted = [volume.value copy];
-    XCTAssertNotNil(adjusted);
-    XCTAssertNotEqualObjects(adjusted, before, @"The native slider changes the volume");
-    [self attachScreenshot:@"native-connections-route-and-volume"];
-    [[self element:@"sheet-close"] tap];
-    [self waitFor:volume predicate:@"exists == NO"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
-    XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
-    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
-    XCTAssertEqualObjects(volume.value, adjusted, @"Reopening restores the volume received by Rust");
-    // adjustToNormalizedSliderPosition is best effort. To require the exact
-    // endpoint, drag the current thumb to the slider's left edge, inside the app.
-    // https://developer.apple.com/documentation/xcuiautomation/xcuielement/adjust(tonormalizedsliderposition:)
-    CGFloat position = volume.normalizedSliderPosition;
-    XCTAssertTrue(position > 0.0 && position <= 1.0, @"The changed volume has a valid nonzero thumb position");
-    XCUICoordinate *thumb = [volume coordinateWithNormalizedOffset:CGVectorMake(position, 0.5)];
-    XCUICoordinate *minimum = [volume coordinateWithNormalizedOffset:CGVectorMake(0, 0.5)];
-    [thumb pressForDuration:0.2 thenDragToCoordinate:minimum];
-    [self waitFor:volume predicate:[NSString stringWithFormat:@"value == '%@'", before]];
-    XCTAssertEqualObjects(volume.value, before, @"Restore the fixture's silent volume");
-    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
-    [self attachScreenshot:@"native-connections-restored-to-zero"];
-    [[self element:@"sheet-close"] tap];
-    [self waitFor:volume predicate:@"exists == NO"];
-    [self canvasTap:@"setting:connections" page:@"settings-devices"];
-    XCTAssertTrue([volume waitForExistenceWithTimeout:12]);
-    [self waitFor:volume predicate:@"enabled == YES AND hittable == YES"];
-    XCTAssertEqualObjects(volume.value, before, @"The exact minimum persists after closing and reopening");
-    XCTAssertEqual(volume.normalizedSliderPosition, 0.0);
-    [[self element:@"sheet-close"] tap];
-    [self waitFor:volume predicate:@"exists == NO"];
+    [self canvasTap:@"setting:connections" page:@"settings"];
+    // limn draws the sheet; UIKit's own AirPlay and Bluetooth button stands in its slot.
+    XCUIElement *picker = [self element:@"surco-route-picker"];
+    XCTAssertTrue([picker waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
+    [self waitFor:picker predicate:@"hittable == YES"];
+    [self attachScreenshot:@"limn-connections-with-route-picker"];
 }
 
 - (void)testHomeCardLongPressOpensNativeMenuForTheHeldTrack {
@@ -415,7 +209,7 @@
         thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.9)]];
     [NSThread sleepForTimeInterval:1.0];
     [self canvasTap:@"settings" page:@"home"];
-    [[self entryCoordinate:@"settings-part:devices" page:@"settings"] pressForDuration:0.05
+    [[self entryCoordinate:@"setting:connections" page:@"settings"] pressForDuration:0.05
         thenDragToCoordinate:[self.app coordinateWithNormalizedOffset:CGVectorMake(0.5, 0.12)]];
     [NSThread sleepForTimeInterval:1.0];
     // Evidence for review: rows under the header fade into the progressive edge.

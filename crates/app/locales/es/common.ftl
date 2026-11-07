@@ -16,7 +16,6 @@ common-playlist = Playlist
 common-cancel = Cancelar
 common-close = Cerrar
 common-delete = Eliminar
-common-remove = Quitar
 common-clear = Borrar
 common-retry = Reintentar
 common-percent = { $percent } %
@@ -118,7 +117,6 @@ common-onboarding-skip = Omitir
 common-onboarding-done = ¡Todo listo, { $name }!
 common-onboarding-done-detail = Armamos tu inicio con lo que elegiste.
 common-onboarding-home = Ir al inicio
-common-onboarding-step = Ir al paso { $step }
 common-onboarding-taste = Volver a elegir artistas
 common-onboarding-taste-detail = Los géneros y artistas con los que se arma tu inicio.
 common-scan-code = Escanear código
@@ -159,19 +157,10 @@ common-replay-plays = { $count ->
     [one] reproducción
    *[other] reproducciones
 }
-common-replay-songs = { $count ->
-    [one] canción
-   *[other] canciones
-}
-common-replay-artists = { $count ->
-    [one] artista
-   *[other] artistas
-}
 common-replay-plays-of = { $count ->
     [one] 1 reproducción
    *[other] { $count } reproducciones
 }
-common-replay-song-heard = { $plays } × · { $minutes } min
 common-replay-minutes-title = Tus minutos escuchados
 common-replay-minutes-days = { $count ->
     [one] Eso es { $count } día.
@@ -207,10 +196,6 @@ common-replay-streak = días seguidos con música
 common-replay-days = { $count ->
     [one] { $count } día
    *[other] { $count } días
-}
-common-replay-hours = { $count ->
-    [one] Más de una hora
-   *[other] Más de { $count } horas
 }
 
 ## Scrobbling
@@ -286,8 +271,6 @@ common-together-open = Los invitados también controlan
 common-together-open-detail = Pueden poner, pausar, adelantar y saltar canciones, no solo sugerirlas.
 common-together-close = Cerrar la sala
 common-together-leave = Salir de la sala
-common-together-members = En la sala
-common-together-host-tag = anfitrión
 common-together-chat = Charla
 common-together-chat-empty = Todavía nadie dijo nada.
 common-together-chat-placeholder = Escribí algo

@@ -106,64 +106,94 @@ fn lift(start: f32, end: f32, at: f32) -> f32 {
 }
 
 
-/// The shell adds the device's bottom safe-area inset after this footer.
-pub(super) const FOOTER_HEIGHT: f32 = 212.0;
+/// The shell adds the device's bottom safe-area inset after this footer: the timeline and its
+/// times, the transport, the volume and the foot, 8 apart and 8 inside.
+pub(super) const FOOTER_HEIGHT: f32 = TAP + 16.0 + player::PLAY_TARGET + TAP + TAP + 3.0 * 8.0 + 16.0;
 /// Below this height, as a phone on its side, the footer leaves its tools to the player so
 /// that a wrapped line still fits between it and the header.
-const SHORT: f32 = 500.0;
+pub(super) const SHORT: f32 = 500.0;
 
-/// The cover beside the song's name in the header.
-const ARTWORK: f32 = 40.0;
+/// The cover beside the song's name in the head, as BitChord's 54, and the grip over it; a
+/// screen too short for both, as a phone on its side, has the way back beside a smaller one.
+const ARTWORK: f32 = 54.0;
+const GRIP: f32 = TAP;
+const SHORT_ARTWORK: f32 = 40.0;
 
-/// A compact row, as in a music app's lyrics: the way back, the song by its cover, and its
-/// options. The song names the page; there is no title competing with it.
-pub(super) fn header(state: &State, palette: ComponentPalette) -> Element {
-    let close = icon("mobile-lyrics-close", Icon::ChevronDown, &t!("mobile-close-lyrics"), palette).dispatch_as("back");
-    let row = match state.current() {
-        Some(track) => vec![
-            close,
-            cover(state, &track.artwork_url, ARTWORK, palette).radius(6.0).centered_y(),
-            Element::column(vec![
-                Text::new(&track.title, palette).font_size(15.0).line_height(19.0).truncate().render()
-                    .font_family(FontFamily::SansMedium),
-                Text::new(&track.artist, palette).font_size(13.0).line_height(17.0).muted().truncate().render(),
-            ]).gap(1.0).centered_y().flex(1.0),
-            translate(state, palette),
-            // BitChord's lyrics keep the song's heart beside its name.
-            {
-                let liked = state.is_liked(&track.id);
-                icon("like", if liked { Icon::HeartFill } else { Icon::Heart }, &if liked { t!("mobile-unlike") } else { t!("common-like") }, palette)
-            },
-            icon("mobile-lyrics-more", Icon::More, &t!("common-song-options"), palette).dispatch_as("more:current"),
-        ],
-        None => vec![close, Element::spacer().flex(1.0)],
-    };
-    horizontal_inset(Element::row(row).gap(6.0).padding(6.0), 6.0, 6.0)
-        .size(None, Some(HEADER_HEIGHT)).clip_children()
+/// Where the head's cover stands on a tall screen whose safe edges are `insets`: where the
+/// player's cover shrinks to.
+pub(super) fn thumb(insets: crate::state::mobile::ContentInsets) -> limn::Rect {
+    limn::Rect::new(insets.left + player::GUTTER, insets.top + GRIP + 4.0, ARTWORK, ARTWORK)
 }
 
-/// Translates the lyrics into the app's language, or takes the translation away; nothing
-/// while there is nothing to translate. Lit while it is on.
+/// How tall the head over the lyrics and the queue stands in a screen `window` tall.
+pub(super) fn head_height(window: f32) -> f32 {
+    if window < SHORT { HEADER_HEIGHT } else { GRIP + ARTWORK + 8.0 }
+}
+
+/// BitChord's head over the lyrics and the queue: the grip that puts them away, and under it
+/// the song as the player names it, beside its cover. The song names the page; there is no
+/// title competing with it.
+pub(super) fn header(state: &State, window: f32, palette: ComponentPalette) -> Element {
+    // Over the queue the way back is to the song, as its lit button at the foot is.
+    let queue = state.page == Page::Playing && state.queue_open;
+    let label = if queue { t!("mobile-back-to-song") } else { t!("mobile-close-lyrics") };
+    let back = if queue { "queue" } else { "back" };
+    let short = window < SHORT;
+    let close = if short {
+        icon("mobile-lyrics-close", Icon::ChevronDown, &label, palette).dispatch_as(back)
+    } else {
+        let bar = Element::panel(Element::spacer()).background(Color::rgba(255, 255, 255, 150)).round().size(Some(36.0), Some(5.0)).centered();
+        Element::clickable("mobile-lyrics-close", bar).dispatch_as(back).accessible(limn::Access::new(limn::Role::Button).name(label))
+            .size(Some(120.0), Some(GRIP)).centered_x()
+    };
+    let Some(track) = state.current() else { return Element::column(vec![close, Element::spacer().flex(1.0)]) };
+    let side = if short { SHORT_ARTWORK } else { ARTWORK };
+    // While the player's cover is on its way here, its place waits for it.
+    let picture = if super::cover_flight(state, window).is_some() { Element::spacer().size(Some(side), Some(side)) }
+        // The player's own rendition of the cover, so that the one shrinking into this place
+        // and this one are the same picture, decoded once.
+        else { cover(state, &largest(state, track), side, palette).radius(8.0) };
+    let song = [picture.centered_y(), player::song(state, track, palette).flex(1.0)];
+    if short {
+        let row = Element::row(std::iter::once(close.centered_y()).chain(song).collect()).gap(12.0);
+        return horizontal_inset(row, 6.0, player::GUTTER - 6.0).size(None, Some(HEADER_HEIGHT));
+    }
+    let row = horizontal_inset(Element::row(song.into()).gap(12.0), player::GUTTER, player::GUTTER - 6.0).size(None, Some(side + 8.0));
+    Element::column(vec![close, row])
+}
+
+/// Translates the lyrics into the app's language, or takes the translation away, as a round
+/// button at the lines' foot as BitChord's; nothing while there is nothing to translate. Lit
+/// while it is on.
 fn translate(state: &State, palette: ComponentPalette) -> Element {
-    if !state.translatable() { return Element::spacer().size(Some(0.0), Some(0.0)); }
+    if !state.translatable() { return Element::spacer().size(None, Some(TAP)); }
     let on = state.settings.translate_lyrics;
     let label = if on { t!("common-original-lyrics") } else { t!("common-translate-lyrics") };
-    // Round, so that a press lights a circle and not the square around it.
-    let button = icon("lyrics-translate", Icon::Custom(include_str!("../../../assets/icons/languages.svg")), &label, palette).radius(22.0);
-    if on { Element::panel(button).background(Color::rgba(255, 255, 255, 40)).radius(22.0).centered_y() } else { button.centered_y() }
+    let button = player::circle("lyrics-translate", Icon::Custom(include_str!("../../../assets/icons/languages.svg")), &label, on, palette);
+    Element::row(vec![Element::spacer().flex(1.0), button])
 }
 
-pub(super) fn footer_height(window: f32) -> f32 {
-    if window < SHORT { FOOTER_HEIGHT - TAP - 8.0 } else { FOOTER_HEIGHT }
+/// The footer's height in a screen `window` tall: what leads it, the lyrics' translation or
+/// the queue's line being sung, over the player's controls.
+pub(super) fn footer_height(state: &State, window: f32) -> f32 {
+    // A short screen keeps the timeline and the transport alone.
+    if window < SHORT { return FOOTER_HEIGHT - 2.0 * (TAP + 8.0); }
+    FOOTER_HEIGHT + if state.page == Page::Lyrics { TAP + 8.0 } else { SUNG + 8.0 }
 }
 
-/// As BitChord's, the player's own controls, its foot too, stay under the lyrics.
+/// The line being sung's room over the queue's controls.
+const SUNG: f32 = 24.0;
+
+/// As BitChord's, the player's own controls, its volume and foot too, stay under the lyrics
+/// and the queue.
 pub(super) fn footer(state: &State, window: f32, palette: ComponentPalette) -> Element {
-    let height = footer_height(window);
+    let height = footer_height(state, window);
     if state.current().is_none() { return Element::spacer().size(None, Some(height)); }
-    let mut controls = vec![player::timeline(state, palette), player::transport(state, palette)];
-    if window >= SHORT { controls.push(player::foot(state, palette)); }
-    horizontal_inset(Element::column(controls).gap(8.0).padding(8.0), 16.0, 16.0).size(None, Some(height))
+    // As BitChord's: the translation's button over the lyrics' controls, the line being sung over the queue's.
+    let lead = if state.page == Page::Lyrics { translate(state, palette) } else { player::sung_line(state, palette) };
+    let controls = if window < SHORT { vec![player::timeline(state, palette), player::transport(state, palette)] }
+        else { vec![lead, player::timeline(state, palette), player::transport(state, palette), player::volume(state, palette), player::foot(state, palette)] };
+    horizontal_inset(Element::column(controls).gap(8.0).padding(8.0), player::GUTTER - 8.0, player::GUTTER - 8.0).size(None, Some(height))
 }
 
 #[cfg(test)]
@@ -214,8 +244,8 @@ mod tests {
         for width in [320.0, 390.0, 430.0] {
             let tree = tree(&state, width);
             let frame = tree.frame();
-            for id in ["mobile-lyrics-close", "mobile-lyrics-more", "seek", "previous", "play-pause",
-                "next", "mobile-connections", "do:share:current"] {
+            for id in ["mobile-lyrics-close", "more:current", "seek", "previous", "play-pause",
+                "next", "mobile-connections", "queue"] {
                 let rect = target(frame, id);
                 assert!(rect.width >= TAP - 0.01 && rect.height >= TAP - 0.01, "{id}: {rect:?}");
                 assert!(rect.x >= 0.0 && rect.x + rect.width <= width);
@@ -245,7 +275,7 @@ mod tests {
             UiAction::SliderChanged { id, committed: true, .. } if id == "seek")).unwrap();
         assert_eq!(state.update(committed), vec![Command::Seek(90.0)]);
 
-        for (id, action) in [("previous", "previous"), ("next", "next"), ("mobile-lyrics-more", "more:current")] {
+        for (id, action) in [("previous", "previous"), ("next", "next"), ("more:current", "more:current")] {
             assert_eq!(click(&mut tree, id), vec![UiAction::Clicked { id: action.into() }]);
         }
         let close = click(&mut tree, "mobile-lyrics-close");
@@ -255,17 +285,17 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_route_and_share_use_the_current_track_and_existing_connection_surface() {
+    fn lyrics_route_and_queue_use_the_existing_connection_surface_and_the_players_queue() {
         let mut state = state();
         let mut tree = tree(&state, 390.0);
         let route = click(&mut tree, "mobile-connections");
         assert_eq!(route, vec![UiAction::Clicked { id: "mobile-connections".into() }]);
         state.update(&route[0]);
         assert!(state.mobile_ui.connections);
-        let share = click(&mut tree, "do:share:current");
-        assert_eq!(share, vec![UiAction::Clicked { id: "do:share:current".into() }]);
-        state.update(&share[0]);
-        assert_eq!(state.sharing.as_ref(), state.current());
+        let queue = click(&mut tree, "queue");
+        assert_eq!(queue, vec![UiAction::Clicked { id: "queue".into() }]);
+        state.update(&queue[0]);
+        assert!(state.page == Page::Playing && state.queue_open, "the queue opens in the player, as BitChord's");
     }
 
     #[test]
@@ -329,21 +359,22 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_header_is_a_compact_song_row_beside_its_cover() {
+    fn the_lyrics_head_is_the_grip_over_the_players_song_beside_its_cover() {
         let state = state();
         let frame = tree(&state, 390.0);
         let frame = frame.frame();
-        let close = target(frame, "mobile-lyrics-close");
-        let more = target(frame, "mobile-lyrics-more");
+        let grip = target(frame, "mobile-lyrics-close");
+        let more = target(frame, "more:current");
         let title = frame.commands.iter().find_map(|command| match command {
-            DrawCommand::Text { text, position, font_family, .. } if text == "La canción actual" => Some((*position, *font_family)),
+            DrawCommand::Text { text, position, font_family, .. } if text.starts_with("La canción") => Some((*position, *font_family)),
             _ => None,
         }).unwrap();
         let (title, face) = title;
-        assert_eq!(face, FontFamily::SansMedium);
-        assert!(title.x > close.x + close.width + 40.0, "the cover sits between the way back and the song");
+        assert_eq!(face, FontFamily::SansBold, "named as the player names it");
+        assert!((grip.x + grip.width / 2.0 - 195.0).abs() < 0.5 && grip.y + grip.height <= more.y + 0.5, "the grip, centred over the song: {grip:?} {more:?}");
+        assert!(title.x > 28.0 + 54.0, "the cover sits before the song: {title:?}");
         assert!(title.x < 390.0 / 3.0, "the song reads from the leading side, not centered: {title:?}");
-        assert!(more.x + more.width > 390.0 - 16.0 && (more.y - close.y).abs() < 0.5);
+        assert!(more.x + more.width > 390.0 - 28.0, "the ⋯ at the end: {more:?}");
         assert!(!frame.commands.iter().any(|command| matches!(command, DrawCommand::Text { text, .. } if text == "Letra")));
     }
 
@@ -353,9 +384,9 @@ mod tests {
         state.player.duration = 0.0;
         let shown = tree(&state, 390.0);
         assert!(shown.frame().access.iter().any(|node| node.id == "seek" && node.disabled));
-        for expected in ["La canción actual", "Una artista"] {
+        for expected in ["La canción", "Una artista"] {
             assert!(shown.frame().commands.iter().any(|command| matches!(command,
-                DrawCommand::Text { text, .. } if text == expected)));
+                DrawCommand::Text { text, .. } if text.starts_with(expected))), "{expected}");
         }
         let mut empty_state = State::default();
         empty_state.mobile = true;

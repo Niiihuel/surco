@@ -8,10 +8,13 @@ mobile-show-queue = Open queue
 mobile-tabs = Tabs
 mobile-queue = Queue
 mobile-now-playing = Now playing
+mobile-playing-from = Playing from { $name }
 mobile-lyrics = Lyrics
 mobile-your-music = Your music
 mobile-close-notice = Dismiss notice
 mobile-tab-home = Home
+mobile-tab-explore = Explore
+mobile-tab-library = Library
 mobile-open-player = Open player: { $title }
 mobile-connect-device = Connect to a device
 mobile-options-for = Options for { $title }
@@ -37,18 +40,11 @@ mobile-save-to-library = Save to Your Library
 mobile-unfollow = Unfollow
 mobile-remove-from-library = Remove from Your Library
 mobile-library-options = Library options
-mobile-system-output = System output
-mobile-listening-on = LISTENING ON
 mobile-route-picker = Audio destination picker
 mobile-airplay-bluetooth = AirPlay or Bluetooth
 mobile-open-route-picker = Open the audio picker
 mobile-on-iphone = Available on iPhone
-mobile-new-device = A new device?
-mobile-new-device-detail = Pair your headphones or speakers in the iPhone's Settings > Bluetooth. Then choose them from the audio picker.
-mobile-surco-volume = Surco volume
 mobile-done = Done
-mobile-listen-on = Listen on
-mobile-listen-on-detail = Choose where the music plays.
 
 ## Player and lyrics
 
@@ -60,14 +56,9 @@ mobile-play-failed = Couldn't play
 mobile-playback-position = Playback position
 mobile-repeat = Repeat
 mobile-volume = Volume
-mobile-unsynced-lyrics = Unsynced lyrics · { $source }
-mobile-lyrics-loading = Looking for lyrics…
-mobile-lyrics-missing = No lyrics available.
-mobile-lyrics-open = Open the lyrics to look for them.
 mobile-show-lyrics = Show lyrics
-mobile-view-artist = View artist: { $name }
-mobile-about-artist = About the artist
-mobile-subscribers = { $subscribers } subscribers
+mobile-show-controls = Show controls
+mobile-hide-controls = Hide controls
 
 ## Album, artist and playlist pages
 
@@ -85,12 +76,9 @@ mobile-songs-not-found = { $count ->
     [one] 1 song wasn't found
    *[other] { $count } songs weren't found
 }
-mobile-delete-playlist = Delete playlist
 mobile-playlist-empty = No songs yet
 mobile-playlist-empty-detail = Find a song and choose “Add to” in its menu.
-mobile-share-playlist = Share playlist
 mobile-songs-copied = Songs copied: paste them in the other app
-mobile-copy-songs = Copy songs for another app
 
 ## Search
 
@@ -159,6 +147,8 @@ mobile-genre-soundtracks =
 
 mobile-crossfade-off = Off
 mobile-autoplay = Autoplay
+mobile-autoplay-detail = Similar music, chosen to play next
+mobile-move-in-queue = Move { $title }
 mobile-connections = Connections and devices
 mobile-listen-elsewhere = Listen on another device
 mobile-audio-output = Audio output
@@ -175,7 +165,6 @@ mobile-view = View
 mobile-view-compact = Compact
 mobile-view-list = List
 mobile-view-grid = Grid
-mobile-import-music = Import music from other apps
 mobile-about = About
 mobile-version = Version
 mobile-licenses = Third-party licenses
@@ -197,3 +186,90 @@ mobile-search-start = Play what you love
 mobile-search-start-detail = Search for artists, songs or albums.
 mobile-home-recent = Recents
 mobile-search-list = Search this list
+mobile-this-phone = This phone
+mobile-playing-here = Playing here
+mobile-pipeline = Audio Pipeline
+mobile-pipeline-detail = Live signal path, decoder to output
+mobile-pipeline-track = Track
+mobile-pipeline-decoder = Decoder
+mobile-pipeline-resampler = Resampler
+mobile-pipeline-dsp = DSP
+mobile-pipeline-output = Output device
+mobile-pipeline-source = Source
+mobile-pipeline-downloaded = Downloaded
+mobile-pipeline-stream = Stream
+mobile-pipeline-name = Name
+mobile-pipeline-format = Format
+mobile-pipeline-rate = I/O rate
+mobile-pipeline-passthrough = None, passthrough
+mobile-pipeline-type = Type
+mobile-pipeline-equalizer = Equalizer
+mobile-pipeline-custom = Custom
+mobile-pipeline-off = Off
+mobile-pipeline-on = On
+mobile-pipeline-normalize = Normalize
+mobile-pipeline-mono = Mono
+mobile-pipeline-crossfade = Crossfade
+mobile-pipeline-volume = Volume
+mobile-pipeline-device = Device
+mobile-pipeline-api = Output API
+mobile-pipeline-route = Route
+mobile-pipeline-waiting = Starts with the next song
+mobile-dislike = Dislike
+mobile-undislike = Undo dislike
+mobile-add-to-playlist = Add to a playlist
+mobile-start-radio = Start radio
+mobile-song-info = Song info
+mobile-lyrics-offset = Lyrics offset
+mobile-lyrics-offset-detail = Move the lyrics if they run ahead of or behind the song
+mobile-lyrics-earlier = Earlier
+mobile-lyrics-later = Later
+mobile-lyrics-reset = Back to zero
+mobile-info-title = Title
+mobile-info-artist = Artist
+mobile-info-album = Album
+mobile-info-length = Length
+mobile-info-stream = Stream
+mobile-info-id = ID
+mobile-top-picks = Top picks for you
+mobile-find-mood = Find your mood
+mobile-listening-experience = Your listening experience
+mobile-minutes-listened = Minutes listened
+mobile-plays-year = { $count ->
+    [one] 1 play
+   *[other] { $plays } plays
+} · { $year }
+mobile-listening-since = Listening since
+mobile-top-song = Your top song
+mobile-top-artist = Your top artist
+mobile-import-from-link = From a playlist link
+mobile-top-songs = Top songs
+mobile-single = Single
+mobile-share-messages = Messages
+mobile-share-mail = Mail
+mobile-share-more = More
+mobile-share-open = Open in YouTube Music
+
+## Settings, as one list
+mobile-settings-liked = { $count ->
+    [one] 1 like
+   *[other] { $count } likes
+}
+mobile-settings-music = Your music
+mobile-settings-import = Import a playlist
+mobile-settings-import-detail = From another app's link
+mobile-settings-handoff-detail = Over Wi-Fi, with its QR or its code
+mobile-settings-more = More
+mobile-settings-version = Version { $version }
+mobile-import-placeholder = Paste a playlist's link
+mobile-import-detail = Surco tells which app it is from and shows you the playlist before bringing it in.
+mobile-import-apps = Apps a playlist can come from
+mobile-import-help = Where do I copy the link?
+mobile-import-preview = The link's playlist
+mobile-handoff-detail = Your data lives on this phone. With both on the same Wi-Fi, the other one reads it from here.
+mobile-handoff-how = On the other device, open Settings › Move to another device › Receive, and scan the QR or type the code.
+mobile-handoff-nothing = Nothing: choose at least one part
+mobile-handoff-receive-instead = Receive on this phone
+mobile-handoff-send-instead = Send from this phone
+mobile-clips = Songs' videos
+mobile-clips-detail = In the player, the song's video behind the controls; off, its cover.
