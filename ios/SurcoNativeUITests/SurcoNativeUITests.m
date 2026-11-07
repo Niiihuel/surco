@@ -89,6 +89,11 @@
 - (void)openLibrary {
     [self tapTab:@"mobile-library"];
 }
+// The list of playlists, with the card that brings music in: "See all" on the overview's lists.
+- (void)openLibraryLists {
+    [self openLibrary];
+    [self canvasTap:@"library-all:lists" page:@"library"];
+}
 - (void)openImport {
     [self openLibrary];
     [self canvasTap:@"import-open" page:@"library"];
@@ -122,7 +127,7 @@
     NSString *link = @"https://open.spotify.com/playlist/surco-ui-card";
     UIPasteboard.generalPasteboard.URL = [NSURL URLWithString:link];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12], @"%@", self.app.debugDescription);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
@@ -141,7 +146,7 @@
     NSString *text = @"Lista para el viaje — niñez 東京";
     UIPasteboard.generalPasteboard.items = @[@{@"public.utf16-external-plain-text": [text dataUsingEncoding:NSUTF16StringEncoding]}];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];
@@ -178,7 +183,7 @@
         @"public.utf8-plain-text": [text dataUsingEncoding:NSUTF8StringEncoding],
     }];
     [self launch];
-    [self openLibrary];
+    [self openLibraryLists];
     XCUIElement *paste = [self element:@"surco.native.paste.import-card"];
     XCTAssertTrue([paste waitForExistenceWithTimeout:12]);
     [self waitFor:paste predicate:@"enabled == YES AND hittable == YES"];

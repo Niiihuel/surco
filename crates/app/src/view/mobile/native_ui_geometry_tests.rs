@@ -52,11 +52,9 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
             vec!["heard:0", "home", "mobile-search", "mobile-library", "settings"],
         ),
         (Page::Search, "search", vec!["mobile-search-edit"]),
-        (
-            Page::Library,
-            "library",
-            vec!["import-open", "ios-paste:import-card", "playlist-new"],
-        ),
+        // The Library tab opens its overview; "See all" on its lists opens the list with the card.
+        (Page::Collection, "library", vec!["import-open", "playlist-new", "library-all:lists"]),
+        (Page::Library, "library-lists", vec!["ios-paste:import-card"]),
         (Page::Settings, "settings", vec!["setting:connections"]),
     ] {
         state.page = page;
@@ -65,7 +63,8 @@ fn native_ui_entry_geometry_matches_the_real_phone_frames() {
         limn_egui::attach_fonts(&mut tree, &context);
         tree.set_reduced_motion(true);
         let frame = tree.layout(size);
-        if key == "library" {
+        state.filter = if key == "library-lists" { crate::state::Filter::Lists } else { crate::state::Filter::All };
+        if key == "library-lists" {
             let slot = crate::native_surfaces::Controller::default().payload(&state, &frame, eframe::egui::Pos2::ZERO).paste;
             assert_eq!(slot.map(|slot| slot.target).as_deref(), Some("import-card"), "UIKit is handed the card's paste slot");
         }
