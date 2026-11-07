@@ -3011,6 +3011,11 @@ impl State {
                 self.sharing_page = None;
                 Vec::new()
             }
+            // The system's share sheet, UIKit's, closed: Surco's stays as it was under it.
+            "share-system-close" => {
+                self.share_system = None;
+                Vec::new()
+            }
             // The share sheet's apps, as iOS's: each takes the link by its own address, which
             // works from any device; the system's own sheet where there is one.
             share if share.starts_with("share-to:") || share == "share-open" => {

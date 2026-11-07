@@ -11,7 +11,6 @@ mod wrapped;
 mod jam;
 pub(crate) use mobile::route_key as mobile_route_key;
 #[cfg(any(target_os = "ios", test))]
-pub(crate) use jam::entry as jam_entry;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, mini_buttons, search::filters as search_filters, surface_tint, tabs, title as mobile_title};
 pub(crate) use mobile::{large_title as mobile_large_title, search_header_height as mobile_search_header, search_in_header};
@@ -19,7 +18,7 @@ pub(crate) use mobile::{large_title as mobile_large_title, search_header_height 
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    Alert, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
+    Alert, Button, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
@@ -512,11 +511,6 @@ const CARD_BUTTON: limn::ButtonSizing = limn::ButtonSizing { height: 44.0, font_
 /// A card button beside what it acts on, a step smaller.
 const CARD_BUTTON_SMALL: limn::ButtonSizing = limn::ButtonSizing { height: 36.0, font_size: 14.0, icon_size: 16.0, horizontal_padding: 16.0, inner_spacing: 6.0 };
 
-/// A dialog's footer: the way out first, what goes ahead last, at the end.
-fn dialog_footer(cancel: Element, confirm: Element) -> Element {
-    ButtonGroup::new(vec![cancel, confirm]).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render()
-}
-
 /// Making a playlist: its name, and whether others will add to it.
 fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(draft) = &state.creating else { return window_tree };
@@ -530,8 +524,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
                     .render(),
             );
         }
-        let cancel = card_button("playlist-cancel", t!("common-cancel"), false).render();
-        let create = card_button("playlist-create", t!("desktop-create"), true).render();
+        // iOS's: the cross cancels, the check creates.
         return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
@@ -542,7 +535,7 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         )
         .max_height(560.0)
         .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, create))
+        .confirm("playlist-create", t!("desktop-create"), true)
         .initial_focus("playlist-name")
         .return_focus("playlist-new"));
     }
@@ -593,12 +586,11 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             None => {}
         }
         let done = matches!(handoff.pushed, Some(Ok(())));
-        let close = card_button("handoff-close", t!("common-close"), done).render();
-        let footer = if done { ButtonGroup::new(vec![close]).align_end().render() }
-            else { dialog_footer(close, card_button("handoff-push", t!("desktop-handoff-push"), true).enabled(!handoff.pushing).render()) };
         if state.mobile {
-            return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
-                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer));
+            // iOS's: the cross closes; until it has got there, the check sends.
+            let sheet = limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
+                .max_height(820.0).body(Element::column(body).gap(16.0));
+            return mobile::phone_sheet(state, if done { sheet } else { sheet.confirm("handoff-push", t!("desktop-handoff-push"), !handoff.pushing) });
         }
         return Card { body: Some(Element::column(body).gap(10.0)), go: (!done).then(|| ("handoff-push", t!("desktop-handoff-push"), !handoff.pushing)), widest: HANDOFF_WIDEST, returns: Some("account"),
             ..Card::new("handoff", t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), ("handoff-close", t!("common-close"))) }
@@ -609,8 +601,6 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
     // A phone opens on what the other device reads; receiving is a step aside, at the foot.
     let mut body = if state.mobile { Vec::new() } else { vec![tabs] };
-    let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
-    let mut confirm = None;
     if !handoff.receiving && state.mobile {
         body.extend(handoff_offer(state, handoff, palette));
     } else if !handoff.receiving {
@@ -673,27 +663,20 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
                 rows.extend(came(bundle, handoff.parts));
                 rows.push(Text::new(t!("desktop-handoff-replace-detail"), palette).role(TextRole::Caption).muted().render());
                 body.extend(rows);
-                confirm = Some(card_button("handoff-take", t!("desktop-handoff-take"), true).render());
             }
             None => {}
         }
     }
-    if confirm.is_none() {
-        // Sending, the dialog only closes: the other device does the rest.
-        cancel = card_button("handoff-close", t!("common-close"), true).render();
-    }
-    let footer = match confirm {
-        Some(confirm) => dialog_footer(cancel, confirm),
-        None => ButtonGroup::new(vec![cancel]).align_end().render(),
-    };
     if state.mobile {
         let (aside, words) = if handoff.receiving { ("handoff-tab:send", t!("mobile-handoff-send-instead")) } else { ("handoff-tab:receive", t!("mobile-handoff-receive-instead")) };
         body.push(card_button(aside, words, false).render().centered_x());
         let about = if handoff.receiving { t!("desktop-handoff-detail") } else { t!("mobile-handoff-detail") };
-        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), about, "handoff-close", palette)
+        // iOS's: the cross closes; what came from the other device is taken in by the check.
+        let sheet = limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), about, "handoff-close", palette)
             .max_height(820.0)
-            .body(Element::column(body).gap(16.0))
-            .footer(footer));
+            .body(Element::column(body).gap(16.0));
+        let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
+        return mobile::phone_sheet(state, if take { sheet.confirm("handoff-take", t!("desktop-handoff-take"), true) } else { sheet });
     }
     let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
     Card { body: Some(Element::column(body).gap(10.0)), go: take.then(|| ("handoff-take", t!("desktop-handoff-take"), true)), widest: HANDOFF_WIDEST, returns: Some("account"),
@@ -782,8 +765,6 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(draft) = &state.profile_draft else { return window_tree };
     let palette = if state.mobile { dialog_palette() } else { Card::palette(GREY_CARD) };
     let name = TextField::new("profile-name", draft, "Surco", palette).label(t!("desktop-profile-name")).render();
-    let cancel = card_button("profile-cancel", t!("common-cancel"), false).render();
-    let save = card_button("profile-save", t!("desktop-save"), true).render();
     // As Spotify's profile details: the face beside the name, with the way to change it.
     let mut choices = vec![card_button("profile-picture", t!("desktop-choose-photo"), false).sizing(CARD_BUTTON_SMALL).render()];
     if state.profile.picture.is_some() {
@@ -795,7 +776,7 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
         return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
             .max_height(560.0)
             .body(Element::column(vec![face.centered_x(), fields]).gap(16.0))
-            .footer(dialog_footer(cancel, save))
+            .confirm("profile-save", t!("desktop-save"), true)
             .initial_focus("profile-name"));
     }
     Card { body: Some(Element::row(vec![face, fields]).gap(16.0)), go: Some(("profile-save", t!("desktop-save"), true)), widest: 480.0, focus: Some("profile-name"), returns: Some("profile-edit"),
@@ -857,12 +838,11 @@ fn import_phone(state: &State, link: &str, window_tree: Element, width: f32, pal
     body.push(Element::clickable("import-help", help).size(None, Some(44.0))
         .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-import-help")).expanded(state.import_help)));
     if state.import_help { body.extend(import_guide(state, width - 32.0, palette)); }
-    let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
-    let go = card_button("import-go", t!("common-import"), true).enabled(source.is_some()).render();
+    // iOS's: the cross cancels; the check imports, once the link is one of a list.
     mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("mobile-settings-import"), t!("mobile-import-detail"), "import-cancel", palette)
         .max_height(640.0)
         .body(Element::column(body).gap(12.0))
-        .footer(dialog_footer(cancel, go))
+        .confirm("import-go", t!("common-import"), source.is_some())
         .initial_focus("import-link"))
 }
 
@@ -938,8 +918,8 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .iter()
             .map(|song| Text::new(song, palette).font_size(14.0).render())
             .collect();
+        // iOS's: the cross closes; copying the list is its one action, across the foot.
         let copy = card_button("import-missed-copy", t!("desktop-copy-list"), false).icon(Icon::Copy).render();
-        let close = card_button("import-missed-close", t!("common-close"), true).render();
         return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
@@ -950,7 +930,7 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         )
         .max_height(600.0)
         .body(Element::column(rows).gap(12.0))
-        .footer(dialog_footer(copy, close)));
+        .footer(copy));
     }
     let palette = Card::palette(GREY_CARD);
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
@@ -973,10 +953,10 @@ pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32,
     });
     let way_out = if failed.is_some() { t!("common-close") } else { t!("desktop-import-hide") };
     if state.mobile {
-        let mut buttons = vec![card_button("import-hide", way_out, failed.is_none()).render()];
-        buttons.extend(failed.as_ref().map(|_| card_button("import-retry", t!("common-retry"), true).render()));
-        let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0)
-            .footer(ButtonGroup::new(buttons).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render());
+        // iOS's: the cross hides it while it goes on, or closes it once it failed; then the
+        // check tries again.
+        let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0);
+        let sheet = if failed.is_some() { sheet.confirm("import-retry", t!("common-retry"), true) } else { sheet };
         return mobile::phone_sheet(state, match body { Some(body) => sheet.body(body), None => sheet });
     }
     Card { art: import_art(width), inset_art: false, inline: true, widest: IMPORT_WIDEST, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
@@ -1313,20 +1293,26 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
         None => (String::new(), "".into(), "".into()),
     };
     if state.mobile {
-        let cancel = card_button("confirm-cancel", t!("common-cancel"), false).render();
-        let confirm = card_button("confirm-yes", yes, true).render();
+        // iOS's: what is about to be undone, and the one way to do it in red, the cross the way out.
+        let undo = limn::Button::new("confirm-yes", yes, ComponentPalette { surface: Color::rgba(255, 69, 58, 38), text: Color::rgb(255, 69, 58), hover: Color::rgba(255, 69, 58, 56), ..palette })
+            .sizing(limn::ButtonSizing { height: 50.0, ..ControlSize::Spacious.button_sizing() }).round().font_family(FontFamily::SansSemibold).render().size(None, Some(50.0));
+        let body = Element::column(vec![
+            Text::new(&title, palette).font_size(17.0).render().font_family(FontFamily::SansSemibold),
+            Text::new(about.as_ref(), palette).font_size(15.0).line_height(20.0).muted().render(),
+            Element::spacer().size(None, Some(8.0)),
+            undo,
+        ]).gap(8.0);
         return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             state.confirm.is_some(),
             t!("desktop-confirm"),
-            format!("{title}\n\n{about}"),
+            "",
             "confirm-cancel",
             palette,
         )
-        .max_height(480.0)
-        .footer(dialog_footer(cancel, confirm))
-        .initial_focus("confirm-cancel")
-        .backdrop_dismiss(false));
+        .body(body)
+        .alert(&format!("{title}\n\n{about}"))
+        .initial_focus("confirm-cancel:close"));
     }
     if state.confirm.is_none() { return window_tree; }
     Card { go: Some(("confirm-yes", yes, true)), focus: Some("confirm-cancel"),
@@ -4704,7 +4690,10 @@ mod tests {
     fn a_list_being_brought_in_stands_on_its_own_card_over_the_page_it_was_asked_from() {
         let link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M";
         let shown = |state: &State, size: Size| {
-            let frame = UiTree::new(view(state, size)).layout(size);
+            // At rest: a phone's sheet rises from the foot of the screen.
+            let mut tree = UiTree::new(view(state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
             let texts: String = frame.commands.iter().filter_map(|command| match command {
                 limn::DrawCommand::Text { text, .. } => Some(text.as_str()),
                 _ => None,

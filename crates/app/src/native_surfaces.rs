@@ -108,12 +108,7 @@ pub(crate) struct Share {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum Row {
-    Text { title: String, secondary: bool },
     Action(Action),
-    Field { id: String, value: String, placeholder: String, keyboard: String, paste: bool, paste_title: String },
-    Slider { id: String, title: String, value: f32, min: f32, max: f32 },
-    Segments { id: String, items: Vec<Action>, selected: usize },
-    Route { title: String, subtitle: String, label: String },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -186,6 +181,8 @@ impl Controller {
             return payload;
         }
         self.sheet = None;
+        // A limn sheet stands over the page: none of the page's controls is UIKit's under it.
+        if limn_sheet(state) { self.search = None; self.active_menu = None; return payload; }
         let slot = |id: &str| frame.access.iter().find(|node| node.id == id && !node.disabled);
         let search_rect = if search_visible(state) {
             slot("ios-search").and_then(|node| visible_rect(frame, 0, node.rect, true)).map(|rect| (rect, None))
@@ -350,16 +347,6 @@ impl Controller {
                     return state.update(&UiAction::Clicked { id: action });
                 }
             }
-            Event::SheetInput { sheet, id, text } if self.current_sheet(state, &sheet).is_some_and(|spec|
-                spec.rows.iter().any(|row| matches!(row, Row::Field { id: field, .. } if *field == id))) =>
-                return state.update(&UiAction::InputChanged { id, value: text }),
-            Event::SheetSlider { sheet, id, value } if value.is_finite() => {
-                if let Some((min, max)) = self.current_sheet(state, &sheet).and_then(|spec| spec.rows.iter().find_map(|row| match row {
-                    Row::Slider { id: slider, min, max, .. } if *slider == id && max > min => Some((*min, *max)), _ => None,
-                })) {
-                    return state.update(&UiAction::SliderChanged { id, fraction: ((value - min) / (max - min)).clamp(0.0, 1.0), committed: true });
-                }
-            }
             Event::SheetClose { sheet } => {
                 if let Some(spec) = self.current_sheet(state, &sheet) {
                     let id = spec.dismiss;
@@ -367,20 +354,11 @@ impl Controller {
                     return state.update(&UiAction::Clicked { id });
                 }
             }
-            Event::Paste { target, text } if !text.is_empty() && paste_valid(state, &target) => {
-                let valid = if target == "import-link" {
-                    self.sheet.as_ref().is_some_and(|held| self.current_sheet(state, &held.sheet.id).is_some_and(|spec|
-                        spec.rows.iter().any(|row| matches!(row, Row::Field { id, paste: true, .. } if *id == target))))
-                } else { self.paste.as_deref() == Some(target.as_str()) };
-                if valid {
-                    if target == "import-card" {
-                        state.importing = Some(text);
-                        state.import_unknown = false;
-                        state.mobile_ui.blur = true;
-                    } else {
-                        return state.update(&UiAction::InputChanged { id: target, value: text });
-                    }
-                }
+            // The Library card's paste opens the import with the link in it, read at once and
+            // brought in only by the sheet's check.
+            Event::Paste { target, text } if !text.is_empty() && paste_valid(state, &target) && self.paste.as_deref() == Some(target.as_str()) => {
+                state.mobile_ui.blur = true;
+                return state.update(&UiAction::InputChanged { id: "import-link".into(), value: text });
             }
             _ => {}
         }
@@ -402,10 +380,16 @@ impl Controller {
 }
 
 pub(crate) fn has_sheet(state: &State) -> bool {
+    state.share_system.is_some()
+}
+
+/// Whether one of limn's sheets, or a menu, stands over the page.
+fn limn_sheet(state: &State) -> bool {
     state.confirm.is_some() || (state.missed_open && state.imported.is_some())
-        || (state.import_run.is_some() && !state.import_hidden) || state.importing.is_some() || state.creating.is_some() || state.sharing.is_some()
+        || (state.import_run.is_some() && !state.import_hidden) || state.importing.is_some() || state.creating.is_some()
+        || state.sharing.is_some() || state.sharing_page.is_some() || state.sleep_open
         || state.mobile_ui.connections || state.mobile_ui.library.is_some() || state.mobile_ui.context.is_some()
-        || state.sleep_open
+        || state.mobile_ui.picking.is_some() || state.mobile_ui.info.is_some() || state.mobile_ui.offset_open || state.mobile_ui.pipeline
 }
 
 /// `in_bars`: the rect is Search's field, which lives in the header or, under Liquid Glass, the foot.
@@ -487,129 +471,28 @@ fn library_actions(state: &State, context: &LibraryContext) -> Vec<Action> {
     items
 }
 
-fn text(title: impl Into<String>, secondary: bool) -> Row { Row::Text { title: title.into(), secondary } }
 
 fn sheet_spec(state: &State) -> Option<(String, Sheet)> {
-    let shell = |title: &str, description: &str, dismiss: &str| Sheet { id: String::new(), title: title.into(), description: description.into(),
-        dismiss: dismiss.into(), rows: Vec::new(), actions: Vec::new(), large: false, confirmation: false,
-        close_label: t!("common-close").into_owned(), share: None };
-    // Match limn's overlay order. UIKit receives precisely the top surface.
-    if let Some(confirm) = &state.confirm {
-        let (title, description, yes) = match confirm {
-            Confirm::DeletePlaylist(id) => (t!("native-delete-playlist-title", name = state.collection.playlist(*id)
-                .map_or(t!("native-this-playlist"), |list| list.name.as_str().into())), t!("native-delete-playlist-description"), t!("common-delete")),
-            Confirm::ClearDownloads => (t!("native-clear-downloads-title"), t!("native-clear-downloads-description"), t!("common-delete")),
-            Confirm::ClearQueue => (t!("native-clear-queue-title"), t!("native-clear-queue-description"), t!("common-clear")),
-            Confirm::ClearRecent => (t!("native-clear-recent-title"), t!("native-clear-recent-description"), t!("common-clear")),
-        };
-        let mut sheet = shell(&title, &description, "confirm-cancel");
-        sheet.confirmation = true;
-        sheet.actions = vec![Action::new("confirm-cancel", t!("common-cancel"), "xmark"), Action::new("confirm-yes", yes, "trash").destructive()];
-        return Some((format!("confirm:{confirm:?}"), sheet));
-    }
-    if let Some((id, missed)) = state.imported.as_ref().filter(|_| state.missed_open) {
-        let mut sheet = shell(&t!("native-missed-title"), &t!("native-missed-description"), "import-missed-close");
-        sheet.large = true;
-        sheet.rows = missed.iter().map(|song| text(song, false)).collect();
-        sheet.actions = vec![Action::new("import-missed-copy", t!("native-missed-copy"), "doc.on.doc"), Action::new("import-missed-close", t!("common-close"), "xmark")];
-        return Some((format!("missed:{id}"), sheet));
-    }
-    if let Some((link, failed)) = state.import_run.as_ref().filter(|_| !state.import_hidden) {
-        // One sheet from the first song looked for to the last, or to why none could be.
-        let (title, about) = crate::view::import_run_words(state);
-        let about = if failed.is_some() { about.into_owned() } else { format!("{about}\n\n{}", t!("desktop-import-wait")) };
-        let mut sheet = shell(&title, &about, "import-hide");
-        sheet.actions = match failed {
-            Some(_) => vec![Action::new("import-hide", t!("common-close"), "xmark"), Action::new("import-retry", t!("common-retry"), "arrow.clockwise")],
-            None => vec![Action::new("import-hide", t!("desktop-import-hide"), "chevron.down")],
-        };
-        return Some((format!("import-run:{link}"), sheet));
-    }
-    if let Some(link) = &state.importing {
-        // UIKit's sheet keeps its editor alone, where its own editing menu is reached; the way to
-        // copy a link, for the app the link pasted is of, is its description.
-        let chosen = state.import_source;
-        let copy = match chosen {
-            state::ImportSource::Spotify => t!("desktop-import-step-copy-spotify"),
-            state::ImportSource::Apple => t!("desktop-import-step-copy-apple"),
-            state::ImportSource::YouTube => t!("desktop-import-step-copy-youtube"),
-        };
-        let description = if state.import_unknown { t!("native-import-unknown").into_owned() } else {
-            format!("1. {}\n2. {copy}\n3. {}", t!("desktop-import-step-open", app = chosen.name()), t!("desktop-import-step-paste"))
-        };
-        let mut sheet = shell(&t!("native-import-title"), &description, "import-cancel");
-        sheet.rows = vec![Row::Field { id: "import-link".into(), value: link.clone(),
-            placeholder: t!("native-import-placeholder").into_owned(), keyboard: "url".into(), paste: true, paste_title: t!("native-paste").into_owned() }];
-        sheet.actions = vec![Action::new("import-cancel", t!("common-cancel"), "xmark"), Action::new("import-go", t!("common-import"), "square.and.arrow.down")];
-        return Some(("import".into(), sheet));
-    }
-    if let Some(draft) = &state.creating {
-        let mut sheet = shell(&t!("native-new-playlist-title"), &t!("native-new-playlist-description"), "playlist-cancel");
-        sheet.rows = vec![text(t!("common-title"), false), Row::Field { id: "playlist-name".into(), value: draft.name.clone(), placeholder: state.collection.default_name(), keyboard: "default".into(), paste: false, paste_title: String::new() },
-            Row::Segments { id: "playlist-kind".into(), items: vec![Action::new("playlist-kind:normal", t!("native-playlist-normal"), "music.note.list"), Action::new("playlist-kind:collaborative", t!("native-playlist-collaborative"), "person.2")], selected: usize::from(draft.collaborative) }];
-        if let Some(track) = &draft.first { sheet.rows.push(text(t!("native-playlist-starts-with", title = track.title.as_str()), true)); }
-        sheet.actions = vec![Action::new("playlist-cancel", t!("common-cancel"), "xmark"), Action::new("playlist-create", t!("native-create"), "plus")];
-        return Some((format!("playlist:{}", draft.first.as_ref().map_or("", |track| track.id.as_str())), sheet));
-    }
-    if let Some(track) = &state.sharing {
-        // Copying, AirDrop and the other apps are the system's own actions; only closing reaches Rust.
-        let mut sheet = shell(&track.title, &track.artist, "share-close");
-        sheet.share = Some(Share { url: state::share_link(track), artwork: track.artwork_url.clone() });
-        return Some((format!("share:{}", track.id), sheet));
-    }
-    if state.sleep_open {
-        let mut sheet = shell(&t!("desktop-sleep"), &crate::view::sleep_hint(state), "sleep-dismiss");
-        sheet.rows = crate::view::sleep_choices(state).into_iter().filter_map(|entry| match entry {
-            limn::DropdownMenuEntry::Item(item) => {
-                let symbol = match item.action_id.as_str() { "sleep:end" => "music.note", "sleep:off" => "xmark.circle", _ => "moon.zzz" };
-                Some(Row::Action(Action { selected: item.selected, destructive: item.action_id == "sleep:off", ..Action::new(item.action_id.clone(), item.label.clone(), symbol) }))
-            }
-            _ => None,
-        }).collect();
-        return Some(("sleep".into(), sheet));
-    }
-    if state.mobile_ui.connections {
-        let mut sheet = shell(&t!("native-listen-on"), "", "mobile-connections-close");
-        // Listening with others first, as Spotify offers its Jam beside its devices.
-        let (together, with) = crate::view::jam_entry(state);
-        sheet.rows = vec![Row::Action(Action { subtitle: Some(with), ..Action::new("together", together, "person.2.wave.2") }),
-            Row::Route { title: t!("native-route-title").into_owned(), label: t!("native-choose-audio-device").into_owned(),
-                subtitle: state.mobile_ui.route.as_ref().map_or(t!("native-system-output"), |(name, _)| name.as_str().into()).into_owned() },
-            Row::Slider { id: "volume".into(), title: t!("native-volume").into_owned(), value: state.volume, min: 0.0, max: 1.0 }];
-        sheet.actions.push(Action::new("mobile-connections-close", t!("native-done"), "checkmark"));
-        return Some(("connections".into(), sheet));
-    }
-    if let Some(context) = &state.mobile_ui.library {
-        let mut sheet = shell(&context.title, &t!("native-library-options"), "mobile-library-close");
-
-        sheet.rows = library_actions(state, context).into_iter().map(Row::Action).collect();
-        return Some((format!("library:{}", context.key), sheet));
-    }
-    if let Some(context) = &state.mobile_ui.context {
-        let mut sheet = shell(&context.track.title, &context.track.artist, "mobile-context-close");
-        sheet.large = true;
-        sheet.rows = context_actions(state, &CardContext::Track(context.clone())).into_iter().map(Row::Action).collect();
-        return Some((format!("track:{}:{}:{:?}", context.row, context.track.id, context.playlist), sheet));
-    }
-    None
+    // limn draws every sheet of the phone, iOS 26's, in the app's glass. UIKit's is the
+    // system's share sheet alone, a share's "More": AirDrop and the other apps are its own.
+    let (title, link) = state.share_system.as_ref()?;
+    let sheet = Sheet { id: String::new(), title: title.clone(), description: String::new(), dismiss: "share-system-close".into(), rows: Vec::new(),
+        actions: Vec::new(), large: false, confirmation: false, close_label: t!("common-close").into_owned(),
+        share: Some(Share { url: link.clone(), artwork: None }) };
+    Some((format!("share:{link}"), sheet))
 }
 
 fn allowed_actions(sheet: &Sheet) -> HashSet<&str> {
     let mut ids: HashSet<_> = sheet.actions.iter().map(|action| action.id.as_str()).collect();
     ids.insert(&sheet.dismiss);
-    for row in &sheet.rows {
-        match row {
-            Row::Action(action) => { ids.insert(&action.id); }
-            Row::Segments { items, .. } => ids.extend(items.iter().map(|action| action.id.as_str())),
-            _ => {}
-        }
+    for Row::Action(action) in &sheet.rows {
+        ids.insert(&action.id);
     }
     ids
 }
 
 fn paste_valid(state: &State, target: &str) -> bool {
     match target {
-        "import-link" => state.importing.is_some() && sheet_spec(state).is_some_and(|(key, _)| key == "import"),
         "import-card" => state.page == state::Page::Library && !state.settings.import_dismissed && !has_sheet(state),
         _ => false,
     }
@@ -662,25 +545,6 @@ mod tests {
         assert_eq!(controller.apply(&mut state, Event::MenuAction { id: id.clone(), action: "do:queue:track:0".into() }),
             vec![Command::Enqueue(track("first"))]);
         assert!(controller.apply(&mut state, Event::MenuAction { id, action: "do:queue:track:0".into() }).is_empty(), "callbacks are consumed once");
-    }
-
-    #[test]
-    fn sheet_identity_survives_editing_but_rejects_callbacks_after_retargeting() {
-        let mut state = phone();
-        state.importing = Some(String::new());
-        let mut controller = Controller::default();
-        let id = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap().id;
-        controller.apply(&mut state, Event::SheetInput { sheet: id.clone(), id: "import-link".into(), text: "https://open.spotify.com/playlist/example".into() });
-        assert_eq!(controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap().id, id);
-        assert!(state.importing.as_ref().unwrap().contains("example"));
-        assert!(state.import_progress.is_none());
-        state.importing = None;
-        state.creating = Some(state::Draft::default());
-        let replacement = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_ne!(replacement.id, id);
-        assert!(controller.apply(&mut state, Event::SheetInput { sheet: id.clone(), id: "import-link".into(), text: "stale".into() }).is_empty());
-        controller.apply(&mut state, Event::SheetClose { sheet: id });
-        assert!(state.importing.is_none() && state.creating.is_some());
     }
 
     #[test]
@@ -745,74 +609,42 @@ mod tests {
     }
 
     #[test]
-    fn only_the_current_top_sheet_accepts_its_declared_controls() {
+    fn every_sheet_is_limns_but_the_systems_share_sheet_and_none_of_the_page_is_uikits_under_one() {
         let mut state = phone();
-        state.mobile_ui.connections = true;
-        state.confirm = Some(Confirm::ClearQueue);
+        state.found.tracks.push(track("first"));
         let mut controller = Controller::default();
-        let sheet = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert!(sheet.confirmation);
-        let id = sheet.id;
-        assert!(controller.apply(&mut state, Event::SheetAction { sheet: id.clone(), action: "mobile-connections-close".into() }).is_empty());
-        assert!(state.mobile_ui.connections);
-        let volume = state.volume;
-        assert!(controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "volume".into(), value: 0.2 }).is_empty());
-        assert_eq!(state.volume, volume);
-        controller.apply(&mut state, Event::SheetClose { sheet: id.clone() });
-        assert!(state.confirm.is_none() && state.mobile_ui.connections);
-        let connections = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_ne!(connections.id, id);
-        let id = connections.id;
-        assert!(controller.apply(&mut state, Event::SheetSlider { sheet: id.clone(), id: "volume".into(), value: f32::NAN }).is_empty());
-        let commands = controller.apply(&mut state, Event::SheetSlider { sheet: id, id: "volume".into(), value: 0.2 });
-        assert_eq!((state.volume, commands), (0.2, vec![Command::Volume(0.2)]));
+        assert_eq!(controller.payload(&state, &frame(), Pos2::ZERO).menus.len(), 1, "the card's menu, with nothing over it");
+        for open in ["sleep", "import-open", "playlist-new", "mobile-connections"] {
+            let mut state = phone();
+            state.found.tracks.push(track("first"));
+            state.update(&limn::UiAction::Clicked { id: open.into() });
+            assert!(!has_sheet(&state) && sheet_spec(&state).is_none(), "{open} is limn's");
+            let payload = controller.payload(&state, &frame(), Pos2::ZERO);
+            assert!(payload.sheet.is_none() && payload.menus.is_empty(), "{open}: nothing of the page's is UIKit's under it");
+        }
     }
 
     #[test]
-    fn share_sheet_retargeting_rejects_a_close_for_the_previous_track() {
+    fn the_systems_share_sheet_takes_the_link_and_only_a_close_of_its_own_link() {
         let mut state = phone();
-        state.sharing = Some(track("first"));
+        state.share_system = Some(("First".into(), "https://music.youtube.com/watch?v=first".into()));
         let mut controller = Controller::default();
         let first = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
-        assert_eq!(first.share.unwrap().url, state::share_link(&track("first")));
-        state.sharing = Some(track("second"));
+        assert_eq!(first.share.as_ref().unwrap().url, "https://music.youtube.com/watch?v=first");
+        assert!(first.rows.is_empty() && first.actions.is_empty(), "the system sheet brings its own actions");
+        let json = serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap();
+        // UIKit keeps no words of its own: Rust sends each label it shows or speaks.
+        assert_eq!((json["sheet"]["close_label"].as_str(), json["route_label"].as_str()), (Some("Cerrar"), Some("Salida de audio")));
+        assert!(controller.apply(&mut state, Event::SheetAction { sheet: first.id.clone(), action: "downloads-clear".into() }).is_empty());
+        state.share_system = Some(("Second".into(), "https://music.youtube.com/watch?v=second".into()));
         controller.apply(&mut state, Event::SheetClose { sheet: first.id.clone() });
-        assert!(state.sharing.is_some(), "a stale close leaves the new track's sheet open");
+        assert!(state.share_system.is_some(), "a stale close leaves the new link's sheet open");
         let second = controller.payload(&state, &Frame::default(), Pos2::ZERO).sheet.unwrap();
         assert_ne!(first.id, second.id);
-        assert!(second.rows.is_empty() && second.actions.is_empty(), "the system sheet brings its own actions");
         controller.apply(&mut state, Event::SheetClose { sheet: second.id });
-        assert!(state.sharing.is_none());
-    }
-
-    #[test]
-    fn payload_matches_the_native_json_contract() {
-        let mut state = phone();
-        state.importing = Some("https://example.com/ñ".into());
-        let payload = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
-        let json = serde_json::to_value(payload).unwrap();
-        assert_eq!(json["sheet"]["rows"].as_array().unwrap().len(), 1, "the import form contains only its editor");
-        assert_eq!(json["sheet"]["rows"][0]["kind"], "field");
-        assert_eq!(json["sheet"]["rows"][0]["paste"], true);
-        // UIKit keeps no words of its own: Rust sends each label it shows or speaks.
-        assert_eq!(json["sheet"]["rows"][0]["paste_title"], "Pegar");
-        assert_eq!(json["sheet"]["close_label"], "Cerrar");
-        assert_eq!(json["route_label"], "Salida de audio");
-        crate::i18n::set(crate::i18n::Language::English);
-        let english = serde_json::to_value(Controller::default().payload(&state, &Frame::default(), Pos2::ZERO)).unwrap();
-        crate::i18n::set(crate::i18n::Language::Spanish);
-        assert_eq!((&english["sheet"]["title"], &english["sheet"]["close_label"], &english["route_label"]),
-            (&"Import music".into(), &"Close".into(), &"Audio output".into()));
-        state.import_unknown = true;
-        let error = Controller::default().payload(&state, &Frame::default(), Pos2::ZERO);
-        assert_eq!(serde_json::to_value(error).unwrap()["sheet"]["rows"], json["sheet"]["rows"],
-            "validation changes the description without rebuilding the live editor");
-        assert!(json["menus"].as_array().unwrap().is_empty());
+        assert!(state.share_system.is_none());
         let action = serde_json::to_value(Row::Action(Action::new("test", "Title", "heart"))).unwrap();
-        assert_eq!(action["kind"], "action");
-        assert_eq!(action["id"], "test");
-        assert_eq!(serde_json::from_str::<Event>(r#"{"kind":"sheet_input","sheet":"1","id":"import-link","text":"ñ"}"#).unwrap(),
-            Event::SheetInput { sheet: "1".into(), id: "import-link".into(), text: "ñ".into() });
+        assert_eq!((action["kind"].as_str(), action["id"].as_str()), (Some("action"), Some("test")));
     }
 
     #[test]
@@ -826,19 +658,6 @@ mod tests {
         state.settings.reduce_motion = false;
         state.motion = false;
         assert_eq!(serde_json::to_value(controller.payload(&state, &Frame::default(), Pos2::ZERO)).unwrap()["reduce_motion"], true);
-    }
-
-    #[test]
-    fn the_sleep_timer_is_a_sheet_of_its_choices() {
-        let mut state = phone();
-        state.mobile_ui.native_surfaces = true;
-        state.mobile_ui.native_bars = true;
-        state.update(&limn::UiAction::Clicked { id: "sleep".into() });
-        assert!(has_sheet(&state));
-        let (key, sheet) = sheet_spec(&state).unwrap();
-        assert_eq!((key.as_str(), sheet.dismiss.as_str()), ("sleep", "sleep-dismiss"));
-        let ids: Vec<&str> = sheet.rows.iter().filter_map(|row| match row { Row::Action(action) => Some(action.id.as_str()), _ => None }).collect();
-        assert_eq!(ids, ["sleep:15", "sleep:30", "sleep:45", "sleep:60", "sleep:90", "sleep:end"]);
     }
 
     #[test]
@@ -1124,9 +943,11 @@ mod tests {
             .layout(Size::new(240.0, 160.0));
         let mut controller = Controller::default();
         assert_eq!(controller.payload(&state, &frame, Pos2::ZERO).paste.unwrap().target, "import-card");
-        assert!(controller.apply(&mut state, Event::Paste { target: "import-card".into(), text: "https://open.spotify.com/playlist/example".into() }).is_empty());
-        assert_eq!(state.importing.as_deref(), Some("https://open.spotify.com/playlist/example"));
-        assert!(state.import_progress.is_none() && !state.settings.import_dismissed);
+        // The list the link names is read at once, to be shown; only the sheet's check imports it.
+        let link = "https://open.spotify.com/playlist/example";
+        assert_eq!(controller.apply(&mut state, Event::Paste { target: "import-card".into(), text: link.into() }), vec![Command::PeekImport(link.into())]);
+        assert_eq!(state.importing.as_deref(), Some(link));
+        assert!(state.import_progress.is_none() && state.import_run.is_none() && !state.settings.import_dismissed);
         controller.apply(&mut state, Event::SheetClose { sheet: "old".into() });
         assert!(controller.apply(&mut state, Event::Paste { target: "search".into(), text: "wrong field".into() }).is_empty());
         assert!(state.query.is_empty());

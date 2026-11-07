@@ -97,7 +97,7 @@ pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: Compon
         limn::ShareTarget::new("share-to:telegram", "Telegram", mark(Color::rgb(42, 171, 238), glyph(Icon::Send))),
         limn::ShareTarget::new("share-to:x", "X", mark(Color::rgb(24, 24, 24), Text::new("X", palette).font_size(28.0).render().font_family(FontFamily::SansBold))),
     ];
-    if cfg!(target_os = "android") {
+    if cfg!(any(target_os = "android", target_os = "ios")) {
         targets.push(limn::ShareTarget::new("share-to:system", t!("mobile-share-more"), mark(Color::rgb(72, 72, 74), glyph(Icon::More))));
     }
     let copied = state.copied;
@@ -106,7 +106,7 @@ pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: Compon
         limn::ShareAction::new("share-open", t!("mobile-share-open"), Icon::ExternalLink),
     ];
     let sheet = limn::ShareSheet::new(base, true, title, "music.youtube.com", "share-close", palette)
-        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(SHEET_GLASS).render();
+        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(SHEET_GLASS).ios(ios_sheet(state)).render();
     popped(state, sheet)
 }
 
@@ -115,7 +115,29 @@ const MAIL: &str = include_str!("../../assets/icons/mail.svg");
 
 /// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
 pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
-    popped(state, sheet.glass(SHEET_GLASS).render())
+    popped(state, sheet.glass(SHEET_GLASS).ios(ios_sheet(state)).render())
+}
+
+/// Every sheet of the phone is iOS 26's: as tall as what it holds, or up to under the safe
+/// area's top, floating inset at partial heights with corners concentric with the display's.
+pub(in crate::view) fn ios_sheet(state: &State) -> limn::SheetSpec {
+    let top = state.mobile_ui.content_insets.top;
+    limn::SheetSpec { safe_top: top, screen_corner: display_corner(top), ..limn::SheetSpec::default() }
+}
+
+/// The display's corner radius, told by where its safe area starts: the iPhones with the
+/// Dynamic Island in their two sizes, with a notch, and the square older ones; Android's
+/// status bars take a radius of 40, and the desktop's preview, with no inset, an iPhone 14's.
+fn display_corner(safe_top: f32) -> f32 {
+    match safe_top {
+        top if top >= 62.0 => 62.0,
+        top if top >= 59.0 => 55.0,
+        top if top >= 47.0 => 47.33,
+        top if top >= 44.0 => 41.5,
+        top if top > 20.0 => 40.0,
+        top if top > 0.0 => 0.0,
+        _ => 47.33,
+    }
 }
 
 /// `element` as a pane of aurora's glass with its shadow; `small` for a circle.
@@ -377,7 +399,7 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
-    super::wrapped::story(state, dialogs(state, tree, window, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
+    super::wrapped::story(state, dialogs(state, tree, window, palette), window)
 }
 
 /// Whether an artist's page is on its way, drawn as theirs is.
@@ -461,17 +483,15 @@ pub(in crate::view) fn mood_page(state: &State, params: &str, width: f32, palett
     page_scroll("mobile-mood", Element::column(vec![pairs(tiles)]).padding(MOOD_GUTTER))
 }
 
-/// The phone's dialogs over `tree`. UIKit owns its sheets when its bridge is ready, `uikit`;
-/// the limn ones stay for other platforms or if the bridge is unavailable. The greeting,
-/// the profile and moving an account are limn's on every platform: no UIKit surface draws
-/// them, and left behind the bridge they would open to nothing.
-fn dialogs(state: &State, tree: Element, window: Size, palette: ComponentPalette, uikit: bool) -> Element {
+/// The phone's dialogs over `tree`, limn's on every platform: iOS 26's sheets, drawn and
+/// moving as Apple's, in the app's own glass. Only the system's share sheet, a share's "More",
+/// is UIKit's on the iPhone.
+fn dialogs(state: &State, tree: Element, window: Size, palette: ComponentPalette) -> Element {
     let width = window.width;
     let tree = welcome_dialog(state, tree, width);
     let tree = super::jam::invite(state, super::profile_dialog(state, super::handoff_dialog(state, tree, width), width), width);
     // limn's on the iPhone too: it stands over everything, as moving an account does.
     let tree = super::crop::dialog(state, tree, width);
-    if uikit { return tree; }
     let tree = sheets::render(state, tree, window, palette);
     let tree = share_dialog(state, tree, width, palette);
     let tree = playlist_dialog(state, tree, width, palette);
@@ -1170,12 +1190,13 @@ mod tests {
     }
 
     #[test]
-    fn behind_uikit_moving_an_account_and_the_profile_still_open() {
+    fn moving_an_account_and_the_profile_open_as_sheets() {
         let size = Size::new(390.0, 844.0);
         let mut state = playing_state();
         let ids = |state: &State| {
-            let tree = dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size, SCHEME.palette(), true);
-            UiTree::new(tree).layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
+            let mut tree = UiTree::new(dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size, SCHEME.palette()));
+            tree.set_reduced_motion(true);
+            tree.layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
         };
         state.update(&UiAction::Clicked { id: "account-handoff".into() });
         let offer = crate::handoff::Offer { code: "0000-0000-0001".into(), link: "surco://receive?from=x".into() };

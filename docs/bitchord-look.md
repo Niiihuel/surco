@@ -205,10 +205,17 @@ Numbers are in points (BitChord's dp). Paths below are BitChord's: `A` is
   button. Every sheet of the phone (output, timer, lists, song info, lyrics' step, Audio
   Pipeline, importing, sharing, a new list, the profile's details, moving to another device,
   cropping a photo, confirmations) is aurora's glass and pops the same way out of whatever
-  opened it. Held by its grabber, a sheet follows the finger down (up only as a rubber band
-  of 48), springs back (0.38 s, bounce 0.18) when let go short, and leaves from where it is
-  past a third of its height (60 to 180) or flicked at 700 a second; a sheet whose content
-  changes its height moves to it on the same spring. Tiles light no box under a pointer or
+  opened it. Every sheet is iOS 26's (limn's `BottomSheet::ios`):
+
+- **Size:** as tall as what it holds, up to 10 under the safe area's top.
+- **Partial heights:** it floats 8 in from the sides and foot, its corners concentric with the display's (radius minus 8). The display radius is told by the safe area: 62, 55, 47.33 or 41.5.
+- **Large height:** it anchors to the edges, its glass grows opaque, and the page recedes behind it, smaller and rounded.
+- **Bar:** a grabber 36 by 5, 5 from the top; a light cross at its start; the title, centred, 17 semibold; and the prominent white check where a sheet has an action.
+- **Moving:** it follows its bar 1:1, and past its largest height as a rubber band. Its content, at its top, takes the drag down; short of its largest height, it takes the drag up and grows the sheet before scrolling.
+- **Let go:** it rests at the height UIKit's projection (0.998) carries it nearest to, on a spring of 0.45 s with a bounce of 0.12; past its smallest height it leaves, sliding on down.
+- **Grabber tap:** it steps through the heights.
+
+Tiles light no box under a pointer or
   a press.
 - Profile: the face, the name 28 bold and what the account holds centred over the page's wash,
   which starts at the screen's top, under the bar,

@@ -194,6 +194,7 @@ typedef struct {
     _picker.prioritizesVideoDevices = NO;
     _picker.tintColor = UIColor.whiteColor;
     _picker.activeTintColor = UIColor.whiteColor;
+    _picker.accessibilityIdentifier = @"surco-route-picker";
     _picker.hidden = YES;
     _picker.userInteractionEnabled = NO;
 }

@@ -52,11 +52,8 @@ fn playlist_fields_scroll_while_creation_actions_stay_above_the_keyboard() {
     reveal(&mut tree, "playlist-name", size);
     tree.scroll_to_end("modal_body:playlist-cancel");
     let frame = tree.layout(size);
-    for id in [
-        "playlist-cancel",
-        "playlist-create",
-        "playlist-cancel:close",
-    ] {
+    // iOS's bar: the cross and the check stay while the form scrolls.
+    for id in ["playlist-create", "playlist-cancel:close"] {
         target(&frame, id, size);
     }
     assert!(
@@ -76,13 +73,13 @@ fn importing_has_a_touch_field_and_fixed_actions_in_a_short_viewport() {
         assert!(tree.focus("import-link"));
         reveal(&mut tree, "ios-paste:import-link", size);
         let frame = tree.layout(size);
-        for id in ["import-cancel", "import-go", "import-cancel:close"] {
+        for id in ["import-go", "import-cancel:close"] {
             target(&frame, id, size);
         }
         // The field leads the sheet: scrolled to its end, the actions stay and the field comes back.
         tree.scroll_to_end("modal_body:import-cancel");
         let frame = tree.layout(size);
-        for id in ["import-cancel", "import-go"] {
+        for id in ["import-go", "import-cancel:close"] {
             target(&frame, id, size);
         }
         assert!(tree.focus("import-link"));
@@ -113,11 +110,7 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
     state.sharing = None;
     state.imported = Some((1, vec!["Una canción que no se encontró".into(); 20]));
     state.missed_open = true;
-    for id in [
-        "import-missed-copy",
-        "import-missed-close",
-        "import-missed-close:close",
-    ] {
+    for id in ["import-missed-copy", "import-missed-close:close"] {
         target(&tree(&state, size).layout(size), id, size);
     }
     state.missed_open = false;
@@ -128,7 +121,7 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
     let spoken = dialog.description.as_deref().unwrap();
     assert!(spoken.contains(&state.collection.playlists[0].name), "the reader identifies the actual playlist");
     assert!(spoken.contains("canciones"), "the reader hears the deletion's consequences");
-    for id in ["confirm-yes", "confirm-cancel", "confirm-cancel:close"] {
+    for id in ["confirm-yes", "confirm-cancel:close"] {
         target(&frame, id, size);
     }
 }

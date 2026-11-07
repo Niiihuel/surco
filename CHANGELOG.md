@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Every sheet of the phone is iOS 26's, on the iPhone and on Android alike, drawn in the
+  app's glass.
+  - **Floating:** at partial heights it floats over the page, its corners following the
+    screen's.
+  - **Large:** it anchors to the edges and turns opaque, and the page recedes behind it.
+  - **Bar:** the actions live in it, the cross at its start and the check at its end.
+  - **Dragging:** it follows the finger from its bar, or from its list once that is at its
+    top. Let go, it settles where its speed carries it. Flicked down, it leaves. A tap on
+    its grabber makes it taller.
+- On the iPhone the forms, confirmations, the timer, the device sheet and the menus' sheets
+  are no longer UIKit's. They are the same sheets as Android's, with the song's info, the
+  lyrics' step and the Audio Pipeline. Only a share's "More" opens the system's share sheet.
+
+### Fixed
+
+- On the iPhone, the song's info, the lyrics' step, the Audio Pipeline, adding to a
+  playlist and sharing an artist opened nothing.
+
 ## 0.18.0
 
 ### Changed
