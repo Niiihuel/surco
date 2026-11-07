@@ -119,6 +119,11 @@ struct Script {
     focus: Vec<(Duration, String)>,
     /// Which scroll to move, how far down, and when.
     scrolls: Vec<(Duration, String, f32)>,
+    /// A finger on the tree itself, as a person's: when, on the middle of which region, how
+    /// far down from it, and whether it goes down (0), moves (1) or comes up (2).
+    pointer: Vec<(Duration, String, f32, u8)>,
+    /// Where the finger went down.
+    touched: Option<limn::Point>,
     /// Every frame drawn from a moment on, for so many, saved numbered in a folder: QA's way to
     /// see a motion frame by frame.
     record: Option<(PathBuf, Duration, usize)>,
@@ -375,6 +380,25 @@ impl Host {
         if let Some(seconds) = self.script.seek.filter(|_| self.state.player.position > 0.0) {
             self.script.seek = None;
             self.send(vec![Command::Seek(seconds)]);
+        }
+        while self.script.pointer.first().is_some_and(|(at, ..)| *at <= self.opened.elapsed()) {
+            let (_, id, down, phase) = self.script.pointer.remove(0);
+            let frame = self.tree.frame();
+            if phase == 0 {
+                self.script.touched = frame.regions.iter().rev().find(|region| region.id == id)
+                    .map(|region| limn::Point::new(region.rect.x + region.rect.width / 2.0, region.rect.y + region.rect.height.min(44.0) / 2.0));
+            }
+            let Some(origin) = self.script.touched else { continue };
+            let at = limn::Point::new(origin.x, origin.y + down);
+            let event = match phase { 0 => limn::UiEvent::PointerDown(at), 1 => limn::UiEvent::PointerMove(at), _ => limn::UiEvent::PointerUp(at) };
+            let regions = frame.regions.clone();
+            for action in self.tree.handle_event(event) {
+                note_menu_origin(&mut self.state, &action, &regions);
+                let up = sheet_up(&self.state);
+                let commands = self.state.update(&action);
+                note_sheet_origin(&mut self.state, &action, up, &regions);
+                self.send(commands);
+            }
         }
         while self.script.scrolls.first().is_some_and(|(at, _, _)| *at <= self.opened.elapsed()) {
             let (_, id, offset) = self.script.scrolls.remove(0);
@@ -1181,6 +1205,20 @@ pub fn run() -> eframe::Result {
                     let _ = std::fs::create_dir_all(dir);
                     script.record = Some((PathBuf::from(dir), Duration::from_millis(at.parse().unwrap_or(0)), count.parse().unwrap_or(30)));
                 }
+            }
+            // A tap, and a drag down of so many points over a fifth of a second, through the tree:
+            // what a press of a sheet's grabber or a pull of it does, which `--click` skips.
+            "--tap" | "--drag" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                let at = Duration::from_millis(at.parse().unwrap_or(0));
+                let (id, down) = what.split_once('=').map_or((what, 0.0), |(id, down)| (id, down.parse().unwrap_or(0.0)));
+                let steps: u32 = if argument == "--drag" { 12 } else { 0 };
+                script.pointer.push((at, id.to_owned(), 0.0, 0));
+                for step in 1..=steps {
+                    script.pointer.push((at + Duration::from_millis(16 * u64::from(step)), id.to_owned(), down * step as f32 / steps as f32, 1));
+                }
+                script.pointer.push((at + Duration::from_millis(16 * u64::from(steps) + 30), id.to_owned(), down, 2));
             }
             "--scroll" => {
                 let value = value();
