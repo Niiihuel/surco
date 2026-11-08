@@ -85,6 +85,10 @@ struct Host {
     session: Option<state::Session>,
     touch: mobile_input::TouchInput,
     motion: mobile_motion::Motion,
+    /// Paints the phone's glass over the page beneath it; none without wgpu.
+    glass: Option<limn_egui::GlassRenderer>,
+    /// What the last painted frame could be pressed at, for a scripted press to find.
+    painted: Vec<limn::HitRegion>,
     /// The notice already revealed; ordinary repaints preserve manual scrolling.
     notice: Option<String>,
     #[cfg(target_os = "ios")]
@@ -113,6 +117,17 @@ struct Script {
     actions: Vec<(Duration, UiAction)>,
     /// Where to put the keyboard's focus, and when, as a television's remote would.
     focus: Vec<(Duration, String)>,
+    /// Which scroll to move, how far down, and when.
+    scrolls: Vec<(Duration, String, f32)>,
+    /// A finger on the tree itself, as a person's: when, on the middle of which region, how
+    /// far down from it, and whether it goes down (0), moves (1) or comes up (2).
+    pointer: Vec<(Duration, String, f32, u8)>,
+    /// Where the finger went down.
+    touched: Option<limn::Point>,
+    /// Every frame drawn from a moment on, for so many, saved numbered in a folder: QA's way to
+    /// see a motion frame by frame.
+    record: Option<(PathBuf, Duration, usize)>,
+    recorded: usize,
     screenshot: Option<PathBuf>,
     after: Duration,
     requested: bool,
@@ -366,9 +381,35 @@ impl Host {
             self.script.seek = None;
             self.send(vec![Command::Seek(seconds)]);
         }
+        while self.script.pointer.first().is_some_and(|(at, ..)| *at <= self.opened.elapsed()) {
+            let (_, id, down, phase) = self.script.pointer.remove(0);
+            let frame = self.tree.frame();
+            if phase == 0 || phase == 3 {
+                self.script.touched = frame.regions.iter().rev().find(|region| region.id == id)
+                    .map(|region| limn::Point::new(region.rect.x + region.rect.width / 2.0, region.rect.y + region.rect.height.min(44.0) / 2.0));
+            }
+            let Some(origin) = self.script.touched else { continue };
+            let at = limn::Point::new(origin.x, origin.y + down);
+            let event = match phase { 0 => limn::UiEvent::PointerDown(at), 1 => limn::UiEvent::PointerMove(at), 3 => limn::UiEvent::ContextMenu { position: at }, _ => limn::UiEvent::PointerUp(at) };
+            let regions = frame.regions.clone();
+            for action in self.tree.handle_event(event) {
+                note_menu_origin(&mut self.state, &action, &regions);
+                let up = sheet_up(&self.state);
+                let commands = self.state.update(&action);
+                note_sheet_origin(&mut self.state, &action, up, &regions);
+                self.send(commands);
+            }
+        }
+        while self.script.scrolls.first().is_some_and(|(at, _, _)| *at <= self.opened.elapsed()) {
+            let (_, id, offset) = self.script.scrolls.remove(0);
+            self.tree.set_scroll_offset(&id, offset);
+        }
         while self.script.actions.first().is_some_and(|(at, _)| *at <= self.opened.elapsed()) {
             let (_, action) = self.script.actions.remove(0);
+            note_menu_origin(&mut self.state, &action, &self.painted);
+            let up = sheet_up(&self.state);
             let commands = self.state.update(&action);
+            note_sheet_origin(&mut self.state, &action, up, &self.painted);
             self.send(commands);
         }
     }
@@ -524,10 +565,10 @@ impl eframe::App for Host {
             };
             self.send(commands);
         }
-        // Android's own share sheet takes a song's link to any app, as iOS's does.
+        // Android's own share sheet, picked from Surco's as its "More": the link to any app.
         #[cfg(target_os = "android")]
-        if let Some(track) = self.state.sharing.take() {
-            android_system::share(&track.title, &state::share_link(&track));
+        if let Some((title, link)) = self.state.share_system.take() {
+            android_system::share(&title, &link);
         }
         // The lyrics follow the sound as the route plays it, an Apple TV's over AirPlay late.
         #[cfg(target_os = "ios")]
@@ -541,6 +582,8 @@ impl eframe::App for Host {
         self.tree.set_reduced_motion(still);
         // A remote's arrows move the focus from control to control.
         self.tree.set_spatial_focus(self.state.tv);
+        // A phone's text menu is iOS 26's edit menu, over the field in the bars' glass.
+        self.tree.set_touch_text_menu(self.state.mobile.then_some(view::EDIT_MENU));
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
@@ -622,6 +665,7 @@ impl eframe::App for Host {
         self.state.mobile_ui.content_insets = if self.state.mobile {
             mobile_content_insets(area, safe_content, keyboard_inset)
         } else { Default::default() };
+        self.state.mobile_ui.keyboard = if self.state.mobile && keyboard_inset.is_finite() { keyboard_inset.max(0.0) } else { 0.0 };
         let window = Size::new(area.width(), area.height());
         self.state.wide = window.width >= view::PANEL_FROM;
 
@@ -667,6 +711,8 @@ impl eframe::App for Host {
         self.state.levels = if sounding { surco_audio::meter::levels() } else { Default::default() };
 
         let commands = self.motion.advance(&mut self.state, window, Instant::now());
+        // The page the player uncovers was drawn under it all along: it stands as it was.
+        if self.motion.take_uncovered() { self.tree.settle_entrances(); }
         self.send(commands);
         // Escape leaves the whole window to the app again, and the screen follows.
         if self.state.cinema && ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
@@ -696,6 +742,8 @@ impl eframe::App for Host {
         match self.state.screening().map(|(name, footage, showing)| (name, footage.clone(), showing)) {
             Some((name, footage, showing)) => {
                 let fit = match showing {
+                    // A phone's player stands on it across the whole screen.
+                    _ if self.state.mobile => clip::Fit::Canvas { width: window.width, height: window.height },
                     clip::Showing::Large => {
                         let room = view::cinema_room(window);
                         clip::Fit::Whole { width: view::cinema_picture(&footage.large.0, window).width, room: (room.width, room.height) }
@@ -752,7 +800,7 @@ impl eframe::App for Host {
         let input = if self.state.mobile {
             let raw = ctx.input(|input| input.events.clone());
             let input = self.touch.translate(&raw, input, area.min, &input_frame,
-                state::mobile::is_sheet_handle);
+                |id| state::mobile::is_sheet_handle(id) || id.starts_with(state::mobile::QUEUE_GRIP));
             self.motion.filter(&raw, input, &self.state, mobile_motion::DragArea {
                 frame: &input_frame, origin: area.min, size: window,
                 scroll: self.tree.scroll_offset("mobile-playing"),
@@ -770,7 +818,9 @@ impl eframe::App for Host {
             acted = true;
             self.stirred = Instant::now();
             #[cfg(target_os = "ios")]
-            if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { .. }) { continue; }
+            // UIKit's own menus stand for a row's; a field's text menu is still limn's.
+            if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { position }
+                if !input_frame.press_region(position).is_some_and(|hit| matches!(hit.kind, limn::HitKind::TextInput | limn::HitKind::TextArea))) { continue; }
             #[cfg(any(target_os = "ios", target_os = "android"))]
             if matches!(event, limn::UiEvent::Paste(_)) {
                 // egui-winit's iOS and Android clipboards are app-local. The shortcut still
@@ -792,7 +842,10 @@ impl eframe::App for Host {
                 actions.extend(back_target(&self.state).map(|id| UiAction::Clicked { id: id.into() }));
             }
             for action in actions {
+                note_menu_origin(&mut self.state, &action, &input_frame.regions);
+                let up = sheet_up(&self.state);
                 let commands = self.state.update(&action);
+                note_sheet_origin(&mut self.state, &action, up, &input_frame.regions);
                 self.send(commands);
             }
         }
@@ -871,8 +924,10 @@ impl eframe::App for Host {
         }
         if std::mem::take(&mut self.state.mobile_ui.blur) { self.tree.clear_focus(); acted = true; }
         let now = Instant::now();
-        let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient();
+        let moving = self.motion.active(now) || self.state.is_sliding(now) || self.state.ambient() || self.state.cover_moving();
         let commands = self.motion.advance(&mut self.state, window, now);
+        // The page the player uncovers was drawn under it all along: it stands as it was.
+        if self.motion.take_uncovered() { self.tree.settle_entrances(); }
         acted |= !commands.is_empty();
         self.send(commands);
         if self.state.tv {
@@ -944,6 +999,8 @@ impl eframe::App for Host {
                                 self.send(commands);
                             }
                             let commands = self.motion.advance(&mut self.state, window, Instant::now());
+                            // The page the player uncovers was drawn under it all along: it stands as it was.
+                            if self.motion.take_uncovered() { self.tree.settle_entrances(); }
                             self.send(commands);
                             frame = layout_with_notice(&mut self.state, &mut self.tree, window, &mut self.notice);
                         }
@@ -983,20 +1040,41 @@ impl eframe::App for Host {
             }
         }
         limn_egui::set_cursor(&ctx, self.tree.cursor());
+        // The page under a player on the move is glass as it is when shown: painted without
+        // the glass its bars were opaque until the player had gone, a flash.
         if let Some(underlay) = self.motion.underlay(&self.state, window) {
-            limn_egui::paint_at(ui, underlay, area.min);
+            match &mut self.glass {
+                Some(glass) => glass.paint_page(ui, underlay, area.min),
+                None => limn_egui::paint_at(ui, underlay, area.min),
+            }
         }
-        limn_egui::paint_at(ui, &frame, area.min);
+        match &mut self.glass {
+            Some(glass) => glass.paint_page(ui, &frame, area.min),
+            None => limn_egui::paint_at(ui, &frame, area.min),
+        }
         self.motion.remember(&frame, &self.state, window);
 
+        if let Some((dir, start, count)) = self.script.record.clone() {
+            let at = self.opened.elapsed();
+            if at >= start && self.script.recorded < count {
+                let path = dir.join(format!("{:03}-{}ms.png", self.script.recorded, at.as_millis()));
+                self.script.recorded += 1;
+                ctx.request_screenshot(move |image| {
+                    let [width, height] = image.size;
+                    let _ = image::save_buffer(&path, image.as_raw(), width as u32, height as u32, image::ColorType::Rgba8);
+                });
+                ctx.request_repaint();
+            }
+        }
         if let Some(path) = self.script.screenshot.clone() {
             self.capture(&ctx, &path);
         } else if !on_screen() {
             // Behind the lock screen nothing animates; the next frame waits for the return.
         // The lyrics' fill moves every frame, as BitChord's does on each of the display's.
-        } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) || self.state.lyrics_fill() {
+        // So does the cover on its way into the lyrics' head, from the press that sends it.
+        } else if self.state.is_sliding(Instant::now()) || self.motion.active(Instant::now()) || self.state.lyrics_fill() || self.state.cover_moving() {
             ctx.request_repaint();
-        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves()).then_some(AMBIENT_FRAME)) {
+        } else if let Some(after) = match (self.tree.animation_repaint_after(), (self.state.ambient() || self.state.title_moves() || self.state.signal_runs()).then_some(AMBIENT_FRAME)) {
             (Some(own), Some(ambient)) => Some(own.min(ambient)),
             (own, ambient) => own.or(ambient),
         } {
@@ -1007,7 +1085,36 @@ impl eframe::App for Host {
             // A running animation asks for the very next frame: never throttle it.
             ctx.request_repaint_after(if settled && !after.is_zero() { after.max(frame + ahead) } else { after });
         }
+        self.painted = frame.regions;
     }
+}
+
+/// Which of the phone's sheets is up, the one over the others first.
+fn sheet_up(state: &state::State) -> Option<&'static str> {
+    let ui = &state.mobile_ui;
+    [(state.confirm.is_some(), "confirm"), (state.cropping.is_some(), "crop"), (state.sharing.is_some() || state.sharing_page.is_some(), "share"),
+        (state.creating.is_some(), "playlist"), (state.profile_draft.is_some(), "profile"), (state.handoff.is_some(), "handoff"),
+        (state.missed_open, "missed"), (state.import_run.is_some() && !state.import_hidden, "import-run"), (state.importing.is_some(), "import"),
+        (ui.pipeline, "pipeline"), (ui.picking.is_some(), "picking"), (ui.info.is_some(), "info"), (ui.offset_open, "offset"),
+        (state.sleep_open, "sleep"), (ui.library.is_some(), "library"), (ui.connections, "connections")]
+        .into_iter().find(|(up, _)| *up).map(|(_, sheet)| sheet)
+}
+
+/// A sheet that a press has just brought up pops out of what was pressed, as aurora's panels do.
+fn note_sheet_origin(state: &mut state::State, action: &UiAction, before: Option<&'static str>, regions: &[limn::HitRegion]) {
+    let UiAction::Clicked { id } = action else { return };
+    let now = sheet_up(state);
+    if state.mobile && now.is_some() && now != before {
+        state.mobile_ui.sheet_from = regions.iter().find(|region| region.id == *id).map(|region| region.rect);
+    }
+}
+
+/// A song's menu grows out of the button, or the row held, that opened it.
+fn note_menu_origin(state: &mut state::State, action: &UiAction, regions: &[limn::HitRegion]) {
+    let UiAction::Clicked { id } = action else { return };
+    let Some(row) = id.strip_prefix("more:").filter(|_| state.mobile) else { return };
+    let found = |wanted: &str| regions.iter().find(|region| region.id == wanted).map(|region| region.rect);
+    if let Some(origin) = found(id).or_else(|| found(row)) { state.mobile_ui.menu_origin = Some(origin); }
 }
 
 /// The id of the field the search is typed in: the phone's own, or the desktop top bar's.
@@ -1051,6 +1158,10 @@ fn graphics_configuration() -> eframe::WgpuConfiguration {
             });
         }
     }
+    // QA records a motion frame by frame: a window out of sight gets a frame a second at vsync.
+    if std::env::var_os("SURCO_QA_NO_VSYNC").is_some() {
+        configuration.surface.present_mode = eframe::wgpu::PresentMode::AutoNoVsync;
+    }
     configuration
 }
 
@@ -1091,6 +1202,41 @@ pub fn run() -> eframe::Result {
                     _ => UiAction::Clicked { id: what.to_owned() },
                 };
                 script.actions.push((Duration::from_millis(at.parse().unwrap_or(0)), action));
+            }
+            "--record" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                if let Some((dir, count)) = what.split_once('=') {
+                    let _ = std::fs::create_dir_all(dir);
+                    script.record = Some((PathBuf::from(dir), Duration::from_millis(at.parse().unwrap_or(0)), count.parse().unwrap_or(30)));
+                }
+            }
+            // A tap, and a drag down of so many points over a fifth of a second, through the tree:
+            // what a press of a sheet's grabber or a pull of it does, which `--click` skips.
+            "--tap" | "--drag" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                let at = Duration::from_millis(at.parse().unwrap_or(0));
+                let (id, down) = what.split_once('=').map_or((what, 0.0), |(id, down)| (id, down.parse().unwrap_or(0.0)));
+                let steps: u32 = if argument == "--drag" { 12 } else { 0 };
+                script.pointer.push((at, id.to_owned(), 0.0, 0));
+                for step in 1..=steps {
+                    script.pointer.push((at + Duration::from_millis(16 * u64::from(step)), id.to_owned(), down * step as f32 / steps as f32, 1));
+                }
+                script.pointer.push((at + Duration::from_millis(16 * u64::from(steps) + 30), id.to_owned(), down, 2));
+            }
+            // A finger held on a control until its menu comes: a field's, the edit menu.
+            "--hold" => {
+                let value = value();
+                let (id, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                script.pointer.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned(), 0.0, 3));
+            }
+            "--scroll" => {
+                let value = value();
+                let (what, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                if let Some((id, offset)) = what.split_once('=') {
+                    script.scrolls.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned(), offset.parse().unwrap_or(0.0)));
+                }
             }
             "--focus" => {
                 let value = value();
@@ -1218,6 +1364,8 @@ pub fn run() -> eframe::Result {
                 script,
                 touch: mobile_input::TouchInput::default(),
                 motion: mobile_motion::Motion::new(Instant::now()),
+                glass: creation.wgpu_render_state.as_ref().map(limn_egui::GlassRenderer::new),
+                painted: Vec::new(),
                 notice: None,
                 #[cfg(target_os = "ios")]
                 native_ui,
@@ -1374,7 +1522,7 @@ mod press_tests {
         state.show(crate::player::PlayerView { current: Some(track), playing: true, position: 12.0, duration: 200.0, ..Default::default() });
         state.lyrics = Some(("a".into(), state::Lyrics::Lines((0..20).map(|i| Line { words: Vec::new(), at_ms: i * 3_000, text: format!("line {i}") }).collect())));
         let window = Size::new(390.0, 844.0);
-        for id in ["play-pause", "repeat", "shuffle", "next"] {
+        for id in ["play-pause", "previous", "next", "lyrics"] {
             let mut tree = UiTree::new(Element::spacer());
             let mut seen = None;
             let frame = layout_with_notice(&mut state, &mut tree, window, &mut seen);

@@ -6,12 +6,15 @@ mobile-unlike = Quitar de Tus me gusta
 mobile-back-to-song = Volver a la canción
 mobile-show-queue = Ver cola
 mobile-tabs = Pestañas
-mobile-queue = Cola de reproducción
+mobile-queue = Cola
 mobile-now-playing = Ahora suena
+mobile-playing-from = Reproduciendo desde { $name }
 mobile-lyrics = Letra
 mobile-your-music = Tu música
 mobile-close-notice = Cerrar aviso
 mobile-tab-home = Inicio
+mobile-tab-explore = Explorar
+mobile-tab-library = Biblioteca
 mobile-open-player = Abrir reproductor: { $title }
 mobile-connect-device = Conectar a un dispositivo
 mobile-options-for = Opciones de { $title }
@@ -37,18 +40,11 @@ mobile-save-to-library = Guardar en tu biblioteca
 mobile-unfollow = Dejar de seguir
 mobile-remove-from-library = Quitar de tu biblioteca
 mobile-library-options = Opciones de biblioteca
-mobile-system-output = Salida del sistema
-mobile-listening-on = ESCUCHANDO EN
 mobile-route-picker = Selector de destinos de audio
 mobile-airplay-bluetooth = AirPlay o Bluetooth
 mobile-open-route-picker = Abrí el selector de audio
 mobile-on-iphone = Disponible en el iPhone
-mobile-new-device = ¿Un dispositivo nuevo?
-mobile-new-device-detail = Vinculá tus auriculares o parlantes en Ajustes > Bluetooth del iPhone. Después elegilos desde el selector de audio.
-mobile-surco-volume = Volumen de Surco
 mobile-done = Listo
-mobile-listen-on = Escuchar en
-mobile-listen-on-detail = Elegí dónde sigue la música.
 
 ## Player and lyrics
 
@@ -60,14 +56,9 @@ mobile-play-failed = No se pudo reproducir
 mobile-playback-position = Posición de reproducción
 mobile-repeat = Repetir
 mobile-volume = Volumen
-mobile-unsynced-lyrics = Letra sin sincronización · { $source }
-mobile-lyrics-loading = Buscando la letra…
-mobile-lyrics-missing = No hay letra disponible.
-mobile-lyrics-open = Abrí la letra para buscarla.
 mobile-show-lyrics = Mostrar la letra
-mobile-view-artist = Ver artista: { $name }
-mobile-about-artist = Acerca del artista
-mobile-subscribers = { $subscribers } suscriptores
+mobile-show-controls = Mostrar los controles
+mobile-hide-controls = Ocultar los controles
 
 ## Album, artist and playlist pages
 
@@ -85,12 +76,9 @@ mobile-songs-not-found = { $count ->
     [one] 1 canción no se encontró
    *[other] { $count } canciones no se encontraron
 }
-mobile-delete-playlist = Eliminar playlist
 mobile-playlist-empty = Todavía no tiene canciones
 mobile-playlist-empty-detail = Buscá una canción y elegí «Agregar a» en su menú.
-mobile-share-playlist = Compartir playlist
 mobile-songs-copied = Canciones copiadas: pegalas en la otra app
-mobile-copy-songs = Copiar canciones para otra app
 
 ## Search
 
@@ -159,6 +147,8 @@ mobile-genre-soundtracks =
 
 mobile-crossfade-off = No
 mobile-autoplay = Reproducción automática
+mobile-autoplay-detail = Música parecida, elegida para seguir
+mobile-move-in-queue = Mover { $title }
 mobile-connections = Conexiones y dispositivos
 mobile-listen-elsewhere = Escuchar en otro dispositivo
 mobile-audio-output = Salida de audio
@@ -175,7 +165,6 @@ mobile-view = Vista
 mobile-view-compact = Compacta
 mobile-view-list = Lista
 mobile-view-grid = Cuadrícula
-mobile-import-music = Importar música de otras apps
 mobile-about = Acerca de
 mobile-version = Versión
 mobile-licenses = Licencias de terceros
@@ -197,3 +186,87 @@ mobile-search-start = Escuchá lo que te gusta
 mobile-search-start-detail = Buscá artistas, canciones o álbumes.
 mobile-home-recent = Recientes
 mobile-search-list = Buscar en esta lista
+mobile-this-phone = Este teléfono
+mobile-playing-here = Sonando acá
+mobile-pipeline = Audio Pipeline
+mobile-pipeline-detail = La señal en vivo, de la pista a la salida
+mobile-pipeline-track = Pista
+mobile-pipeline-decoder = Decodificador
+mobile-pipeline-resampler = Remuestreo
+mobile-pipeline-dsp = DSP
+mobile-pipeline-output = Dispositivo de salida
+mobile-pipeline-source = Origen
+mobile-pipeline-downloaded = Descargada
+mobile-pipeline-stream = Flujo
+mobile-pipeline-name = Nombre
+mobile-pipeline-format = Formato
+mobile-pipeline-rate = Entrada → salida
+mobile-pipeline-passthrough = Ninguno, pasa directo
+mobile-pipeline-type = Tipo
+mobile-pipeline-equalizer = Ecualizador
+mobile-pipeline-custom = Personalizado
+mobile-pipeline-off = Apagado
+mobile-pipeline-on = Encendido
+mobile-pipeline-normalize = Normalización
+mobile-pipeline-mono = Mono
+mobile-pipeline-crossfade = Fundido
+mobile-pipeline-volume = Volumen
+mobile-pipeline-device = Dispositivo
+mobile-pipeline-api = API de salida
+mobile-pipeline-route = Ruta
+mobile-pipeline-waiting = Aparece con la próxima canción
+mobile-dislike = No me gusta
+mobile-undislike = Ya no me disgusta
+mobile-add-to-playlist = Agregar a una playlist
+mobile-start-radio = Iniciar radio
+mobile-song-info = Info de la canción
+mobile-lyrics-offset = Ajustar la letra
+mobile-lyrics-offset-detail = Mové la letra si va antes o después de lo que suena
+mobile-lyrics-earlier = Antes
+mobile-lyrics-later = Después
+mobile-lyrics-reset = Volver a cero
+mobile-info-title = Título
+mobile-info-artist = Artista
+mobile-info-album = Álbum
+mobile-info-length = Duración
+mobile-info-stream = Flujo
+mobile-info-id = ID
+mobile-top-picks = Para vos
+mobile-find-mood = Tu estado de ánimo
+mobile-listening-experience = Tu experiencia de escucha
+mobile-minutes-listened = Minutos escuchados
+mobile-plays-year = { $count ->
+    [one] 1 reproducción
+   *[other] { $plays } reproducciones
+} · { $year }
+mobile-listening-since = Escuchando desde
+mobile-top-song = Tu canción más escuchada
+mobile-top-artist = Tu artista más escuchado
+mobile-import-from-link = Desde un enlace
+mobile-top-songs = Canciones populares
+mobile-single = Sencillo
+mobile-share-open = Abrir en YouTube Music
+
+## Settings, as one list
+mobile-settings-liked = { $count ->
+    [one] 1 me gusta
+   *[other] { $count } me gusta
+}
+mobile-settings-music = Tu música
+mobile-settings-import = Importar playlist
+mobile-settings-import-detail = Desde el enlace de otra app
+mobile-settings-handoff-detail = Por Wi-Fi, con su QR o su código
+mobile-settings-more = Más
+mobile-settings-version = Versión { $version }
+mobile-import-placeholder = Pegá el enlace de una playlist
+mobile-import-detail = Surco reconoce de qué app es y te muestra la playlist antes de traerla.
+mobile-import-apps = Apps de las que se puede importar
+mobile-import-help = ¿Dónde copio el enlace?
+mobile-import-preview = La playlist del enlace
+mobile-handoff-detail = Tus datos viven en este teléfono. Con los dos en el mismo Wi-Fi, el otro los lee de acá.
+mobile-handoff-how = En el otro dispositivo, abrí Configuración › Pasar a otro dispositivo › Recibir, y escaneá el QR o escribí el código.
+mobile-handoff-nothing = Nada: elegí al menos una parte
+mobile-handoff-receive-instead = Recibir en este teléfono
+mobile-handoff-send-instead = Enviar desde este teléfono
+mobile-clips = Videos de las canciones
+mobile-clips-detail = En el reproductor, el video de la canción detrás de los controles; apagado, su portada.

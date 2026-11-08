@@ -17,6 +17,24 @@ use ytmapi_rs::query::search::{AlbumsFilter, ArtistsFilter, SearchQuery, Spellin
 
 pub use stream::{Audio, Stream, Video};
 
+/// One of the catalog's moods or genres, as its Explore page lists them: its name, what opens
+/// its lists, and the colour of the stripe the service draws beside it, as RGB.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Mood {
+    pub title: String,
+    pub params: String,
+    pub color: Option<u32>,
+}
+
+/// A list of the catalog's: its id, its name, who made it and its largest cover.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CatalogList {
+    pub id: String,
+    pub title: String,
+    pub author: String,
+    pub cover: Option<String>,
+}
+
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
 
@@ -128,6 +146,21 @@ impl YouTube {
             None => self.music().await?.get_playlist_details(PlaylistID::from_raw(&id)).await?.title,
         };
         Ok((name, tracks))
+    }
+
+    /// The catalog's moods and genres, each once, in the order its Explore page has them. The
+    /// answer is read raw: the parsed one leaves out each one's colour.
+    pub async fn moods(&self) -> Result<Vec<Mood>> {
+        let raw = self.music().await?.raw_json_query(ytmapi_rs::query::GetMoodCategoriesQuery).await?;
+        Ok(moods(&serde_json::from_str(&raw)?))
+    }
+
+    /// The lists a mood or genre opens on, `params` as `moods` gave them.
+    pub async fn mood_lists(&self, params: &str) -> Result<Vec<CatalogList>> {
+        let sections = self.music().await?.get_mood_playlists(ytmapi_rs::common::MoodCategoryParams::from_raw(params)).await?;
+        Ok(sections.into_iter().flat_map(|section| section.playlists).map(|list| CatalogList {
+            id: list.playlist_id.get_raw().to_owned(), title: list.title, author: list.author, cover: artwork(list.thumbnails),
+        }).collect())
     }
 
     /// The id of the artist a name most likely means, for a track that names its artist
@@ -368,6 +401,28 @@ fn official(artist: &str, title: &str, channel: &str, name: &str) -> bool {
     !artist.is_empty() && channel == artist && plain(name).contains(&plain(title))
 }
 
+/// The moods and genres of the answer to the Explore page's browse, each once: a later
+/// section that repeats them, as the service's shortcuts do, adds none.
+fn moods(answer: &serde_json::Value) -> Vec<Mood> {
+    let sections = answer.pointer("/contents/singleColumnBrowseResultsRenderer/tabs/0/tabRenderer/content/sectionListRenderer/contents")
+        .and_then(serde_json::Value::as_array).cloned().unwrap_or_default();
+    let mut moods: Vec<Mood> = Vec::new();
+    for item in sections.iter().filter_map(|section| section.pointer("/gridRenderer/items")?.as_array()).flatten() {
+        let Some(button) = item.get("musicNavigationButtonRenderer") else { continue };
+        let endpoint = button.pointer("/clickCommand/browseEndpoint").or_else(|| button.pointer("/navigationEndpoint/browseEndpoint"));
+        let Some(params) = endpoint.and_then(|endpoint| endpoint.get("params")?.as_str()) else { continue };
+        let title: String = button.pointer("/buttonText/runs").and_then(serde_json::Value::as_array).into_iter().flatten()
+            .filter_map(|run| run.get("text")?.as_str()).collect();
+        // ARGB, as a number or its digits; the alpha is always whole.
+        let stripe = button.pointer("/solid/leftStripeColor");
+        let color = stripe.and_then(|value| value.as_u64().or_else(|| value.as_str()?.parse().ok())).map(|argb| (argb & 0xFF_FF_FF) as u32);
+        if !title.trim().is_empty() && !moods.iter().any(|mood| mood.params == params) {
+            moods.push(Mood { title, params: params.to_owned(), color });
+        }
+    }
+    moods
+}
+
 /// The largest rendition on offer.
 fn artwork(thumbnails: Vec<Thumbnail>) -> Option<String> {
     thumbnails.into_iter().max_by_key(|thumbnail| thumbnail.width).map(|thumbnail| thumbnail.url)
@@ -391,7 +446,24 @@ fn duration_ms(text: &str) -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{album_playlist_name, duration_ms, official, playlist_browse_id, lyrics_video_id, YouTube};
+    use super::{album_playlist_name, duration_ms, moods, official, playlist_browse_id, lyrics_video_id, Mood, YouTube};
+
+    #[test]
+    fn the_moods_are_read_with_their_colour_each_once() {
+        let button = |text: &str, params: &str, color: serde_json::Value| serde_json::json!({ "musicNavigationButtonRenderer": {
+            "buttonText": { "runs": [{ "text": text }] }, "solid": { "leftStripeColor": color },
+            "clickCommand": { "browseEndpoint": { "browseId": "FEmusic_moods_and_genres_category", "params": params } } } });
+        let grid = |items: Vec<serde_json::Value>| serde_json::json!({ "gridRenderer": { "items": items } });
+        let answer = serde_json::json!({ "contents": { "singleColumnBrowseResultsRenderer": { "tabs": [{ "tabRenderer": { "content": { "sectionListRenderer": { "contents": [
+            grid(vec![button("Chill", "a", serde_json::json!(4288460507u64)), button("Focus", "b", serde_json::json!("4294945024"))]),
+            grid(vec![button("Chill", "a", serde_json::json!(1)), button("Rock", "c", serde_json::Value::Null)]),
+        ] } } } }] } } });
+        assert_eq!(moods(&answer), [
+            Mood { title: "Chill".into(), params: "a".into(), color: Some(4288460507 & 0xFFFFFF) },
+            Mood { title: "Focus".into(), params: "b".into(), color: Some(4294945024 & 0xFFFFFF) },
+            Mood { title: "Rock".into(), params: "c".into(), color: None },
+        ]);
+    }
 
     #[test]
     fn lyrics_accept_only_video_ids_and_never_urls_other_catalog_ids_or_local_keys() {

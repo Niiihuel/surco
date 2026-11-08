@@ -52,11 +52,8 @@ fn playlist_fields_scroll_while_creation_actions_stay_above_the_keyboard() {
     reveal(&mut tree, "playlist-name", size);
     tree.scroll_to_end("modal_body:playlist-cancel");
     let frame = tree.layout(size);
-    for id in [
-        "playlist-cancel",
-        "playlist-create",
-        "playlist-cancel:close",
-    ] {
+    // iOS's bar: the cross and the check stay while the form scrolls.
+    for id in ["playlist-create", "playlist-cancel:close"] {
         target(&frame, id, size);
     }
     assert!(
@@ -76,13 +73,14 @@ fn importing_has_a_touch_field_and_fixed_actions_in_a_short_viewport() {
         assert!(tree.focus("import-link"));
         reveal(&mut tree, "ios-paste:import-link", size);
         let frame = tree.layout(size);
-        for id in ["import-cancel", "import-go", "import-cancel:close"] {
+        for id in ["import-go", "import-cancel:close"] {
             target(&frame, id, size);
         }
+        // The field leads the sheet: scrolled to its end, the actions stay and the field comes back.
         tree.scroll_to_end("modal_body:import-cancel");
         let frame = tree.layout(size);
-        if size.height == 240.0 {
-            assert!(crate::mobile_input::can_paste(&tree, &frame, "import-link"), "the shorter form keeps its editor visible even at the end");
+        for id in ["import-go", "import-cancel:close"] {
+            target(&frame, id, size);
         }
         assert!(tree.focus("import-link"));
         tree.reveal("import-link");
@@ -106,17 +104,13 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
         artwork_url: None,
         duration_ms: 180_000,
     });
-    for id in ["share-copy", "share-close:close"] {
+    for id in ["share-copy", "share-close"] {
         target(&tree(&state, size).layout(size), id, size);
     }
     state.sharing = None;
     state.imported = Some((1, vec!["Una canción que no se encontró".into(); 20]));
     state.missed_open = true;
-    for id in [
-        "import-missed-copy",
-        "import-missed-close",
-        "import-missed-close:close",
-    ] {
+    for id in ["import-missed-copy", "import-missed-close:close"] {
         target(&tree(&state, size).layout(size), id, size);
     }
     state.missed_open = false;
@@ -127,7 +121,7 @@ fn sharing_missing_songs_and_confirmation_keep_touch_footers_visible() {
     let spoken = dialog.description.as_deref().unwrap();
     assert!(spoken.contains(&state.collection.playlists[0].name), "the reader identifies the actual playlist");
     assert!(spoken.contains("canciones"), "the reader hears the deletion's consequences");
-    for id in ["confirm-yes", "confirm-cancel", "confirm-cancel:close"] {
+    for id in ["confirm-yes", "confirm-cancel:close"] {
         target(&frame, id, size);
     }
 }
@@ -153,4 +147,20 @@ fn the_equalizer_page_reveals_its_controls_and_each_band_takes_its_column() {
         assert!(rect.x >= 0.0 && rect.x + rect.width <= size.width, "{id} fits: {rect:?}");
     }
     assert!(tree.layout(size).access.iter().any(|node| node.id == "back"), "back leaves it");
+}
+
+
+
+#[test]
+fn over_the_keyboard_the_import_sheet_grows_and_keeps_its_field_and_bar_above_it() {
+    let size = Size::new(390.0, 844.0);
+    let mut state = State::default();
+    state.mobile = true;
+    state.importing = Some(String::new());
+    state.mobile_ui.keyboard = 336.0;
+    let frame = tree(&state, size).layout(size);
+    for id in ["import-link", "import-go", "import-cancel:close"] {
+        let node = frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id}"));
+        assert!(node.rect.y >= 0.0 && node.rect.y + node.rect.height <= size.height - 336.0 + 0.5, "{id} above the keyboard: {:?}", node.rect);
+    }
 }

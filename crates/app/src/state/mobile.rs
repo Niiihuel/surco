@@ -8,10 +8,15 @@ const SEARCH_DELAY: Duration = Duration::from_millis(200);
 fn sheet_dismiss_id(handle: &str) -> Option<&str> {
     let id = handle.strip_suffix(":drag")?;
     matches!(id, "mobile-context-close" | "mobile-connections-close" | "playlist-cancel"
-        | "import-cancel" | "import-hide" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close").then_some(id)
+        | "import-cancel" | "import-hide" | "import-missed-close" | "share-close" | "confirm-cancel" | "equalizer-close" | "mobile-library-close"
+        | "mobile-picking-close" | "mobile-info-close" | "lyrics-offset-close" | "sleep-dismiss").then_some(id)
 }
 
 pub(crate) fn is_sheet_handle(id: &str) -> bool { sheet_dismiss_id(id).is_some() }
+
+/// What a phone's queue row's grip is named before its place: a finger on it moves the row
+/// rather than scrolling the list.
+pub(crate) const QUEUE_GRIP: &str = "upcoming-grip:";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) enum SearchFilter {
@@ -65,8 +70,16 @@ pub(crate) struct MobileUi {
     pub content_insets: ContentInsets,
     /// Host-owned translation of the full player surface in logical points.
     pub player_offset: f32,
+    /// How far the player's cover has flown from the sheet toward the mini player: 0 while it
+    /// rides the sheet, as under a finger, 1 on the mini player's thumbnail.
+    pub player_flight: f32,
     /// An explicit dismissal requests animation before the Host navigates back.
     pub player_close: bool,
+    /// Whether the player's controls are put away, its video bare under the song's name.
+    pub controls_away: bool,
+    /// How far the player's cover has gone into the lyrics' or the queue's head: 0 at rest on
+    /// the player, 1 at rest there; the host moves it.
+    pub collapse: f32,
     /// Animated Search header height; None outside the Search tab.
     pub search_header: Option<f32>,
     /// The shared chrome condenses only after the current title scrolls above it.
@@ -75,14 +88,38 @@ pub(crate) struct MobileUi {
     pub scrolled: bool,
     /// How far the page has scrolled, which carries the native large title up with it.
     pub page_scroll: f32,
+    /// Whether the tabs are folded into one row with the mini player, as BitChord's bar is
+    /// while the page goes down, and how far it has gone one way since it last turned.
+    pub bar_inline: bool,
+    pub bar_travel: f32,
+    /// How far down the page was when the bar last looked.
+    pub bar_scroll: f32,
+    /// When the song playing became the one it is: its banner fades in only then, not each
+    /// time it comes back from a flight into the mini player or the lyrics' head.
+    pub song_since: Option<std::time::Instant>,
+    /// How far the bar has folded into one row, from 0 open to 1 folded, as its spring has got.
+    pub bar_fold: f32,
     pub search_editing: bool,
     /// Explicit recent/browse/clear actions supersede any live native composition.
     pub search_intent: u64,
     /// The host consumes this once after changing the view.
     pub blur: bool,
     pub context: Option<TrackContext>,
+    /// Where the song's menu grows from and goes back into: the button or row that opened it,
+    /// in the window's points, as the host found it. Without it the menu is a sheet.
+    pub menu_origin: Option<limn::Rect>,
+    /// Where the sheet up now came out of, and goes back into: what was pressed to open it.
+    pub sheet_from: Option<limn::Rect>,
     pub library: Option<LibraryContext>,
     pub connections: bool,
+    /// Whether the Audio Pipeline stands over the output sheet.
+    pub pipeline: bool,
+    /// The row whose song is being put into a playlist, while the playlists are offered.
+    pub picking: Option<String>,
+    /// The song whose details are shown.
+    pub info: Option<Track>,
+    /// Whether the sheet that moves the lyrics ahead or behind is open.
+    pub offset_open: bool,
     pub route: Option<(String, String)>,
     pub native_routes: bool,
     /// UIKit context menus, sheets and paste controls are attached to the live canvas.
@@ -96,6 +133,8 @@ pub(crate) struct MobileUi {
     // SurcoSurfaces.m's chrome once the iPhone is settled on limn's bars.
     pub native_bars: bool,
     pub keyboard_visible: bool,
+    /// How much of the screen's foot the keyboard covers, as it slides: a sheet grows by it.
+    pub keyboard: f32,
     pub sheet_drag: Option<(String, limn::BottomSheetDrag)>,
     pub notice: Option<String>,
     /// The route uncovered by closing the player. It is already on screen
@@ -315,6 +354,8 @@ impl State {
                     return Some(Vec::new());
                 }
                 if let Some((action, row)) = id.strip_prefix("do:").and_then(|rest| rest.split_once(':')) {
+                    // A list chosen for the song closes the lists offered with the menu.
+                    if action != "playlists" { self.mobile_ui.picking = None; }
                     let commands = self.act(action, row);
                     self.mobile_ui.context = None;
                     self.menu = None;
@@ -368,7 +409,19 @@ impl State {
                     "search-submit" => return Some(self.mobile_submit()),
                     "mobile-context-close" => self.mobile_ui.context = None,
                     "mobile-library-close" => self.mobile_ui.library = None,
-                    "mobile-connections-close" => self.mobile_ui.connections = false,
+                    "mobile-connections-close" => {
+                        self.mobile_ui.connections = false;
+                        self.mobile_ui.pipeline = false;
+                    }
+                    "audio-pipeline" => self.mobile_ui.pipeline = true,
+                    "audio-pipeline-close" => self.mobile_ui.pipeline = false,
+                    "mobile-picking-close" => self.mobile_ui.picking = None,
+                    "mobile-info-close" => self.mobile_ui.info = None,
+                    "lyrics-offset-close" => self.mobile_ui.offset_open = false,
+                    // Half a second each way, as BitChord's; back to where it was found.
+                    "lyrics-offset:earlier" => self.lyrics_offset += 0.5,
+                    "lyrics-offset:later" => self.lyrics_offset -= 0.5,
+                    "lyrics-offset:reset" => self.lyrics_offset = 0.0,
                     "mobile-notice-close" => {
                         self.mobile_ui.notice = None;
                         if self.page == Page::Lyrics { self.lyric_shown = None; }
@@ -392,7 +445,7 @@ impl State {
                         self.mobile_ui.blur = true;
                     }
                     // Navigation must cancel delayed requests from the search tab.
-                    "home" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
+                    "home" | "browse" | "mobile-library" | "mobile-playing" | "settings" | "back" => {
                         self.mobile_ui.library = None;
                         self.search_due = None;
                         self.mobile_ui.search_editing = false;
@@ -552,9 +605,14 @@ mod tests {
         assert!(state.open_url.is_none());
         state.importing = Some(String::new());
         let link = "https://open.spotify.com/playlist/example";
-        assert!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: link.into() }).is_empty());
-        assert_eq!(state.importing.as_deref(), Some(link));
-        assert!(state.import_progress.is_none());
+        // The list a link names is read at once, to be shown; it is brought in only on Import.
+        assert_eq!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: link.into() }), vec![Command::PeekImport(link.into())]);
+        assert!(state.update(&UiAction::InputChanged { id: "import-link".into(), value: format!("{link} ") }).is_empty(), "read once");
+        assert!(state.import_progress.is_none() && state.import_run.is_none());
+        state.apply(crate::backend::Event::ImportPeeked { link: "https://open.spotify.com/playlist/other".into(), result: Ok(("Otra".into(), 3)) });
+        assert_eq!(state.import_peek, Some((link.into(), None)), "a link replaced meanwhile is forgotten");
+        state.apply(crate::backend::Event::ImportPeeked { link: link.into(), result: Ok(("Lista".into(), 12)) });
+        assert_eq!(state.import_peek, Some((link.into(), Some(Ok(("Lista".into(), 12))))));
     }
 
     #[test]

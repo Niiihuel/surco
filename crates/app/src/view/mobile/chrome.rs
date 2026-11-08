@@ -62,14 +62,6 @@ pub(super) fn spotify_fade(canvas: Color) -> Vec<Color> {
     [0, 150, 220, 248, 255, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
 }
 
-/// BitChord's scrim under the floating bars: clear at their top and solid by the foot of the
-/// player's bar, so nothing under them shows in the gap between the two or beside the tabs'
-/// rounded ends. It darkens sooner than BitChord's curve, as limn blends in linear light,
-/// where a faint veil hides little of a white row.
-pub(super) fn floating_fade(canvas: Color) -> Vec<Color> {
-    [0, 120, 215, 255, 255, 255, 255, 255, 255, 255].map(|alpha| Color::rgba(canvas.r, canvas.g, canvas.b, alpha)).to_vec()
-}
-
 /// Under Liquid Glass the rows stay seen through the floating bar, deepening only by the home
 /// indicator.
 pub(super) fn glass_fade(canvas: Color) -> Vec<Color> {

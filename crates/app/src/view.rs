@@ -10,8 +10,8 @@ mod onboarding;
 mod wrapped;
 mod jam;
 pub(crate) use mobile::route_key as mobile_route_key;
+pub(crate) use mobile::EDIT_MENU;
 #[cfg(any(target_os = "ios", test))]
-pub(crate) use jam::entry as jam_entry;
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, mini_buttons, search::filters as search_filters, surface_tint, tabs, title as mobile_title};
 pub(crate) use mobile::{large_title as mobile_large_title, search_header_height as mobile_search_header, search_in_header};
@@ -19,7 +19,7 @@ pub(crate) use mobile::{large_title as mobile_large_title, search_header_height 
 use surco_audio::equalizer::BAND_HZ;
 use surco_core::{discover, Album, AlbumRef, Artist, Repeat, Track};
 use limn::{
-    Alert, Button, ButtonGroup, ButtonGroupSizing, ButtonVariant, Color, Component,
+    Alert, Button, ButtonVariant, Color, Component,
     ComponentPalette, ContextMenu, ContextMenuEntry, ContextMenuItem, ControlColors, ControlSize, DropdownMenu, DropdownMenuEntry,
     DropdownMenuItem, DropdownOption, Element, FontFamily, FormField, FormFieldSizing, Icon, IconButton, LevelBars, Link, ListRow, MediaCard, MediaTile,
     Modal, Popover, PopoverPlacement, Progress, RadiusRole, ResizeHandle, ListRowSizing, Scheme,
@@ -512,11 +512,6 @@ const CARD_BUTTON: limn::ButtonSizing = limn::ButtonSizing { height: 44.0, font_
 /// A card button beside what it acts on, a step smaller.
 const CARD_BUTTON_SMALL: limn::ButtonSizing = limn::ButtonSizing { height: 36.0, font_size: 14.0, icon_size: 16.0, horizontal_padding: 16.0, inner_spacing: 6.0 };
 
-/// A dialog's footer: the way out first, what goes ahead last, at the end.
-fn dialog_footer(cancel: Element, confirm: Element) -> Element {
-    ButtonGroup::new(vec![cancel, confirm]).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render()
-}
-
 /// Making a playlist: its name, and whether others will add to it.
 fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(draft) = &state.creating else { return window_tree };
@@ -530,9 +525,8 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
                     .render(),
             );
         }
-        let cancel = card_button("playlist-cancel", t!("common-cancel"), false).render();
-        let create = card_button("playlist-create", t!("desktop-create"), true).render();
-        return limn::BottomSheet::new(
+        // iOS's: the cross cancels, the check creates.
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("desktop-new-playlist"),
@@ -542,10 +536,9 @@ fn playlist_dialog(state: &State, window_tree: Element, width: f32, palette: Com
         )
         .max_height(560.0)
         .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, create))
+        .confirm("playlist-create", t!("desktop-create"), true)
         .initial_focus("playlist-name")
-        .return_focus("playlist-new")
-        .render();
+        .return_focus("playlist-new"));
     }
     let palette = Card::palette(GREY_CARD);
     let form = Card::inner(width, 440.0);
@@ -594,12 +587,11 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
             None => {}
         }
         let done = matches!(handoff.pushed, Some(Ok(())));
-        let close = card_button("handoff-close", t!("common-close"), done).render();
-        let footer = if done { ButtonGroup::new(vec![close]).align_end().render() }
-            else { dialog_footer(close, card_button("handoff-push", t!("desktop-handoff-push"), true).enabled(!handoff.pushing).render()) };
         if state.mobile {
-            return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
-                .max_height(820.0).body(Element::column(body).gap(16.0)).footer(footer).render();
+            // iOS's: the cross closes; until it has got there, the check sends.
+            let sheet = limn::BottomSheet::new(window_tree, true, t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), "handoff-close", palette)
+                .max_height(820.0).body(Element::column(body).gap(16.0));
+            return mobile::phone_sheet(state, if done { sheet } else { sheet.confirm("handoff-push", t!("desktop-handoff-push"), !handoff.pushing) });
         }
         return Card { body: Some(Element::column(body).gap(10.0)), go: (!done).then(|| ("handoff-push", t!("desktop-handoff-push"), !handoff.pushing)), widest: HANDOFF_WIDEST, returns: Some("account"),
             ..Card::new("handoff", t!("desktop-handoff-push-title"), t!("desktop-handoff-push-detail"), ("handoff-close", t!("common-close"))) }
@@ -608,10 +600,11 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let form = if state.mobile { Modal::fitted_body_width(Modal::fit_width(width, 560.0).max(280.0)) } else { Card::inner(width, HANDOFF_WIDEST) };
     let tab = |id: &str, label: &str, chosen: bool| Tab::new(id, label, 0.0).active(chosen);
     let tabs = segments("handoff-tab", form, vec![tab("handoff-tab:send", &t!("desktop-handoff-send"), !handoff.receiving), tab("handoff-tab:receive", &t!("desktop-handoff-receive"), handoff.receiving)]);
-    let mut body = vec![tabs];
-    let mut cancel = card_button("handoff-close", t!("common-close"), false).render();
-    let mut confirm = None;
-    if !handoff.receiving {
+    // A phone opens on what the other device reads; receiving is a step aside, at the foot.
+    let mut body = if state.mobile { Vec::new() } else { vec![tabs] };
+    if !handoff.receiving && state.mobile {
+        body.extend(handoff_offer(state, handoff, palette));
+    } else if !handoff.receiving {
         match &handoff.offer {
             None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
             Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
@@ -671,30 +664,63 @@ fn handoff_dialog(state: &State, window_tree: Element, width: f32) -> Element {
                 rows.extend(came(bundle, handoff.parts));
                 rows.push(Text::new(t!("desktop-handoff-replace-detail"), palette).role(TextRole::Caption).muted().render());
                 body.extend(rows);
-                confirm = Some(card_button("handoff-take", t!("desktop-handoff-take"), true).render());
             }
             None => {}
         }
     }
-    if confirm.is_none() {
-        // Sending, the dialog only closes: the other device does the rest.
-        cancel = card_button("handoff-close", t!("common-close"), true).render();
-    }
-    let footer = match confirm {
-        Some(confirm) => dialog_footer(cancel, confirm),
-        None => ButtonGroup::new(vec![cancel]).align_end().render(),
-    };
     if state.mobile {
-        return limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), t!("desktop-handoff-detail"), "handoff-close", palette)
+        let (aside, words) = if handoff.receiving { ("handoff-tab:send", t!("mobile-handoff-send-instead")) } else { ("handoff-tab:receive", t!("mobile-handoff-receive-instead")) };
+        body.push(card_button(aside, words, false).render().centered_x());
+        let about = if handoff.receiving { t!("desktop-handoff-detail") } else { t!("mobile-handoff-detail") };
+        // iOS's: the cross closes; what came from the other device is taken in by the check.
+        let sheet = limn::BottomSheet::new(window_tree, true, t!("desktop-handoff"), about, "handoff-close", palette)
             .max_height(820.0)
-            .body(Element::column(body).gap(16.0))
-            .footer(footer)
-            .render();
+            .body(Element::column(body).gap(16.0));
+        let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
+        return mobile::phone_sheet(state, if take { sheet.confirm("handoff-take", t!("desktop-handoff-take"), true) } else { sheet });
     }
     let take = handoff.receiving && matches!(handoff.fetched, Some(Ok(_)));
     Card { body: Some(Element::column(body).gap(10.0)), go: take.then(|| ("handoff-take", t!("desktop-handoff-take"), true)), widest: HANDOFF_WIDEST, returns: Some("account"),
         ..Card::new("handoff", t!("desktop-handoff"), t!("desktop-handoff-detail"), ("handoff-close", t!("common-close"))) }
         .render(window_tree, width)
+}
+
+/// A phone's offer: the QR the other device's camera reads, the code to type under it, how,
+/// and what goes, folded into one line until it is opened.
+fn handoff_offer(state: &State, handoff: &crate::state::Handoff, palette: ComponentPalette) -> Vec<Element> {
+    let mut body = Vec::new();
+    match &handoff.offer {
+        None => body.push(Element::row(vec![Spinner::new("handoff-serving", palette.muted).size(16.0).render(), Text::new(t!("desktop-handoff-starting"), palette).muted().render()]).gap(8.0)),
+        Some(Err(message)) => body.push(Alert::new(t!("desktop-handoff"), message, palette).id("handoff-error").compact(true).render()),
+        Some(Ok((offer, qr))) => {
+            if let Some(qr) = qr {
+                body.push(Element::panel(Element::raster_image(qr.clone()).size(Some(HANDOFF_CODE), Some(HANDOFF_CODE)).centered())
+                    .background(Color::WHITE).radius(HANDOFF_TILE_RADIUS).size(Some(HANDOFF_CODE + 16.0), Some(HANDOFF_CODE + 16.0)).centered_x());
+            }
+            // The code as it is typed, large, with the way to copy it at its end.
+            let code = Element::text(&offer.code).font_family(FontFamily::SansBold).font_size(24.0).foreground(palette.text).centered();
+            let copy = Element::clickable("handoff-copy", Element::icon(Icon::Copy).foreground(palette.text).size(Some(18.0), Some(18.0)).centered())
+                .size(Some(44.0), Some(44.0)).accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-handoff-copy")));
+            body.push(Element::panel(Element::row(vec![Element::spacer().size(Some(44.0), None), code.flex(1.0), copy]))
+                .background(palette.selected).radius(HANDOFF_TILE_RADIUS).padding(4.0));
+            body.push(Text::new(t!("mobile-handoff-how"), palette).font_size(14.0).line_height(20.0).muted().render().center_content());
+        }
+    }
+    // What goes, said in a line; opened, a switch a part.
+    let parts = handoff.parts;
+    let going_now: Vec<_> = [(parts.profile, t!("desktop-handoff-profile")), (parts.playlists, t!("desktop-playlists")), (parts.liked, t!("common-liked-songs")),
+        (parts.library, t!("desktop-handoff-library")), (parts.settings, t!("common-settings")), (parts.equalizer, t!("common-equalizer")), (parts.history, t!("desktop-handoff-history"))]
+        .into_iter().filter(|(on, _)| *on).map(|(_, name)| name.into_owned()).collect();
+    let said = if going_now.is_empty() { t!("mobile-handoff-nothing").into_owned() } else { going_now.join(" · ") };
+    let fold = if handoff.parts_open { Icon::ChevronUp } else { Icon::ChevronDown };
+    let line = Element::row(vec![
+        Element::column(vec![Text::new(t!("desktop-handoff-what"), palette).font_size(15.0).render(), Text::new(&said, palette).font_size(13.0).muted().render()]).gap(2.0).flex(1.0).centered_y(),
+        Element::icon(fold).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+    ]).gap(12.0);
+    body.push(Element::clickable("handoff-parts", line).min_size(0.0, 52.0)
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-handoff-what")).description(said.clone()).expanded(handoff.parts_open)));
+    if handoff.parts_open { body.extend(going(state, parts)); }
+    body
 }
 
 /// The widest the card to move an account stands: room for its QR beside its code.
@@ -740,8 +766,6 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let Some(draft) = &state.profile_draft else { return window_tree };
     let palette = if state.mobile { dialog_palette() } else { Card::palette(GREY_CARD) };
     let name = TextField::new("profile-name", draft, "Surco", palette).label(t!("desktop-profile-name")).render();
-    let cancel = card_button("profile-cancel", t!("common-cancel"), false).render();
-    let save = card_button("profile-save", t!("desktop-save"), true).render();
     // As Spotify's profile details: the face beside the name, with the way to change it.
     let mut choices = vec![card_button("profile-picture", t!("desktop-choose-photo"), false).sizing(CARD_BUTTON_SMALL).render()];
     if state.profile.picture.is_some() {
@@ -750,12 +774,11 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
     let face = Element::column(vec![profile_face(state, DIALOG_FACE, palette).centered_x(), Element::column(choices).gap(4.0)]).gap(8.0);
     let fields = Element::column(vec![name]).flex(1.0);
     if state.mobile {
-        return limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
+        return mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("desktop-profile-details"), t!("desktop-profile-details-detail"), "profile-cancel", palette)
             .max_height(560.0)
             .body(Element::column(vec![face.centered_x(), fields]).gap(16.0))
-            .footer(dialog_footer(cancel, save))
-            .initial_focus("profile-name")
-            .render();
+            .confirm("profile-save", t!("desktop-save"), true)
+            .initial_focus("profile-name"));
     }
     Card { body: Some(Element::row(vec![face, fields]).gap(16.0)), go: Some(("profile-save", t!("desktop-save"), true)), widest: 480.0, focus: Some("profile-name"), returns: Some("profile-edit"),
         ..Card::new("profile", t!("desktop-profile-details"), t!("desktop-profile-details-detail"), ("profile-cancel", t!("common-cancel"))) }
@@ -765,30 +788,7 @@ fn profile_dialog(state: &State, window_tree: Element, width: f32) -> Element {
 /// Bringing a list in from another app: its link there.
 fn import_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
     let Some(link) = &state.importing else { return window_tree };
-    if state.mobile {
-        let field = TextField::new("import-link", link, t!("desktop-import-link-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render();
-        let mut fields = import_guide(state, width - 32.0, palette);
-        fields.push(field);
-        // A phone's link comes from another app; its own clipboard is a tap away here.
-        if cfg!(any(target_os = "ios", target_os = "android", test)) {
-            fields.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
-        }
-        let cancel = card_button("import-cancel", t!("common-cancel"), false).render();
-        let go = card_button("import-go", t!("common-import"), true).render();
-        return limn::BottomSheet::new(
-            window_tree,
-            true,
-            t!("desktop-import-music"),
-            if state.import_unknown { t!("desktop-import-unknown") } else { "Spotify · Apple Music · YouTube Music".into() },
-            "import-cancel",
-            palette,
-        )
-        .max_height(560.0)
-        .body(Element::column(fields).gap(8.0))
-        .footer(dialog_footer(cancel, go))
-        .initial_focus("import-link")
-        .render();
-    }
+    if state.mobile { return import_phone(state, link, window_tree, width, palette); }
     let palette = Card::palette(GREY_CARD);
     let field = TextField::new("import-link", link, "https://open.spotify.com/playlist/…", palette).label(t!("desktop-import-list-link")).render();
     let about = if state.import_unknown {
@@ -803,6 +803,70 @@ fn import_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
     Card { art: import_art(width), inset_art: false, inline: true, body: Some(Element::column(fields).gap(10.0)), go: Some(("import-go", t!("common-import"), true)), widest: IMPORT_WIDEST, focus: Some("import-link"),
         ..Card::new("import", t!("desktop-import-title"), t!("desktop-import-detail"), ("import-cancel", t!("common-cancel"))) }
         .render(window_tree, width)
+}
+
+/// A phone's: one field. The app a link pasted is of lights up among the three, and the list
+/// it names is read at once: its name and how many songs it has show before it is brought in.
+/// How to copy a link in each app waits folded under the field.
+fn import_phone(state: &State, link: &str, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
+    use crate::state::ImportSource;
+    let source = ImportSource::of(link);
+    let typed = !link.trim().is_empty();
+    let mut body = vec![TextField::new("import-link", link, t!("mobile-import-placeholder"), palette).label(t!("desktop-import-link")).size(ControlSize::Spacious).render()];
+    // A phone's link comes from another app; its own clipboard is a tap away here.
+    if cfg!(any(target_os = "ios", target_os = "android", test)) {
+        body.push(card_button("ios-paste:import-link", t!("desktop-paste-link"), false).render());
+    }
+    let apps = ImportSource::ALL.into_iter().map(|app| {
+        let lit = source == Some(app);
+        let ink = if lit { palette.text } else { Color { a: 110, ..palette.text } };
+        let mut name = vec![Text::new(app.name(), palette).font_size(13.0).ink(ink).render()
+            .font_family(if lit { FontFamily::SansSemibold } else { FontFamily::Sans }).centered_y()];
+        if lit { name.insert(0, Element::icon(Icon::Check).foreground(ink).size(Some(14.0), Some(14.0)).centered_y()); }
+        Element::row(name).gap(4.0)
+    }).collect();
+    body.push(Element::row(apps).gap(14.0).accessible(limn::Access::new(limn::Role::Group).name(t!("mobile-import-apps"))));
+    match (source, state.import_peek.as_ref().map(|(_, peeked)| peeked)) {
+        (None, _) if typed || state.import_unknown => body.push(Text::new(t!("desktop-import-unknown-detail"), palette).font_size(13.0).muted().render()),
+        (Some(app), Some(peeked)) => body.push(import_preview(app, peeked.as_ref(), palette)),
+        _ => {}
+    }
+    let fold = if state.import_help { Icon::ChevronUp } else { Icon::ChevronDown };
+    let help = Element::row(vec![
+        Text::new(t!("mobile-import-help"), palette).font_size(15.0).render().flex(1.0).centered_y(),
+        Element::icon(fold).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+    ]);
+    body.push(Element::clickable("import-help", help).size(None, Some(44.0))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-import-help")).expanded(state.import_help)));
+    if state.import_help { body.extend(import_guide(state, width - 32.0, palette)); }
+    // iOS's: the cross cancels; the check imports, once the link is one of a list.
+    mobile::phone_sheet(state, limn::BottomSheet::new(window_tree, true, t!("mobile-settings-import"), t!("mobile-import-detail"), "import-cancel", palette)
+        .max_height(640.0)
+        .body(Element::column(body).gap(12.0))
+        .confirm("import-go", t!("common-import"), source.is_some())
+        .initial_focus("import-link"))
+}
+
+/// The list a link names, as it was read: its name over how many songs and from where; or
+/// that it is being read, or why it could not be.
+fn import_preview(app: crate::state::ImportSource, peeked: Option<&crate::state::Peeked>, palette: ComponentPalette) -> Element {
+    let row = match peeked {
+        None => Element::row(vec![Spinner::new("import-peeking", palette.muted).size(16.0).render().centered_y(),
+            Text::new(t!("desktop-import-reading"), palette).font_size(14.0).muted().render().centered_y()]).gap(10.0),
+        Some(Ok((name, count))) => Element::row(vec![
+            Element::icon(Icon::Playlist).large_icon(22.0).foreground(palette.text).size(Some(22.0), Some(22.0)).centered_y(),
+            Element::column(vec![
+                Text::new(name, palette).font_size(16.0).truncate().render().font_family(FontFamily::SansSemibold),
+                Text::new(format!("{} · {}", songs(*count), app.name()), palette).font_size(13.0).muted().truncate().render(),
+            ]).gap(2.0).flex(1.0).centered_y(),
+        ]).gap(12.0),
+        Some(Err(why)) => Element::row(vec![
+            Element::icon(Icon::WarningTriangle).foreground(palette.muted).size(Some(16.0), Some(16.0)).centered_y(),
+            Text::new(why, palette).font_size(13.0).muted().render().flex(1.0).centered_y(),
+        ]).gap(10.0),
+    };
+    Element::panel(row).background(Color::rgba(255, 255, 255, 18)).radius(14.0).padding(12.0).min_size(0.0, 56.0)
+        .accessible(limn::Access::new(limn::Role::Group).id("import-preview").name(t!("mobile-import-preview")))
 }
 
 /// How wide the import's card stands, the same from its link to its last song.
@@ -839,7 +903,12 @@ fn import_guide(state: &State, width: f32, palette: ComponentPalette) -> Vec<Ele
         step(2, copy),
         step(3, t!("desktop-import-step-paste")),
     ]).gap(18.0).padding(4.0);
-    vec![segments("import-source", width, tabs), steps]
+    // A phone's is aurora's knob, as its other segmented controls.
+    let kinds = if state.mobile {
+        let cells: Vec<(String, &str, bool)> = ImportSource::ALL.into_iter().map(|source| (format!("import-source:{}", source.slug()), source.name(), source == chosen)).collect();
+        mobile::segments(cells.iter().map(|(id, name, on)| (id.as_str(), *name, *on)), limn::Role::Button, "import-source", palette)
+    } else { segments("import-source", width, tabs) };
+    vec![kinds, steps]
 }
 
 /// The songs of a list brought in that the catalog does not have, to be looked for by hand.
@@ -850,9 +919,9 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
             .iter()
             .map(|song| Text::new(song, palette).font_size(14.0).render())
             .collect();
+        // iOS's: the cross closes; copying the list is its one action, across the foot.
         let copy = card_button("import-missed-copy", t!("desktop-copy-list"), false).icon(Icon::Copy).render();
-        let close = card_button("import-missed-close", t!("common-close"), true).render();
-        return limn::BottomSheet::new(
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             true,
             t!("desktop-missed-title-short"),
@@ -862,8 +931,7 @@ fn missed_dialog(state: &State, window_tree: Element, width: f32, palette: Compo
         )
         .max_height(600.0)
         .body(Element::column(rows).gap(12.0))
-        .footer(dialog_footer(copy, close))
-        .render();
+        .footer(copy));
     }
     let palette = Card::palette(GREY_CARD);
     let rows = missed.iter().map(|song| Text::new(song, palette).truncate().render()).collect();
@@ -886,11 +954,11 @@ pub(crate) fn import_run_dialog(state: &State, window_tree: Element, width: f32,
     });
     let way_out = if failed.is_some() { t!("common-close") } else { t!("desktop-import-hide") };
     if state.mobile {
-        let mut buttons = vec![card_button("import-hide", way_out, failed.is_none()).render()];
-        buttons.extend(failed.as_ref().map(|_| card_button("import-retry", t!("common-retry"), true).render()));
-        let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0)
-            .footer(ButtonGroup::new(buttons).align_end().sizing(ButtonGroupSizing { gap: 8.0, stacked_gap: 8.0 }).render());
-        return match body { Some(body) => sheet.body(body), None => sheet }.render();
+        // iOS's: the cross hides it while it goes on, or closes it once it failed; then the
+        // check tries again.
+        let sheet = limn::BottomSheet::new(window_tree, true, title, about, "import-hide", palette).max_height(420.0);
+        let sheet = if failed.is_some() { sheet.confirm("import-retry", t!("common-retry"), true) } else { sheet };
+        return mobile::phone_sheet(state, match body { Some(body) => sheet.body(body), None => sheet });
     }
     Card { art: import_art(width), inset_art: false, inline: true, widest: IMPORT_WIDEST, body, go: failed.as_ref().map(|_| ("import-retry", t!("common-retry"), true)),
         ..Card::new("import-run", title, about, ("import-hide", way_out)) }
@@ -1226,21 +1294,26 @@ fn confirm_dialog(state: &State, window_tree: Element, width: f32, palette: Comp
         None => (String::new(), "".into(), "".into()),
     };
     if state.mobile {
-        let cancel = card_button("confirm-cancel", t!("common-cancel"), false).render();
-        let confirm = card_button("confirm-yes", yes, true).render();
-        return limn::BottomSheet::new(
+        // iOS's: what is about to be undone, and the one way to do it in red, the cross the way out.
+        let undo = limn::Button::new("confirm-yes", yes, ComponentPalette { surface: Color::rgba(255, 69, 58, 38), text: Color::rgb(255, 69, 58), hover: Color::rgba(255, 69, 58, 56), ..palette })
+            .sizing(limn::ButtonSizing { height: 50.0, ..ControlSize::Spacious.button_sizing() }).round().font_family(FontFamily::SansSemibold).render().size(None, Some(50.0));
+        let body = Element::column(vec![
+            Text::new(&title, palette).font_size(17.0).render().font_family(FontFamily::SansSemibold),
+            Text::new(about.as_ref(), palette).font_size(15.0).line_height(20.0).muted().render(),
+            Element::spacer().size(None, Some(8.0)),
+            undo,
+        ]).gap(8.0);
+        return mobile::phone_sheet(state, limn::BottomSheet::new(
             window_tree,
             state.confirm.is_some(),
             t!("desktop-confirm"),
-            format!("{title}\n\n{about}"),
+            "",
             "confirm-cancel",
             palette,
         )
-        .max_height(480.0)
-        .footer(dialog_footer(cancel, confirm))
-        .initial_focus("confirm-cancel")
-        .backdrop_dismiss(false)
-        .render();
+        .body(body)
+        .alert(&format!("{title}\n\n{about}"))
+        .initial_focus("confirm-cancel:close"));
     }
     if state.confirm.is_none() { return window_tree; }
     Card { go: Some(("confirm-yes", yes, true)), focus: Some("confirm-cancel"),
@@ -1455,63 +1528,8 @@ fn media_card(state: &State, id: &str, track: &Track, palette: ComponentPalette)
 
 /// Sharing a track: its card, as whoever opens the link will see it, over the link itself.
 fn share_dialog(state: &State, window_tree: Element, width: f32, palette: ComponentPalette) -> Element {
-    if state.mobile {
-        let Some(track) = &state.sharing else {
-            return window_tree;
-        };
-        let playing = state.player.playing
-            && state
-                .current()
-                .is_some_and(|current| current.id == track.id);
-        let picture = Element::clickable(
-            "share-card",
-            cover(state, &track.artwork_url, 160.0, palette),
-        )
-        .accessible(limn::Access::new(limn::Role::Button).name(format!(
-            "{} {}",
-            if playing { t!("common-pause") } else { t!("common-play") },
-            track.title
-        )))
-        .centered_x();
-        let copy = Button::new(
-            "share-copy",
-            if state.copied {
-                t!("common-link-copied")
-            } else {
-                t!("desktop-copy-link")
-            },
-            palette,
-        )
-        .icon(if state.copied {
-            Icon::Check
-        } else {
-            Icon::Copy
-        })
-        .render()
-        .size(None, Some(44.0));
-        let body = Element::column(vec![
-            picture,
-            Text::new(&track.title, palette).font_size(20.0).render(),
-            Text::new(&track.artist, palette).muted().render(),
-            Text::new(share_link(track), palette)
-                .muted()
-                .truncate()
-                .render(),
-        ])
-        .gap(12.0);
-        return limn::BottomSheet::new(
-            window_tree,
-            true,
-            t!("common-share-song"),
-            t!("desktop-share-detail"),
-            "share-close",
-            palette,
-        )
-        .max_height(640.0)
-        .body(body)
-        .footer(copy)
-        .render();
-    }
+    // A phone's is iOS's share sheet, in aurora's glass.
+    if state.mobile { return mobile::share_sheet(state, window_tree, palette); }
     let Some(track) = &state.sharing else { return window_tree };
     let palette = Card::palette(GREY_CARD);
     let body = Element::column(vec![media_card(state, "share-card", track, palette).centered_x(), Text::new(share_link(track), palette).muted().truncate().render()]).gap(12.0);
@@ -1718,12 +1736,24 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
     } else {
         choosable("profile-picture", profile_face(state, side, palette), side, true, palette)
     };
-    let header = Element::row(vec![face, about]).gap(24.0);
+    // A phone's stands centred, as BitChord's pages lead: the face, the name and what it holds.
+    let header = if state.mobile {
+        Element::column(vec![
+            face.centered_x(),
+            Text::new(state.profile.shown(), palette).font_size(28.0).truncate().render().font_family(FontFamily::SansBold).center_content(),
+            Text::new(counts.join(" · "), palette).font_size(14.0).muted().truncate().render().center_content(),
+        ]).gap(8.0)
+    } else { Element::row(vec![face, about]).gap(24.0) };
     let mut sections = vec![header];
-    // A phone has no account menu: what it offers is here.
+    // A phone has no account menu: what it offers is here, as BitChord's rows of places.
     if state.mobile {
-        let action = |id: &str, label: std::borrow::Cow<'static, str>| card_button(id, label, false).render();
-        sections.push(Element::row(vec![action("profile-edit", t!("desktop-profile-edit")), action("account-handoff", t!("desktop-handoff")), action("replay", t!("common-replay-see")), action("together", t!("common-together"))]).gap(8.0).wrap().line_gap(8.0));
+        let row = |id: &str, glyph: Icon, label: std::borrow::Cow<'static, str>| mobile::collection::row(id, glyph, &label, palette);
+        sections.push(Element::column(vec![
+            row("profile-edit", Icon::Edit, t!("desktop-profile-edit")),
+            row("replay", Icon::Custom(glyph::REPLAY), t!("common-replay-see")),
+            row("together", Icon::Users, t!("common-together")),
+            row("account-handoff", Icon::Phone, t!("desktop-handoff")),
+        ]));
     } else {
         sections.push(Element::row(vec![card_button("profile-replay", t!("common-replay-see"), false).dispatch_as("replay").icon(Icon::Custom(glyph::REPLAY)).render()]));
     }
@@ -1767,7 +1797,8 @@ fn profile_page(state: &State, palette: ComponentPalette) -> Element {
         sections.push(shelf(state, "profile-playlists", &t!("desktop-your-playlists"), playlists, palette));
     }
     let content = Element::column(sections).gap(24.0).padding(if state.mobile { 16.0 } else { 24.0 });
-    page_scroll("profile", content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH))
+    // A phone's page is washed from the screen's top, under its bar, by the page itself.
+    page_scroll("profile", if state.mobile { content } else { content.top_background_fade(Color { a: 150, ..profile_colour(state) }, HEADER_WASH) })
 }
 
 /// The face in the dialog of the profile's details.
@@ -2066,8 +2097,7 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     let side = ((width - 24.0 - (columns - 1) as f32 * GAP) / columns as f32).max(120.0);
     let height = if width >= 1599.0 { 80.0 } else if width >= 1141.0 { 64.0 } else { 48.0 };
     if state.mobile {
-        // A phone's are BitChord's recents instead: rows four to a page, the pages side by side.
-        sections.extend(mobile::home::recents(state, width, palette));
+        // A phone's are BitChord's recents instead, after its Top Picks.
     } else {
         let quick = |id: String, name: &str, picture: Element, sounding: bool| {
             // What plays shows its sound at the row's end; the others, their play under the pointer.
@@ -2119,17 +2149,23 @@ fn home(state: &State, width: f32, palette: ComponentPalette) -> Element {
     // The catalog's picks as lists, Spotify's mixes: the time of day's leads, large, and the
     // rest are the cards of a shelf.
     let mixes = state.mixes();
-    if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment) {
+    if let Some((index, mix)) = mixes.iter().enumerate().find(|(_, mix)| mix.kind == MixKind::Moment).filter(|_| !state.mobile) {
         sections.push(moment_card(state, index, mix, width, palette).animate_enter("home-moment"));
     }
-    // On a phone they lead as BitChord's hero cards.
-    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| mix.kind != MixKind::Moment)
+    // On a phone they lead as BitChord's Top Picks, the time of day's among them.
+    let cards: Vec<Element> = mixes.iter().enumerate().filter(|(_, mix)| state.mobile || mix.kind != MixKind::Moment)
         .map(|(index, mix)| if state.mobile { mobile::home::hero(state, index, mix, width, palette) } else { mix_tile(state, index, mix, palette) }).collect();
+    let (eyebrow, title) = if state.mobile { (None, t!("mobile-top-picks")) } else { (Some(t!("desktop-made-for-you")), t!("desktop-your-mixes")) };
     if !cards.is_empty() {
         // Picks arrive after the page: they settle in rather than appear.
-        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), cards, palette).animate_enter("home-mixes"));
+        sections.push(headed_shelf(state, "home-mixes", None, eyebrow.as_deref(), &title, cards, palette).animate_enter("home-mixes"));
     } else if state.picks_coming[0] {
-        sections.push(headed_shelf(state, "home-mixes", None, Some(&t!("desktop-made-for-you")), &t!("desktop-your-mixes"), coming_tiles(state, false, palette), palette));
+        sections.push(headed_shelf(state, "home-mixes", None, eyebrow.as_deref(), &title, coming_tiles(state, false, palette), palette));
+    }
+    // Then, as BitChord's: what was played lately, rows four to a page, and the moods.
+    if state.mobile {
+        sections.extend(mobile::home::recents(state, width, palette));
+        sections.extend(mobile::home::moods(state, palette));
     }
     // Today's: what goes with the latest plays, as Spotify's "Recommended for today".
     let pick = |id: String, track: &Track| tile(state, id, &track.title, Some(track.artist.clone()), &track.artwork_url, false, palette);
@@ -2396,7 +2432,8 @@ fn blank(icon: Icon, title: impl Into<String>, about: impl Into<String>, action:
     if let Some((id, words)) = action {
         parts.extend([Element::spacer().size(None, Some(8.0)), card_button(id, words, true).render().centered_x()]);
     }
-    Element::panel(Element::column(parts).gap(8.0)).padding(24.0)
+    // Narrower than its lines on a phone: wrapped there rather than past the screen's edge.
+    Element::panel(Element::column(parts).gap(8.0)).padding(24.0).shrink_to_fit()
 }
 
 /// The widest a blank page's lines run before they wrap, and its icon's side.
@@ -2457,7 +2494,8 @@ fn coming_tiles(state: &State, round: bool, palette: ComponentPalette) -> Vec<El
 
 fn tile(state: &State, id: String, title: &str, subtitle: Option<String>, artwork: &Option<String>, round: bool, palette: ComponentPalette) -> Element {
     let row = id.clone();
-    let tile = MediaTile::new(id, title, palette).width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
+    let tile = MediaTile::new(id, title, if state.mobile { mobile::still(palette) } else { palette })
+        .width(if state.mobile { TILE_WIDTH } else { CARD_WIDTH }).round(round);
     // On a desktop a tile is a card whose play button rises under the pointer.
     let tile = if state.mobile { tile } else {
         let sounding = state.player.playing && state.track_at(&row).zip(state.current()).is_some_and(|(track, current)| track.id == current.id);
@@ -2513,6 +2551,7 @@ fn mix_name(mix: &Mix) -> String {
         MixKind::Moment => moment_title(chrono::Local::now()),
         MixKind::Artist(seed) => t!("desktop-mix-of", artist = seed.artist.as_str()).into_owned(),
         MixKind::Repeat => t!("desktop-mix-repeat").into_owned(),
+        MixKind::Catalog(name) => name.clone(),
     }
 }
 
@@ -2523,7 +2562,7 @@ fn mix_detail(mix: &Mix) -> String {
         MixKind::Repeat => t!("desktop-mix-repeat-detail").into_owned(),
         _ if artists.is_empty() => songs(mix.tracks.len()),
         MixKind::Moment => t!("desktop-moment-detail", artists = artists.as_str()).into_owned(),
-        MixKind::Artist(_) => t!("desktop-mix-with", artists = artists.as_str()).into_owned(),
+        MixKind::Artist(_) | MixKind::Catalog(_) => t!("desktop-mix-with", artists = artists.as_str()).into_owned(),
     }
 }
 
@@ -2558,6 +2597,7 @@ fn mix_cover(state: &State, mix: &Mix, side: f32, named: bool, palette: Componen
         MixKind::Moment => (t!("desktop-moment").into_owned(), mix_name(mix)),
         MixKind::Artist(seed) => (t!("desktop-mix").into_owned(), seed.artist.clone()),
         MixKind::Repeat => (t!("desktop-mix").into_owned(), t!("desktop-mix-repeat").into_owned()),
+        MixKind::Catalog(name) => (t!("common-playlist").into_owned(), name.clone()),
     };
     let words = Element::column(vec![
         Text::new(label.to_uppercase(), palette).font_size((side * 0.07).round().max(9.0)).truncate().render().font_family(FontFamily::SansBold),
@@ -2717,6 +2757,12 @@ pub(crate) fn track_actions(state: &State, row: &str, track: &Track) -> Vec<Opti
         actions.push(item("album", t!("desktop-go-to-album"), include_str!("../assets/icons/disc-3.svg"), track.album.clone()));
     }
     actions.push(item("artist", t!("desktop-go-to-artist"), include_str!("../assets/icons/user-round.svg"), Some(track.artist.clone())));
+    // A phone's player has no timer of its own: BitChord's is in what plays's ⋯, named.
+    if state.mobile && row == "current" {
+        actions.push(None);
+        let left = state.player.sleep.is_some().then(|| sleep_hint(state));
+        actions.push(item("sleep", t!("desktop-sleep"), glyph::SLEEP, left));
+    }
     actions.push(None);
     actions.push(if state.is_saved(&track.id) {
         item("unsave", t!("desktop-remove-download"), include_str!("../assets/icons/trash-2.svg"), None)
@@ -2990,6 +3036,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Search if state.at_home() => "page:home".to_owned(),
         Page::Search => "page:search".to_owned(),
         Page::Loading(_) => "page:loading".to_owned(),
+        Page::Mood(params) => format!("page:mood:{params}"),
         Page::Failed(..) => "page:failed".to_owned(),
         Page::Artist(artist) => format!("page:artist:{}", artist.id),
         Page::Album(album) => format!("page:album:{}", album.id),
@@ -2998,6 +3045,7 @@ fn pane(state: &State, width: f32, palette: ComponentPalette) -> Element {
         Page::Liked => "page:liked".to_owned(),
         Page::Playlist(id) => format!("page:playlist:{id}"),
         Page::Library => "page:library".to_owned(),
+        Page::Collection => "page:collection".to_owned(),
         Page::Playing => "page:playing".to_owned(),
         Page::Settings => "page:settings".to_owned(),
         Page::SettingsPart(part) => format!("page:settings:{}", part.slug()),
@@ -3063,7 +3111,9 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
     match &state.page {
         Page::Search if state.submitted.is_none() && !state.searching => home(state, width, palette),
         Page::Search => results(state, width, palette),
+        Page::Loading(crate::backend::Target::Artist(id)) if state.mobile => mobile::details::artist_coming(state, id, width, palette),
         Page::Loading(_) => loading("opening", palette),
+        Page::Mood(params) => mobile::mood_page(state, params, width, palette),
         Page::Failed(_, message) => centered(blank(Icon::WarningTriangle, t!("desktop-open-failed"), message, Some(("retry", t!("common-retry"))), palette)),
         Page::Artist(artist) => artist_page(state, artist, width, palette),
         Page::Album(album) => album_page(state, album, width, palette),
@@ -3076,6 +3126,7 @@ fn page(state: &State, width: f32, palette: ComponentPalette) -> Element {
         ),
         Page::Downloads => downloads_page(state, width, palette),
         Page::Library => library(state, false, width, palette),
+        Page::Collection => page_scroll("collection", mobile::collection::content(state, width, palette)),
         Page::Playing => mobile::playing(state, width, palette),
         Page::Liked => liked_page(state, width, palette),
         Page::Lyrics => lyrics(state, width, 0.0, palette),
@@ -3386,7 +3437,7 @@ fn settings_page(state: &State, width: f32, palette: ComponentPalette) -> Elemen
     use SettingsPart::*;
     let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
         (Display, display), (Display, language), (Library, library), (Library, bring), (Library, mobile::settings::scrobbling(state, inner.min(420.0))), (About, about), (Storage, erase)];
-    let column = Element::column(arrange(state, sections, true, palette)).gap(28.0).padding(GUTTER).size(Some(across), None);
+    let column = Element::column(arrange(state, sections, palette)).gap(28.0).padding(GUTTER).size(Some(across), None);
     page_scroll("settings", column)
 }
 
@@ -4176,10 +4227,6 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
         .iter()
         .enumerate()
         .map(|(index, track)| {
-            if state.mobile {
-                let subtitle = if state.player.picks.contains(&track.id) { format!("{} · {}", track.artist, t!("desktop-recommended")) } else { track.artist.clone() };
-                return mobile::track_row(state, format!("upcoming:{index}"), track, &subtitle, palette);
-            }
             let row = ListRow::new(format!("upcoming:{index}"), &track.title, palette)
                 .sizing(TRACK_ROW)
                 .leading(middle(cover(state, &track.artwork_url, COVER, palette)))
@@ -4188,8 +4235,8 @@ fn upcoming(state: &State, palette: ComponentPalette) -> Element {
                 .title_fade(true)
                 .radius(RadiusRole::Card)
                 .render();
-            // A finger pans the queue; desktop pointers can reorder its rows.
-            let row = if state.mobile { row } else { row.draggable().drop_target() };
+            // A phone's queue is its own, in the player; here pointers reorder its rows.
+            let row = row.draggable().drop_target();
             let out = ContextMenuItem::new(format!("do:unqueue:upcoming:{index}"), t!("desktop-remove-from-queue")).icon(Icon::Custom(include_str!("../assets/icons/circle-minus.svg")));
             let row = ContextMenu::new(format!("upcoming-context:{index}"), row, vec![ContextMenuEntry::Item(out)], menu_palette()).render();
             // Named by its track, so the row that starts playing closes and the rest glide up.
@@ -4644,7 +4691,10 @@ mod tests {
     fn a_list_being_brought_in_stands_on_its_own_card_over_the_page_it_was_asked_from() {
         let link = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M";
         let shown = |state: &State, size: Size| {
-            let frame = UiTree::new(view(state, size)).layout(size);
+            // At rest: a phone's sheet rises from the foot of the screen.
+            let mut tree = UiTree::new(view(state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
             let texts: String = frame.commands.iter().filter_map(|command| match command {
                 limn::DrawCommand::Text { text, .. } => Some(text.as_str()),
                 _ => None,

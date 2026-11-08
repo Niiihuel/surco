@@ -134,17 +134,20 @@ impl TouchInput {
                     ..
                 } => {
                     let plan = if !pressed {
-                        self.primary
-                            .as_mut()
-                            .and_then(|touch| touch.pan(touch.position, origin))
+                        // A pan ends with the finger up: what it took, a sheet, comes to rest.
+                        self.primary.as_mut().and_then(|touch| {
+                            let mut events = touch.pan(touch.position, origin)?;
+                            if touch.axis.is_some() { events.push(UiEvent::ScrollEnded); }
+                            Some(events)
+                        })
                     } else {
                         None
                     };
                     plans.push_back(plan);
                 }
                 egui::Event::PointerGone => {
-                    self.primary = None;
-                    plans.push_back(None);
+                    let panned = self.primary.take().is_some_and(|touch| touch.axis.is_some());
+                    plans.push_back(panned.then(|| vec![UiEvent::ScrollEnded]));
                 }
                 egui::Event::WindowFocused(false) => self.primary = None,
                 _ => {}
@@ -446,6 +449,29 @@ mod tests {
         assert_eq!(send(&mut input, &mut tree, &touch(egui::TouchPhase::End, Pos2::new(40.0, 40.0))),
             vec![UiAction::Clicked { id: "song:1".into() }]);
         assert_eq!(tree.horizontal_scroll_offset("shelf"), 140.0);
+    }
+
+    #[test]
+    fn a_touch_pulling_a_sheets_content_down_at_its_top_takes_the_sheet_and_lets_it_go_on_release() {
+        let sheet = limn::BottomSheet::new(Element::spacer(), true, "Lists", "", "sheet", limn::ComponentPalette::neutral_dark())
+            .ios(limn::SheetSpec { safe_top: 47.0, screen_corner: 47.33, ..limn::SheetSpec::default() })
+            .body(Element::spacer().size(None, Some(300.0)))
+            .render();
+        let mut tree = UiTree::new(sheet);
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(limn::Size::new(390.0, 844.0));
+        let body = frame.regions.iter().find(|region| region.id == "modal_body:sheet").unwrap().rect;
+        let mut input = TouchInput::default();
+        // On a phone's screen, not the helper's small one.
+        let mut send = |raw: &[egui::Event]| -> Vec<UiAction> {
+            let frame = tree.layout(limn::Size::new(390.0, 844.0));
+            input.translate(raw, translated(raw), Pos2::ZERO, &frame, |id| id == "drag").into_iter().flat_map(|event| tree.handle_event(event)).collect()
+        };
+        let down = Pos2::new(195.0, body.y + 20.0);
+        send(&touch(egui::TouchPhase::Start, down));
+        let mut actions = send(&touch(egui::TouchPhase::Move, down + egui::vec2(0.0, 320.0)));
+        actions.extend(send(&touch(egui::TouchPhase::End, down + egui::vec2(0.0, 320.0))));
+        assert!(actions.contains(&UiAction::Clicked { id: "sheet".into() }), "taken far down and let go, it leaves: {actions:?}");
     }
 
     #[test]

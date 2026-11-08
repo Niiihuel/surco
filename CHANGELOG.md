@@ -1,5 +1,108 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Dragged down, the player carries its cover with it, as Apple Music's; let go, the cover
+  flies from where the sheet is into the mini player.
+- The blur a page goes up under at the top is the status bar's alone, as Apple Music's: the
+  header's buttons stand over the page as it is.
+- A song's menu lights a row only under the finger, rounded, as iOS's.
+- Sharing on the phone opens the system's own share sheet, iOS's or Android's, with the apps
+  and people the phone has, instead of Surco's with apps drawn in their place.
+- A field held, or a word double-tapped in it, brings iOS 26's edit menu over it in Liquid
+  Glass: Select, Select All and Paste, or Cut, Copy and Paste over a selection. On the iPhone
+  too, where a hold on a field used to bring nothing.
+- As Apple's sheets, only those that save something (a new playlist, a crop, the profile, an
+  import) or ask before deleting keep the cross beside their check; the audio output, a
+  song's options, the sleep timer and the rest of the choices go with a swipe, their grabber
+  or a press beside them.
+- Every sheet of the phone is iOS 26's, on the iPhone and on Android alike, drawn in the
+  app's glass.
+  - **Floating:** at partial heights it floats over the page, its corners following the
+    screen's.
+  - **Large:** it anchors to the edges and turns opaque, and the page recedes behind it.
+  - **Bar:** the actions live in it, the cross at its start and the check at its end.
+  - **Dragging:** it follows the finger from its bar, or from its list once that is at its
+    top. Let go, it settles where its speed carries it. Flicked down, it leaves. A tap on
+    its grabber makes it taller.
+- A sheet over the keyboard grows by its height, as iOS's, its field and its bar kept above
+  it and its sides' inset kept; taken by its bar, it puts the keyboard away first.
+- The player has a button at its top to show the song's cover instead of its video, and
+  Settings › Display and language a switch for it; the choice is kept.
+- The tab bar keeps the tab a page was reached from: Settings, an artist or an album opened
+  from Home or the Library shows that tab, chosen.
+- On the iPhone the forms, confirmations, the timer, the device sheet and the menus' sheets
+  are no longer UIKit's. They are the same sheets as Android's, with the song's info, the
+  lyrics' step and the Audio Pipeline. Only a share's "More" opens the system's share sheet.
+
+### Fixed
+
+- On the iPhone, the song's info, the lyrics' step, the Audio Pipeline, adding to a
+  playlist and sharing an artist opened nothing.
+- The sheets' corners looked square: their glass is now rounded as the screen's corners
+  are, and a seam no longer crosses the cross of their bar.
+- Folded, the tab bar showed an empty circle on pages outside the tabs, Settings among
+  them, and while searching.
+
+## 0.18.0
+
+### Changed
+
+- The phone's player stands on the song's video, as BitChord's: across the whole screen behind
+  it, dimmed, and blurred under the controls. A tap on the video puts the controls away and
+  another brings them back.
+- The phone's player is laid out and sized as BitChord's: the skips and play alone in the
+  transport, round sliders, a foot of lyrics, output (earbuds) and queue, and "Playing from"
+  where the song was started. The sleep timer moves into the song's ⋯.
+- The lyrics and the queue open in the player under the song beside its cover, with the
+  player's controls below. The queue lists what plays, then what follows, each row moved by
+  its grip and taken out by its cross; shuffle, repeat and autoplay are in a capsule at its foot.
+- The player comes down from anywhere on it, not only its top.
+- The cover moves as BitChord's: it shrinks into the head of the lyrics and the queue and
+  grows back, and goes down into the mini player as the player is put away.
+- The phone's output sheet is a set of cards, and its "Audio Pipeline" shows what the sound
+  goes through, from the decoder to the device, as the engine reports it.
+- The phone's tabs are Home, Explore and Library, with Search a circle beside them, as
+  BitChord's; going down a page folds them into one row with the mini player.
+- The phone's home leads with BitChord's Top Picks, tall cards with the time of day's mix
+  among them, then what was played lately and the moods to find yours in.
+- Explore shows YouTube Music's moods and genres as BitChord's cards, each in the service's
+  own colour with its first list's cover drawn in it; a card opens its lists, and a list
+  opens to be played without being added to the library.
+- An artist's page on a phone is BitChord's: their photo across the screen from its top, their
+  name large in the middle of its foot, their newest release on a card and their top songs.
+- The phone's Library is BitChord's: what was listened to this year on cards across the
+  top, the downloads, then shelves of the lists and the artists kept, each with "See all".
+- The phone's bars, header circles and song menu are glass, as BitChord's: the page passes
+  beneath them blurred, sharp and bent at their rims. The menu grows out of the ⋯ or the row
+  held and goes back into it.
+- The song's menu is grouped as BitChord's and adds a radio of the song, "Dislike" (the
+  song is skipped and kept out of the picks), the song's details, and the lyrics' step
+  for when they run ahead of or behind the song.
+- Settings on a phone are one list, as iOS's: the account first, then importing a playlist,
+  moving to another device and listening elsewhere, then every setting in sight in its
+  group. Only the apps connected and About are a page away.
+- Importing a playlist on a phone is one field: a link pasted lights up the app it is from,
+  and the playlist it names shows with how many songs it has before it is imported. How to
+  copy a link in each app is folded under the field.
+- Moving to another device on a phone opens on its QR and its code. What goes folds into one
+  line, and receiving is a button at the sheet's foot.
+- The phone's sheets follow the finger down from their handle and spring back when let go
+  short; let go further, or flicked down, they leave from where they were. A sheet whose
+  content grows or shrinks moves to its new height on a spring rather than jumping.
+- Sharing on a phone is a sheet as iOS's: what is shared at its top, the apps to send it to
+  in a row, and copying or opening the link below.
+- Pages go up under the phone's bars blurred, as iOS 26's, and Home, Explore, Library and
+  Settings have their names large at their top.
+
+### Fixed
+
+- The Library icon stood off the middle of the folded tab bar's circle.
+- An empty page, as Downloads with nothing in it, ran its lines past a phone's edge.
+- Nothing bright behind a phone's sheet shows through its words: sheets are a thicker glass.
+
 ## 0.17.2
 
 ### Changed

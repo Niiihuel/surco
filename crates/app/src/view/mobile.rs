@@ -5,11 +5,13 @@ use std::borrow::Cow;
 
 pub(super) mod search;
 pub(super) mod home;
+pub(super) mod collection;
 mod player;
 pub(super) mod lyrics;
 mod chrome;
 pub(super) mod controls;
 mod sheets;
+mod queue;
 pub(super) mod details;
 pub(super) mod settings;
 #[cfg(test)]
@@ -27,17 +29,123 @@ const NAV_HEIGHT: f32 = 62.0;
 const HEADER_HEIGHT: f32 = MOBILE_HEADER_HEIGHT;
 /// The mini-player's pill and the gap that floats it above the tabs.
 const MINI_HEIGHT: f32 = MINI_PILL + 8.0;
-const MINI_PILL: f32 = 56.0;
+/// BitChord's mini player, measured off Apple's: 48 tall, its cover 30.4 with corners of 5.7,
+/// 16 in from its start; its title 13 over its artist 12 at 70%.
+const MINI_PILL: f32 = 48.0;
+const MINI_ART: f32 = 30.4;
+const MINI_ART_CORNER: f32 = 5.7;
+const MINI_INSET: f32 = 16.0;
+/// BitChord's folded bar: a row 48 tall, 28 in from the screen's sides, its parts 14 apart, on
+/// the open tabs' centre line.
+const INLINE: f32 = 48.0;
+const INLINE_GUTTER: f32 = 28.0;
+const INLINE_SPACING: f32 = 14.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
-// shortcut: limn has no backdrop blur, and blending in linear light lets even 8% of a white
-// row through a dark tint, so the frosted bars are opaque; let rows pass blurred beneath them
-// once limn can blur.
-const FROST: Color = Color::rgb(24, 24, 26);
+/// iOS 26's soft scroll edge, as Apple Music's: the page blurred (σ 8, as the bars' glass,
+/// which shares its blur) and a little darkened under the status bar alone, no rim nor bend,
+/// giving way to the sharp page over its lower half; the header's buttons stand over the page
+/// as it is.
+const SCROLL_EDGE: limn::GlassMaterial = limn::GlassMaterial {
+    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.55,
+    ..limn::GlassMaterial::new(Color::rgba(0, 0, 0, 70))
+};
+const EDGE_TAIL: f32 = 8.0;
+
+/// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
+/// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
+pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial::new(Color::rgba(38, 38, 40, 122));
+/// iOS 26's edit menu over a field: Liquid Glass, the page seen blurred through it, dark enough
+/// for its words over a bright one.
+pub(crate) const EDIT_MENU: limn::GlassMaterial = limn::GlassMaterial { blur: 24.0, ..limn::GlassMaterial::new(Color::rgba(38, 38, 40, 150)) };
+/// A sheet's: thicker than a bar's, as iOS's sheets are, so a bright switch or button behind
+/// it does not show through the words on it; the page still shows, blurred, as a tint.
+const SHEET_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 28.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 32, 214)) };
+/// aurora's regularSmall, for circles: the rim bends over 14.
+const GLASS_SMALL: limn::GlassMaterial = limn::GlassMaterial { refraction: 14.0, ..GLASS };
+/// aurora's glass shadow: 0 10 40, black at 20%.
+const GLASS_SHADOW: Color = Color::rgba(0, 0, 0, 51);
+
+/// `palette` for a phone's tiles, as BitChord's: no box lights under a pointer or a press.
+pub(in crate::view) fn still(palette: ComponentPalette) -> ComponentPalette {
+    ComponentPalette { hover: Color::TRANSPARENT, selected: Color::TRANSPARENT, ..palette }
+}
+
+/// A sheet in aurora's glass that pops out of what opened it as aurora's panels do, a drop
+/// swelling into it, and melts back into it on closing. Without that place it rises as before.
+pub(in crate::view) fn popped(state: &State, sheet: Element) -> Element {
+    match state.mobile_ui.sheet_from {
+        Some(from) => sheet.popover_morph(from, from.width.min(from.height) / 2.0)
+            .popover_animation_ms(limn::GLASS_POP_OPEN_MS).popover_close_animation_ms(limn::GLASS_POP_CLOSE_MS),
+        None => sheet,
+    }
+}
+
+/// Where there is no system share sheet, as in a desktop's preview of the phone: what is shared,
+/// and copying or opening its link. A phone shares through its own sheet, iOS's or Android's,
+/// with the apps it has; none are drawn here in their place.
+pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
+    let (title, artwork) = match (&state.sharing, &state.sharing_page) {
+        (Some(track), _) => (track.title.clone(), track.artwork_url.clone()),
+        (None, Some(page)) => (page.title.clone(), page.artwork_url.clone()),
+        (None, None) => return base,
+    };
+    let copied = state.copied;
+    let actions = vec![
+        limn::ShareAction::new("share-copy", if copied { t!("common-link-copied") } else { t!("desktop-copy-link") }, if copied { Icon::Check } else { Icon::Copy }),
+        limn::ShareAction::new("share-open", t!("mobile-share-open"), Icon::ExternalLink),
+    ];
+    let sheet = limn::ShareSheet::new(base, true, title, "music.youtube.com", "share-close", palette)
+        .preview(cover(state, &artwork, 52.0, palette)).actions(actions).glass(SHEET_GLASS).ios(ios_sheet(state)).render();
+    popped(state, sheet)
+}
+
+/// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
+pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
+    popped(state, sheet.glass(SHEET_GLASS).ios(ios_sheet(state)).render())
+}
+
+/// Every sheet of the phone is iOS 26's: as tall as what it holds, or up to under the safe
+/// area's top, floating inset at partial heights with corners concentric with the display's.
+pub(in crate::view) fn ios_sheet(state: &State) -> limn::SheetSpec {
+    let top = state.mobile_ui.content_insets.top;
+    // Over the keyboard it grows by its height, its field kept above it, as UIKit's.
+    limn::SheetSpec { safe_top: top, screen_corner: display_corner(top), keyboard: state.mobile_ui.keyboard, ..limn::SheetSpec::default() }
+}
+
+/// The display's corner radius, told by where its safe area starts: the iPhones with the
+/// Dynamic Island in their two sizes, with a notch, and the square older ones; Android's
+/// status bars take a radius of 40, and the desktop's preview, with no inset, an iPhone 14's.
+fn display_corner(safe_top: f32) -> f32 {
+    match safe_top {
+        top if top >= 62.0 => 62.0,
+        top if top >= 59.0 => 55.0,
+        top if top >= 47.0 => 47.33,
+        top if top >= 44.0 => 41.5,
+        top if top > 20.0 => 40.0,
+        top if top > 0.0 => 0.0,
+        _ => 47.33,
+    }
+}
+
+/// `element` as a pane of aurora's glass with its shadow; `small` for a circle.
+pub(in crate::view) fn pane_of_glass(element: Element, small: bool) -> Element {
+    element.glass(if small { GLASS_SMALL } else { GLASS }).shadow(GLASS_SHADOW, limn::Point::new(0.0, 10.0), 40.0, 0.0)
+}
+/// The chosen tab's lens while it travels: clear, magnifying what it passes over.
+const LENS: limn::GlassMaterial = limn::GlassMaterial { blur: 0.0, magnify: 1.1, bezel: 6.0, ..limn::GlassMaterial::new(Color::rgba(255, 255, 255, 0)) };
 const HAIRLINE: Color = Color::rgba(255, 255, 255, 26);
 /// The hairline every thumbnail keeps, so a dark cover does not sink into the page.
 pub(in crate::view) const THUMB_RIM: Color = Color::rgba(255, 255, 255, 38);
+/// The black over a phone's video while its controls stand on it, as BitChord's 50%, and
+/// the shade at its foot under the song's name once they are put away.
+const CANVAS_DIM: Color = Color::rgba(0, 0, 0, 128);
+const CANVAS_FOOT: Color = Color::rgba(0, 0, 0, 115);
+/// BitChord's library glyph, solid: a case with two more stacked behind it.
+const LIBRARY_FILL: &str = include_str!("../../assets/icons/library-fill.svg");
+/// A tab's name over its page, as BitChord's "Library".
+const TAB_TITLE: f32 = 34.0;
 /// The chosen tab's platter.
 const TAB_LIT: Color = Color::rgba(255, 255, 255, 36);
 pub(super) const SCROLL_INDICATOR: limn::ScrollbarVisibility = limn::ScrollbarVisibility::AutoHide { hold_ms: 650, fade_ms: 220 };
@@ -76,62 +184,84 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let width = (window.width - insets.left - insets.right).max(TAP);
     let surface = page_surface(state);
     let searching = state.page == Page::Search && state.mobile_search;
+    // BitChord's queue opens in the player, on the lyrics' shell: the song above, its controls below.
+    let queue = state.page == Page::Playing && state.queue_open;
     let title = title(state);
     let mut header = Vec::new();
     // Where a tab starts there is no way back, as Spotify's on a phone: the account's face is
     // there instead, and opens the profile.
-    let tab = matches!(state.page, Page::Search | Page::Library) && !state.mobile_search;
+    let tab = matches!(state.page, Page::Search | Page::Collection | Page::Browse) && !state.mobile_search;
     // BitChord's bar has no pane of its own: its buttons float as discs. The player's stand
     // bare on the song.
-    let disc = |button: Element| if state.page == Page::Playing { button } else { button.background(FROST).border(HAIRLINE, 0.5) };
-    if tab {
-        let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
-            .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
-        header.push(face.centered_y());
-    }
+    // Each a button of aurora's interactive glass, its press kept under `key`.
+    let disc = |button: Element, key: &str| if state.page == Page::Playing { button } else { pane_of_glass(button, true).glass_press(key) };
+    // At the bar's end, as BitChord's, after its circles.
+    let face = tab.then(|| Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile"))).centered_y());
     // Over the player's banner its handle stands alone, as BitChord's, with what plays under it.
     let banner_head = state.page == Page::Playing && !state.queue_open;
     if ((state.can_go_back() && !tab) || state.page == Page::Playing) && !banner_head {
-        header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette)));
+        header.push(disc(icon(if state.page == Page::Playing && !state.queue_open { "mobile-player-dismiss" } else if state.can_go_back() { "back" } else { "home" }, if state.page == Page::Playing { Icon::ChevronDown } else { Icon::ArrowLeft }, &t!("common-back"), palette), "header-lead"));
     }
-    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_));
-    let copy = if banner_head {
-        player_handle(&title, palette)
+    let detail = matches!(state.page, Page::Album(_) | Page::Artist(_) | Page::Playlist(_) | Page::Mix(_)) || artist_coming(state);
+    // Put away over a bare video, the controls take the handle with them.
+    let bare = state.mobile_ui.controls_away && canvas_ready(state).is_some();
+    let copy = if banner_head && bare {
+        Element::spacer()
+    } else if banner_head {
+        player_handle()
     } else if detail && !state.mobile_ui.compact_header {
         // The page's own heading names it under its cover; the bar does once that has scrolled away.
         Element::spacer()
     } else if state.page == Page::Playing {
         Text::new(title.as_ref(), palette).font_size(14.0).truncate().render()
+    } else if tab || (state.page == Page::Settings && !state.mobile_ui.compact_header) {
+        // A tab's name stands large under the bar, the page's first row, as BitChord's;
+        // Settings' too, as iOS's, until it has gone up under the bar.
+        Element::spacer()
     } else {
         // A tab's name stands large, as BitChord's headings; a page pushed on it a step smaller.
         let size = if state.mobile_ui.compact_header { 18.0 } else if tab { 30.0 } else { 24.0 };
         Text::new(title.as_ref(), palette).font_size(size).truncate().render().font_family(FontFamily::SansBold)
     };
+    // The song's video or its cover, as the listener wants it: at the banner's end, the same
+    // room at its start keeping the handle in the middle. Put away with the controls.
+    let footage = banner_head && !bare && state.current().is_some();
+    if footage { header.push(Element::spacer().size(Some(TAP), Some(TAP))); }
     header.push(if state.page == Page::Playing { copy.centered().flex(1.0) } else { copy.centered_y().flex(1.0) });
-    if state.page == Page::Playing && state.queue_open {
-        header.push(icon("queue", Icon::Playlist, &if state.queue_open { t!("mobile-back-to-song") } else { t!("mobile-show-queue") }, palette));
+    if footage {
+        let (glyph, hint) = if state.settings.clips { (Icon::Image, t!("desktop-show-cover")) } else { (Icon::Video, t!("desktop-show-video")) };
+        header.push(disc(icon("cover-clips", glyph, &hint, palette), "header-clips"));
     }
     if state.page == Page::Library {
-        header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette)));
+        header.push(disc(icon("playlist-new", Icon::Add, &t!("common-create-playlist"), palette), "header-new"));
     }
     // A list's search and order, as BitChord's: together in a floating pill of the bar. An
     // artist's page has neither, as BitChord's has not.
     if matches!(state.page, Page::Album(_) | Page::Playlist(_) | Page::Mix(_)) && !state.page_tracks().is_empty() {
         header.push(details::bar_tools(state, palette));
     }
-    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) {
-        header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette)));
+    if !matches!(state.page, Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Playing | Page::Album(_) | Page::Artist(_) | Page::Playlist(_)) && !artist_coming(state) {
+        header.push(disc(icon("settings", Icon::Settings, &t!("common-settings"), palette), "header-settings"));
+    }
+    header.extend(face);
+    // An artist's page has BitChord's capsule at the bar's end: a share and the account's face.
+    if matches!(state.page, Page::Artist(_)) || artist_coming(state) {
+        let share = icon("artist-share", Icon::Custom(sheets::SHARE), &t!("desktop-share"), palette);
+        let face = Element::clickable("account-profile", super::profile_face(state, ACCOUNT_FACE, palette).centered()).size(Some(TAP), Some(TAP))
+            .accessible(limn::Access::new(limn::Role::Button).name(t!("desktop-profile")));
+        header.push(pane_of_glass(Element::panel(Element::row(vec![share, face])), true).glass_press("header-artist").round().centered_y());
     }
     let editing = searching && state.mobile_ui.search_editing;
     let keyboard = editing || state.mobile_ui.keyboard_visible;
     // Under Liquid Glass the field floats at the foot, as Apple Music's, below a plain header.
     let field_on_top = search_in_header(state);
-    let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else { HEADER_HEIGHT };
+    let header_height = if field_on_top { state.mobile_ui.search_header.unwrap_or(if state.mobile_search_compact() { 0.0 } else { search_header_height(state) }) } else if state.page == Page::Lyrics || queue { lyrics::head_height(window.height) } else { HEADER_HEIGHT };
     // UIKit draws the header and tabs over these slots outside the song pages.
     let native_chrome = state.mobile_ui.native_bars && state.mobile_ui.native_surfaces && !matches!(state.page, Page::Playing | Page::Lyrics);
     let header = if native_chrome {
         Element::spacer().accessible(limn::Access::new(limn::Role::Group).id("ios-header").name(title.as_ref()))
-    } else if state.page == Page::Lyrics { lyrics::header(state, palette) }
+    } else if state.page == Page::Lyrics || queue { lyrics::header(state, window.height, palette) }
         else { horizontal_inset(Element::row(header).gap(8.0).padding(6.0), 10.0, 10.0) }
         .size(None, Some(header_height)).clip_children();
     let mut top = vec![Element::spacer().size(None, Some(insets.top)), header];
@@ -140,15 +270,19 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         top.push(search::field(state, palette));
         top_height += search::FIELD_HEIGHT;
     }
-    let mut content = if state.page == Page::Playing && state.queue_open {
-        upcoming(state, palette)
+    let mut content = if queue {
+        queue::content(state, palette)
     } else if searching {
         search::content(state, width, palette)
     } else if state.page == Page::Search {
         home::content(state, width, palette)
+    } else if state.page == Page::Browse {
+        explore(state, width, palette)
     } else if state.page == Page::Lyrics {
         // What the lines are seen through, between the header and the transport.
-        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(window.height), palette)
+        lyrics(state, width, window.height - top_height - insets.bottom - lyrics::footer_height(state, window.height), palette)
+    } else if state.page == Page::Playing && bare {
+        player::bare(state, width, palette)
     } else if state.page == Page::Playing {
         player::screen(state, width, window, top_height, palette)
     } else {
@@ -158,17 +292,27 @@ pub(super) fn view(state: &State, window: Size) -> Element {
         // The mobile shell owns the full-height song color, including plain/error states.
         content.style.bottom_background_fade = None;
     }
+    // A tab's name, large, as the first row of its page: UIKit draws its own over native bars.
+    if (tab || state.page == Page::Settings) && !large_title(state) {
+        let name = Text::new(title.as_ref(), palette).font_size(TAB_TITLE).truncate().render().font_family(FontFamily::SansBold).centered_y();
+        prepend_notice(&mut content, &mut Some(horizontal_inset(name, 16.0, 16.0).size(None, Some(MOBILE_LARGE_TITLE))));
+    }
     let content = with_notice(content, state, palette);
     let mut bottom = Vec::new();
     let mut bottom_height = insets.bottom;
     // The tab bar floats off the foot, by at least 15 where the system leaves no inset.
     let mut lift = insets.bottom;
-    if state.page == Page::Lyrics {
+    if state.page == Page::Lyrics || queue {
         bottom.push(lyrics::footer(state, window.height, palette));
-        bottom_height += lyrics::footer_height(window.height);
+        bottom_height += lyrics::footer_height(state, window.height);
     } else if state.page != Page::Playing && !keyboard {
         if let Some(track) = state.current() {
-            bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, width, palette) });
+            // With the tabs, the mini player is one piece with them, which folds it into their
+            // row; its room stays, so the page does not jump.
+            let with_tabs = !native_chrome && !(searching && !field_on_top);
+            if !with_tabs {
+                bottom.push(if native_chrome && glass(state) { mini_slot(track) } else { mini_player(state, track, width, palette) });
+            }
             bottom_height += MINI_HEIGHT;
         }
     }
@@ -201,27 +345,50 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let ground = song_ground(state, window);
     // Over the blurred cover the bars are clear, as the cover runs beneath them.
     let (header_edge, footer_edge) = if native_chrome || ground.is_some() { (Color::TRANSPARENT, Color::TRANSPARENT) } else { (header_edge, footer_edge) };
+    // iOS 26's scroll edge, as BitChord's: a page going up under the bar blurs, the more the
+    // nearer the top, rather than fading into a colour. The song's pages keep their ground.
+    let soft_edge = !native_chrome && !song_surface && !queue;
+    let header_edge = if soft_edge { Color::TRANSPARENT } else { header_edge };
     let surface = if ground.is_some() { (Color::TRANSPARENT, Color::TRANSPARENT) } else { surface };
     // The large title is the page's first row, scrolling up under the bar; over Search it
     // stays in the header, above the field.
     let scroll_top = top_height + if large_title(state) && !field_on_top { MOBILE_LARGE_TITLE } else { 0.0 };
+    // An artist's photo runs to the screen's top under a clear header, as BitChord's, until
+    // their name has gone up under it.
+    let bleed = (matches!(state.page, Page::Artist(_)) || artist_coming(state)) && !native_chrome;
+    let clear_head = bleed && !state.mobile_ui.compact_header;
+    let scroll_top = if bleed { 0.0 } else { scroll_top };
+    let header_edge = if clear_head { Color::TRANSPARENT } else { header_edge };
     // limn fades an edge into a colour, which the blurred cover has none of: over it the lines
     // are cut between the bars instead of passing under them.
-    let content = if ground.is_some() && state.page == Page::Lyrics {
+    let content = if ground.is_some() && (state.page == Page::Lyrics || queue) {
         Element::column(vec![Element::spacer().size(None, Some(scroll_top)), content.flex(1.0), Element::spacer().size(None, Some(bottom_height))])
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
-    let top = if native_chrome { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    let top = if native_chrome || clear_head || soft_edge { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
+    // iOS's edge is the status bar's: it is gone by the row of the header's buttons; it takes
+    // no press.
+    let edge = soft_edge.then(|| Element::column(vec![
+        Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(insets.top + EDGE_TAIL)),
+        Element::spacer().flex(1.0),
+    ]));
     let footer = Element::column(bottom);
     // The scrim is the tab bar's; the lyrics' transport stands on the song's colour.
     let footer = if player { footer }
         else if native_chrome && state.mobile_ui.glass { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }
         else if native_chrome { footer.vertical_gradient(chrome::spotify_fade(SCHEME.canvas)) }
         else if song_surface { footer.background(footer_edge).vertical_gradient(vec![footer_edge, surface.1]) }
-        else { footer.vertical_gradient(chrome::floating_fade(SCHEME.canvas)) }.block_pointer("mobile-footer-bar");
+        // Rows pass seen beneath the glass, as BitChord's, deepening only by the home indicator.
+        else { footer.vertical_gradient(chrome::glass_fade(SCHEME.canvas)) }.block_pointer("mobile-footer-bar");
     let bars = Element::column(vec![top, Element::spacer().flex(1.0), footer]);
-    let content = Element::stack(vec![content, bars]);
+    // The page, iOS's soft edge over it, and the bars over both.
+    let mut layers = vec![content];
+    layers.extend(edge);
+    layers.push(bars);
+    let content = Element::stack(layers);
     let content = horizontal_inset(Element::column(vec![content.flex(1.0)]), insets.left, insets.right);
+    let content = match flying_cover(state, window) { Some(cover) => Element::stack(vec![cover, content]), None => content };
+    let content = match player_canvas(state, window) { Some(canvas) => Element::stack(vec![canvas, content]), None => content };
     let content = match player_banner(state, window) { Some(banner) => Element::stack(vec![banner, content]), None => content };
     let content = match ground { Some(ground) => Element::stack(vec![ground, content]), None => content };
     let tree = Element::panel(content).background(SCHEME.canvas).vertical_gradient(vec![surface.0, surface.1])
@@ -229,20 +396,100 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     let tree = if state.page == Page::Playing { tree.translate(limn::Point::new(0.0, state.mobile_ui.player_offset)) } else { tree };
     let tree = Element::panel(tree).size(Some(window.width), Some(window.height)).clip_children();
     // Replay's story stands over everything, the whole screen, on every platform.
-    super::wrapped::story(state, dialogs(state, tree, window.width, palette, cfg!(target_os = "ios") && state.mobile_ui.native_surfaces), window)
+    super::wrapped::story(state, dialogs(state, tree, window, palette), window)
 }
 
-/// The phone's dialogs over `tree`. UIKit owns its sheets when its bridge is ready, `uikit`;
-/// the limn ones stay for other platforms or if the bridge is unavailable. The greeting,
-/// the profile and moving an account are limn's on every platform: no UIKit surface draws
-/// them, and left behind the bridge they would open to nothing.
-fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, uikit: bool) -> Element {
+/// Whether an artist's page is on its way, drawn as theirs is.
+fn artist_coming(state: &State) -> bool {
+    matches!(state.page, Page::Loading(crate::backend::Target::Artist(_)))
+}
+
+/// BitChord's Explore: the catalog's moods and genres two to a row, each a card of its colour
+/// with its first list's cover redrawn in it. While they come their places pulse; without
+/// them, the genres Surco names itself, each a search.
+fn explore(state: &State, width: f32, palette: ComponentPalette) -> Element {
+    let inner = width - 2.0 * MOOD_GUTTER;
+    let (card, height) = ((inner - MOOD_GAP) / 2.0, ((inner - MOOD_GAP) / 2.0 / MOOD_ASPECT).round());
+    let grid = match &state.moods {
+        Some(Ok(moods)) if !moods.is_empty() => {
+            let cards: Vec<Element> = moods.iter().enumerate().map(|(index, mood)| mood_card(state, index, mood, card, height, palette)).collect();
+            pairs(cards)
+        }
+        Some(_) => search::browse(usize::MAX, inner, 2, height, palette),
+        None => pairs((0..12).map(|_| limn::Skeleton::new("mood-coming", palette).render().radius(MOOD_RADIUS).size(Some(card), Some(height))).collect()),
+    };
+    page_scroll("mobile-explore", Element::column(vec![grid]).padding(MOOD_GUTTER))
+}
+
+/// Cards two to a row, `MOOD_GAP` apart both ways.
+fn pairs(cards: Vec<Element>) -> Element {
+    let mut cards = cards.into_iter();
+    let mut rows = Vec::new();
+    while let Some(first) = cards.next() {
+        rows.push(Element::row(vec![first, cards.next().unwrap_or_else(Element::spacer).flex(1.0)]).gap(MOOD_GAP));
+    }
+    Element::column(rows).gap(MOOD_GAP)
+}
+
+/// BitChord's mood card: corners of 18, width over height 1.72, 16 from the sides, 12 apart.
+const MOOD_GUTTER: f32 = 16.0;
+const MOOD_GAP: f32 = 12.0;
+const MOOD_ASPECT: f32 = 1.72;
+const MOOD_RADIUS: f32 = 18.0;
+/// How much of the card its colour's stripe takes before the cover starts.
+const MOOD_STRIPE: f32 = 0.28;
+
+/// A mood as BitChord's Explore draws it: a stripe of its colour down the left, its first list's
+/// cover filling the rest as a duotone of that colour, and its name over a soft shade.
+fn mood_card(state: &State, index: usize, mood: &surco_youtube::Mood, width: f32, height: f32, palette: ComponentPalette) -> Element {
+    let color = crate::state::mood_color(mood);
+    let base = Color::rgb((color >> 16) as u8, (color >> 8) as u8, color as u8);
+    let (stripe, shadow, light) = (mix(base, Color::rgb(0, 0, 0), 0.08), mix(base, Color::rgb(0, 0, 0), 0.68), mix(base, Color::rgb(255, 255, 255), 0.32));
+    let cover = state.mood_lists.get(&mood.params).and_then(|lists| lists.iter().find_map(|list| list.cover.as_deref()))
+        .and_then(|cover| state.artwork.get(&crate::state::duotone_key(cover, color)));
+    let side = width * (1.0 - MOOD_STRIPE);
+    let art = match cover {
+        Some(image) => Element::raster_image(image.clone().cover()).size(Some(side), Some(height)),
+        None => Element::panel(Element::spacer()).background(mix(shadow, light, 0.45)).size(Some(side), Some(height)),
+    };
+    // Pale stripes, as Energize's cream, would swallow white words: a shade under the name.
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 61), Color::TRANSPARENT, Color::TRANSPARENT]);
+    let name = Text::new(&mood.title, palette).font_size(17.0).render().max_lines(2).font_family(FontFamily::SansBold).foreground(Color::rgb(255, 255, 255));
+    let card = Element::stack(vec![
+        Element::panel(Element::spacer()).background(stripe),
+        Element::row(vec![Element::spacer().flex(1.0), art]),
+        shade,
+        Element::column(vec![name, Element::spacer().flex(1.0)]).padding(12.0),
+    ]).size(Some(width), Some(height)).radius(MOOD_RADIUS).clip_children();
+    Element::clickable(format!("mood:{index}"), card).accessible(limn::Access::new(limn::Role::Button).name(&mood.title)).radius(MOOD_RADIUS).flex(1.0)
+}
+
+/// A mood's or genre's page: its lists two to a row, each its cover over its name and maker;
+/// pressed, one opens to be looked at and played, not kept.
+pub(in crate::view) fn mood_page(state: &State, params: &str, width: f32, palette: ComponentPalette) -> Element {
+    let Some(lists) = state.mood_lists.get(params) else { return super::loading("mood-lists", palette) };
+    let side = (width - 2.0 * MOOD_GUTTER - MOOD_GAP) / 2.0;
+    let tiles = lists.iter().enumerate().map(|(index, list)| {
+        let body = Element::column(vec![
+            cover(state, &list.cover, side, palette).radius(12.0).border(THUMB_RIM, 0.5),
+            Text::new(&list.title, palette).font_size(15.0).truncate().render().font_family(FontFamily::SansBold),
+            Text::new(&list.author, palette).font_size(13.0).muted().truncate().render(),
+        ]).gap(4.0);
+        Element::clickable(format!("catalog:{index}"), body).accessible(limn::Access::new(limn::Role::Button).name(format!("{} · {}", list.title, list.author))).flex(1.0)
+    }).collect();
+    page_scroll("mobile-mood", Element::column(vec![pairs(tiles)]).padding(MOOD_GUTTER))
+}
+
+/// The phone's dialogs over `tree`, limn's on every platform: iOS 26's sheets, drawn and
+/// moving as Apple's, in the app's own glass. Only the system's share sheet, a share's "More",
+/// is UIKit's on the iPhone.
+fn dialogs(state: &State, tree: Element, window: Size, palette: ComponentPalette) -> Element {
+    let width = window.width;
     let tree = welcome_dialog(state, tree, width);
     let tree = super::jam::invite(state, super::profile_dialog(state, super::handoff_dialog(state, tree, width), width), width);
     // limn's on the iPhone too: it stands over everything, as moving an account does.
     let tree = super::crop::dialog(state, tree, width);
-    if uikit { return tree; }
-    let tree = sheets::render(state, tree, palette);
+    let tree = sheets::render(state, tree, window, palette);
     let tree = share_dialog(state, tree, width, palette);
     let tree = playlist_dialog(state, tree, width, palette);
     let tree = missed_dialog(state, super::import_run_dialog(state, import_dialog(state, tree, width, palette), width, palette), width, palette);
@@ -252,7 +499,7 @@ fn dialogs(state: &State, tree: Element, width: f32, palette: ComponentPalette, 
 /// The pages whose name UIKit draws large beneath the bar, as at a navigation stack's root.
 pub(crate) fn large_title(state: &State) -> bool {
     state.mobile_ui.native_bars && state.mobile_ui.native_surfaces
-        && matches!(state.page, Page::Search | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
+        && matches!(state.page, Page::Search | Page::Collection | Page::Library | Page::Settings | Page::SettingsPart(_) | Page::Equalizer | Page::Patches)
 }
 
 /// Search's whole header: its bar and, natively, the large title over the field.
@@ -264,11 +511,22 @@ pub(crate) fn search_header_height(state: &State) -> f32 {
 pub(crate) fn title(state: &State) -> Cow<'_, str> {
     let searching = state.page == Page::Search && state.mobile_search;
     match &state.page {
-        Page::Library => t!("common-library"),
+        Page::Collection => t!("mobile-tab-library"),
+        // A shelf's "See all" is named for what it lists.
+        Page::Library => match state.filter {
+            crate::state::Filter::Lists => t!("desktop-playlists"),
+            crate::state::Filter::Artists => t!("common-artists"),
+            crate::state::Filter::Albums => t!("common-albums"),
+            crate::state::Filter::All => t!("mobile-tab-library"),
+        },
+        Page::Browse => t!("mobile-tab-explore"),
+        Page::Mood(params) => state.moods.as_ref().and_then(|moods| moods.as_ref().ok()?.iter().find(|mood| mood.params == *params))
+            .map_or_else(|| t!("mobile-tab-explore"), |mood| Cow::Borrowed(mood.title.as_str())),
         Page::Settings => t!("common-settings"),
         Page::SettingsPart(part) => settings::part_title(*part),
         Page::Equalizer => t!("common-equalizer"),
-        Page::Playing => if state.queue_open { t!("mobile-queue") } else { t!("mobile-now-playing") },
+        Page::Playing if state.queue_open => t!("mobile-queue"),
+        Page::Playing => playing_from(state),
         Page::Lyrics => t!("mobile-lyrics"),
         Page::Search if searching => t!("common-search"),
         Page::Search => greeting(chrono::Timelike::hour(&chrono::Local::now())).into(),
@@ -285,6 +543,16 @@ pub(crate) fn title(state: &State) -> Cow<'_, str> {
         Page::Playlist(id) if state.mobile_ui.compact_header => state.collection.playlist(*id).map_or_else(|| t!("common-playlist"), |playlist| Cow::Borrowed(&playlist.name)),
         Page::Mix(mix) if state.mobile_ui.compact_header => Cow::Owned(super::mix_name(mix)),
         _ => t!("mobile-your-music"),
+    }
+}
+
+/// What the player says it plays from, as BitChord's: the place it was started, or else the
+/// song's album.
+fn playing_from(state: &State) -> Cow<'_, str> {
+    let album = state.current().and_then(|track| track.album.as_deref());
+    match state.playing_from.as_deref().or(album) {
+        Some(name) => Cow::Owned(t!("mobile-playing-from", name = name).into_owned()),
+        None => t!("mobile-now-playing"),
     }
 }
 
@@ -346,14 +614,14 @@ fn cover_tone(tint: Color, amount: f32) -> Color {
 /// screen under a black scrim, darker toward the controls. Until the blur has come they keep
 /// the cover's colour.
 fn song_ground(state: &State, window: Size) -> Option<Element> {
-    if !matches!(state.page, Page::Playing | Page::Lyrics) || state.queue_open { return None; }
+    if !matches!(state.page, Page::Playing | Page::Lyrics) { return None; }
     let url = state.current()?.artwork_url.as_deref()?;
     let blurred = state.artwork.get(&crate::state::backdrop_key(url))?;
     // The player's is BitChord's own shade, 34 → 48% → 64%, which gives its screens' greys over
     // the same cover. A near-white cover, and the lyrics, keep the deeper one white words stay
     // legible on over any cover.
     let light = state.tints.get(url).is_some_and(|tint| luminance(*tint) > 0.6);
-    let shade = if state.page == Page::Playing && !light { [87, 122, 163] } else { [120, 160, 205] };
+    let shade = if state.page == Page::Playing && !state.queue_open && !light { [87, 122, 163] } else { [120, 160, 205] };
     let scrim = Element::panel(Element::spacer()).vertical_gradient(shade.map(|alpha| Color::rgba(0, 0, 0, alpha)).to_vec());
     let whole = |element: Element| element.size(Some(window.width), Some(window.height));
     Some(Element::stack(vec![whole(Element::raster_image(blurred.clone().cover())), whole(scrim)]))
@@ -362,20 +630,106 @@ fn song_ground(state: &State, window: Size) -> Option<Element> {
 /// The player's cover, edge to edge across the top over its ground, which it dissolves into;
 /// a shade over its top keeps the system's bar and the handle legible on a light cover.
 fn player_banner(state: &State, window: Size) -> Option<Element> {
-    if state.page != Page::Playing || state.queue_open { return None; }
+    if state.page != Page::Playing || state.queue_open || cover_flight(state, window.height).is_some() { return None; }
     let insets = state.mobile_ui.content_insets;
-    let banner = player::banner(state, window.width, player::banner_height(window, insets.bottom))?;
-    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, 120), Color::TRANSPARENT]).size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
     let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    // On its way to or from the mini player, the cover goes its own way under the player's
+    // header and controls, and becomes the banner, its dissolve and its shade, as it arrives:
+    // where it lands nothing changes from one frame to the next. It leaves from the sheet,
+    // wherever the sheet has come down to.
+    let (banner, at) = match docking(state) {
+        Some(at) => {
+            let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), mini_thumb(state, window));
+            let mix = |a: f32, b: f32| a + (b - a) * at;
+            // The sheet it is drawn on is lowered by the player's offset; the thumbnail is not.
+            let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height), 1.0 - at)?
+                .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y - state.mobile_ui.player_offset)));
+            (Element::row(vec![picture, Element::spacer().flex(1.0)]), at)
+        }
+        None => (player::banner(state, window.width, player::banner_height(window, insets.bottom))?, 0.0),
+    };
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, (120.0 * (1.0 - at)) as u8), Color::TRANSPARENT])
+        .size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
     Some(Element::stack(vec![at_top(banner), at_top(shade)]))
+}
+
+/// How far the player's cover has gone toward the lyrics' or the queue's head while it is on
+/// its way there or back, on a screen `height` tall enough for the head to take it; none at rest.
+fn cover_flight(state: &State, height: f32) -> Option<f32> {
+    (height >= lyrics::SHORT && state.cover_moving()).then_some(state.mobile_ui.collapse)
+}
+
+/// The cover on its way between the player's banner and the lyrics' or the queue's head, as
+/// BitChord's: it shrinks from the banner into the head's 54 thumbnail, its corners rounding,
+/// and grows back the same way.
+fn flying_cover(state: &State, window: Size) -> Option<Element> {
+    let at = cover_flight(state, window.height)?;
+    let insets = state.mobile_ui.content_insets;
+    let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), lyrics::thumb(insets));
+    let mix = |a: f32, b: f32| a + (b - a) * at;
+    let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height), 1.0 - at)?
+        .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y)));
+    // The banner's shade comes back with it.
+    let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::rgba(0, 0, 0, (120.0 * (1.0 - at)) as u8), Color::TRANSPARENT])
+        .size(None, Some(insets.top + HEADER_HEIGHT + 32.0));
+    let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
+    Some(Element::stack(vec![at_top(Element::row(vec![picture, Element::spacer().flex(1.0)])), at_top(shade)]))
+}
+
+/// How far the player's cover has flown toward the mini player, while it is on its way down or
+/// up; under a finger it rides the sheet, as Apple Music's, and this is none.
+fn docking(state: &State) -> Option<f32> {
+    let flight = state.mobile_ui.player_flight;
+    (state.page == Page::Playing && !state.queue_open && state.mobile_ui.player_offset > 0.5 && flight > 0.0 && state.current().is_some()).then_some(flight)
+}
+
+/// Where the mini player's thumbnail stands over the tabs, on a screen `window` whose safe
+/// edges the state knows: where the player's cover goes as the player comes down.
+fn mini_thumb(state: &State, window: Size) -> limn::Rect {
+    let insets = state.mobile_ui.content_insets;
+    let width = (window.width - insets.left - insets.right).max(TAP);
+    let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
+    let pill = window.height - (insets.bottom.max(15.0) + 6.0) - NAV_HEIGHT - MINI_HEIGHT;
+    limn::Rect::new(insets.left + (width - span) / 2.0 + MINI_INSET, pill + (MINI_PILL - MINI_ART) / 2.0, MINI_ART, MINI_ART)
+}
+
+/// The video's showing, once its first frame is on the screen behind a phone's player.
+fn canvas_ready(state: &State) -> Option<String> {
+    let (name, ..) = state.screening().filter(|_| state.canvas())?;
+    (state.clip_ready.as_ref() == Some(&name)).then_some(name)
+}
+
+/// The song's video across the whole screen behind the player, as BitChord's over a Spotify
+/// Canvas: from its first frame it fades in over the cover, under a black of 50% and, at its
+/// foot, the picture blurred for the controls to stand on. A tap on the bare video puts the
+/// controls, the black and the blur away, and another brings them back. A shade at its foot
+/// keeps the song's name legible over a light picture meanwhile.
+fn player_canvas(state: &State, window: Size) -> Option<Element> {
+    // The cover travels alone: the video gives way to it, as BitChord's still frame does.
+    if cover_flight(state, window.height).is_some() || docking(state).is_some() { return None; }
+    let name = canvas_ready(state)?;
+    let whole = |element: Element| element.size(Some(window.width), Some(window.height));
+    let at_foot = |element: Element, share: f32| whole(Element::column(vec![Element::spacer().flex(1.0), element.size(Some(window.width), Some(window.height * share))]));
+    let mut layers = vec![whole(Element::surface(CLIP_SURFACE, t!("desktop-song-video"))).animate_enter(format!("clip:{name}"))];
+    let away = state.mobile_ui.controls_away;
+    if away {
+        let shade = Element::panel(Element::spacer()).vertical_gradient(vec![Color::TRANSPARENT, CANVAS_FOOT]);
+        layers.push(at_foot(shade, 0.3).animate_presence("mobile-canvas-foot"));
+    } else {
+        layers.push(at_foot(Element::surface(CLIP_BACKDROP, ""), crate::clip::DECK).animate_presence("mobile-canvas-deck"));
+        layers.push(whole(Element::panel(Element::spacer()).background(CANVAS_DIM)).animate_presence("mobile-canvas-dim"));
+    }
+    let label = if away { t!("mobile-show-controls") } else { t!("mobile-hide-controls") };
+    layers.push(whole(Element::clickable("mobile-canvas", Element::spacer()).accessible(limn::Access::new(limn::Role::Button).name(label))));
+    Some(Element::stack(layers))
 }
 
 /// BitChord's handle over the player's banner, what plays named under it; pressed, it puts
 /// the player away, as dragging it down does.
-fn player_handle(title: &str, palette: ComponentPalette) -> Element {
+fn player_handle() -> Element {
+    // The grip alone: where the song was started from is not said over it.
     let grip = Element::panel(Element::spacer()).background(Color::rgba(255, 255, 255, 150)).round().size(Some(36.0), Some(5.0)).centered_x();
-    let words = Text::new(title, palette).font_size(13.0).ink(Color::rgba(255, 255, 255, 225)).truncate().render().font_family(FontFamily::SansMedium).centered_x();
-    Element::clickable("mobile-player-dismiss", Element::column(vec![grip, words]).gap(6.0).centered())
+    Element::clickable("mobile-player-dismiss", grip.centered())
         .accessible(limn::Access::new(limn::Role::Button).name(t!("common-close")))
         .size(Some(200.0), Some(TAP))
 }
@@ -388,6 +742,9 @@ fn page_surface(state: &State) -> (Color, Color) {
         Page::Playlist(id) => state.collection.playlist(*id).and_then(|playlist| playlist.cover()).map(String::as_str),
         _ => None,
     };
+    // The profile is washed in its photo's or its name's colour from the screen's top, under
+    // the bar too: no black band over it.
+    if state.page == Page::Profile { return (cover_tone(super::profile_colour(state), 0.5), SCHEME.canvas); }
     let Some(tint) = artwork.and_then(|url| state.tints.get(url)).copied() else { return (SCHEME.canvas, SCHEME.canvas); };
     // A song list's page is BitChord's: one dark colour of its cover, all the way down.
     if !matches!(state.page, Page::Playing | Page::Lyrics) { let tone = page_tone(tint); return (tone, tone); }
@@ -410,42 +767,126 @@ pub(crate) fn route_key(state: &State) -> String {
     }
 }
 
-/// BitChord's tab bar: a frosted pill floating clear of the edges, the chosen tab on a lit
-/// platter that slides over to the next one chosen.
+/// BitChord's floating bar: the tabs in a glass capsule, the chosen one on a lit platter that
+/// slides to the next one chosen, Search a circle beside them, and the mini player above. As
+/// the page goes down they fold into one row, `bar_fold` of the way: the capsule narrows into
+/// the chosen tab's circle as the other tabs and the names fade, and the mini player comes
+/// down between it and Search, each part moving between its places as BitChord's shared
+/// elements do. Pressed while folded, the circle opens the bar again.
 fn navigation(state: &State, width: f32, palette: ComponentPalette) -> Element {
-    let tab = |id: &str, glyph: Icon, label: &str, selected: bool| {
-        let ink = if selected { palette.text } else { palette.muted };
-        let copy = Element::column(vec![
-            Element::icon(glyph).large_icon(24.0).foreground(ink).centered_x().animate_foreground(format!("mobile-tab:{id}:icon")),
-            Text::new(label, palette).font_size(10.0).render().font_family(limn::FontFamily::SansMedium).foreground(ink).centered_x()
-                .animate_foreground(format!("mobile-tab:{id}:label")),
-        ]).gap(3.0).centered();
-        let cell = if selected {
-            Element::stack(vec![Element::panel(Element::spacer()).background(TAB_LIT).round().animate_move("mobile-tab-platter"), copy])
-        } else { copy };
-        Element::clickable(id, cell).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
-            .size(None, Some(NAV_HEIGHT - 8.0)).flex(1.0)
-    };
-    let row = Element::row(tabs(state).into_iter().map(|(id, glyph, _, label, selected)| tab(id, glyph, label, selected)).collect()).padding(4.0);
-    floating_bar(row, width, NAV_HEIGHT).block_pointer("mobile-nav-bar")
+    let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
+    let fold = state.mobile_ui.bar_fold.clamp(0.0, 1.0);
+    let lerp = |from: f32, to: f32| from + (to - from) * fold;
+    let fade = |color: Color, share: f32| Color { a: (f32::from(color.a) * share.clamp(0.0, 1.0)).round() as u8, ..color };
+    let track = state.current();
+    // The tabs' row: under the mini player's while the bar is open. Folded, the row is shorter,
+    // narrower and more spaced, on the open row's centre line.
+    let row = if track.is_some() { MINI_HEIGHT } else { 0.0 };
+    let left = ((width - span) / 2.0).max(0.0);
+    let (inline_left, inline_span) = (INLINE_GUTTER, (width - 2.0 * INLINE_GUTTER).max(3.0 * INLINE));
+    let inline_y = row + (NAV_HEIGHT - INLINE) / 2.0;
+    let tall = lerp(NAV_HEIGHT, INLINE);
+    let place = |surface: Element, x: f32, y: f32, across: f32, tall: f32| Element::column(vec![
+        Element::spacer().size(None, Some(y)),
+        Element::row(vec![Element::spacer().size(Some(x), None), surface.size(Some(across.max(0.0)), Some(tall.max(0.0)))]),
+    ]);
+    let disc = |content: Element, small: bool| pane_of_glass(Element::panel(content), small).round().clip_children();
+    let face = Element::icon(Icon::Search).large_icon(24.0).foreground(palette.text).centered();
+    let searching = state.page == Page::Search && state.mobile_search;
+    let search = disc(Element::clickable("mobile-search", face.foreground(if searching { palette.text } else { Color { a: 166, ..palette.text } }))
+        .accessible(limn::Access::new(limn::Role::Button).name(t!("common-search")).selected(searching)).round(), true)
+        .glass_press("bar:mobile-search");
+    // The capsule's cells: the chosen one becomes the circle, the others narrow away.
+    let tabs = tabs(state);
+    let open = span - NAV_HEIGHT - 8.0;
+    let rest = (open - 8.0) / tabs.len() as f32;
+    let still = fold == 0.0;
+    // Folded, the circle shows the tab the page is of, or was reached from, even while
+    // Search's circle is the chosen one.
+    let kept = chosen_tab(state);
+    let cells: Vec<Element> = tabs.iter().filter(|tab| tab.0 == kept || fold < 0.99).map(|&(id, glyph, _, label, selected)| {
+        // BitChord's: the others in the chosen one's ink at 65%.
+        let ink = if selected { palette.text } else { fade(Color { a: 166, ..palette.text }, 1.0 - fold) };
+        let icon = Element::icon(glyph).large_icon(24.0).foreground(ink).centered_x();
+        let name = Text::new(label, palette).font_size(10.0).render().font_family(limn::FontFamily::SansMedium)
+            .foreground(fade(ink, 1.0 - fold)).centered_x();
+        // The tab's colour moves with a choice, not with a fold.
+        let (icon, name) = if still { (icon.animate_foreground(format!("mobile-tab:{id}:icon")), name.animate_foreground(format!("mobile-tab:{id}:label"))) } else { (icon, name) };
+        let across = lerp(rest, if id == kept { INLINE - 8.0 } else { 0.0 });
+        // As wide as its cell: a label wider than the folded circle ("Biblioteca") would push the icon aside.
+        let copy = Element::column(vec![icon, Element::panel(name).size(None, Some(lerp(13.0, 0.0))).clip_children()]).gap(lerp(3.0, 0.0))
+            .size(Some(across), None).centered_y();
+        // Folded, the chosen tab's circle opens the bar again, as BitChord's inline tab does.
+        let action = if fold >= 0.5 && id == kept { "mobile-bar-open" } else { id };
+        let cell = if id == kept || fold < 0.5 {
+            Element::clickable(action, copy).accessible(limn::Access::new(limn::Role::Button).name(label).selected(selected)).radius((NAV_HEIGHT - 8.0) / 2.0)
+        } else { Element::panel(copy) };
+        cell.size(Some(across), Some(tall - 8.0)).clip_children().indicator_slot(id)
+    }).collect();
+    let actions = tabs.iter().filter(|tab| tab.0 == kept || fold < 0.5).map(|tab| if fold >= 0.5 { "mobile-bar-open" } else { tab.0 }.to_owned()).collect();
+    let mut strip = Element::tab_strip(cells, actions);
+    if let Some(chosen) = tabs.iter().find(|tab| tab.4) {
+        strip = strip.tab_selection("mobile-tab-platter", chosen.0, fade(TAB_LIT, 1.0 - fold), (tall - 8.0) / 2.0, limn::tokens().motion.move_ms)
+            .glass_selection(LENS);
+    }
+    // Unclipped, unlike the circles: the lens stands past the capsule while it travels.
+    let capsule = pane_of_glass(Element::panel(strip.padding(4.0)), false).round();
+    // Folded, the capsule is a button of glass of its own.
+    let capsule = if fold > 0.0 { capsule.glass_press("bar:tabs") } else { capsule };
+    let mut layers = Vec::new();
+    // What the bars stand on takes no press for the page under them: the mini player's row
+    // while it is there, and the tabs' row.
+    if track.is_some() && fold < 0.5 {
+        layers.push(place(Element::spacer().block_pointer("mobile-mini-bar"), 0.0, 0.0, width, MINI_HEIGHT));
+    }
+    layers.push(place(Element::spacer().block_pointer("mobile-nav-bar"), left, row, span, NAV_HEIGHT));
+    let y = lerp(row, inline_y);
+    layers.push(place(capsule, lerp(left, inline_left), y, lerp(open, INLINE), tall));
+    layers.push(place(search, lerp(left + span - NAV_HEIGHT, inline_left + inline_span - INLINE), y, tall, tall));
+    if let Some(track) = track {
+        let mini = disc(mini_controls(state, track, fold >= 0.5, palette), false);
+        let side = INLINE + INLINE_SPACING;
+        layers.push(place(mini, lerp(left, inline_left + side), lerp(0.0, inline_y), lerp(span, inline_span - 2.0 * side), MINI_PILL));
+    }
+    Element::stack(layers).size(Some(width), Some(row + NAV_HEIGHT))
 }
 
 /// A floating bar's pill: frosted, rimmed with a hairline, centred `BAR_SIDE` clear of the
 /// sides and no wider than `BAR_MAX`.
 fn floating_bar(content: Element, width: f32, height: f32) -> Element {
     let span = (width - 2.0 * BAR_SIDE).clamp(TAP, BAR_MAX);
-    Element::panel(content).background(FROST).border(HAIRLINE, 0.5).round().clip_children()
+    pane_of_glass(Element::panel(content), false).round().clip_children()
         .size(Some(span), Some(height)).centered_x()
 }
 
-/// Each tab's id, limn glyph, SF Symbol, label and selection, shared with the native tab bar.
+/// The tab a page is of, as BitChord's stacks: Home's, Explore's or the Library's.
+fn tab_of(page: &Page) -> Option<&'static str> {
+    match page {
+        Page::Search => Some("home"),
+        Page::Browse | Page::Mood(_) => Some("browse"),
+        Page::Collection | Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_) => Some("mobile-library"),
+        _ => None,
+    }
+}
+
+/// The tab of the page shown or, for one of none (Settings, an artist, an album, Search's
+/// results), the one it was reached from: a tab bar keeps its tab while its stack goes deeper.
+fn chosen_tab(state: &State) -> &'static str {
+    let own = if state.page == Page::Search && state.mobile_search { None } else { tab_of(&state.page) };
+    own.or_else(|| state.history.iter().rev().find_map(tab_of)).unwrap_or("home")
+}
+
+/// Each tab's id, limn glyph, SF Symbol, label and selection, shared with the native tab bar:
+/// BitChord's Home, Explore and Library. Search is the circle beside them.
 pub(crate) fn tabs(state: &State) -> [(&'static str, Icon, &'static str, &'static str, bool); 3] {
-    let home = state.page == Page::Search && !state.mobile_search;
-    let library = matches!(state.page, Page::Library | Page::Downloads | Page::Liked | Page::Playlist(_));
+    // While Search's circle is chosen, no tab is.
+    let chosen = (!(state.page == Page::Search && state.mobile_search)).then(|| chosen_tab(state));
+    let (home, browse, library) = (chosen == Some("home"), chosen == Some("browse"), chosen == Some("mobile-library"));
     [
-        ("home", Icon::Home, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
-        ("mobile-search", Icon::Search, "magnifyingglass", crate::i18n::fixed(t!("common-search")), state.page == Page::Search && state.mobile_search),
-        ("mobile-library", Icon::Library, if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("common-library")), library),
+        // limn's glyphs solid, chosen or not, as BitChord's tabs are.
+        ("home", Icon::HomeFill, if home { "house.fill" } else { "house" }, crate::i18n::fixed(t!("mobile-tab-home")), home),
+        ("browse", Icon::GridFill, "square.grid.2x2.fill", crate::i18n::fixed(t!("mobile-tab-explore")), browse),
+        ("mobile-library", Icon::Custom(LIBRARY_FILL), if library { "books.vertical.fill" } else { "books.vertical" }, crate::i18n::fixed(t!("mobile-tab-library")), library),
     ]
 }
 
@@ -515,25 +956,35 @@ pub(crate) fn mini_buttons(state: &State) -> [HeaderButton; 3] {
 /// BitChord's mini-player: a frosted pill floating over the tabs, the song beside its cover,
 /// then play and next.
 fn mini_player(state: &State, track: &Track, width: f32, palette: ComponentPalette) -> Element {
+    Element::column(vec![floating_bar(mini_controls(state, track, false, palette), width, MINI_PILL).animate_move("mobile-mini"), Element::spacer().size(None, Some(MINI_HEIGHT - MINI_PILL))])
+        .size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
+}
+
+/// What the mini player holds, over the tabs or folded among them: the song by its cover,
+/// which opens the player, play and next.
+fn mini_controls(state: &State, track: &Track, inline: bool, palette: ComponentPalette) -> Element {
     let label = Element::row(vec![
-        cover(state, &track.artwork_url, 40.0, palette).radius(8.0).border(THUMB_RIM, 1.0).centered_y(),
+        cover(state, &track.artwork_url, MINI_ART, palette).radius(MINI_ART_CORNER).border(THUMB_RIM, 1.0).centered_y(),
         Element::column(vec![
-            Text::new(&track.title, palette).font_size(15.0).truncate().render().font_family(limn::FontFamily::SansBold),
-            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).font_size(13.0).muted().truncate().render(),
-        ]).gap(2.0).centered_y().flex(1.0),
-    ]).gap(10.0).size(None, Some(TAP));
+            Text::new(&track.title, palette).font_size(13.0).truncate().render().font_family(limn::FontFamily::SansBold),
+            Text::new(state.player.error.as_deref().unwrap_or(&track.artist), palette).font_size(12.0)
+                .ink(Color { a: 179, ..palette.text }).truncate().render(),
+        ]).gap(1.0).centered_y().flex(1.0),
+    ]).gap(if inline { 8.0 } else { 9.0 }).size(None, Some(TAP));
     let open = Element::clickable("mobile-playing", label)
         .accessible(limn::Access::new(limn::Role::Button).name(t!("mobile-open-player", title = track.title.as_str()))).flex(1.0);
     let playing = state.player.playing;
-    let controls = Element::row(vec![
-        Element::spacer().size(Some(8.0), None),
+    let mut row = vec![
+        Element::spacer().size(Some(MINI_INSET), None),
         open,
-        controls::action("play-pause", if playing { Icon::PauseFill } else { Icon::PlayFill }, &if playing { t!("common-pause") } else { t!("common-play") }, 26.0, palette),
-        controls::action("mobile-mini-next", Icon::SkipForward, &t!("common-next-song"), 22.0, palette).dispatch_as("next"),
-        Element::spacer().size(Some(4.0), None),
-    ]).centered_y();
-    Element::column(vec![floating_bar(controls, width, MINI_PILL), Element::spacer().size(None, Some(MINI_HEIGHT - MINI_PILL))])
-        .size(None, Some(MINI_HEIGHT)).block_pointer("mobile-mini-bar")
+        controls::action("play-pause", if playing { Icon::PauseFill } else { Icon::PlayFill }, &if playing { t!("common-pause") } else { t!("common-play") }, if inline { 22.0 } else { 26.0 }, palette),
+    ];
+    // Folded, BitChord's keeps play alone.
+    if !inline {
+        row.push(controls::action("mobile-mini-next", Icon::SkipForward, &t!("common-next-song"), 22.0, palette).dispatch_as("next"));
+    }
+    row.push(Element::spacer().size(Some(if inline { 2.0 } else { 4.0 }), None));
+    Element::row(row).centered_y()
 }
 
 /// A song row's cover, as BitChord's: 52 across, its corners 8, rimmed with a hairline.
@@ -542,22 +993,37 @@ pub(in crate::view) const THUMB: f32 = 52.0;
 const SEGMENT_TRACK: Color = Color::rgb(34, 34, 37);
 const SEGMENT_ON: Color = Color::rgb(99, 99, 102);
 const SEGMENT_HEIGHT: f32 = 36.0;
+/// aurora's lifted knob, dark: nearly clear, sharp, bending 10 at its rim and magnifying the
+/// labels under it 1.1; it lifts to 1.3.
+const SEGMENT_LENS: limn::GlassMaterial = limn::GlassMaterial {
+    blur: 0.0, refraction: 10.0, dispersion: 0.4, saturation: 1.2, magnify: 1.1, bezel: 7.0,
+    ..limn::GlassMaterial::new(Color::rgba(255, 255, 255, 41))
+};
+const SEGMENT_LIFT: f32 = 1.3;
 
 /// BitChord's segmented control: its `cells`, (id, label, chosen), in one pill track, the one
 /// chosen on a lighter pill that slides, under `platter`, to the next one chosen. Each is
 /// touched on the track's whole height, and said to be a `role`.
 pub(in crate::view) fn segments<'a>(cells: impl Iterator<Item = (&'a str, &'a str, bool)>, role: limn::Role, platter: &str, palette: ComponentPalette) -> Element {
-    let cells = cells.map(|(id, label, on)| {
+    let cells: Vec<_> = cells.collect();
+    let knob = SEGMENT_HEIGHT - 6.0;
+    let children = cells.iter().map(|&(id, label, on)| {
         let copy = Text::new(label, palette).font_size(13.0).truncate().render().font_family(FontFamily::SansBold).centered();
-        let pill = |cell: Element| Element::column(vec![Element::spacer().flex(1.0), cell.size(None, Some(SEGMENT_HEIGHT - 6.0)), Element::spacer().flex(1.0)]);
-        let cell = if on {
-            pill(Element::stack(vec![Element::panel(Element::spacer()).background(SEGMENT_ON).round().animate_move(platter), copy]))
-        } else { copy };
-        Element::clickable(id, cell).accessible(limn::Access::new(role).name(label).selected(on)).size(None, Some(TAP)).flex(1.0)
+        // The knob says which: nothing lights under a pointer or a press.
+        Element::clickable(id, copy).accessible(limn::Access::new(role).name(label).selected(on)).radius(knob / 2.0)
+            .hover_background(Color::TRANSPARENT).pressed_background(Color::TRANSPARENT)
+            .size(None, Some(TAP)).flex(1.0).indicator_slot(id)
     }).collect();
+    // aurora's segmented control: the knob slides on to the one chosen, lifting into a clear
+    // lens over the labels for half its way and landing with a squash.
+    let mut strip = Element::tab_strip(children, cells.iter().map(|cell| cell.0.to_owned()).collect());
+    if let Some(chosen) = cells.iter().find(|cell| cell.2) {
+        strip = strip.tab_selection(platter, chosen.0, SEGMENT_ON, knob / 2.0, limn::tokens().motion.move_ms)
+            .tab_selection_height(knob).glass_selection(SEGMENT_LENS).selection_lift(SEGMENT_LIFT);
+    }
     let track = Element::panel(Element::spacer()).background(SEGMENT_TRACK).round().size(None, Some(SEGMENT_HEIGHT));
     Element::stack(vec![Element::column(vec![Element::spacer().flex(1.0), track, Element::spacer().flex(1.0)]),
-        horizontal_inset(Element::row(cells), 3.0, 3.0)]).size(None, Some(TAP))
+        horizontal_inset(strip, 3.0, 3.0)]).size(None, Some(TAP))
 }
 /// The row of the song that plays: a faint platter, faint as limn blends in linear light.
 const PLAYING_ROW: Color = Color::rgba(255, 255, 255, 8);
@@ -665,19 +1131,64 @@ mod tests {
     }
 
     #[test]
+    fn folded_the_bar_is_one_row_of_the_chosen_tab_the_mini_player_and_search() {
+        let mut state = playing_state();
+        state.page = Page::Library;
+        state.mobile_ui.bar_inline = true;
+        state.mobile_ui.bar_fold = 1.0;
+        let size = Size::new(390.0, 844.0);
+        let mut tree = UiTree::new(super::view(&state, size));
+        tree.set_reduced_motion(true);
+        let frame = tree.layout(size);
+        let rect = |id: &str| frame.access.iter().find(|node| node.id == id).unwrap_or_else(|| panic!("{id}")).rect;
+        let (tab, mini, search) = (rect("mobile-bar-open"), rect("mobile-playing"), rect("mobile-search"));
+        assert!(!frame.access.iter().any(|node| node.id == "home"), "the other tabs fold away");
+        assert!(tab.x + tab.width <= mini.x && mini.x + mini.width <= search.x, "{tab:?} {mini:?} {search:?}");
+        let middle = |rect: limn::Rect| rect.y + rect.height / 2.0;
+        assert!((middle(tab) - middle(search)).abs() < 1.0 && (middle(mini) - middle(search)).abs() < 1.0, "one row");
+    }
+
+    #[test]
+    fn a_folded_tab_and_an_empty_page_stand_in_the_middle_of_a_phone() {
+        let size = Size::new(390.0, 844.0);
+        let icon_at = |state: &State, side: f32, low: f32| {
+            let mut tree = UiTree::new(super::view(state, size));
+            tree.set_reduced_motion(true);
+            let frame = tree.layout(size);
+            frame.commands.iter().find_map(|command| match command {
+                limn::DrawCommand::Icon { rect, .. } if rect.width == side && rect.y > low => Some(*rect),
+                _ => None,
+            }).unwrap()
+        };
+        // "Biblioteca" is wider than the folded circle: its icon stays in the circle's middle.
+        let mut state = playing_state();
+        state.page = Page::Collection;
+        state.mobile_ui.bar_fold = 1.0;
+        let circle = UiTree::new(super::view(&state, size)).layout(size).access.iter().find(|node| node.id == "mobile-bar-open").unwrap().rect;
+        let icon = icon_at(&state, 24.0, 700.0);
+        assert!((icon.x + 12.0 - (circle.x + circle.width / 2.0)).abs() < 0.5, "{icon:?} in {circle:?}");
+        // An empty page's lines are wider than a phone: they wrap, and the whole stays centred.
+        state.page = Page::Downloads;
+        state.mobile_ui.bar_fold = 0.0;
+        state.saved.clear();
+        let icon = icon_at(&state, 48.0, 0.0);
+        assert!((icon.x + 24.0 - size.width / 2.0).abs() < 0.5, "{icon:?}");
+    }
+
+    #[test]
     fn navigation_labels_are_visible_and_tabs_do_not_overlap() {
         let mut state = playing_state();
         state.player.current = None;
         let mut tree = UiTree::new(super::view(&state, Size::new(390.0, 844.0)));
         let frame = tree.layout(Size::new(390.0, 844.0));
-        for label in ["Inicio", "Buscar", "Tu biblioteca"] {
+        for label in ["Inicio", "Explorar", "Biblioteca"] {
             let positions: Vec<_> = frame.commands.iter().filter_map(|command| match command {
                 limn::DrawCommand::Text { text, position, .. } if text == label => Some(position),
                 _ => None,
             }).collect();
             assert_eq!(positions.len(), 1, "{label}: {positions:?}");
         }
-        let tabs: Vec<_> = ["home", "mobile-search", "mobile-library"].iter().map(|id| frame.access.iter().find(|node| node.id == *id).unwrap().rect).collect();
+        let tabs: Vec<_> = ["home", "browse", "mobile-library", "mobile-search"].iter().map(|id| frame.access.iter().find(|node| node.id == *id).unwrap().rect).collect();
         for pair in tabs.windows(2) { assert!(pair[0].x + pair[0].width <= pair[1].x + 0.1, "{tabs:?}"); }
     }
 
@@ -699,12 +1210,13 @@ mod tests {
     }
 
     #[test]
-    fn behind_uikit_moving_an_account_and_the_profile_still_open() {
+    fn moving_an_account_and_the_profile_open_as_sheets() {
         let size = Size::new(390.0, 844.0);
         let mut state = playing_state();
         let ids = |state: &State| {
-            let tree = dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size.width, SCHEME.palette(), true);
-            UiTree::new(tree).layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
+            let mut tree = UiTree::new(dialogs(state, Element::spacer().size(Some(size.width), Some(size.height)), size, SCHEME.palette()));
+            tree.set_reduced_motion(true);
+            tree.layout(size).access.iter().map(|node| node.id.clone()).collect::<Vec<_>>()
         };
         state.update(&UiAction::Clicked { id: "account-handoff".into() });
         let offer = crate::handoff::Offer { code: "0000-0000-0001".into(), link: "surco://receive?from=x".into() };
@@ -853,13 +1365,13 @@ mod tests {
         state.update(&UiAction::InputChanged { id: "search".into(), value: "De música ligera".into() });
         assert_eq!(click(&mut state, "search-submit"), vec![Command::Search("De música ligera".into())]);
         click(&mut state, "mobile-library");
-        assert_eq!(state.page, Page::Library);
+        assert_eq!(state.page, Page::Collection);
         click(&mut state, "mobile-playing");
         assert_eq!(state.page, Page::Playing);
         assert_eq!(click(&mut state, "play-pause"), vec![Command::PlayPause]);
         assert_eq!(click(&mut state, "next"), vec![Command::Next]);
         click(&mut state, "back");
-        assert_eq!(state.page, Page::Library);
+        assert_eq!(state.page, Page::Collection);
         assert_eq!(state.current().unwrap().id, "song", "navigation keeps the same player");
         click(&mut state, "home");
         assert!(state.page == Page::Search && !state.mobile_search);
@@ -929,3 +1441,4 @@ mod tests {
         assert!(state.player.playing);
     }
 }
+

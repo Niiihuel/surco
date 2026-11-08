@@ -190,13 +190,18 @@ pub(in crate::view) fn segmented(group: &str, width: f32, tabs: Vec<Tab>) -> Ele
 
 /// A bold heading over its rows, flat on the page, and a note only when one helps.
 pub(in crate::view) fn group(title: &str, rows: Vec<Element>, footer: &str) -> Element {
+    group_at(title, rows, footer, GUTTER)
+}
+
+/// A group whose hairlines start `indent` in, under its rows' words past their tiles.
+fn group_at(title: &str, rows: Vec<Element>, footer: &str, indent: f32) -> Element {
     let palette = SCHEME.palette();
     let said = limn::Access::new(limn::Role::Group).id(format!("settings-group:{title}")).name(title);
     let caption = |text: Element| horizontal_inset(text, GUTTER, GUTTER);
     if carded() {
         // BitChord's: the group's name small and upper case over its card, its note under it.
         let heading = Text::new(title.to_uppercase(), palette).font_size(12.0).muted().render().font_family(FontFamily::SansBold);
-        let mut parts = vec![caption(heading).padding(4.0), card(rows, GUTTER).accessible(said)];
+        let mut parts = vec![caption(heading).padding(4.0), card(rows, indent).accessible(said)];
         if !footer.is_empty() { parts.push(caption(Text::new(footer, palette).font_size(13.0).muted().render())); }
         return Element::column(parts).gap(8.0);
     }
@@ -239,110 +244,130 @@ fn part_about(part: SettingsPart) -> std::borrow::Cow<'static, str> {
 const CONNECTED: &str = include_str!("../../../assets/icons/share-2.svg");
 
 fn part_glyph(part: SettingsPart) -> Icon {
-    // A desktop draws Surco's own glyphs; a phone keeps the platform's.
-    if DENSE_PAGE.get() {
-        use crate::view::glyph;
-        return Icon::Custom(match part {
-            SettingsPart::Playback => glyph::VOLUME_HIGH,
-            SettingsPart::Audio => glyph::EQUALIZER,
-            SettingsPart::Devices => glyph::DEVICE,
-            SettingsPart::Display => glyph::DISPLAY,
-            SettingsPart::Library => glyph::LIBRARY,
-            SettingsPart::Connected => CONNECTED,
-            SettingsPart::About => glyph::INFO,
-            SettingsPart::Storage => glyph::DOWNLOAD,
-        });
-    }
-    match part {
-        SettingsPart::Playback => Icon::Volume,
-        SettingsPart::Audio => Icon::ChartBar,
-        SettingsPart::Devices => Icon::Custom(AUDIO_ROUTE),
-        SettingsPart::Display => Icon::Palette,
-        SettingsPart::Library => Icon::Playlist,
-        SettingsPart::Connected => Icon::Custom(CONNECTED),
-        SettingsPart::About => Icon::InfoCircle,
-        SettingsPart::Storage => Icon::Custom(include_str!("../../../assets/icons/download.svg")),
-    }
+    use crate::view::glyph;
+    Icon::Custom(match part {
+        SettingsPart::Playback => glyph::VOLUME_HIGH,
+        SettingsPart::Audio => glyph::EQUALIZER,
+        SettingsPart::Devices => glyph::DEVICE,
+        SettingsPart::Display => glyph::DISPLAY,
+        SettingsPart::Library => glyph::LIBRARY,
+        SettingsPart::Connected => CONNECTED,
+        SettingsPart::About => glyph::INFO,
+        SettingsPart::Storage => glyph::DOWNLOAD,
+    })
 }
 
-/// The settings page's rows: on the list of parts, a row for each; on a part's page, its
-/// groups apart by hairlines. `sections` are every group with the part it belongs to. The
-/// desktop titles the page itself; the phone's header does.
-pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Element)>, titled: bool, palette: ComponentPalette) -> Vec<Element> {
+/// The desktop's settings: on the list of parts, a row for each with its glyph, what it holds
+/// and a chevron; on a part's page, its title over its groups apart by hairlines. `sections`
+/// are every group with the part it belongs to. The phone lays out its own, as one list.
+pub(in crate::view) fn arrange(state: &State, sections: Vec<(SettingsPart, Element)>, palette: ComponentPalette) -> Vec<Element> {
     let scale = scale();
     let title = |text: &str| horizontal_inset(Text::new(text, palette).role(TextRole::Heading).font_size(scale.page).render().font_family(FontFamily::SansBold), GUTTER, GUTTER);
     let Page::SettingsPart(shown) = state.page else {
-        // A phone's are BitChord's: a 22 glyph, 14 from the words.
-        let (glyph_side, gap) = if carded() { (22.0, 14.0) } else { (scale.glyph, ROW_GAP) };
         let rows: Vec<Element> = SettingsPart::ALL.into_iter().map(|part| {
             let (name, about) = (part_title(part), part_about(part));
-            let glyph = Element::icon(part_glyph(part)).large_icon(glyph_side).foreground(Color::WHITE).size(Some(glyph_side), Some(glyph_side));
-            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(gap);
+            let glyph = Element::icon(part_glyph(part)).large_icon(scale.glyph).foreground(Color::WHITE).size(Some(scale.glyph), Some(scale.glyph));
+            let row = Element::row(vec![glyph.centered_y(), line(&name, Some(&about), Some(chevron()), Color::WHITE).flex(1.0)]).gap(ROW_GAP);
             pressable(&format!("settings-part:{}", part.slug()), &name, Some(&about), cell(row.min_size(0.0, scale.part)), true)
         }).collect();
-        let mut page: Vec<Element> = titled.then(|| title(&t!("common-settings"))).into_iter().collect();
-        // On a phone, one card; its hairlines start under the words, past the glyphs.
-        page.push(if carded() { card(rows, GUTTER + glyph_side + gap) } else { Element::column(rows).gap(4.0) });
-        return page;
+        return vec![title(&t!("common-settings")), Element::column(rows).gap(4.0)];
     };
-    let mut page: Vec<Element> = titled.then(|| title(&part_title(shown))).into_iter().collect();
+    let mut page = vec![title(&part_title(shown))];
     for (index, (_, group)) in sections.into_iter().filter(|(part, _)| *part == shown).enumerate() {
-        // A phone's cards stand apart by room alone.
-        if index > 0 && !carded() { page.push(Separator::horizontal(palette).render()); }
+        if index > 0 { page.push(Separator::horizontal(palette).render()); }
         page.push(group);
     }
     page
 }
 
+/// A row's glyph: bare and white, as the app's mark, with no tile behind it.
+const TILE: f32 = 22.0;
+/// The room between a glyph and its words.
+const TILE_GAP: f32 = 14.0;
+/// The profile's row, as iOS Settings' account row: a face, the name, what the account holds.
+const FACE: f32 = 52.0;
+
+fn tile(glyph: Icon) -> Element {
+    Element::icon(glyph).large_icon(TILE).foreground(Color::WHITE).size(Some(TILE), Some(TILE))
+}
+
+/// A row that opens something of its own: its tile, its words and a chevron.
+fn opens(id: &str, glyph: Icon, title: &str, detail: Option<&str>) -> Element {
+    let row = Element::row(vec![tile(glyph).centered_y(), line(title, detail, Some(chevron()), Color::WHITE).flex(1.0)]).gap(TILE_GAP);
+    pressable(id, title, detail, cell(row), true)
+}
+
+/// The account at the top of the list: its face, its name and what it keeps.
+fn profile(state: &State) -> Element {
+    let palette = SCHEME.palette();
+    let name = state.profile.shown();
+    let holds = format!("{} · {}", t!("desktop-profile-playlists", count = state.collection.playlists.len()),
+        t!("mobile-settings-liked", count = state.collection.liked.len()));
+    let words = Element::column(vec![
+        Text::new(name, palette).font_size(20.0).truncate().render().font_family(FontFamily::SansSemibold),
+        Text::new(&holds, palette).font_size(14.0).muted().truncate().render(),
+    ]).gap(2.0).centered_y().flex(1.0);
+    let row = Element::row(vec![super::super::profile_face(state, FACE, palette).centered_y(), words, chevron().centered_y()]).gap(TILE_GAP);
+    let row = pressable("account-profile", name, Some(&holds), cell(row.min_size(0.0, FACE + 20.0)), true);
+    card(vec![row], GUTTER)
+}
+
+/// Settings as iOS lays its own out: one list, the account first, then what is done with the
+/// music, then each setting in its group, in sight rather than a page away. Only the apps
+/// connected and what Surco is stand on pages of their own.
 pub(in crate::view) fn page(state: &State, width: f32) -> Element {
+    let rows = match state.page {
+        Page::SettingsPart(SettingsPart::Connected) => vec![scrobbling(state, (width - GUTTER * 4.0).max(0.0))],
+        Page::SettingsPart(SettingsPart::About) => vec![about(state)],
+        _ => list(state, width),
+    };
+    ScrollArea::new("settings", Element::column(rows).gap(24.0).padding(GUTTER)).render().flex(1.0)
+}
+
+fn list(state: &State, width: f32) -> Vec<Element> {
     // The card's inside, for controls that span it.
     let inner = (width - GUTTER * 4.0).max(0.0);
     let white = Color::WHITE;
-    let seconds = state.settings.crossfade;
-    let crossfade = stacked(
-        line("Crossfade", None, Some(value(&if seconds == 0.0 { t!("mobile-crossfade-off").into_owned() } else { format!("{seconds:.0} s") })), white),
-        Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(inner).render(),
-    );
-    let transitions = group(&t!("common-settings-transitions"), vec![crossfade], "");
-    let mut controls = vec![switch(&t!("mobile-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay)];
-    controls.extend(sponsorblock(state));
-    let controls = group(&t!("common-settings-controls"), controls, &t!("common-sponsorblock-footer"));
-
-    let mut connections = group(&t!("mobile-connections"), vec![
-        action("setting:connections", &t!("mobile-listen-elsewhere"), None, Some(chevron()), true, false),
-    ], "");
-    if let Some(notice) = &state.output_notice {
-        connections = Element::column(vec![connections, Alert::new(t!("mobile-audio-output"), notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
-    }
+    let music = group_at(&t!("mobile-settings-music"), vec![
+        opens("import-open", Icon::Custom(super::super::DOWNLOAD), &t!("mobile-settings-import"), Some(&t!("mobile-settings-import-detail"))),
+        opens("account-handoff", Icon::Custom(super::super::glyph::HANDOFF), &t!("desktop-handoff"), Some(&t!("mobile-settings-handoff-detail"))),
+        opens("onboarding-taste", Icon::Custom(include_str!("../../../assets/icons/star.svg")), &t!("common-onboarding-taste"), None),
+    ], "", GUTTER + TILE + TILE_GAP);
 
     let chosen = state.settings.quality;
     let kbps: u32 = match chosen { Quality::Low => 50, Quality::Normal => 70, Quality::High => 140 };
-    let ceiling = t!("mobile-quality-ceiling", kbps = kbps);
     let quality = stacked(
-        line(&t!("mobile-quality"), None, Some(value(&ceiling)), white),
+        line(&t!("mobile-quality"), None, Some(value(&t!("mobile-quality-ceiling", kbps = kbps))), white),
         segmented("setting-quality", inner, Quality::ALL.into_iter()
             .map(|(quality, name, label)| Tab::new(format!("setting:quality:{name}"), label, 0.0).active(quality == chosen)).collect()),
     );
     let equalizer = super::super::equalizer::summary(state);
-    let streaming = group(&t!("common-settings-streaming"), vec![quality], &t!("mobile-quality-note"));
     let sound = group(&t!("common-settings-sound"), vec![
+        quality,
         switch(&t!("mobile-normalize"), None, "setting:normalize", state.settings.normalize),
         switch(&t!("mobile-mono"), None, "setting:mono", state.settings.mono),
         switch(&t!("common-skip-silence"), Some(&t!("common-skip-silence-detail")), "setting:skip-silence", state.settings.skip_silence),
         action("equalizer", &t!("common-equalizer"), None,
             Some(Element::row(vec![value(&equalizer).centered_y(), chevron().centered_y()]).gap(6.0)), true, false),
-    ], "");
+    ], &t!("mobile-quality-note"));
 
-    let display = group(&t!("mobile-display"), vec![
-        switch(&t!("mobile-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
-    ], "");
-    let language = group(&t!("common-language"), vec![
-        stacked(line(&t!("common-language"), None, None, white), segmented("setting-language", inner, Language::ALL.into_iter()
-            .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
-    ], "");
+    let seconds = state.settings.crossfade;
+    let crossfade = stacked(
+        line(&t!("desktop-crossfade"), None, Some(value(&if seconds == 0.0 { t!("mobile-crossfade-off").into_owned() } else { format!("{seconds:.0} s") })), white),
+        Slider::new("setting:crossfade", seconds / CROSSFADE_MAX, SCHEME.on_raised()).steps(CROSSFADE_MAX as usize + 1).width(inner).render(),
+    );
+    let mut playback = vec![switch(&t!("mobile-autoplay"), Some(&t!("desktop-autoplay-detail")), "setting:autoplay", state.settings.autoplay), crossfade];
+    playback.extend(sponsorblock(state));
+    let playback = group(&t!("common-settings-playback"), playback, &t!("common-sponsorblock-footer"));
 
-    let sort = state.settings.library_sort;
-    let view = state.settings.library_view;
+    let mut devices = group_at(&t!("mobile-connections"), vec![
+        opens("setting:connections", Icon::Custom(AUDIO_ROUTE), &t!("mobile-listen-elsewhere"), None),
+    ], "", GUTTER + TILE + TILE_GAP);
+    if let Some(notice) = &state.output_notice {
+        devices = Element::column(vec![devices, Alert::new(t!("mobile-audio-output"), notice, SCHEME.palette()).id("setting:output-notice").compact(true).render()]).gap(8.0);
+    }
+
+    let (sort, view) = (state.settings.library_sort, state.settings.library_view);
     let library = group(&t!("common-settings-your-library"), vec![
         stacked(line(&t!("mobile-sort"), None, None, white), segmented("setting-library-sort", inner, vec![
             Tab::new("library-sort:added", t!("mobile-sort-recent"), 0.0).active(sort == Sort::Added),
@@ -355,35 +380,52 @@ pub(in crate::view) fn page(state: &State, width: f32) -> Element {
             Tab::new("library-view:grid", t!("mobile-view-grid"), 0.0).active(view == LibraryView::Grid),
         ])),
     ], "");
-    let bring = group(&t!("common-settings-bring"), vec![
-        action("import-open", &t!("mobile-import-music"), None, Some(chevron()), true, false),
-        action("account-handoff", &t!("desktop-handoff"), None, Some(chevron()), true, false),
-        action("onboarding-taste", &t!("common-onboarding-taste"), None, Some(chevron()), true, false),
+
+    let display = group(&t!("common-settings-display"), vec![
+        switch(&t!("mobile-clips"), Some(&t!("mobile-clips-detail")), "setting:clips", state.settings.clips),
+        switch(&t!("mobile-reduce-motion"), Some(&t!("desktop-reduce-motion-detail")), "setting:motion", state.settings.reduce_motion),
+        stacked(line(&t!("common-language"), None, None, white), segmented("setting-language", inner, Language::ALL.into_iter()
+            .map(|language| Tab::new(format!("setting:language:{}", language.tag()), language.name(), 0.0).active(language == crate::i18n::current())).collect())),
     ], "");
 
-    let mut about = vec![cell(line(&t!("mobile-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), white))];
+    // Who is signed in elsewhere, said in the row that leads there.
+    let connected = [state.scrobbling.listenbrainz.as_ref().map(|_| "ListenBrainz"), state.scrobbling.lastfm.as_ref().map(|_| "Last.fm")]
+        .into_iter().flatten().collect::<Vec<_>>();
+    let connected = if connected.is_empty() { t!("common-settings-connected-about").into_owned() } else { connected.join(" · ") };
+    let mut more = vec![opens("settings-part:connected", Icon::Custom(CONNECTED), &t!("common-settings-connected"), Some(&connected))];
     // A later version leads to the page of what is new, where it is taken in.
+    if let Some(release) = &state.update {
+        let detail = t!("desktop-update-current", version = release.version.as_str(), current = env!("CARGO_PKG_VERSION"));
+        more.push(opens("news", Icon::Custom(super::super::DOWNLOAD), &t!("desktop-update-available"), Some(&detail)));
+    }
+    more.push(opens("settings-part:about", Icon::InfoCircle, &t!("common-settings-about"), Some(&t!("mobile-settings-version", version = env!("CARGO_PKG_VERSION")))));
+    let more = group_at(&t!("mobile-settings-more"), more, "", GUTTER + TILE + TILE_GAP);
+
+    // Listening on another device is a phone's everyday move: it comes right after the music's.
+    vec![profile(state), music, devices, sound, playback, library, display, more, storage(state)]
+}
+
+/// What Surco is: its version, what is new in it, its licences.
+fn about(state: &State) -> Element {
+    let mut about = vec![cell(line(&t!("mobile-version"), None, Some(value(env!("CARGO_PKG_VERSION"))), Color::WHITE))];
     if let Some(release) = &state.update {
         let detail = t!("desktop-update-current", version = release.version.as_str(), current = env!("CARGO_PKG_VERSION"));
         about.push(action("news", &t!("desktop-update-available"), Some(&detail), Some(chevron()), true, false));
     }
     about.extend([
         action("patches", &t!("common-patches"), None, Some(chevron()), true, false),
-        cell(line(&t!("mobile-licenses"), Some(&t!("mobile-licenses-detail")), None, white)),
+        cell(line(&t!("mobile-licenses"), Some(&t!("mobile-licenses-detail")), None, Color::WHITE)),
     ]);
-    let about = group(&t!("mobile-about"), about, "");
+    group(&t!("mobile-about"), about, "")
+}
 
-    // What cannot be undone sits last, each behind a confirmation.
+/// What cannot be undone sits last, each behind a confirmation.
+fn storage(state: &State) -> Element {
     let downloads = format!("{} · {}", songs(state.saved.len()), megabytes(state.saved_bytes));
-    let erase = group(&t!("mobile-storage"), vec![
+    group(&t!("mobile-storage"), vec![
         action("downloads-clear", &t!("mobile-delete-downloads"), Some(&downloads), None, !state.saved.is_empty(), true),
         action("recent-clear", &t!("mobile-clear-recent"), Some(&t!("mobile-clear-recent-detail")), None, !state.collection.recent.is_empty(), true),
-    ], "");
-
-    use SettingsPart::*;
-    let sections = vec![(Playback, transitions), (Playback, controls), (Devices, connections), (Audio, streaming), (Audio, sound),
-        (Display, display), (Display, language), (Library, library), (Library, bring), (Connected, scrobbling(state, inner)), (About, about), (Storage, erase)];
-    ScrollArea::new("settings", Element::column(arrange(state, sections, false, SCHEME.palette())).gap(24.0).padding(GUTTER)).render().flex(1.0)
+    ], "")
 }
 
 /// The equaliser as a page of the same cards: the ready-made curves, the curve its filters
@@ -412,8 +454,8 @@ mod tests {
     use super::*;
     use limn::{DrawCommand, Frame, Rect, UiTree};
 
-    const ROWS: [&str; 12] = ["setting:autoplay", "setting:crossfade", "setting:connections", "setting:quality:high", "setting:normalize",
-        "setting:mono", "equalizer", "setting:motion", "library-sort:creator", "library-view:grid", "import-open", "downloads-clear"];
+    const ROWS: [&str; 14] = ["account-profile", "import-open", "account-handoff", "setting:autoplay", "setting:crossfade", "setting:connections",
+        "setting:quality:high", "setting:normalize", "setting:mono", "equalizer", "setting:motion", "library-sort:creator", "library-view:grid", "downloads-clear"];
 
     fn frame(state: &State, width: f32) -> Frame {
         let mut tree = UiTree::new(page(state, width));
@@ -421,9 +463,9 @@ mod tests {
         tree.layout(Size::new(width, 4000.0))
     }
 
-    /// The list of parts and then each part's page, as the phone shows them.
+    /// The list and the two pages still a chevron away, as the phone shows them.
     fn every_page(state: &mut State, width: f32) -> Vec<Frame> {
-        std::iter::once(Page::Settings).chain(SettingsPart::ALL.map(Page::SettingsPart)).map(|page| {
+        [Page::Settings, Page::SettingsPart(SettingsPart::Connected), Page::SettingsPart(SettingsPart::About)].into_iter().map(|page| {
             state.page = page;
             frame(state, width)
         }).collect()
@@ -439,11 +481,11 @@ mod tests {
         state.mobile = true;
         for width in [320.0, 390.0, 430.0] {
             let frames = every_page(&mut state, width);
-            for id in ROWS.into_iter().chain(["recent-clear", "setting:quality:low", "library-sort:added", "library-view:compact"]) {
+            for id in ROWS.into_iter().chain(["recent-clear", "setting:quality:low", "library-sort:added", "library-view:compact", "patches"]) {
                 let target = rect(&frames, id);
                 assert!(target.x >= GUTTER - 0.01 && target.x + target.width <= width - GUTTER + 0.01, "{id} keeps the 16-point margins at {width}: {target:?}");
             }
-            for id in ["setting:connections", "equalizer", "import-open", "downloads-clear", "recent-clear", "settings-part:playback", "settings-part:storage"] {
+            for id in ["account-profile", "import-open", "account-handoff", "setting:connections", "equalizer", "downloads-clear", "recent-clear", "settings-part:connected", "settings-part:about"] {
                 let row = rect(&frames, id);
                 assert!(row.height >= 44.0, "{id} is a full touch row at {width}: {row:?}");
                 assert!((row.width - (width - GUTTER * 2.0)).abs() < 0.01, "{id} spans the page at {width}: {row:?}");
@@ -465,13 +507,11 @@ mod tests {
             let mut state = State::default();
             state.mobile = true;
             state.mobile_ui.content_insets = crate::state::mobile::ContentInsets { top: 62.0, bottom: 34.0, left, right };
-            let frames: Vec<Frame> = std::iter::once(Page::Settings).chain(SettingsPart::ALL.map(Page::SettingsPart)).map(|page| {
-                state.page = page;
-                let mut tree = UiTree::new(super::super::view(&state, Size::new(width, 6000.0)));
-                tree.set_reduced_motion(true);
-                tree.layout(Size::new(width, 6000.0))
-            }).collect();
-            for id in ROWS.into_iter().chain(["settings-part:playback"]) {
+            state.page = Page::Settings;
+            let mut tree = UiTree::new(super::super::view(&state, Size::new(width, 6000.0)));
+            tree.set_reduced_motion(true);
+            let frames = [tree.layout(Size::new(width, 6000.0))];
+            for id in ROWS.into_iter().chain(["settings-part:about"]) {
                 let target = rect(&frames, id);
                 assert!(target.x >= left + GUTTER - 0.01 && target.x + target.width <= width - right - GUTTER + 0.01, "{id} clears the insets at {width}: {target:?}");
             }
@@ -479,18 +519,22 @@ mod tests {
     }
 
     #[test]
-    fn the_list_of_parts_leads_to_carded_pages_and_what_cannot_be_undone_comes_last() {
+    fn one_list_leads_with_the_account_and_the_music_and_ends_with_what_cannot_be_undone() {
         let mut state = State::default();
         state.mobile = true;
         let frames = every_page(&mut state, 390.0);
-        let parts: Vec<_> = frames[0].access.iter().filter(|node| node.id.starts_with("settings-part:")).map(|node| node.id.as_str()).collect();
-        assert_eq!(parts.len(), 8);
-        assert_eq!(parts.last(), Some(&"settings-part:storage"), "erasing is the last part");
-        assert!(ROWS.iter().all(|id| !frames[0].access.iter().any(|node| node.id == *id)), "the list holds the parts, not their settings");
-        let groups = frames[1..].iter().flat_map(|frame| frame.access.iter().filter(|node| node.id.starts_with("settings-group:"))).count();
-        assert_eq!(groups, 12);
-        // BitChord's: the rows on raised cards, and no hue but a switch's green and the
-        // destructive red's words.
+        let list = &frames[0];
+        let y = |id: &str| rect(std::slice::from_ref(list), id).y;
+        // The account, then what is done with the music, before any setting.
+        assert!(y("account-profile") < y("import-open") && y("import-open") < y("account-handoff") && y("account-handoff") < y("setting:quality:low"));
+        // Each setting is in sight on the list; only two pages are a chevron away.
+        assert!(ROWS.iter().all(|id| list.access.iter().any(|node| node.id == *id)), "the list holds the settings themselves");
+        let away: Vec<_> = list.access.iter().filter(|node| node.id.starts_with("settings-part:")).map(|node| node.id.as_str()).collect();
+        assert_eq!(away, ["settings-part:connected", "settings-part:about"]);
+        assert!(y("downloads-clear") > y("settings-part:about"), "erasing comes last");
+        // BitChord's: the rows on raised cards, and no hue but a switch's green, the
+        // destructive red's words and the account's own face.
+        let face = super::super::super::profile_colour(&state);
         for frame in &frames {
             assert!(frame.commands.iter().any(|command| matches!(command, DrawCommand::FillRect { color, radius, .. }
                 if *color == SCHEME.raised && (*radius - CARD_RADIUS).abs() < 0.01)), "the rows stand on a card");
@@ -498,13 +542,13 @@ mod tests {
                 if let DrawCommand::FillRect { color, .. } = command {
                     let gray = color.r.abs_diff(color.g) <= 2 && color.g.abs_diff(color.b) <= 2;
                     let switch = [SWITCH_ON, SWITCH_OFF].contains(&Color { a: 255, ..*color });
-                    assert!(gray || switch, "a gray fill, not a tint: {color:?}");
+                    assert!(gray || switch || *color == face, "a gray fill, not a tint: {color:?}");
                 }
             }
         }
         // With nothing to erase, both stay listed but cannot be pressed.
         for id in ["downloads-clear", "recent-clear"] {
-            let node = frames.last().unwrap().access.iter().find(|node| node.id == id).unwrap();
+            let node = list.access.iter().find(|node| node.id == id).unwrap();
             assert!(node.disabled && !node.actionable, "{id} waits for something to erase");
         }
     }
@@ -515,12 +559,9 @@ mod tests {
         state.mobile = true;
         state.saved.push(Track { id: "saved".into(), title: "Guardada".into(), artist: "Artista".into(), artist_id: None, album: None, album_id: None, artwork_url: None, duration_ms: 1 });
         for (page, ids) in [
-            (Page::Settings, vec!["settings-part:audio", "settings-part:storage"]),
-            (Page::SettingsPart(SettingsPart::Devices), vec!["setting:connections"]),
-            (Page::SettingsPart(SettingsPart::Audio), vec!["equalizer", "setting:quality:low"]),
-            (Page::SettingsPart(SettingsPart::Library), vec!["import-open", "library-view:grid"]),
-            (Page::SettingsPart(SettingsPart::Storage), vec!["downloads-clear"]),
-            (Page::SettingsPart(SettingsPart::Playback), vec!["setting:autoplay"]),
+            (Page::Settings, vec!["account-profile", "import-open", "account-handoff", "setting:connections", "equalizer", "setting:quality:low",
+                "library-view:grid", "downloads-clear", "setting:autoplay", "settings-part:connected", "settings-part:about"]),
+            (Page::SettingsPart(SettingsPart::About), vec!["patches"]),
         ] {
             state.page = page;
             let mut tree = UiTree::new(page_of(&state));

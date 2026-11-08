@@ -16,15 +16,20 @@ const AT_A_TIME: usize = 4;
 /// What makes a list's name and its songs out of the page that shows it.
 type Reader = fn(&str) -> Option<(String, Vec<Wanted>)>;
 
-/// The list a link names, as the catalog has it: its name, its songs in order, and the
-/// ones the catalog does not have, by whose they are and their name. `told` hears how
-/// many of its songs have been looked for, out of how many: a long list takes minutes.
-pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + Sync)) -> Result<(String, Vec<Track>, Vec<String>), String> {
+/// What a list's page says: the catalog's own list, its songs found already, or another
+/// app's, its songs by whose they are and their name.
+enum Read {
+    Found(String, Vec<Track>),
+    Wanted(String, Vec<Wanted>),
+}
+
+/// Reads the list a link names where it is, without looking for its songs.
+async fn read(youtube: &YouTube, link: &str) -> Result<Read, String> {
     // The others name their songs; the catalog's own lists them as it has them.
     let (address, read): (String, Reader) = match transfer::source(link).ok_or(t!("state-import-unknown-link"))? {
         Source::YouTube(id) => {
             let (name, tracks) = youtube.playlist_named(&id).await.map_err(|_| t!("state-import-unreadable-playlist"))?;
-            return if tracks.is_empty() { Err(t!("state-import-empty-playlist").into_owned()) } else { Ok((name, tracks, Vec::new())) };
+            return if tracks.is_empty() { Err(t!("state-import-empty-playlist").into_owned()) } else { Ok(Read::Found(name, tracks)) };
         }
         Source::Spotify(kind, id) => (format!("https://open.spotify.com/embed/{kind}/{id}"), spotify),
         Source::Apple(address) => (address, apple),
@@ -38,6 +43,26 @@ pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + 
             wanted = whole;
         }
     }
+    Ok(Read::Wanted(name, wanted))
+}
+
+/// The name of the list a link names and how many songs it has, before any is looked for:
+/// what is about to be brought in, shown before it is.
+pub async fn peek(youtube: &YouTube, link: &str) -> Result<(String, usize), String> {
+    Ok(match read(youtube, link).await? {
+        Read::Found(name, tracks) => (name, tracks.len()),
+        Read::Wanted(name, wanted) => (name, wanted.len()),
+    })
+}
+
+/// The list a link names, as the catalog has it: its name, its songs in order, and the
+/// ones the catalog does not have, by whose they are and their name. `told` hears how
+/// many of its songs have been looked for, out of how many: a long list takes minutes.
+pub async fn list(youtube: &YouTube, link: &str, told: &(dyn Fn(usize, usize) + Sync)) -> Result<(String, Vec<Track>, Vec<String>), String> {
+    let (name, wanted) = match read(youtube, link).await? {
+        Read::Found(name, tracks) => return Ok((name, tracks, Vec::new())),
+        Read::Wanted(name, wanted) => (name, wanted),
+    };
     let (mut tracks, mut missed): (Vec<Track>, Vec<String>) = Default::default();
     for (round, some) in wanted.chunks(AT_A_TIME).enumerate() {
         told(round * AT_A_TIME, wanted.len());
