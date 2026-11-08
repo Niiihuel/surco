@@ -43,6 +43,9 @@ pub struct Motion {
     closing: bool,
     reduced: bool,
     drag: DismissDrag,
+    /// Where the player was when its cover set off for the mini player, or None while it rides
+    /// the sheet: under a finger, and springing back from it.
+    flight: Option<f32>,
     primary: Option<Touch>,
     underlay: Option<(Size, Frame)>,
 }
@@ -73,7 +76,7 @@ impl Motion {
         Self { player: ScalarSpring::new(0.0, now).motion(SpringMotion::settling_in(SHEET)), collapse: ScalarTransition::new(0.0, now),
             search: ScalarTransition::new(HEADER, now), search_drawn: None,
             bar: ScalarSpring::new(0.0, now).motion(SpringMotion { stiffness: 400.0, damping_ratio: 1.0 }), uncovered: false,
-            showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0),
+            showing: false, closing: false, reduced: false, drag: DismissDrag::new(120.0, 900.0), flight: None,
             primary: None, underlay: None }
     }
 
@@ -87,6 +90,7 @@ impl Motion {
         let showing = state.mobile && state.page == Page::Playing;
         if showing && !self.showing {
             self.player.snap_to(if reduced || state.queue_open { 0.0 } else { size.height }, now);
+            self.flight = Some(0.0);
             self.launch(0.0, now, reduced);
         } else if !showing || state.queue_open {
             self.drag.cancel();
@@ -99,6 +103,7 @@ impl Motion {
             self.drag.cancel();
             self.primary = None;
             self.closing = true;
+            self.flight = Some(self.offset(now));
             self.launch(size.height + PAST, now, reduced);
         }
         if reduced && !self.drag.is_dragging() { self.player.snap_to(self.player.target(), now); }
@@ -111,13 +116,19 @@ impl Motion {
             self.showing = false;
             self.player.snap_to(0.0, now);
             state.mobile_ui.player_offset = 0.0;
+            state.mobile_ui.player_flight = 0.0;
+            self.flight = None;
             let id = if state.can_go_back() { "back" } else { "home" };
             let commands = state.update(&UiAction::Clicked { id: id.into() });
             state.mobile_ui.revealed = Some(crate::view::mobile_route_key(state));
             self.uncovered = true;
             return commands;
         }
-        state.mobile_ui.player_offset = self.offset(now);
+        let offset = self.offset(now);
+        state.mobile_ui.player_offset = offset;
+        // The cover leaves the sheet from where it let go of it, so it never jumps.
+        state.mobile_ui.player_flight = self.flight
+            .map_or(0.0, |from| ((offset - from) / (size.height - from).max(1.0)).clamp(0.0, 1.0));
         // The lyrics and the queue take the cover into their head; a player opened on either
         // starts there.
         let collapsed = state.mobile && (state.page == Page::Lyrics || (state.page == Page::Playing && state.queue_open));
@@ -173,6 +184,7 @@ impl Motion {
                             if owns && !touch.claimed {
                                 touch.claimed = true;
                                 self.closing = false;
+                                self.flight = None;
                                 cancel = true;
                             }
                             if touch.claimed {
@@ -186,6 +198,7 @@ impl Motion {
                             self.drag.cancel();
                             if touch.claimed || touch.eligible {
                                 self.closing = dismiss;
+                                self.flight = dismiss.then(|| self.player.value(now).max(0.0));
                                 let target = if dismiss { size.height + PAST + velocity.max(0.0) * COAST } else { 0.0 };
                                 if self.reduced || state.settings.reduce_motion {
                                     self.player.snap_to(target, now);
@@ -203,6 +216,7 @@ impl Motion {
                     self.drag.cancel();
                     self.primary = None;
                     self.closing = false;
+                    self.flight = None;
                     self.launch(0.0, now, self.reduced || state.settings.reduce_motion);
                 }
                 _ => {}
@@ -600,14 +614,18 @@ mod tests {
         let size = Size::new(390.0, 844.0);
         motion.advance(&mut state, size, now);
         assert_eq!(state.mobile_ui.player_offset, size.height);
+        assert_eq!(state.mobile_ui.player_flight, 1.0, "opening, the cover leaves the mini player's thumbnail");
         motion.advance(&mut state, size, now + Duration::from_millis(80));
         let middle = state.mobile_ui.player_offset;
         assert!(middle > 0.0 && middle < size.height);
         state.update(&limn::UiAction::Clicked { id: "mobile-player-dismiss".into() });
         motion.advance(&mut state, size, now + Duration::from_millis(80));
         assert!((state.mobile_ui.player_offset - middle).abs() < 0.01, "closing starts from the displayed position");
+        assert_eq!(state.mobile_ui.player_flight, 0.0, "the cover leaves from the sheet, without a jump");
         motion.advance(&mut state, size, now + Duration::from_millis(96));
         assert_eq!(state.page, Page::Playing);
+        motion.advance(&mut state, size, now + Duration::from_millis(200));
+        assert!(state.page == Page::Playing && state.mobile_ui.player_flight > 0.0, "on its way down the cover flies to the mini player");
         let commands = motion.advance(&mut state, size, now + Duration::from_secs(1));
         assert_eq!(state.page, Page::Library);
         assert_eq!(state.mobile_ui.revealed.as_deref(), Some("mobile:Library"), "the uncovered page does not fade in again");
@@ -630,6 +648,7 @@ mod tests {
         assert_eq!(consumed, vec![UiEvent::PointerLeave]);
         motion.advance(&mut state, size, at + Duration::from_millis(1500));
         assert_eq!(state.mobile_ui.player_offset, 60.0);
+        assert_eq!(state.mobile_ui.player_flight, 0.0, "under the finger the cover rides the sheet");
         let released = motion.filter(&raw(egui::TouchPhase::End, 20.0, 260.0), vec![UiEvent::PointerUp(Point::new(20.0, 260.0)), UiEvent::PointerLeave], &state, DragArea { frame: &surface(), origin: Pos2::ZERO, size, scroll: 0.0 }, at + Duration::from_millis(1510));
         assert!(!released.iter().any(|event| matches!(event, UiEvent::PointerUp(_) | UiEvent::Scroll2D { .. })));
         motion.advance(&mut state, size, at + Duration::from_millis(2510));

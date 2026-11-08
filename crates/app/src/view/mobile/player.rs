@@ -473,14 +473,16 @@ mod flight_tests {
         state.page = Page::Lyrics;
         state.mobile_ui.collapse = 1.0;
         assert_eq!(images(&state), [limn::Rect::new(28.0, 48.0, 54.0, 54.0)], "there, the head's thumbnail");
-        // Coming down, the cover goes into the mini player's thumbnail at the player's pace,
-        // and is not carried down with it.
+        // Under a finger the cover rides the sheet down, as Apple Music's.
         state.page = Page::Playing;
         state.mobile_ui.collapse = 0.0;
         state.mobile_ui.player_offset = 422.0;
+        assert_eq!(images(&state), [limn::Rect::new(0.0, 422.0, 390.0, 436.0)], "dragged, the banner stays on the sheet");
+        // Let go, it flies from the sheet into the mini player's thumbnail at the player's pace.
+        state.mobile_ui.player_flight = 0.5;
         // BitChord's mini player: 48 tall, its 30.4 cover 16 in from its start.
         let mini = limn::Rect::new(19.0 + 16.0, 844.0 - 21.0 - 62.0 - 56.0 + (48.0 - 30.4) / 2.0, 30.4, 30.4);
-        let halfway = limn::Rect::new(mini.x / 2.0, mini.y / 2.0, (390.0 + 30.4) / 2.0, (436.0 + 30.4) / 2.0);
-        assert_eq!(images(&state), [halfway], "half of the way down, half of the way there");
+        let halfway = limn::Rect::new(mini.x / 2.0, (422.0 + mini.y) / 2.0, (390.0 + 30.4) / 2.0, (436.0 + 30.4) / 2.0);
+        assert_eq!(images(&state), [halfway], "half of the way there, from where the sheet was");
     }
 }

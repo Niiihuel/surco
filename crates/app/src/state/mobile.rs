@@ -70,6 +70,9 @@ pub(crate) struct MobileUi {
     pub content_insets: ContentInsets,
     /// Host-owned translation of the full player surface in logical points.
     pub player_offset: f32,
+    /// How far the player's cover has flown from the sheet toward the mini player: 0 while it
+    /// rides the sheet, as under a finger, 1 on the mini player's thumbnail.
+    pub player_flight: f32,
     /// An explicit dismissal requests animation before the Host navigates back.
     pub player_close: bool,
     /// Whether the player's controls are put away, its video bare under the song's name.

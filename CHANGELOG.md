@@ -4,6 +4,20 @@
 
 ### Changed
 
+- Dragged down, the player carries its cover with it, as Apple Music's; let go, the cover
+  flies from where the sheet is into the mini player.
+- The blur a page goes up under at the top is the status bar's alone, as Apple Music's: the
+  header's buttons stand over the page as it is.
+- A song's menu lights a row only under the finger, rounded, as iOS's.
+- Sharing on the phone opens the system's own share sheet, iOS's or Android's, with the apps
+  and people the phone has, instead of Surco's with apps drawn in their place.
+- A field held, or a word double-tapped in it, brings iOS 26's edit menu over it in Liquid
+  Glass: Select, Select All and Paste, or Cut, Copy and Paste over a selection. On the iPhone
+  too, where a hold on a field used to bring nothing.
+- As Apple's sheets, only those that save something (a new playlist, a crop, the profile, an
+  import) or ask before deleting keep the cross beside their check; the audio output, a
+  song's options, the sleep timer and the rest of the choices go with a swipe, their grabber
+  or a press beside them.
 - Every sheet of the phone is iOS 26's, on the iPhone and on Android alike, drawn in the
   app's glass.
   - **Floating:** at partial heights it floats over the page, its corners following the

@@ -10,7 +10,8 @@ mod library_tests;
 pub(super) fn render(state: &State, base: Element, window: Size, palette: ComponentPalette) -> Element {
     let width = window.width;
     let context = state.mobile_ui.context.as_ref();
-    let menu = context.map(|context| song_menu(state, &context.row, &context.track, palette));
+    // As iOS's menus: a row lights under the finger, never after it has gone.
+    let menu = context.map(|context| song_menu(state, &context.row, &context.track, ComponentPalette { hover: Color::TRANSPARENT, ..palette }));
     let base = match state.mobile_ui.menu_origin {
         Some(origin) => bubble(base, menu, origin, (state.mobile_ui.content_insets.top, window.height - state.mobile_ui.content_insets.bottom)),
         None => BottomSheet::new(base, context.is_some(), t!("common-song-options"), "", "mobile-context-close", SCHEME.menu())
@@ -82,6 +83,8 @@ fn song_menu(state: &State, row: &str, track: &Track, palette: ComponentPalette)
     let item = |action: &str, label: &str, glyph: Icon, detail: Option<String>| {
         let item = ListRow::new(format!("do:{action}:{row}"), label, palette)
             .sizing(ListRowSizing { height: Some(48.0), two_line_height: Some(60.0), title_size: 16.0, leading_width: 24.0, ..TRACK_ROW })
+            // Lit round inside the round menu, as iOS's.
+            .radius(limn::RadiusRole::Tile)
             .leading(Element::icon(glyph).foreground(palette.text).size(Some(22.0), Some(22.0)));
         match detail { Some(detail) => item.subtitle(detail), None => item }.render()
     };

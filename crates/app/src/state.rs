@@ -1343,6 +1343,16 @@ pub struct SharedPage {
 
 impl State {
     /// What the share sheet holds, by its name and link: the track's or the page's.
+    /// On a phone what is shared goes straight to the system's own share sheet, iOS's or
+    /// Android's, with the apps and people the phone has, as Apple's apps share.
+    fn share_natively(&mut self) {
+        if self.mobile && cfg!(any(target_os = "ios", target_os = "android")) {
+            self.share_system = self.shared();
+            self.sharing = None;
+            self.sharing_page = None;
+        }
+    }
+
     pub fn shared(&self) -> Option<(String, String)> {
         self.sharing.as_ref().map(|track| (track.title.clone(), share_link(track)))
             .or_else(|| self.sharing_page.as_ref().map(|page| (page.title.clone(), page.link.clone())))
@@ -2192,6 +2202,7 @@ impl State {
             "share" => {
                 self.sharing = Some(track);
                 self.copied = false;
+                self.share_natively();
                 Vec::new()
             }
             "save" => {
@@ -2950,6 +2961,7 @@ impl State {
                     self.sharing_page = Some(SharedPage { title: artist.name.clone(),
                         link: format!("https://music.youtube.com/channel/{}", artist.id), artwork_url: artist.artwork_url.clone() });
                     self.copied = false;
+                    self.share_natively();
                 }
                 Vec::new()
             }
@@ -3016,21 +3028,9 @@ impl State {
                 self.share_system = None;
                 Vec::new()
             }
-            // The share sheet's apps, as iOS's: each takes the link by its own address, which
-            // works from any device; the system's own sheet where there is one.
-            share if share.starts_with("share-to:") || share == "share-open" => {
-                if let Some((title, link)) = self.shared() {
-                    let text = |value: &str| percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC).to_string();
-                    match share.strip_prefix("share-to:").unwrap_or("open") {
-                        "whatsapp" => self.open_url = Some(format!("https://wa.me/?text={}", text(&link))),
-                        "telegram" => self.open_url = Some(format!("https://t.me/share/url?url={}&text={}", text(&link), text(&title))),
-                        "x" => self.open_url = Some(format!("https://x.com/intent/post?url={}&text={}", text(&link), text(&title))),
-                        "mail" => self.open_url = Some(format!("mailto:?subject={}&body={}", text(&title), text(&link))),
-                        "messages" => self.open_url = Some(format!("sms:?&body={}", text(&link))),
-                        "system" => self.share_system = Some((title, link)),
-                        _ => self.open_url = Some(link),
-                    }
-                }
+            // Its link opened, in YouTube Music or the browser.
+            "share-open" => {
+                if let Some((_, link)) = self.shared() { self.open_url = Some(link); }
                 self.sharing = None;
                 self.sharing_page = None;
                 Vec::new()

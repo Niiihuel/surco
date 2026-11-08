@@ -245,9 +245,6 @@ mobile-top-artist = Tu artista más escuchado
 mobile-import-from-link = Desde un enlace
 mobile-top-songs = Canciones populares
 mobile-single = Sencillo
-mobile-share-messages = Mensajes
-mobile-share-mail = Correo
-mobile-share-more = Más
 mobile-share-open = Abrir en YouTube Music
 
 ## Settings, as one list

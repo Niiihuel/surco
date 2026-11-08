@@ -384,13 +384,13 @@ impl Host {
         while self.script.pointer.first().is_some_and(|(at, ..)| *at <= self.opened.elapsed()) {
             let (_, id, down, phase) = self.script.pointer.remove(0);
             let frame = self.tree.frame();
-            if phase == 0 {
+            if phase == 0 || phase == 3 {
                 self.script.touched = frame.regions.iter().rev().find(|region| region.id == id)
                     .map(|region| limn::Point::new(region.rect.x + region.rect.width / 2.0, region.rect.y + region.rect.height.min(44.0) / 2.0));
             }
             let Some(origin) = self.script.touched else { continue };
             let at = limn::Point::new(origin.x, origin.y + down);
-            let event = match phase { 0 => limn::UiEvent::PointerDown(at), 1 => limn::UiEvent::PointerMove(at), _ => limn::UiEvent::PointerUp(at) };
+            let event = match phase { 0 => limn::UiEvent::PointerDown(at), 1 => limn::UiEvent::PointerMove(at), 3 => limn::UiEvent::ContextMenu { position: at }, _ => limn::UiEvent::PointerUp(at) };
             let regions = frame.regions.clone();
             for action in self.tree.handle_event(event) {
                 note_menu_origin(&mut self.state, &action, &regions);
@@ -582,6 +582,8 @@ impl eframe::App for Host {
         self.tree.set_reduced_motion(still);
         // A remote's arrows move the focus from control to control.
         self.tree.set_spatial_focus(self.state.tv);
+        // A phone's text menu is iOS 26's edit menu, over the field in the bars' glass.
+        self.tree.set_touch_text_menu(self.state.mobile.then_some(view::EDIT_MENU));
         self.motion.set_reduced_motion(still);
         self.state.motion = !still;
         #[cfg(target_os = "ios")]
@@ -816,7 +818,9 @@ impl eframe::App for Host {
             acted = true;
             self.stirred = Instant::now();
             #[cfg(target_os = "ios")]
-            if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { .. }) { continue; }
+            // UIKit's own menus stand for a row's; a field's text menu is still limn's.
+            if self.state.mobile_ui.native_surfaces && matches!(event, limn::UiEvent::ContextMenu { position }
+                if !input_frame.press_region(position).is_some_and(|hit| matches!(hit.kind, limn::HitKind::TextInput | limn::HitKind::TextArea))) { continue; }
             #[cfg(any(target_os = "ios", target_os = "android"))]
             if matches!(event, limn::UiEvent::Paste(_)) {
                 // egui-winit's iOS and Android clipboards are app-local. The shortcut still
@@ -1220,6 +1224,12 @@ pub fn run() -> eframe::Result {
                     script.pointer.push((at + Duration::from_millis(16 * u64::from(step)), id.to_owned(), down * step as f32 / steps as f32, 1));
                 }
                 script.pointer.push((at + Duration::from_millis(16 * u64::from(steps) + 30), id.to_owned(), down, 2));
+            }
+            // A finger held on a control until its menu comes: a field's, the edit menu.
+            "--hold" => {
+                let value = value();
+                let (id, at) = value.rsplit_once('@').unwrap_or((value.as_str(), "0"));
+                script.pointer.push((Duration::from_millis(at.parse().unwrap_or(0)), id.to_owned(), 0.0, 3));
             }
             "--scroll" => {
                 let value = value();

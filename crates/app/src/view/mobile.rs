@@ -43,18 +43,22 @@ const INLINE_SPACING: f32 = 14.0;
 /// The floating bars keep this clear of the screen's sides, and grow no wider than BAR_MAX.
 const BAR_SIDE: f32 = 19.0;
 const BAR_MAX: f32 = 440.0;
-/// iOS 26's soft scroll edge under the bar: the page blurred (σ 8, as the bars' glass, which
-/// shares its blur) and a little darkened, no rim nor bend, over the bar's whole room, giving
-/// way to the sharp page over `EDGE_TAIL` below it.
+/// iOS 26's soft scroll edge, as Apple Music's: the page blurred (σ 8, as the bars' glass,
+/// which shares its blur) and a little darkened under the status bar alone, no rim nor bend,
+/// giving way to the sharp page over its lower half; the header's buttons stand over the page
+/// as it is.
 const SCROLL_EDGE: limn::GlassMaterial = limn::GlassMaterial {
-    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.3,
+    refraction: 0.0, dispersion: 0.0, saturation: 1.4, intensity: 0.0, fade: 0.55,
     ..limn::GlassMaterial::new(Color::rgba(0, 0, 0, 70))
 };
-const EDGE_TAIL: f32 = 28.0;
+const EDGE_TAIL: f32 = 8.0;
 
 /// aurora's regular glass, dark: a 48% veil of (38, 38, 40) over the page, blurred (σ 8) in
 /// the middle and bent 32 sharp at the rim, saturated 2.2, as the user's shell draws it.
 pub(in crate::view) const GLASS: limn::GlassMaterial = limn::GlassMaterial::new(Color::rgba(38, 38, 40, 122));
+/// iOS 26's edit menu over a field: Liquid Glass, the page seen blurred through it, dark enough
+/// for its words over a bright one.
+pub(crate) const EDIT_MENU: limn::GlassMaterial = limn::GlassMaterial { blur: 24.0, ..limn::GlassMaterial::new(Color::rgba(38, 38, 40, 150)) };
 /// A sheet's: thicker than a bar's, as iOS's sheets are, so a bright switch or button behind
 /// it does not show through the words on it; the page still shows, blurred, as a tint.
 const SHEET_GLASS: limn::GlassMaterial = limn::GlassMaterial { blur: 28.0, ..limn::GlassMaterial::new(Color::rgba(30, 30, 32, 214)) };
@@ -78,40 +82,24 @@ pub(in crate::view) fn popped(state: &State, sheet: Element) -> Element {
     }
 }
 
-/// iOS's share sheet, in aurora's glass and popping out of the button that opened it: what is
-/// shared beside a cross, the apps it can go to, and copying or opening its link. Each app
-/// takes the link by its own address, so it works from any device; on Android the system's
-/// own sheet is its "More".
+/// Where there is no system share sheet, as in a desktop's preview of the phone: what is shared,
+/// and copying or opening its link. A phone shares through its own sheet, iOS's or Android's,
+/// with the apps it has; none are drawn here in their place.
 pub(in crate::view) fn share_sheet(state: &State, base: Element, palette: ComponentPalette) -> Element {
     let (title, artwork) = match (&state.sharing, &state.sharing_page) {
         (Some(track), _) => (track.title.clone(), track.artwork_url.clone()),
         (None, Some(page)) => (page.title.clone(), page.artwork_url.clone()),
         (None, None) => return base,
     };
-    let mark = |color: Color, glyph: Element| Element::panel(glyph.foreground(Color::WHITE).centered()).background(color);
-    let glyph = |icon: Icon| Element::icon(icon).large_icon(28.0);
-    let mut targets = vec![
-        limn::ShareTarget::new("share-to:messages", t!("mobile-share-messages"), mark(Color::rgb(52, 199, 89), glyph(Icon::Chat))),
-        limn::ShareTarget::new("share-to:mail", t!("mobile-share-mail"), mark(Color::rgb(30, 136, 245), glyph(Icon::Custom(MAIL)))),
-        limn::ShareTarget::new("share-to:whatsapp", "WhatsApp", mark(Color::rgb(37, 211, 102), glyph(Icon::Chat))),
-        limn::ShareTarget::new("share-to:telegram", "Telegram", mark(Color::rgb(42, 171, 238), glyph(Icon::Send))),
-        limn::ShareTarget::new("share-to:x", "X", mark(Color::rgb(24, 24, 24), Text::new("X", palette).font_size(28.0).render().font_family(FontFamily::SansBold))),
-    ];
-    if cfg!(any(target_os = "android", target_os = "ios")) {
-        targets.push(limn::ShareTarget::new("share-to:system", t!("mobile-share-more"), mark(Color::rgb(72, 72, 74), glyph(Icon::More))));
-    }
     let copied = state.copied;
     let actions = vec![
         limn::ShareAction::new("share-copy", if copied { t!("common-link-copied") } else { t!("desktop-copy-link") }, if copied { Icon::Check } else { Icon::Copy }),
         limn::ShareAction::new("share-open", t!("mobile-share-open"), Icon::ExternalLink),
     ];
     let sheet = limn::ShareSheet::new(base, true, title, "music.youtube.com", "share-close", palette)
-        .preview(cover(state, &artwork, 52.0, palette)).targets(targets).actions(actions).glass(SHEET_GLASS).ios(ios_sheet(state)).render();
+        .preview(cover(state, &artwork, 52.0, palette)).actions(actions).glass(SHEET_GLASS).ios(ios_sheet(state)).render();
     popped(state, sheet)
 }
-
-/// iOS's Mail glyph, an envelope.
-const MAIL: &str = include_str!("../../assets/icons/mail.svg");
 
 /// One of the phone's sheets as the rest are: in aurora's glass, popping out of what opened it.
 pub(in crate::view) fn phone_sheet(state: &State, sheet: limn::BottomSheet) -> Element {
@@ -378,10 +366,10 @@ pub(super) fn view(state: &State, window: Size) -> Element {
     } else { chrome::under_bars(content, scroll_top, bottom_height, header_edge, if player { Color::TRANSPARENT } else { footer_edge }) };
     let top = Element::column(top);
     let top = if native_chrome || clear_head || soft_edge { top } else { top.vertical_gradient(vec![surface.0, header_edge]) }.block_pointer("mobile-header-bar");
-    // iOS's edge takes the bar's whole room, the status bar and the row of its buttons, at its
-    // full blur, and gives way to the page only below it; it takes no press.
+    // iOS's edge is the status bar's: it is gone by the row of the header's buttons; it takes
+    // no press.
     let edge = soft_edge.then(|| Element::column(vec![
-        Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(top_height + EDGE_TAIL)),
+        Element::panel(Element::spacer()).glass(SCROLL_EDGE).size(None, Some(insets.top + EDGE_TAIL)),
         Element::spacer().flex(1.0),
     ]));
     let footer = Element::column(bottom);
@@ -647,14 +635,15 @@ fn player_banner(state: &State, window: Size) -> Option<Element> {
     let at_top = |element: Element| Element::column(vec![element, Element::spacer().flex(1.0)]).size(Some(window.width), Some(window.height));
     // On its way to or from the mini player, the cover goes its own way under the player's
     // header and controls, and becomes the banner, its dissolve and its shade, as it arrives:
-    // where it lands nothing changes from one frame to the next.
-    let (banner, at) = match docking(state, window) {
+    // where it lands nothing changes from one frame to the next. It leaves from the sheet,
+    // wherever the sheet has come down to.
+    let (banner, at) = match docking(state) {
         Some(at) => {
             let (from, to) = (limn::Rect::new(0.0, 0.0, window.width, player::banner_height(window, insets.bottom)), mini_thumb(state, window));
             let mix = |a: f32, b: f32| a + (b - a) * at;
-            // The sheet it is drawn on is lowered by the player's offset; the cover is not.
+            // The sheet it is drawn on is lowered by the player's offset; the thumbnail is not.
             let picture = player::picture(state, mix(from.width, to.width), mix(from.height, to.height), 1.0 - at)?
-                .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y) - state.mobile_ui.player_offset));
+                .radius(8.0 * at).translate(limn::Point::new(mix(from.x, to.x), mix(from.y, to.y - state.mobile_ui.player_offset)));
             (Element::row(vec![picture, Element::spacer().flex(1.0)]), at)
         }
         None => (player::banner(state, window.width, player::banner_height(window, insets.bottom))?, 0.0),
@@ -687,10 +676,11 @@ fn flying_cover(state: &State, window: Size) -> Option<Element> {
     Some(Element::stack(vec![at_top(Element::row(vec![picture, Element::spacer().flex(1.0)])), at_top(shade)]))
 }
 
-/// How far the player has come down toward the mini player, while it is on its way down or up.
-fn docking(state: &State, window: Size) -> Option<f32> {
-    let offset = state.mobile_ui.player_offset;
-    (state.page == Page::Playing && !state.queue_open && offset > 0.5 && state.current().is_some()).then(|| (offset / window.height.max(1.0)).clamp(0.0, 1.0))
+/// How far the player's cover has flown toward the mini player, while it is on its way down or
+/// up; under a finger it rides the sheet, as Apple Music's, and this is none.
+fn docking(state: &State) -> Option<f32> {
+    let flight = state.mobile_ui.player_flight;
+    (state.page == Page::Playing && !state.queue_open && state.mobile_ui.player_offset > 0.5 && flight > 0.0 && state.current().is_some()).then_some(flight)
 }
 
 /// Where the mini player's thumbnail stands over the tabs, on a screen `window` whose safe
@@ -716,7 +706,7 @@ fn canvas_ready(state: &State) -> Option<String> {
 /// keeps the song's name legible over a light picture meanwhile.
 fn player_canvas(state: &State, window: Size) -> Option<Element> {
     // The cover travels alone: the video gives way to it, as BitChord's still frame does.
-    if cover_flight(state, window.height).is_some() || docking(state, window).is_some() { return None; }
+    if cover_flight(state, window.height).is_some() || docking(state).is_some() { return None; }
     let name = canvas_ready(state)?;
     let whole = |element: Element| element.size(Some(window.width), Some(window.height));
     let at_foot = |element: Element, share: f32| whole(Element::column(vec![Element::spacer().flex(1.0), element.size(Some(window.width), Some(window.height * share))]));

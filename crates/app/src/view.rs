@@ -10,6 +10,7 @@ mod onboarding;
 mod wrapped;
 mod jam;
 pub(crate) use mobile::route_key as mobile_route_key;
+pub(crate) use mobile::EDIT_MENU;
 #[cfg(any(target_os = "ios", test))]
 #[cfg(any(target_os = "ios", test))]
 pub(crate) use mobile::{header_buttons, mini_buttons, search::filters as search_filters, surface_tint, tabs, title as mobile_title};
